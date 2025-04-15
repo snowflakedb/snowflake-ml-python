@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from io import BytesIO
 from types import GeneratorType
-from typing import Any, Dict, Iterable, Iterator, List, Union, cast
+from typing import Any, Iterable, Iterator, Union, cast
 
 import _test_util
 from absl.testing import absltest
@@ -63,7 +63,7 @@ class FakeSession:
 
 
 class FakeResponse:  # needed for testing, imitates some of requests.Response behaviors
-    def __init__(self, content: bytes, headers: Dict[str, str], data: bytes) -> None:
+    def __init__(self, content: bytes, headers: dict[str, str], data: bytes) -> None:
         self.content = BytesIO(content)
         self.headers = headers
         self.data = data
@@ -202,7 +202,7 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         self.wfile.write(json.dumps(response_json).encode("utf-8"))
 
-    def _handle_json_mode_stream(self, response_format_obj: Dict[str, Any], prompt: List[Dict[str, str]]) -> None:
+    def _handle_json_mode_stream(self, response_format_obj: dict[str, Any], prompt: list[dict[str, str]]) -> None:
         people_case = response_format_obj.get("schema", {}).get("properties", {}).get("people", {})
         if response_format_obj.get("type") != "json":
             self._handle_json_mode_stream_rest_response(schema_utils.response_format_with_bad_input, 400, True)
@@ -246,21 +246,21 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 def fake_xp_request_handler(
     method: str,
     url: str,
-    queryParams: Dict[str, str],
-    headers: Dict[str, str],
-    body: Dict[str, Any],
-    postParams: Dict[str, str],
+    queryParams: dict[str, str],
+    headers: dict[str, str],
+    body: dict[str, Any],
+    postParams: dict[str, str],
     timeoutMs: Any,
 ) -> Any:
     assert method == "POST"
     assert "/cortex/" in url
 
     def _handle_json_mode_xp(
-        response_format_obj: Dict[str, Any], prompt: Union[str, list[ConversationMessage], Column]
-    ) -> Union[Dict[str, Any], None]:
+        response_format_obj: dict[str, Any], prompt: Union[str, list[ConversationMessage], Column]
+    ) -> Union[dict[str, Any], None]:
         def _prepare_error_response_template(
             status_code: int, message: str, error_code: str, request_id: str
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             return {
                 "status": status_code,
                 "content": f"""{{
@@ -277,7 +277,7 @@ def fake_xp_request_handler(
                 },
             }
 
-        def _prepare_response_template(status_code: int, message: Dict[str, Any], request_id: str) -> Dict[str, Any]:
+        def _prepare_response_template(status_code: int, message: dict[str, Any], request_id: str) -> dict[str, Any]:
             return {
                 "status": status_code,
                 "content": f"""[{{

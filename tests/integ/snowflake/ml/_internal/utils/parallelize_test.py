@@ -1,5 +1,3 @@
-from typing import List
-
 from absl.testing import parameterized
 from absl.testing.absltest import main
 
@@ -25,7 +23,7 @@ class TestParallelize(parameterized.TestCase):
         schema = ["a", "b", "c", "d", "_exclude"]
         dataset = self._session.create_dataframe([[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]], schema=schema)
 
-        def _negate(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _negate(df: DataFrame, col_subset: list[str]) -> DataFrame:
             return df.select_expr([f"{col}*(-1)" for col in col_subset])
 
         results = map_dataframe_by_column(
@@ -41,7 +39,7 @@ class TestParallelize(parameterized.TestCase):
         schema = ["a", "b", "c", "d"]
         dataset = self._session.create_dataframe([[0, 1, 2, 3], [5, 6, 7, 8]], schema=schema)
 
-        def _increment_and_negate(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _increment_and_negate(df: DataFrame, col_subset: list[str]) -> DataFrame:
             unflattened = [(f"{col}+1", f"{col}*(-1)") for col in col_subset]
             return df.select_expr([val for tup in unflattened for val in tup])
 
@@ -58,7 +56,7 @@ class TestParallelize(parameterized.TestCase):
         schema = ["a", "b", "c", "d", "_exclude"]
         dataset = self._session.create_dataframe([[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]], schema=schema)
 
-        def _negate(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _negate(df: DataFrame, col_subset: list[str]) -> DataFrame:
             return df.select_expr([f"{col}*(-1)" for col in col_subset])
 
         with self.assertRaisesRegex(Exception, "must be a positive integer"):
@@ -73,7 +71,7 @@ class TestParallelize(parameterized.TestCase):
         schema = ["1", "2", "3", "4"]
         dataset = self._session.create_dataframe([["a", "b", "c", "d"]], schema=schema)
 
-        def _unroll_columns(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _unroll_columns(df: DataFrame, col_subset: list[str]) -> DataFrame:
             unflattened = [["'value'"] * int(col) for col in col_subset]
             return df.select_expr([f"{val} AS VALUE_COL_{idx}" for tup in unflattened for (idx, val) in enumerate(tup)])
 
@@ -89,7 +87,7 @@ class TestParallelize(parameterized.TestCase):
         schema = ["1", "2", "3", "4"]
         dataset = self._session.create_dataframe([["a", "b", "c", "d"]], schema=schema)
 
-        def _unroll_rows(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _unroll_rows(df: DataFrame, col_subset: list[str]) -> DataFrame:
             unioned_df = df.select_expr("1")
             for col in col_subset:
                 for _ in range(int(col)):
@@ -112,7 +110,7 @@ class TestParallelize(parameterized.TestCase):
     def test_map_dataframe_by_column_mismatched_schema(self, cols):
         dataset = self._session.create_dataframe([[1, 2]], schema=["a", "b"])
 
-        def _negate(df: DataFrame, col_subset: List[str]) -> DataFrame:
+        def _negate(df: DataFrame, col_subset: list[str]) -> DataFrame:
             return df.select_expr([f"{col}*(-1)" for col in col_subset])
 
         with self.assertRaisesRegex(Exception, "does not index into the dataset"):

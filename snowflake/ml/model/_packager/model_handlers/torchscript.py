@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -36,7 +36,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
     HANDLER_TYPE = "torchscript"
     HANDLER_VERSION = "2025-03-01"
     _MIN_SNOWPARK_ML_VERSION = "1.8.0"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {
         "2023-12-01": torchscript_migrator_2023_12_01.TorchScriptHandlerMigrator20231201
     }
 
@@ -181,7 +181,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         def _create_custom_model(
             raw_model: "torch.jit.ScriptModule",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: "torch.jit.ScriptModule",
                 signature: model_signature.ModelSignature,

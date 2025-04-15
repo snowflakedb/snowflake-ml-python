@@ -1,5 +1,6 @@
 import os
 import pathlib
+import tempfile
 from typing import Any, cast
 from unittest import mock
 from urllib import parse
@@ -21,7 +22,11 @@ from snowflake.snowpark import Session
 
 
 class ModelInterfaceTest(parameterized.TestCase):
-    def test_save_interface(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"params": {"use_save_location": False}},
+        {"params": {"use_save_location": True}},
+    )
+    def test_save_interface(self, params: dict[str, Any]) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)
 
@@ -32,9 +37,17 @@ class ModelInterfaceTest(parameterized.TestCase):
         mock_pk = mock.MagicMock()
         mock_pk.meta = mock.MagicMock()
         mock_pk.meta.signatures = mock.MagicMock()
-        m = model_composer.ModelComposer(session=c_session, stage_path=stage_path)
+        if params["use_save_location"]:
+            temp_dir = tempfile.mkdtemp()
+        else:
+            temp_dir = None
+        m = model_composer.ModelComposer(
+            session=c_session,
+            stage_path=stage_path,
+            save_location=temp_dir,
+        )
 
-        with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(m.packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
             f.write("")
         m.packager = mock_pk
         with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
@@ -62,7 +75,7 @@ class ModelInterfaceTest(parameterized.TestCase):
 
         m = model_composer.ModelComposer(session=c_session, stage_path=stage_path)
         m.packager = mock_pk
-        with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(m.packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
             f.write("")
         with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
             with mock.patch.object(m.manifest, "save") as mock_manifest_save:
@@ -95,7 +108,7 @@ class ModelInterfaceTest(parameterized.TestCase):
         snow_stage_path = "snow://model/a_model_name/versions/a_version_name"
         m = model_composer.ModelComposer(session=c_session, stage_path=snow_stage_path)
         m.packager = mock_pk
-        with open(os.path.join(m._packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(m.packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
             f.write("")
         with mock.patch.object(m.packager, "save", return_value=mock_pk.meta) as mock_save:
             with mock.patch.object(m.manifest, "save") as mock_manifest_save:

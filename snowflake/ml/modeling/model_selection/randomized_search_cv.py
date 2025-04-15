@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, List, Optional, Set, Union
+from typing import Any, Iterable, Optional, Union
 
 import cloudpickle as cp
 import numpy as np
@@ -254,7 +254,7 @@ class RandomizedSearchCV(BaseTransformer):
         sample_weight_col: Optional[str] = None,
     ) -> None:
         super().__init__()
-        deps: Set[str] = {
+        deps: set[str] = {
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",
@@ -280,7 +280,7 @@ class RandomizedSearchCV(BaseTransformer):
         self._sklearn_object: Any = sklearn.model_selection.RandomizedSearchCV(
             **cleaned_up_init_args,
         )
-        self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
+        self._model_signature_dict: Optional[dict[str, ModelSignature]] = None
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
         self.set_label_cols(label_cols)
@@ -294,7 +294,7 @@ class RandomizedSearchCV(BaseTransformer):
         self._class_name = RandomizedSearchCV.__class__.__name__
         self._subproject = _SUBPROJECT
 
-    def _get_active_columns(self) -> List[str]:
+    def _get_active_columns(self) -> list[str]:
         """ "Get the list of columns that are relevant to the transformer."""
         selected_cols = (
             self.input_cols + self.label_cols + ([self.sample_weight_col] if self.sample_weight_col is not None else [])
@@ -820,7 +820,7 @@ class RandomizedSearchCV(BaseTransformer):
         assert self._sklearn_object is not None
         return self._sklearn_object
 
-    def _get_dependencies(self) -> List[str]:
+    def _get_dependencies(self) -> list[str]:
         return self._deps
 
     def _generate_model_signatures(self, dataset: Union[DataFrame, pd.DataFrame]) -> None:
@@ -835,7 +835,7 @@ class RandomizedSearchCV(BaseTransformer):
                 use_snowflake_identifiers=True,
             )
         )
-        outputs: List[BaseFeatureSpec] = []
+        outputs: list[BaseFeatureSpec] = []
         if hasattr(self, "predict"):
             # keep mypy happy
             assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type")
@@ -878,7 +878,7 @@ class RandomizedSearchCV(BaseTransformer):
             self._model_signature_dict[method] = signature
 
     @property
-    def model_signatures(self) -> Dict[str, ModelSignature]:
+    def model_signatures(self) -> dict[str, ModelSignature]:
         """Returns model signature of current class.
 
         Raises:

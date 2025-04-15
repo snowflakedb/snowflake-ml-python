@@ -1,5 +1,5 @@
 import inspect
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import cloudpickle
 import numpy as np
@@ -25,8 +25,8 @@ _MULTIOUTPUT_RAW_VALUES = "raw_values"
 def d2_absolute_error_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
 ) -> Union[float, npt.NDArray[np.float_]]:
@@ -119,8 +119,8 @@ def d2_absolute_error_score(
 def d2_pinball_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     alpha: float = 0.5,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
@@ -219,8 +219,8 @@ def d2_pinball_score(
 def explained_variance_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
     force_finite: bool = True,
@@ -334,8 +334,8 @@ def explained_variance_score(
 def mean_absolute_error(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
 ) -> Union[float, npt.NDArray[np.float_]]:
@@ -407,8 +407,8 @@ def mean_absolute_error(
 def mean_absolute_percentage_error(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
 ) -> Union[float, npt.NDArray[np.float_]]:
@@ -490,8 +490,8 @@ def mean_absolute_percentage_error(
 def mean_squared_error(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
     squared: bool = True,

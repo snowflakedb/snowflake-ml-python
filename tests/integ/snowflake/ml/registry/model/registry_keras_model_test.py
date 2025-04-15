@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable
 
 import keras
 import numpy as np
@@ -11,7 +11,7 @@ from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
-def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
+def _prepare_keras_subclass_model() -> tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
     @keras.saving.register_keras_serializable()
     class KerasModel(keras.Model):
         def __init__(self, n_hidden: int, n_out: int) -> None:
@@ -24,7 +24,7 @@ def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.ArrayLike, npt.Arr
             x = self.fc_2(x)
             return x  # type: ignore[no-any-return]
 
-        def get_config(self) -> Dict[str, Any]:
+        def get_config(self) -> dict[str, Any]:
             base_config = super().get_config()
             config = {
                 "fc_1": keras.saving.serialize_keras_object(self.fc_1),
@@ -33,7 +33,7 @@ def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.ArrayLike, npt.Arr
             return {**base_config, **config}
 
         @classmethod
-        def from_config(cls, config: Dict[str, Any]) -> "KerasModel":
+        def from_config(cls, config: dict[str, Any]) -> "KerasModel":
             fc_1_config = config.pop("fc_1")
             fc_1 = keras.saving.deserialize_keras_object(fc_1_config)
             fc_2_config = config.pop("fc_2")
@@ -53,7 +53,7 @@ def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.ArrayLike, npt.Arr
     return model, x, y
 
 
-def _prepare_keras_sequential_model() -> Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
+def _prepare_keras_sequential_model() -> tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     y = np.random.random_integers(0, 1, (batch_size,)).astype(np.float32)
@@ -69,7 +69,7 @@ def _prepare_keras_sequential_model() -> Tuple[keras.Model, npt.ArrayLike, npt.A
     return model, x, y
 
 
-def _prepare_keras_functional_model() -> Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
+def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     y = np.random.random_integers(0, 1, (batch_size,)).astype(np.float32)
@@ -90,7 +90,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
     )
     def test_keras_tensor_as_sample(
         self,
-        model_fn: Callable[[], Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
+        model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
         registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()
@@ -117,7 +117,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
     )
     def test_keras_df_as_sample(
         self,
-        model_fn: Callable[[], Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
+        model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
         registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()
@@ -145,7 +145,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
     )
     def test_keras_sp(
         self,
-        model_fn: Callable[[], Tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
+        model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
         registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()

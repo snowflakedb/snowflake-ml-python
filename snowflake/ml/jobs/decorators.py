@@ -1,6 +1,6 @@
 import copy
 import functools
-from typing import Callable, Dict, List, Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from typing_extensions import ParamSpec
 
@@ -15,20 +15,19 @@ _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def remote(
     compute_pool: str,
     *,
     stage_name: str,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    env_vars: Optional[Dict[str, str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
-) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob]]:
+) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob[_ReturnValue]]]:
     """
     Submit a job to the compute pool.
 
@@ -47,7 +46,7 @@ def remote(
         Decorator that dispatches invocations of the decorated function as remote jobs.
     """
 
-    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, jb.MLJob]:
+    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, jb.MLJob[_ReturnValue]]:
         # Copy the function to avoid modifying the original
         # We need to modify the line number of the function to exclude the
         # decorator from the copied source code
@@ -55,7 +54,7 @@ def remote(
         wrapped_func.__code__ = wrapped_func.__code__.replace(co_firstlineno=func.__code__.co_firstlineno + 1)
 
         @functools.wraps(func)
-        def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob:
+        def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
             payload = functools.partial(func, *args, **kwargs)
             setattr(payload, constants.IS_MLJOB_REMOTE_ATTR, True)
             job = jm._submit_job(

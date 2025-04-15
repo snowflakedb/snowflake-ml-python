@@ -1,5 +1,3 @@
-from typing import List
-
 from snowflake.ml.feature_store import Entity
 
 end_station_id = Entity(
@@ -16,5 +14,5 @@ trip_id = Entity(
 
 
 # This will be invoked by example_helper.py. Do not change function name.
-def get_all_entities() -> List[Entity]:
+def get_all_entities() -> list[Entity]:
     return [end_station_id, trip_id]

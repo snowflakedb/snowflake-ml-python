@@ -1,5 +1,6 @@
 import json
-from typing import Any, Dict, Optional
+from contextlib import contextmanager
+from typing import Any, Optional
 
 from absl import logging
 
@@ -27,21 +28,50 @@ class PlatformCapabilities:
     """
 
     _instance: Optional["PlatformCapabilities"] = None
+    # Used for unittesting only. This is to avoid the need to mock the session object or reaching out to Snowflake
+    _mock_features: Optional[dict[str, Any]] = None
 
     @classmethod
     def get_instance(cls, session: Optional[snowpark_session.Session] = None) -> "PlatformCapabilities":
+        # Used for unittesting only. In this situation, _instance is not initialized.
+        if cls._mock_features is not None:
+            return cls(features=cls._mock_features)
         if not cls._instance:
-            cls._instance = cls(session)
+            cls._instance = cls(session=session)
         return cls._instance
+
+    @classmethod
+    def set_mock_features(cls, features: Optional[dict[str, Any]] = None) -> None:
+        cls._mock_features = features
+
+    @classmethod
+    def clear_mock_features(cls) -> None:
+        cls._mock_features = None
+
+    # For contextmanager, we need to have return type Iterator[Never]. However, Never type is introduced only in
+    # Python 3.11. So, we are ignoring the type for this method.
+    @classmethod  # type: ignore[arg-type]
+    @contextmanager
+    def mock_features(cls, features: dict[str, Any]) -> None:  # type: ignore[misc]
+        logging.debug(f"Setting mock features: {features}")
+        cls.set_mock_features(features)
+        try:
+            yield
+        finally:
+            logging.debug(f"Clearing mock features: {features}")
+            cls.clear_mock_features()
 
     def is_nested_function_enabled(self) -> bool:
         return self._get_bool_feature("SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS", False)
+
+    def is_inlined_deployment_spec_enabled(self) -> bool:
+        return self._get_bool_feature("ENABLE_INLINE_DEPLOYMENT_SPEC", False)
 
     def is_live_commit_enabled(self) -> bool:
         return self._get_bool_feature("ENABLE_BUNDLE_MODULE_CHECKOUT", False)
 
     @staticmethod
-    def _get_features(session: snowpark_session.Session) -> Dict[str, Any]:
+    def _get_features(session: snowpark_session.Session) -> dict[str, Any]:
         try:
             result = (
                 query_result_checker.SqlResultValidator(
@@ -68,11 +98,17 @@ class PlatformCapabilities:
             # This can happen is server side is older than 9.2. That is fine.
         return {}
 
-    def __init__(self, session: Optional[snowpark_session.Session] = None) -> None:
+    def __init__(
+        self, *, session: Optional[snowpark_session.Session] = None, features: Optional[dict[str, Any]] = None
+    ) -> None:
+        # This is for testing purposes only.
+        if features:
+            self.features = features
+            return
         if not session:
             session = next(iter(snowpark_session._get_active_sessions()))
             assert session, "Missing active session object"
-        self.features: Dict[str, Any] = PlatformCapabilities._get_features(session)
+        self.features = PlatformCapabilities._get_features(session)
 
     def _get_bool_feature(self, feature_name: str, default_value: bool) -> bool:
         value = self.features.get(feature_name, default_value)

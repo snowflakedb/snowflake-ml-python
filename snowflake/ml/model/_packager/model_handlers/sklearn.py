@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, Union, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -49,7 +49,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
     HANDLER_TYPE = "sklearn"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     DEFAULT_TARGET_METHODS = [
         "predict",
@@ -265,7 +265,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         def _create_custom_model(
             raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
                 signature: model_signature.ModelSignature,

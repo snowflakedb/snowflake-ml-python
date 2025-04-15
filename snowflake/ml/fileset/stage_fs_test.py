@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, cast
+from typing import cast
 
 import boto3
 import requests
@@ -23,7 +23,7 @@ class SFStageFileSystemTest(absltest.TestCase):
     subdir = "mydir"
     file3 = "helloworld"
     file_list = [file1, file2, f"{subdir}/{file3}"]
-    urls: Dict[str, str] = {}
+    urls: dict[str, str] = {}
     content = b"hello world"
     db = "TESTDB"
     schema = "TESTSCHEMA"
@@ -103,7 +103,7 @@ class SFStageFileSystemTest(absltest.TestCase):
             result=self._mock_collect_res(prefix, collect_block=False),
         )
 
-    def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> List[snowpark.Row]:
+    def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> list[snowpark.Row]:
         return [snowpark.Row(NAME=file, URL=self.urls[file]) for file in files]
 
     def test_moto_setup(self) -> None:

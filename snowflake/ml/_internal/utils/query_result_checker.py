@@ -1,7 +1,7 @@
 from __future__ import annotations  # for return self methods
 
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 
 from snowflake import connector, snowpark
 from snowflake.ml._internal.utils import formatting
@@ -123,7 +123,7 @@ def cell_value_by_column_matcher(
     return True
 
 
-_DEFAULT_MATCHERS: List[Callable[[List[snowpark.Row], Optional[str]], bool]] = [
+_DEFAULT_MATCHERS: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = [
     partial(result_dimension_matcher, 1, 1),
     partial(column_name_matcher, "status"),
 ]
@@ -252,12 +252,12 @@ class SqlResultValidator(ResultValidator):
     """
 
     def __init__(
-        self, session: snowpark.Session, query: str, statement_params: Optional[Dict[str, Any]] = None
+        self, session: snowpark.Session, query: str, statement_params: Optional[dict[str, Any]] = None
     ) -> None:
         self._session: snowpark.Session = session
         self._query: str = query
         self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
-        self._statement_params: Optional[Dict[str, Any]] = statement_params
+        self._statement_params: Optional[dict[str, Any]] = statement_params
 
     def _get_result(self) -> list[snowpark.Row]:
         """Collect the result of the given SQL query."""

@@ -1,6 +1,6 @@
 # mypy: disable-error-code="import"
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, Literal, Sequence, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
 from typing_extensions import NotRequired
@@ -32,7 +32,7 @@ _SupportedBuiltins = Union[
     bool,
     str,
     bytes,
-    Dict[str, Union["_SupportedBuiltins", "_SupportedBuiltinsList"]],
+    dict[str, Union["_SupportedBuiltins", "_SupportedBuiltinsList"]],
     "_SupportedBuiltinsList",
 ]
 _SupportedNumpyDtype = Union[
@@ -147,13 +147,15 @@ class BaseModelSaveOption(TypedDict):
     embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
     relax_version: Whether or not relax the version constraints of the dependencies if unresolvable in Warehouse.
         It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+    save_location: Local directory path to save the model and metadata.
     """
 
     embed_local_ml_library: NotRequired[bool]
     relax_version: NotRequired[bool]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
-    method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
+    method_options: NotRequired[dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
+    save_location: NotRequired[str]
 
 
 class CatBoostModelSaveOptions(BaseModelSaveOption):

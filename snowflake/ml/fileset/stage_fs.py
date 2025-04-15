@@ -2,7 +2,7 @@ import inspect
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Optional, Union, cast
 
 import fsspec
 from fsspec.implementations import http as httpfs
@@ -44,7 +44,7 @@ class _PresignedUrl:
         return not self.expire_at or time.time() > self.expire_at - headroom_sec
 
 
-def _get_httpfs_kwargs(**kwargs: Any) -> Dict[str, Any]:
+def _get_httpfs_kwargs(**kwargs: Any) -> dict[str, Any]:
     """Extract kwargs that are meaningful to HTTPFileSystem."""
     httpfs_related_keys = [
         "block_size",
@@ -124,7 +124,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         self._db = db
         self._schema = schema
         self._stage = stage
-        self._url_cache: Dict[str, _PresignedUrl] = {}
+        self._url_cache: dict[str, _PresignedUrl] = {}
 
         httpfs_kwargs = _get_httpfs_kwargs(**kwargs)
         self._fs = httpfs.HTTPFileSystem(**httpfs_kwargs)
@@ -145,7 +145,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         func_params_to_log=["detail"],
     )
-    def ls(self, path: str, detail: bool = False) -> Union[List[str], List[Dict[str, Any]]]:
+    def ls(self, path: str, detail: bool = False) -> Union[list[str], list[dict[str, Any]]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
         Args:
@@ -169,7 +169,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
             loc = self.stage_name
             path = path.lstrip("/")
             async_job: snowpark.AsyncJob = self._session.sql(f"LIST '{loc}/{path}'").collect(block=False)
-            objects: List[snowpark.Row] = _resolve_async_job(async_job)
+            objects: list[snowpark.Row] = _resolve_async_job(async_job)
         except snowpark_exceptions.SnowparkSQLException as e:
             if e.sql_error_code == fileset_errors.ERRNO_DOMAIN_NOT_EXIST:
                 raise snowml_exceptions.SnowflakeMLException(
@@ -192,7 +192,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
     )
-    def optimize_read(self, files: Optional[List[str]] = None) -> None:
+    def optimize_read(self, files: Optional[list[str]] = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the read performance.
 
         All the files introduced here will have their urls cached. Further open() on any of cached urls will lead to a
@@ -271,7 +271,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                 original_exception=fileset_errors.StageFileNotFoundError(f"Stage file {path} doesn't exist."),
             )
 
-    def _open_with_snowpark(self, path: str, **kwargs: Dict[str, Any]) -> fsspec.spec.AbstractBufferedFile:
+    def _open_with_snowpark(self, path: str, **kwargs: dict[str, Any]) -> fsspec.spec.AbstractBufferedFile:
         """Open the a file for reading using snowflake.snowpark.file_operation
 
         Args:
@@ -299,7 +299,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
                     original_exception=e,
                 )
 
-    def _parse_list_result(self, list_result: List[snowpark.Row], search_path: str) -> List[Dict[str, Any]]:
+    def _parse_list_result(self, list_result: list[snowpark.Row], search_path: str) -> list[dict[str, Any]]:
         """Convert the result from LIST query to the expected format of fsspec ls() method.
 
         Note that Snowflake LIST query has different behavior with ls(). LIST query will return all the stage files
@@ -318,7 +318,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         Returns:
             A list of dict, where each dict contains key-value pairs as the properties of a file.
         """
-        files: Dict[str, Dict[str, Any]] = {}
+        files: dict[str, dict[str, Any]] = {}
         search_path = search_path.strip("/")
         for row in list_result:
             name, size, md5, last_modified = row["name"], row["size"], row["md5"], row["last_modified"]
@@ -360,7 +360,7 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
 
     def _add_file_info_helper(
         self,
-        files: Dict[str, Dict[str, Any]],
+        files: dict[str, dict[str, Any]],
         object_path: str,
         file_size: int,
         file_type: str,
@@ -379,12 +379,12 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
         )
 
     def _fetch_presigned_urls(
-        self, files: List[str], url_lifetime: float = _PRESIGNED_URL_LIFETIME_SEC
-    ) -> List[Tuple[str, str]]:
+        self, files: list[str], url_lifetime: float = _PRESIGNED_URL_LIFETIME_SEC
+    ) -> list[tuple[str, str]]:
         """Fetch presigned urls for the given files."""
         file_df = self._session.create_dataframe(files).to_df("name")
         try:
-            presigned_urls: List[Tuple[str, str]] = file_df.select_expr(
+            presigned_urls: list[tuple[str, str]] = file_df.select_expr(
                 f"name, get_presigned_url('{self.stage_name}', name, {url_lifetime}) as url"
             ).collect(
                 statement_params=telemetry.get_function_usage_statement_params(
@@ -418,10 +418,10 @@ def _match_error_code(ex: snowpark_exceptions.SnowparkSQLException, error_code: 
 
 
 @snowflake_plan.SnowflakePlan.Decorator.wrap_exception  # type: ignore[misc]
-def _resolve_async_job(async_job: snowpark.AsyncJob) -> List[snowpark.Row]:
+def _resolve_async_job(async_job: snowpark.AsyncJob) -> list[snowpark.Row]:
     # Make sure Snowpark exceptions are properly caught and converted by wrap_exception wrapper
     try:
-        query_result = cast(List[snowpark.Row], async_job.result("row"))
+        query_result = cast(list[snowpark.Row], async_job.result("row"))
         return query_result
     except snowpark_errors.DatabaseError as e:
         # HACK: Snowpark surfaces a generic exception if query doesn't complete immediately

@@ -6,12 +6,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Dict,
-    List,
     Optional,
     Sequence,
-    Tuple,
-    Type,
     Union,
     final,
     get_args,
@@ -48,7 +44,7 @@ PandasExtensionTypes = Union[
 
 
 class DataType(Enum):
-    def __init__(self, value: str, snowpark_type: Type[spt.DataType], numpy_type: npt.DTypeLike) -> None:
+    def __init__(self, value: str, snowpark_type: type[spt.DataType], numpy_type: npt.DTypeLike) -> None:
         self._value = value
         self._snowpark_type = snowpark_type
         self._numpy_type = numpy_type
@@ -159,7 +155,7 @@ class DataType(Enum):
         else:
             actual_sp_type = snowpark_type
 
-        snowpark_to_snowml_type_mapping: Dict[Type[spt.DataType], DataType] = {
+        snowpark_to_snowml_type_mapping: dict[type[spt.DataType], DataType] = {
             i._snowpark_type: i
             for i in DataType
             # We by default infer as signed integer.
@@ -199,7 +195,7 @@ class DataType(Enum):
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""
 
-    def __init__(self, name: str, shape: Optional[Tuple[int, ...]]) -> None:
+    def __init__(self, name: str, shape: Optional[tuple[int, ...]]) -> None:
         self._name = name
 
         if shape and not isinstance(shape, tuple):
@@ -218,23 +214,19 @@ class BaseFeatureSpec(ABC):
     @abstractmethod
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type."""
-        pass
 
     @abstractmethod
     def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
         """Convert to corresponding local Type."""
-        pass
 
     @abstractmethod
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialization"""
-        pass
 
     @classmethod
     @abstractmethod
-    def from_dict(self, input_dict: Dict[str, Any]) -> "BaseFeatureSpec":
+    def from_dict(self, input_dict: dict[str, Any]) -> "BaseFeatureSpec":
         """Deserialization"""
-        pass
 
 
 class FeatureSpec(BaseFeatureSpec):
@@ -244,7 +236,7 @@ class FeatureSpec(BaseFeatureSpec):
         self,
         name: str,
         dtype: DataType,
-        shape: Optional[Tuple[int, ...]] = None,
+        shape: Optional[tuple[int, ...]] = None,
         nullable: bool = True,
     ) -> None:
         """
@@ -330,19 +322,19 @@ class FeatureSpec(BaseFeatureSpec):
             f"name={repr(self._name)}{shape_str}, nullable={repr(self._nullable)})"
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize the feature group into a dict.
 
         Returns:
             A dict that serializes the feature group.
         """
-        base_dict: Dict[str, Any] = {"type": self._dtype.name, "name": self._name, "nullable": self._nullable}
+        base_dict: dict[str, Any] = {"type": self._dtype.name, "name": self._name, "nullable": self._nullable}
         if self._shape is not None:
             base_dict["shape"] = self._shape
         return base_dict
 
     @classmethod
-    def from_dict(cls, input_dict: Dict[str, Any]) -> "FeatureSpec":
+    def from_dict(cls, input_dict: dict[str, Any]) -> "FeatureSpec":
         """Deserialize the feature specification from a dict.
 
         Args:
@@ -391,7 +383,7 @@ class FeatureSpec(BaseFeatureSpec):
 class FeatureGroupSpec(BaseFeatureSpec):
     """Specification of a group of features in Snowflake native model packaging."""
 
-    def __init__(self, name: str, specs: List[BaseFeatureSpec], shape: Optional[Tuple[int, ...]] = None) -> None:
+    def __init__(self, name: str, specs: list[BaseFeatureSpec], shape: Optional[tuple[int, ...]] = None) -> None:
         """Initialize a feature group.
 
         Args:
@@ -458,19 +450,19 @@ class FeatureGroupSpec(BaseFeatureSpec):
     def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
         return np.object_
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize the feature group into a dict.
 
         Returns:
             A dict that serializes the feature group.
         """
-        base_dict: Dict[str, Any] = {"name": self._name, "specs": [s.to_dict() for s in self._specs]}
+        base_dict: dict[str, Any] = {"name": self._name, "specs": [s.to_dict() for s in self._specs]}
         if self._shape is not None:
             base_dict["shape"] = self._shape
         return base_dict
 
     @classmethod
-    def from_dict(cls, input_dict: Dict[str, Any]) -> "FeatureGroupSpec":
+    def from_dict(cls, input_dict: dict[str, Any]) -> "FeatureGroupSpec":
         """Deserialize the feature group from a dict.
 
         Args:
@@ -520,7 +512,7 @@ class ModelSignature:
         else:
             return False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Generate a dict to represent the whole signature.
 
         Returns:
@@ -533,7 +525,7 @@ class ModelSignature:
         }
 
     @classmethod
-    def from_dict(cls, loaded: Dict[str, Any]) -> "ModelSignature":
+    def from_dict(cls, loaded: dict[str, Any]) -> "ModelSignature":
         """Create a signature given the dict containing specifications of children features and feature groups.
 
         Args:
@@ -545,7 +537,7 @@ class ModelSignature:
         sig_outs = loaded["outputs"]
         sig_inputs = loaded["inputs"]
 
-        deserialize_spec: Callable[[Dict[str, Any]], BaseFeatureSpec] = lambda sig_spec: (
+        deserialize_spec: Callable[[dict[str, Any]], BaseFeatureSpec] = lambda sig_spec: (
             FeatureGroupSpec.from_dict(sig_spec) if "specs" in sig_spec else FeatureSpec.from_dict(sig_spec)
         )
 

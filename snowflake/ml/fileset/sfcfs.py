@@ -1,7 +1,7 @@
 import collections
 import logging
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
+from typing import Any, Callable, Optional, Union, cast
 
 import fsspec
 
@@ -100,7 +100,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
             raise ValueError("Either sf_connection or snowpark_session has to be non-empty!")
         self._conn = self._session._conn._conn  # Telemetry wrappers expect connection under `conn_attr_name="_conn"``
         self._kwargs = kwargs
-        self._stage_fs_set: Dict[Tuple[str, str, str], stage_fs.SFStageFileSystem] = {}
+        self._stage_fs_set: dict[tuple[str, str, str], stage_fs.SFStageFileSystem] = {}
 
         super().__init__(**kwargs)
 
@@ -133,7 +133,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         assert isinstance(session, snowpark.Session)
         return session
 
-    def __reduce__(self) -> Tuple[Callable[[], Type["SFFileSystem"]], Tuple[()], Dict[str, Any]]:
+    def __reduce__(self) -> tuple[Callable[[], type["SFFileSystem"]], tuple[()], dict[str, Any]]:
         """Returns a state dictionary for use in serialization.
 
         Returns:
@@ -145,7 +145,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
 
         return partial(self.__class__, **{_RECREATE_FROM_SERIALIZED: True}), (), state_dictionary
 
-    def __setstate__(self, state_dict: Dict[str, Any]) -> None:
+    def __setstate__(self, state_dict: dict[str, Any]) -> None:
         """Sets the dictionary state at deserialization time, and rebuilds a snowflake connection.
 
         Args:
@@ -191,7 +191,7 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         func_params_to_log=["detail"],
         conn_attr_name="_conn",
     )
-    def ls(self, path: str, detail: bool = False, **kwargs: Any) -> Union[List[str], List[Dict[str, Any]]]:
+    def ls(self, path: str, detail: bool = False, **kwargs: Any) -> Union[list[str], list[dict[str, Any]]]:
         """Override fsspec `ls` method. List single "directory" with or without details.
 
         Args:
@@ -214,14 +214,14 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         file_path = self._parse_file_path(path)
         stage_fs = self._get_stage_fs(file_path)
         stage_path_list = stage_fs.ls(file_path.filepath, detail=True, **kwargs)
-        stage_path_list = cast(List[Dict[str, Any]], stage_path_list)
+        stage_path_list = cast(list[dict[str, Any]], stage_path_list)
         return self._decorate_ls_res(stage_fs, stage_path_list, detail)
 
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    def optimize_read(self, files: Optional[List[str]] = None) -> None:
+    def optimize_read(self, files: Optional[list[str]] = None) -> None:
         """Prefetch and cache the presigned urls for all the given files to speed up the file opening.
 
         All the files introduced here will have their urls cached. Further open() on any of cached urls will lead to a
@@ -232,8 +232,8 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         """
         if not files:
             return
-        stage_fs_dict: Dict[str, stage_fs.SFStageFileSystem] = {}
-        stage_file_paths: Dict[str, List[str]] = collections.defaultdict(list)
+        stage_fs_dict: dict[str, stage_fs.SFStageFileSystem] = {}
+        stage_file_paths: dict[str, list[str]] = collections.defaultdict(list)
         for file in files:
             path_info = self._parse_file_path(file)
             fs = self._get_stage_fs(path_info)
@@ -271,11 +271,11 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         project=_PROJECT,
         conn_attr_name="_conn",
     )
-    def info(self, path: str, **kwargs: Any) -> Dict[str, Any]:
+    def info(self, path: str, **kwargs: Any) -> dict[str, Any]:
         """Override fsspec `info` method. Give details of entry at path."""
         file_path = self._parse_file_path(path)
         stage_fs = self._get_stage_fs(file_path)
-        res: Dict[str, Any] = stage_fs.info(file_path.filepath, **kwargs)
+        res: dict[str, Any] = stage_fs.info(file_path.filepath, **kwargs)
         if res:
             res["name"] = self._stage_path_to_absolute_path(stage_fs, res["name"])
         return res
@@ -283,9 +283,9 @@ class SFFileSystem(fsspec.AbstractFileSystem):
     def _decorate_ls_res(
         self,
         stage_fs: stage_fs.SFStageFileSystem,
-        stage_path_list: List[Dict[str, Any]],
+        stage_path_list: list[dict[str, Any]],
         detail: bool,
-    ) -> Union[List[str], List[Dict[str, Any]]]:
+    ) -> Union[list[str], list[dict[str, Any]]]:
         """Add the stage location as the prefix of file names returned by ls() of stagefs"""
         for path in stage_path_list:
             path["name"] = self._stage_path_to_absolute_path(stage_fs, path["name"])

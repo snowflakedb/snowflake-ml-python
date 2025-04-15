@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 import pandas as pd
 from absl.testing import absltest
@@ -68,7 +68,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         )
         self.assertEqual(utils.infer_list("test_feature", data3), expected_spec3)
 
-        data4: List[Any] = []
+        data4: list[Any] = []
         with exception_utils.assert_snowml_exceptions(
             self,
             expected_original_error_type=ValueError,

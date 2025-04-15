@@ -11,7 +11,7 @@ import re
 import sys
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Optional
 
 from snowflake.ml.version import VERSION
 
@@ -63,7 +63,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 
-autodoc_mock_imports: List[str] = []
+autodoc_mock_imports: list[str] = []
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 
@@ -138,7 +138,7 @@ def setup(app: Any) -> None:
 
 # Construct URL to corresponding section in the GitHub repo
 # Not currently used
-def linkcode_resolve(domain: str, info: Dict[str, Any]) -> Optional[str]:
+def linkcode_resolve(domain: str, info: dict[str, Any]) -> Optional[str]:
     import inspect
 
     # import pkg_resources
@@ -190,7 +190,7 @@ def linkcode_resolve(domain: str, info: Dict[str, Any]) -> Optional[str]:
 # also eliminates documentation for dependent classes such as Snowpark Python classes
 class SkipMember:
     class_name: str = ""
-    unsupported_methods: Dict[str, Set[str]] = {}
+    unsupported_methods: dict[str, set[str]] = {}
 
     def __init__(self, csv_filename: str) -> None:
         self.unsupported_methods = {}
@@ -200,7 +200,7 @@ class SkipMember:
             self.unsupported_methods[class_name] = unsupported_methods
 
     # sphinx expects a function for this, so make instance callable
-    def __call__(self, app: Any, what: str, name: str, obj: ModuleType, skip: bool, options: Dict[str, Any]) -> bool:
+    def __call__(self, app: Any, what: str, name: str, obj: ModuleType, skip: bool, options: dict[str, Any]) -> bool:
         if name == "__init__":
             return False
         if name.startswith("_"):
@@ -211,7 +211,7 @@ class SkipMember:
         return False
 
 
-def remove_noqa_lines(app: Any, what: str, name: str, obj: object, options: Dict[str, Any], lines: List[str]) -> None:
+def remove_noqa_lines(app: Any, what: str, name: str, obj: object, options: dict[str, Any], lines: list[str]) -> None:
     lines[:] = (
         line
         for line in lines
@@ -221,7 +221,7 @@ def remove_noqa_lines(app: Any, what: str, name: str, obj: object, options: Dict
 
 # some links in the docstrings are written as Markdown, sometimes broken by whitespace.
 # convert these to RST links by brute force (meaning regex)
-def fix_markdown_links(app: Any, what: str, name: str, obj: object, options: Dict[str, Any], lines: List[str]) -> None:
+def fix_markdown_links(app: Any, what: str, name: str, obj: object, options: dict[str, Any], lines: list[str]) -> None:
     docstring = "\n".join(lines)
     # remove whitespace between parts of markdown-style links
     docstring = re.sub(r"\]\s+\(http", "](http", docstring, flags=re.MULTILINE)

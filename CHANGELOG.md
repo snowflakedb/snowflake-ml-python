@@ -1,6 +1,41 @@
 # Release History
 
-## 1.8.1
+## 1.8.2
+
+### Bug Fixes
+
+### Behavior Change
+
+### New Features
+
+- ML Job now available as a PuPr feature
+- ML Job: Add ability to retrieve results for `@remote` decorated functions using
+  new `MLJobWithResult.result()` API, which will return the unpickled result
+  or raise an exception if the job execution failed.
+- ML Job: Pre-created Snowpark Session is now available inside job payloads using
+  `snowflake.snowpark.context.get_active_session()`
+- ML Job: Added `as_list` argument to `MLJob.get_logs()` to enable retrieving logs
+  as a list of strings
+- Registry: Introducing `save_location` to `log_model` using the `options` argument.
+  User's can provide the path to write the model version's files that get stored in Snowflake's stage.
+- Registry: Include model dependencies in pip requirements by default when logging in Container Runtime.
+- Registry: Support `ModelVersion.run_job` to run inference with a single-node Snowpark Container Services job.
+
+```python
+reg.log_model(
+    model=...,
+    model_name=...,
+    version_name=...,
+    ...,
+    options={"save_location": "./model_directory"},
+)
+```
+
+- Multi-node ML Job (PrPr): Add `instance_id` argument to `get_logs` and `show_logs` method to support multi node log retrieval
+- Multi-node ML Job (PrPr): Add `job.get_instance_status(instance_id=...)` API to support multi node status retrieval
+- DataConnector: Removed PrPr decorators
+
+## 1.8.1 (03-26-2025)
 
 ### Bug Fixes
 
@@ -20,7 +55,7 @@
   for cost implications.
 - Registry: When creating a copy of a `ModelVersion` with `log_model`, raise an exception if unsupported arguments are provided.
 
-## 1.8.0
+## 1.8.0 (03-20-2025)
 
 ### Bug Fixes
 
@@ -321,7 +356,6 @@
 
 - Registry: Added support for handling Hugging Face model configurations with auto-mapping functionality.
 - Registry: Added support for `keras` 3.x model with `tensorflow` and `pytorch` backend
-- ML Job (PrPr): Support any serializable (pickleable) argument for `@remote` decorated functions
 
 ## 1.7.4 (01-28-2025)
 

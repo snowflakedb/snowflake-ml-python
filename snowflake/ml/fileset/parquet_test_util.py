@@ -1,5 +1,5 @@
 import tempfile
-from typing import Any, Tuple
+from typing import Any
 
 import numpy as np
 import pyarrow as pa
@@ -21,7 +21,7 @@ _DATA5 = {
 
 def write_parquet_file(
     multi_dim_cols: bool = False,
-) -> Tuple[Any, ...]:  # Use "Any" as type hints to satisfy mypy check.
+) -> tuple[Any, ...]:  # Use "Any" as type hints to satisfy mypy check.
     """Creates 3 temporary parquet files for testing."""
     files = []
     if multi_dim_cols:

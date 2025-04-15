@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting, identifier, query_result_checker
@@ -24,8 +24,8 @@ def create_single_table(
     database_name: str,
     schema_name: str,
     table_name: str,
-    table_schema: List[Tuple[str, str]],
-    statement_params: Optional[Dict[str, Any]] = None,
+    table_schema: list[tuple[str, str]],
+    statement_params: Optional[dict[str, Any]] = None,
 ) -> str:
     """Creates a single table for registry and returns the fully qualified name of the table.
 
@@ -55,7 +55,7 @@ def create_single_table(
     return fully_qualified_table_name
 
 
-def insert_table_entry(session: snowpark.Session, table: str, columns: Dict[str, Any]) -> List[snowpark.Row]:
+def insert_table_entry(session: snowpark.Session, table: str, columns: dict[str, Any]) -> list[snowpark.Row]:
     """Insert an entry into an internal Model Registry table.
 
     Args:
@@ -99,9 +99,9 @@ def validate_table_exist(session: snowpark.Session, table: str, qualified_schema
     return len(tables) == 1
 
 
-def get_table_schema(session: snowpark.Session, table_name: str, qualified_schema_name: str) -> Dict[str, str]:
+def get_table_schema(session: snowpark.Session, table_name: str, qualified_schema_name: str) -> dict[str, str]:
     result = session.sql(f"DESC TABLE {qualified_schema_name}.{table_name}").collect()
-    schema_dict: Dict[str, str] = {}
+    schema_dict: dict[str, str] = {}
     for row in result:
         schema_dict[row["name"]] = row["type"]
     return schema_dict
@@ -112,13 +112,13 @@ def get_table_schema_types(
     database: str,
     schema: str,
     table_name: str,
-) -> Dict[str, types.DataType]:
+) -> dict[str, types.DataType]:
     fully_qualified_table_name = identifier.get_schema_level_object_identifier(
         db=database, schema=schema, object_name=table_name
     )
-    struct_fields: List[types.StructField] = session.table(fully_qualified_table_name).schema.fields
+    struct_fields: list[types.StructField] = session.table(fully_qualified_table_name).schema.fields
 
-    schema_dict: Dict[str, types.DataType] = {}
+    schema_dict: dict[str, types.DataType] = {}
     for field in struct_fields:
         schema_dict[field.name] = field.datatype
     return schema_dict

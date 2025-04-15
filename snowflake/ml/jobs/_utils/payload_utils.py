@@ -6,17 +6,7 @@ import pickle
 import sys
 import textwrap
 from pathlib import Path, PurePath
-from typing import (
-    Any,
-    Callable,
-    List,
-    Optional,
-    Type,
-    Union,
-    cast,
-    get_args,
-    get_origin,
-)
+from typing import Any, Callable, Optional, Union, cast, get_args, get_origin
 
 import cloudpickle as cp
 
@@ -27,6 +17,7 @@ from snowflake.snowpark._internal import code_generation
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
 _SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
+_ENTRYPOINT_FUNC_NAME = "func"
 _STARTUP_SCRIPT_PATH = PurePath("startup.sh")
 _STARTUP_SCRIPT_CODE = textwrap.dedent(
     f"""
@@ -73,14 +64,14 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
     ##### Ray configuration #####
     shm_size=$(df --output=size --block-size=1 /dev/shm | tail -n 1)
 
-    # Check if the instance ip retrieval module exists, which is a prerequisite for multi node jobs
+    # Check if the local get_instance_ip.py script exists
     HELPER_EXISTS=$(
-        python3 -c "import snowflake.runtime.utils.get_instance_ip" 2>/dev/null && echo "true" || echo "false"
+        [ -f "get_instance_ip.py" ] && echo "true" || echo "false"
     )
 
     # Configure IP address and logging directory
     if [ "$HELPER_EXISTS" = "true" ]; then
-        eth0Ip=$(python3 -m snowflake.runtime.utils.get_instance_ip "$SNOWFLAKE_SERVICE_NAME" --instance-index=-1)
+        eth0Ip=$(python3 get_instance_ip.py "$SNOWFLAKE_SERVICE_NAME" --instance-index=-1)
     else
         eth0Ip=$(ifconfig eth0 2>/dev/null | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
     fi
@@ -103,7 +94,7 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
     # Determine if it should be a worker or a head node for batch jobs
     if [[ "$SNOWFLAKE_JOBS_COUNT" -gt 1 && "$HELPER_EXISTS" = "true" ]]; then
-        head_info=$(python3 -m snowflake.runtime.utils.get_instance_ip "$SNOWFLAKE_SERVICE_NAME" --head)
+        head_info=$(python3 get_instance_ip.py "$SNOWFLAKE_SERVICE_NAME" --head)
         if [ $? -eq 0 ]; then
             # Parse the output using read
             read head_index head_ip <<< "$head_info"
@@ -166,10 +157,17 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
             "--object-store-memory=${{shm_size}}"
         )
 
-        # Start Ray on a worker node
-        ray start "${{common_params[@]}}" "${{worker_params[@]}}" -v --block
-    else
+        # Start Ray on a worker node - run in background
+        ray start "${{common_params[@]}}" "${{worker_params[@]}}" -v --block &
 
+        # Start the worker shutdown listener in the background
+        echo "Starting worker shutdown listener..."
+        python worker_shutdown_listener.py
+        WORKER_EXIT_CODE=$?
+
+        echo "Worker shutdown listener exited with code $WORKER_EXIT_CODE"
+        exit $WORKER_EXIT_CODE
+    else
         # Additional head-specific parameters
         head_params=(
             "--head"
@@ -193,13 +191,39 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
         # Run user's Python entrypoint
         echo Running command: python "$@"
         python "$@"
+
+        # After the user's job completes, signal workers to shut down
+        echo "User job completed. Signaling workers to shut down..."
+        python signal_workers.py --wait-time 15
+        echo "Head node job completed. Exiting."
     fi
     """
 ).strip()
 
 
-def _resolve_entrypoint(parent: Path, entrypoint: Optional[Path]) -> Path:
-    parent = parent.absolute()
+def resolve_source(source: Union[Path, Callable[..., Any]]) -> Union[Path, Callable[..., Any]]:
+    if callable(source):
+        return source
+    elif isinstance(source, Path):
+        # Validate source
+        source = source
+        if not source.exists():
+            raise FileNotFoundError(f"{source} does not exist")
+        return source.absolute()
+    else:
+        raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
+
+
+def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Optional[Path]) -> types.PayloadEntrypoint:
+    if callable(source):
+        # Entrypoint is generated for callable payloads
+        return types.PayloadEntrypoint(
+            file_path=entrypoint or Path(constants.DEFAULT_ENTRYPOINT_PATH),
+            main_func=_ENTRYPOINT_FUNC_NAME,
+        )
+
+    # Resolve entrypoint path for file-based payloads
+    parent = source.absolute()
     if entrypoint is None:
         if parent.is_file():
             # Infer entrypoint from source
@@ -218,12 +242,23 @@ def _resolve_entrypoint(parent: Path, entrypoint: Optional[Path]) -> Path:
         else:
             # Relative to source dir
             entrypoint = parent.joinpath(entrypoint)
+
+    # Validate resolved entrypoint file
     if not entrypoint.is_file():
         raise FileNotFoundError(
             "Entrypoint not found. Ensure the entrypoint is a valid file and is under"
             f" the source directory (source={parent}, entrypoint={entrypoint})"
         )
-    return entrypoint
+    if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
+        raise ValueError(
+            "Unsupported entrypoint type:"
+            f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
+        )
+
+    return types.PayloadEntrypoint(
+        file_path=entrypoint,  # entrypoint is an absolute path at this point
+        main_func=None,
+    )
 
 
 class JobPayload:
@@ -232,46 +267,17 @@ class JobPayload:
         source: Union[str, Path, Callable[..., Any]],
         entrypoint: Optional[Union[str, Path]] = None,
         *,
-        pip_requirements: Optional[List[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
     ) -> None:
         self.source = Path(source) if isinstance(source, str) else source
         self.entrypoint = Path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
 
-    def validate(self) -> None:
-        if callable(self.source):
-            # Any entrypoint value is OK for callable payloads (including None aka default)
-            # since we will generate the file from the serialized callable
-            pass
-        elif isinstance(self.source, Path):
-            # Validate source
-            source = self.source
-            if not source.exists():
-                raise FileNotFoundError(f"{source} does not exist")
-            source = source.absolute()
-
-            # Validate entrypoint
-            entrypoint = _resolve_entrypoint(source, self.entrypoint)
-            if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
-                raise ValueError(
-                    "Unsupported entrypoint type:"
-                    f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
-                )
-
-            # Update fields with normalized values
-            self.source = source
-            self.entrypoint = entrypoint
-        else:
-            raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
-
     def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
-        # Validate payload
-        self.validate()
-
         # Prepare local variables
         stage_path = PurePath(stage_path) if isinstance(stage_path, str) else stage_path
-        source = self.source
-        entrypoint = self.entrypoint or Path(constants.DEFAULT_ENTRYPOINT_PATH)
+        source = resolve_source(self.source)
+        entrypoint = resolve_entrypoint(source, self.entrypoint)
 
         # Create stage if necessary
         stage_name = stage_path.parts[0].lstrip("@")
@@ -290,11 +296,11 @@ class JobPayload:
             source_code = generate_python_code(source, source_code_display=True)
             _ = session.file.put_stream(
                 io.BytesIO(source_code.encode()),
-                stage_location=stage_path.joinpath(entrypoint).as_posix(),
+                stage_location=stage_path.joinpath(entrypoint.file_path).as_posix(),
                 auto_compress=False,
                 overwrite=True,
             )
-            source = entrypoint.parent
+            source = Path(entrypoint.file_path.parent)
         elif source.is_dir():
             # Manually traverse the directory and upload each file, since Snowflake PUT
             # can't handle directories. Reduce the number of PUT operations by using
@@ -337,17 +343,35 @@ class JobPayload:
             overwrite=False,  # FIXME
         )
 
+        # Upload system scripts
+        scripts_dir = Path(__file__).parent.joinpath("scripts")
+        for script_file in scripts_dir.glob("*"):
+            if script_file.is_file():
+                session.file.put(
+                    script_file.as_posix(),
+                    stage_path.as_posix(),
+                    overwrite=True,
+                    auto_compress=False,
+                )
+
+        python_entrypoint: list[Union[str, PurePath]] = [
+            PurePath("mljob_launcher.py"),
+            entrypoint.file_path.relative_to(source),
+        ]
+        if entrypoint.main_func:
+            python_entrypoint += ["--script_main_func", entrypoint.main_func]
+
         return types.UploadedPayload(
             stage_path=stage_path,
             entrypoint=[
                 "bash",
                 _STARTUP_SCRIPT_PATH,
-                entrypoint.relative_to(source),
+                *python_entrypoint,
             ],
         )
 
 
-def _get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
+def _get_parameter_type(param: inspect.Parameter) -> Optional[type[object]]:
     # Unwrap Optional type annotations
     param_type = param.annotation
     if get_origin(param_type) is Union and len(get_args(param_type)) == 2 and type(None) in get_args(param_type):
@@ -356,10 +380,10 @@ def _get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
     # Return None for empty type annotations
     if param_type == inspect.Parameter.empty:
         return None
-    return cast(Type[object], param_type)
+    return cast(type[object], param_type)
 
 
-def _validate_parameter_type(param_type: Type[object], param_name: str) -> None:
+def _validate_parameter_type(param_type: type[object], param_name: str) -> None:
     # Validate param_type is a supported type
     if param_type not in _SUPPORTED_ARG_TYPES:
         raise ValueError(
@@ -471,12 +495,11 @@ def generate_python_code(func: Callable[..., Any], source_code_display: bool = F
     # https://github.com/snowflakedb/snowpark-python/blob/main/src/snowflake/snowpark/_internal/udf_utils.py
     source_code_comment = _generate_source_code_comment(func) if source_code_display else ""
 
-    func_name = "func"
     func_code = f"""
 {source_code_comment}
 
 import pickle
-{func_name} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
+{_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
 """
 
     arg_dict_name = "kwargs"
@@ -487,6 +510,7 @@ import pickle
 
     return f"""
 ### Version guard to check compatibility across Python versions ###
+import os
 import sys
 import warnings
 
@@ -508,5 +532,5 @@ if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor 
 if __name__ == '__main__':
 {textwrap.indent(param_code, '    ')}
 
-    {func_name}(**{arg_dict_name})
+    __return__ = {_ENTRYPOINT_FUNC_NAME}(**{arg_dict_name})
 """

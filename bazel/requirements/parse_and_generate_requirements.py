@@ -4,17 +4,7 @@ import functools
 import itertools
 import json
 import sys
-from typing import (
-    List,
-    Literal,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Set,
-    TypedDict,
-    Union,
-    cast,
-)
+from typing import Literal, MutableMapping, Optional, Sequence, TypedDict, Union, cast
 
 import jsonschema
 import toml
@@ -228,7 +218,7 @@ def validate_dev_version_and_user_requirements(req_info: RequirementInfo, env: L
     return
 
 
-def fold_extras_tags(extras_tags: Set[str], req_info: RequirementInfo) -> Set[str]:
+def fold_extras_tags(extras_tags: set[str], req_info: RequirementInfo) -> set[str]:
     """Left-fold style function to get all extras tags in all requirements.
 
     Args:
@@ -243,7 +233,7 @@ def fold_extras_tags(extras_tags: Set[str], req_info: RequirementInfo) -> Set[st
     return extras_tags
 
 
-def fold_channel(channels: Set[str], req_info: RequirementInfo) -> Set[str]:
+def fold_channel(channels: set[str], req_info: RequirementInfo) -> set[str]:
     """Left-fold style function to get all channels in all requirements.
 
     Args:
@@ -265,7 +255,7 @@ def generate_requirements(
     pyproject_file_path: str,
     mode: str,
     format: Optional[str],
-    extras_filter: Optional[List[str]] = None,
+    extras_filter: Optional[list[str]] = None,
     tag_filter: Optional[str] = None,
     version: Optional[str] = None,
 ) -> None:
@@ -315,7 +305,7 @@ def generate_requirements(
         )
     )
 
-    extended_env: List[Union[str, MutableMapping[str, Sequence[str]]]] = copy.deepcopy(
+    extended_env: list[Union[str, MutableMapping[str, Sequence[str]]]] = copy.deepcopy(
         extended_env_conda  # type: ignore[arg-type]
     )
     # Relative order needs to be maintained here without sorting.
@@ -367,7 +357,7 @@ def generate_requirements(
     elif (mode, format) == ("version_requirements", "toml"):
         extras_requirements = list(filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements))
         extras_results: MutableMapping[str, Sequence[str]] = {}
-        all_extras_tags: Set[str] = set()
+        all_extras_tags: set[str] = set()
         all_extras_tags = functools.reduce(fold_extras_tags, requirements, all_extras_tags)
         for extras_tag in sorted(list(all_extras_tags)):
             requirements_with_tag = list(
@@ -497,7 +487,7 @@ def main() -> None:
     if (args.mode, args.format) not in VALID_SETTINGS:
         raise ValueError("Invalid config combination found.")
 
-    filter_by_extras: Optional[List[str]] = None
+    filter_by_extras: Optional[list[str]] = None
     if args.filter_by_extras:
         filter_by_extras = args.filter_by_extras.split(",")
 

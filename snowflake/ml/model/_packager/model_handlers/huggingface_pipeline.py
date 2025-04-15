@@ -1,18 +1,7 @@
 import json
 import os
 import warnings
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Type,
-    Union,
-    cast,
-    final,
-)
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -38,7 +27,7 @@ if TYPE_CHECKING:
     import transformers
 
 
-def get_requirements_from_task(task: str, spcs_only: bool = False) -> List[model_env.ModelDependency]:
+def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model_env.ModelDependency]:
     # Text
     if task in [
         "conversational",
@@ -84,7 +73,7 @@ class HuggingFacePipelineHandler(
     HANDLER_TYPE = "huggingface_pipeline"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
     ADDITIONAL_CONFIG_FILE = "pipeline_config.pt"
@@ -262,8 +251,8 @@ class HuggingFacePipelineHandler(
         model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
 
     @staticmethod
-    def _get_device_config(**kwargs: Unpack[model_types.HuggingFaceLoadOptions]) -> Dict[str, str]:
-        device_config: Dict[str, Any] = {}
+    def _get_device_config(**kwargs: Unpack[model_types.HuggingFaceLoadOptions]) -> dict[str, str]:
+        device_config: dict[str, Any] = {}
         cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", None)
         gpu_nums = 0
         if cuda_visible_devices is not None:
@@ -369,7 +358,7 @@ class HuggingFacePipelineHandler(
         def _create_custom_model(
             raw_model: "transformers.Pipeline",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: "transformers.Pipeline",
                 signature: model_signature.ModelSignature,

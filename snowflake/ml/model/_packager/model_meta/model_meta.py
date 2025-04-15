@@ -6,14 +6,15 @@ import zipfile
 from contextlib import contextmanager
 from datetime import datetime
 from types import ModuleType
-from typing import Any, Dict, Generator, List, Optional, TypedDict
+from typing import Any, Generator, Optional, TypedDict
 
 import cloudpickle
 import yaml
 from packaging import requirements, version
 from typing_extensions import Required
 
-from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml import version as snowml_version
+from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import (
@@ -41,14 +42,16 @@ def create_model_metadata(
     model_dir_path: str,
     name: str,
     model_type: model_types.SupportedModelHandlerType,
-    signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-    function_properties: Optional[Dict[str, Dict[str, Any]]] = None,
-    metadata: Optional[Dict[str, str]] = None,
-    code_paths: Optional[List[str]] = None,
-    ext_modules: Optional[List[ModuleType]] = None,
-    conda_dependencies: Optional[List[str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    artifact_repository_map: Optional[Dict[str, str]] = None,
+    signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
+    function_properties: Optional[dict[str, dict[str, Any]]] = None,
+    metadata: Optional[dict[str, str]] = None,
+    code_paths: Optional[list[str]] = None,
+    ext_modules: Optional[list[ModuleType]] = None,
+    conda_dependencies: Optional[list[str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    artifact_repository_map: Optional[dict[str, str]] = None,
+    resource_constraint: Optional[dict[str, str]] = None,
+    target_platforms: Optional[list[model_types.TargetPlatform]] = None,
     python_version: Optional[str] = None,
     task: model_types.Task = model_types.Task.UNKNOWN,
     **kwargs: Any,
@@ -69,6 +72,8 @@ def create_model_metadata(
         conda_dependencies: List of conda requirements for running the model. Defaults to None.
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
         artifact_repository_map: A dict mapping from package channel to artifact repository name.
+        resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
+        target_platforms: List of target platforms to run the model.
         python_version: A string of python version where model is run. Used for user override. If specified as None,
             current version would be captured. Defaults to None.
         task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
@@ -101,16 +106,19 @@ def create_model_metadata(
         else:
             raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
 
+    prefer_pip = target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,
         artifact_repository_map=artifact_repository_map,
+        resource_constraint=resource_constraint,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
+        prefer_pip=prefer_pip,
     )
 
     if embed_local_ml_library:
-        env.snowpark_ml_version = f"{snowml_env.VERSION}+{file_utils.hash_directory(path_to_copy)}"
+        env.snowpark_ml_version = f"{snowml_version.VERSION}+{file_utils.hash_directory(path_to_copy)}"
 
     model_meta = ModelMetadata(
         name=name,
@@ -152,20 +160,23 @@ def create_model_metadata(
 
 def _create_env_for_model_metadata(
     *,
-    conda_dependencies: Optional[List[str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    artifact_repository_map: Optional[Dict[str, str]] = None,
+    conda_dependencies: Optional[list[str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    artifact_repository_map: Optional[dict[str, str]] = None,
+    resource_constraint: Optional[dict[str, str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
+    prefer_pip: bool = False,
 ) -> model_env.ModelEnv:
-    env = model_env.ModelEnv()
+    env = model_env.ModelEnv(prefer_pip=prefer_pip)
 
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
     env.conda_dependencies = conda_dependencies  # type: ignore[assignment]
     env.pip_requirements = pip_requirements  # type: ignore[assignment]
     env.artifact_repository_map = artifact_repository_map
+    env.resource_constraint = resource_constraint
     env.python_version = python_version  # type: ignore[assignment]
-    env.snowpark_ml_version = snowml_env.VERSION
+    env.snowpark_ml_version = snowml_version.VERSION
 
     requirements_to_add = _PACKAGING_REQUIREMENTS
 
@@ -237,20 +248,20 @@ class ModelMetadata:
         name: str,
         env: model_env.ModelEnv,
         model_type: model_types.SupportedModelHandlerType,
-        runtimes: Optional[Dict[str, model_runtime.ModelRuntime]] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
-        function_properties: Optional[Dict[str, Dict[str, Any]]] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        metadata: Optional[Dict[str, str]] = None,
+        runtimes: Optional[dict[str, model_runtime.ModelRuntime]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
+        function_properties: Optional[dict[str, dict[str, Any]]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        metadata: Optional[dict[str, str]] = None,
         creation_timestamp: Optional[str] = None,
         min_snowpark_ml_version: Optional[str] = None,
-        models: Optional[Dict[str, model_blob_meta.ModelBlobMeta]] = None,
+        models: Optional[dict[str, model_blob_meta.ModelBlobMeta]] = None,
         original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
         task: model_types.Task = model_types.Task.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
     ) -> None:
         self.name = name
-        self.signatures: Dict[str, model_signature.ModelSignature] = dict()
+        self.signatures: dict[str, model_signature.ModelSignature] = dict()
         if signatures:
             self.signatures = signatures
         self.function_properties = function_properties or {}
@@ -265,7 +276,7 @@ class ModelMetadata:
             else model_meta_schema.MODEL_METADATA_MIN_SNOWPARK_ML_VERSION
         )
 
-        self.models: Dict[str, model_blob_meta.ModelBlobMeta] = dict()
+        self.models: dict[str, model_blob_meta.ModelBlobMeta] = dict()
         if models:
             self.models = models
 
@@ -286,7 +297,7 @@ class ModelMetadata:
         self._min_snowpark_ml_version = max(self._min_snowpark_ml_version, parsed_min_snowpark_ml_version)
 
     @property
-    def runtimes(self) -> Dict[str, model_runtime.ModelRuntime]:
+    def runtimes(self) -> dict[str, model_runtime.ModelRuntime]:
         if self._runtimes and "cpu" in self._runtimes:
             return self._runtimes
         runtimes = {
@@ -353,11 +364,11 @@ class ModelMetadata:
 
         loaded_meta_min_snowpark_ml_version = loaded_meta.get("min_snowpark_ml_version", None)
         if not loaded_meta_min_snowpark_ml_version or (
-            version.parse(loaded_meta_min_snowpark_ml_version) > version.parse(snowml_env.VERSION)
+            version.parse(loaded_meta_min_snowpark_ml_version) > version.parse(snowml_version.VERSION)
         ):
             raise RuntimeError(
                 f"The minimal version required to load the model is {loaded_meta_min_snowpark_ml_version}, "
-                f"while current version of Snowpark ML library is {snowml_env.VERSION}."
+                f"while current version of Snowpark ML library is {snowml_version.VERSION}."
             )
         return model_meta_schema.ModelMetadataDict(
             creation_timestamp=loaded_meta["creation_timestamp"],
@@ -400,7 +411,7 @@ class ModelMetadata:
         env = model_env.ModelEnv()
         env.load_from_dict(pathlib.Path(model_dir_path), model_dict["env"])
 
-        runtimes: Optional[Dict[str, model_runtime.ModelRuntime]]
+        runtimes: Optional[dict[str, model_runtime.ModelRuntime]]
         if model_dict.get("runtimes", None):
             runtimes = {
                 name: model_runtime.ModelRuntime.load(pathlib.Path(model_dir_path), name, env, runtime_dict)

@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import cloudpickle
 import numpy as np
@@ -32,7 +32,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
     HANDLER_TYPE = "keras"
     HANDLER_VERSION = "2025-01-01"
     _MIN_SNOWPARK_ML_VERSION = "1.7.5"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model.keras"
     CUSTOM_OBJECT_SAVE_PATH = "custom_objects.pkl"
@@ -185,7 +185,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
         def _create_custom_model(
             raw_model: "keras.Model",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: "keras.Model",
                 signature: model_signature.ModelSignature,

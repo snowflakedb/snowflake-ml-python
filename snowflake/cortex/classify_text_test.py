@@ -1,5 +1,3 @@
-from typing import List
-
 import _test_util
 from absl.testing import absltest
 
@@ -13,7 +11,7 @@ class ClassifyTextTest(absltest.TestCase):
     categories = ["category1", "category2", "category3"]
 
     @staticmethod
-    def classify_stub(_input: str, categories: List[str]) -> str:
+    def classify_stub(_input: str, categories: list[str]) -> str:
         return f"prediction: {categories[-1]}"
 
     def setUp(self) -> None:

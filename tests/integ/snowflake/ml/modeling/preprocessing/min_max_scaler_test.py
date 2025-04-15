@@ -4,7 +4,6 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import List
 
 import cloudpickle
 import joblib
@@ -35,7 +34,7 @@ class MinMaxScalerTest(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()

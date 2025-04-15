@@ -30,7 +30,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
     DS_INTEG_TEST_DB = "SNOWML_DATASET_TEST_DB"
     DS_INTEG_TEST_SCHEMA = "DATASET_TEST"
 
-    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_dataset_management(self) -> None:
         """Test Dataset management APIs"""
         dataset_name = f"dataset_integ_management_{uuid4().hex}"
@@ -258,7 +258,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         self.assertEqual(num_rows, len(ds.read.to_pandas()))
 
     @unittest.skip("Fails due to server side issue. Need to be investigated SNOW-1862761")
-    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_dataset_from_dataset(self) -> None:
         # Generate random prefixes due to race condition between sprocs causing dataset collision
         dataset_name = f"dataset_integ_dataset_from_dataset_{uuid4().hex}"
@@ -371,7 +371,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
 
         self.assertEqual(row_count, len(ds.read.to_pandas()))
 
-    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_file_access(self) -> None:
         import pyarrow.parquet as pq
 
@@ -389,7 +389,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         self.assertEqual(self.num_rows, len(pq_table))
         self._validate_pandas(pq_table.to_pandas())
 
-    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_to_pandas(self) -> None:
         dataset_name = f"dataset_integ_pandas_{uuid4().hex}"
         dataset_version = "v1"
@@ -408,7 +408,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         # df = ds.to_snowpark_dataframe()
         # pd.testing.assert_frame_equal(df.to_pandas(), pd_df, check_index_type=False)
 
-    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=[])
+    @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_to_dataframe(self) -> None:
         all_columns = [col for col, _ in fileset_integ_utils._TEST_RESULTSET_SCHEMA]
         exclude_cols = all_columns[:2]
@@ -473,7 +473,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
     def _validate_torch_dataset(
         self, ds: "data.IterableDataset[Dict[str, Any]]", batch_size: int, drop_last_batch: bool
     ) -> None:
-        def numpy_batch_generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator() -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in data.DataLoader(ds, batch_size=batch_size, drop_last=drop_last_batch, num_workers=0):
                 numpy_batch = {}
                 for k, v in batch.items():
@@ -487,7 +487,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
     def _validate_torch_datapipe(
         self, datapipe: "data.IterDataPipe[Dict[str, npt.NDArray[Any]]]", batch_size: int, drop_last_batch: bool
     ) -> None:
-        def numpy_batch_generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator() -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in data.DataLoader(datapipe, batch_size=None, num_workers=0):
                 numpy_batch = {}
                 for k, v in batch.items():

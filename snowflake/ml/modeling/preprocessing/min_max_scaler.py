@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -69,7 +69,7 @@ class MinMaxScaler(base.BaseTransformer):
     def __init__(
         self,
         *,
-        feature_range: Tuple[float, float] = (0, 1),
+        feature_range: tuple[float, float] = (0, 1),
         clip: bool = False,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -101,13 +101,13 @@ class MinMaxScaler(base.BaseTransformer):
         self.feature_range = feature_range
         self.clip = clip
 
-        self.min_: Dict[str, float] = {}
-        self.scale_: Dict[str, float] = {}
-        self.data_min_: Dict[str, float] = {}
-        self.data_max_: Dict[str, float] = {}
-        self.data_range_: Dict[str, float] = {}
+        self.min_: dict[str, float] = {}
+        self.scale_: dict[str, float] = {}
+        self.data_min_: dict[str, float] = {}
+        self.data_max_: dict[str, float] = {}
+        self.data_range_: dict[str, float] = {}
 
-        self.custom_states: List[str] = [_utils.NumericStatistics.MIN, _utils.NumericStatistics.MAX]
+        self.custom_states: list[str] = [_utils.NumericStatistics.MIN, _utils.NumericStatistics.MAX]
 
         super().__init__(drop_input_cols=drop_input_cols, custom_states=self.custom_states)
 

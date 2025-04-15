@@ -2,10 +2,9 @@ import importlib
 import inspect
 import pkgutil
 from types import FunctionType
-from typing import Dict
 
 
-def fetch_classes_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> Dict[str, type]:
+def fetch_classes_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> dict[str, type]:
     """Finds classes defined all the python modules in the given package directory.
 
     Args:
@@ -36,7 +35,7 @@ def fetch_classes_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> Dict[s
     return exportable_classes
 
 
-def fetch_functions_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> Dict[str, FunctionType]:
+def fetch_functions_from_modules_in_pkg_dir(pkg_dir: str, pkg_name: str) -> dict[str, FunctionType]:
     """Finds functions defined all the python modules in the given package directory.
 
     Args:

@@ -1,5 +1,6 @@
+import os
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 import pandas as pd
 from absl.logging import logging
@@ -13,6 +14,7 @@ from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.modeling._internal import constants
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 
 logger = logging.getLogger(__name__)
@@ -43,20 +45,21 @@ class ModelManager:
         model_name: str,
         version_name: Optional[str] = None,
         comment: Optional[str] = None,
-        metrics: Optional[Dict[str, Any]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
+        metrics: Optional[dict[str, Any]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        code_paths: Optional[List[str]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        code_paths: Optional[list[str]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
 
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
@@ -129,6 +132,7 @@ class ModelManager:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,
@@ -148,20 +152,21 @@ class ModelManager:
         model_name: str,
         version_name: str,
         comment: Optional[str] = None,
-        metrics: Optional[Dict[str, Any]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
+        metrics: Optional[dict[str, Any]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        code_paths: Optional[List[str]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        code_paths: Optional[list[str]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
@@ -208,6 +213,14 @@ class ModelManager:
         if target_platforms:
             # Convert any string target platforms to TargetPlatform objects
             platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+        else:
+            # Default the target platform to SPCS if not specified when running in ML runtime
+            if os.getenv(constants.IN_ML_RUNTIME_ENV_VAR):
+                logger.info(
+                    "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
+                    'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
+                )
+                platforms = [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
 
         if artifact_repository_map:
             for channel, artifact_repository_name in artifact_repository_map.items():
@@ -223,8 +236,17 @@ class ModelManager:
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
 
+        # Extract save_location from options if present
+        save_location = None
+        if options and "save_location" in options:
+            save_location = options.get("save_location")
+            logger.info(f"Model will be saved to local directory: {save_location}")
+
         mc = model_composer.ModelComposer(
-            self._model_ops._session, stage_path=stage_path, statement_params=statement_params
+            self._model_ops._session,
+            stage_path=stage_path,
+            statement_params=statement_params,
+            save_location=save_location,
         )
         model_metadata: model_meta.ModelMetadata = mc.save(
             name=model_name_id.resolved(),
@@ -234,6 +256,7 @@ class ModelManager:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             target_platforms=platforms,
             python_version=python_version,
             user_files=user_files,
@@ -295,7 +318,7 @@ class ModelManager:
         self,
         model_name: str,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> model_impl.Model:
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
         if self._model_ops.validate_existence(
@@ -323,8 +346,8 @@ class ModelManager:
     def models(
         self,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[model_impl.Model]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[model_impl.Model]:
         model_names = self._model_ops.list_models_or_versions(
             database_name=None,
             schema_name=None,
@@ -342,7 +365,7 @@ class ModelManager:
     def show_models(
         self,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> pd.DataFrame:
         rows = self._model_ops.show_models_or_versions(
             database_name=None,
@@ -355,7 +378,7 @@ class ModelManager:
         self,
         model_name: str,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
 
@@ -368,7 +391,7 @@ class ModelManager:
 
     def _parse_fully_qualified_name(
         self, model_name: str
-    ) -> Tuple[
+    ) -> tuple[
         Optional[sql_identifier.SqlIdentifier], Optional[sql_identifier.SqlIdentifier], sql_identifier.SqlIdentifier
     ]:
         try:

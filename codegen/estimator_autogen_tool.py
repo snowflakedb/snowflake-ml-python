@@ -11,7 +11,6 @@
         --gen_mode='SRC'
 """
 import os
-from typing import List
 
 from absl import app, flags, logging
 
@@ -53,7 +52,7 @@ flags.mark_flag_as_required("template_file")
 flags.mark_flag_as_required("output_path")
 
 
-def main(argv: List[str]) -> None:
+def main(argv: list[str]) -> None:
     del argv  # Unused.
 
     gen_mode = None

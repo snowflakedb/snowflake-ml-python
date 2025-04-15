@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 import fsspec
 import pyarrow as pa
@@ -33,7 +33,7 @@ def _get_dataframe_cursor(session: snowpark.Session, df_info: data_source.DataFr
 
 def get_dataframe_result_batches(
     session: snowpark.Session, df_info: data_source.DataFrameInfo
-) -> List[result_batch.ResultBatch]:
+) -> list[result_batch.ResultBatch]:
     """Retrieve the ResultBatches for a given query"""
     cursor = _get_dataframe_cursor(session, df_info)
     batches = cursor.get_result_batches()
@@ -63,7 +63,7 @@ def get_dataset_filesystem(
 
 def get_dataset_files(
     session: snowpark.Session, ds_info: data_source.DatasetInfo, filesystem: Optional[fsspec.AbstractFileSystem] = None
-) -> List[str]:
+) -> list[str]:
     """Get the list of files in a given Dataset"""
     if filesystem is None:
         filesystem = get_dataset_filesystem(session, ds_info)

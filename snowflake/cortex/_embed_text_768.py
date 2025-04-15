@@ -1,4 +1,4 @@
-from typing import List, Optional, Union, cast
+from typing import Optional, Union, cast
 
 from typing_extensions import deprecated
 
@@ -14,7 +14,7 @@ def embed_text_768(
     model: Union[str, snowpark.Column],
     text: Union[str, snowpark.Column],
     session: Optional[snowpark.Session] = None,
-) -> Union[List[float], snowpark.Column]:
+) -> Union[list[float], snowpark.Column]:
     """Calls into the LLM inference service to embed the text.
 
     Args:
@@ -35,8 +35,8 @@ def _embed_text_768_impl(
     model: Union[str, snowpark.Column],
     text: Union[str, snowpark.Column],
     session: Optional[snowpark.Session] = None,
-) -> Union[List[float], snowpark.Column]:
-    return cast(Union[List[float], snowpark.Column], call_sql_function(function, session, model, text))
+) -> Union[list[float], snowpark.Column]:
+    return cast(Union[list[float], snowpark.Column], call_sql_function(function, session, model, text))
 
 
 EmbedText768 = deprecated(

@@ -6,7 +6,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Type
+from typing import Any, Callable, Generator, Optional
 
 from absl.testing import absltest, parameterized
 
@@ -53,7 +53,7 @@ def function_with_collection_args(a: list, b: dict, c: tuple) -> None:  # type: 
     print(a, b, c)  # noqa: T201: we need to print here.
 
 
-def function_with_typing_collection_args(a: List[str], b: Dict[str, int], c: Tuple[int, int]) -> None:
+def function_with_typing_collection_args(a: list[str], b: dict[str, int], c: tuple[int, int]) -> None:
     print(a, b, c)  # noqa: T201: we need to print here.
 
 
@@ -99,11 +99,11 @@ class PayloadUtilsTests(parameterized.TestCase):
     def test_payload_validate(self, source: str, entrypoint: Optional[str], expected_entrypoint: str) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
-            payload.validate()
-            assert isinstance(payload.source, pathlib.PurePath)
-            assert isinstance(payload.entrypoint, pathlib.PurePath)
-            self.assertEqual(payload.source.as_posix(), pathlib.Path(source).absolute().as_posix())
-            self.assertEqual(payload.entrypoint.as_posix(), expected_entrypoint)
+            resolved_source = payload_utils.resolve_source(payload.source)
+            resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
+            assert isinstance(resolved_source, pathlib.PurePath)
+            self.assertEqual(resolved_source.as_posix(), pathlib.Path(source).absolute().as_posix())
+            self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("not_exist", "file1.py", FileNotFoundError),  # not_exist/ does not exist
@@ -117,12 +117,13 @@ class PayloadUtilsTests(parameterized.TestCase):
         (".", "script1.sh", ValueError),  # script1.sh does not have a .py extension
     )
     def test_payload_validate_negative(
-        self, source: str, entrypoint: Optional[str], expected_error: Type[Exception] = ValueError
+        self, source: str, entrypoint: Optional[str], expected_error: type[Exception] = ValueError
     ) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
             with self.assertRaises(expected_error):
-                payload.validate()
+                _ = payload_utils.resolve_source(payload.source)
+                _ = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
 
     @parameterized.parameters(  # type: ignore[misc]
         (function_with_pos_arg, ("Hello world", 100)),
@@ -144,8 +145,8 @@ class PayloadUtilsTests(parameterized.TestCase):
     def test_generate_python_code(
         self,
         func: Callable[..., Any],
-        args: List[Any],
-        kwargs: Optional[Dict[str, Any]] = None,
+        args: list[Any],
+        kwargs: Optional[dict[str, Any]] = None,
         source_code_display: bool = False,
     ) -> None:
         kwargs = kwargs or {}
@@ -192,7 +193,7 @@ class PayloadUtilsTests(parameterized.TestCase):
     def test_generate_python_code_negative(
         self,
         func: Callable[..., Any],
-        error_type: Type[Exception] = ValueError,
+        error_type: type[Exception] = ValueError,
     ) -> None:
         # Write generated code to a temp file and execute temp file as a subprocess
         with self.assertRaises(error_type):

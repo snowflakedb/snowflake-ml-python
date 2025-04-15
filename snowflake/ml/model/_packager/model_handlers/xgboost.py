@@ -1,17 +1,7 @@
 # mypy: disable-error-code="import"
 import os
 import warnings
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Optional,
-    Type,
-    Union,
-    cast,
-    final,
-)
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
 import numpy as np
 import pandas as pd
@@ -44,7 +34,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
     HANDLER_TYPE = "xgboost"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model.ubj"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
@@ -227,7 +217,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         def _create_custom_model(
             raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: Union["xgboost.Booster", "xgboost.XGBModel"],
                 signature: model_signature.ModelSignature,
@@ -261,7 +251,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                     return explain_fn
                 return fn
 
-            type_method_dict: Dict[str, Any] = {"_raw_model": raw_model}
+            type_method_dict: dict[str, Any] = {"_raw_model": raw_model}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

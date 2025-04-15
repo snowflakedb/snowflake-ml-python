@@ -36,14 +36,24 @@ def py_genrule(**attrs):
 def _add_target_compatibility_labels(optional_dependencies, attrs):
     compatibility = ["//bazel/platforms:core_conda_channel"]
     if optional_dependencies:
+        found_matching_group = False
         for group_name, group in OPTIONAL_DEPENDENCY_GROUPS.items():
-            should_add = True
-            for optional_dependency in optional_dependencies:
-                if optional_dependency not in group:
-                    should_add = False
+            dependency_in_group = True
+            for dependency in optional_dependencies:
+                if dependency not in group:
+                    dependency_in_group = False
                     break
-            if should_add:
+            if dependency_in_group:
                 compatibility.append("//bazel/platforms:{}_conda_channel".format(group_name))
+                found_matching_group = True
+                break
+
+        if not found_matching_group:
+            fail(
+                "Could not find a compatible dependency group containing all of: {}".format(
+                    ", ".join(optional_dependencies),
+                ),
+            )
     attrs["target_compatible_with"] = compatibility
 
 def py_binary(optional_dependencies = None, **attrs):

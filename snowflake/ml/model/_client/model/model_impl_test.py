@@ -4,6 +4,7 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import model_ops, service_ops
@@ -15,19 +16,20 @@ class ModelImplTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        self.m_model = model_impl.Model._ref(
-            model_ops.ModelOperator(
-                self.c_session,
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-            ),
-            service_ops=service_ops.ServiceOperator(
-                self.c_session,
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-            ),
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-        )
+        with pc.PlatformCapabilities.mock_features(features={"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
+            self.m_model = model_impl.Model._ref(
+                model_ops.ModelOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                service_ops=service_ops.ServiceOperator(
+                    self.c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+            )
 
     def test_property(self) -> None:
         self.assertEqual(self.m_model.name, "MODEL")

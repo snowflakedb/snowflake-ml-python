@@ -1,5 +1,5 @@
 import importlib
-from typing import Any, Tuple
+from typing import Any
 
 
 class MissingOptionalDependency:
@@ -46,7 +46,7 @@ def import_with_fallbacks(*targets: str) -> Any:
     raise ImportError(f"None of the requested targets could be imported. Requested: {', '.join(targets)}")
 
 
-def import_or_get_dummy(target: str) -> Tuple[Any, bool]:
+def import_or_get_dummy(target: str) -> tuple[Any, bool]:
     """Try to import the the given target or return a dummy object.
 
     If the import target (package/module/symbol) is available, the target will be returned. If it is not available,

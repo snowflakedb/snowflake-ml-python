@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List
+from typing import Any
 from unittest import mock
 
 from absl.testing import absltest
@@ -12,7 +12,7 @@ class FinetuneTest(absltest.TestCase):
     system_function_name = "SNOWFLAKE.CORTEX.FINETUNE"
 
     def setUp(self) -> None:
-        self.list_jobs_return_value: List[Dict[str, Any]] = [
+        self.list_jobs_return_value: list[dict[str, Any]] = [
             {"id": "1", "status": "SUCCESS"},
             {"id": "2", "status": "ERROR"},
         ]
@@ -121,7 +121,7 @@ class FinetuneTest(absltest.TestCase):
     @mock.patch("snowflake.cortex._finetune.call_sql_function_literals")
     def test_finetune_describe(self, mock_call_sql_function: mock.Mock, mock_finetune_list_jobs: mock.Mock) -> None:
         """Test call of finetune operation DESCRIBE."""
-        sql_return_value: Dict[str, Any] = {
+        sql_return_value: dict[str, Any] = {
             "base_model": "llama3-8b",
             "created_on": 1728688216077,
             "finished_on": 1728688392137,
@@ -154,7 +154,7 @@ class FinetuneTest(absltest.TestCase):
     ) -> None:
         """Test call of finetune operation DESCRIBE with error message."""
         mock_finetune_list_jobs.return_value = self.list_jobs_expected_result
-        sql_return_value: Dict[str, Any] = {
+        sql_return_value: dict[str, Any] = {
             "base_model": "llama3-8b",
             "created_on": 1728670992861,
             "error": {

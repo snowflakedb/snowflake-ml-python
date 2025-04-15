@@ -21,6 +21,7 @@ py_test(
     deps = [
         ":model_impl",
         ":model_version_impl",
+        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/lineage",
         "//snowflake/ml/test_utils:mock_session",
@@ -46,6 +47,7 @@ py_test(
     srcs = ["model_version_impl_test.py"],
     deps = [
         ":model_version_impl",
+        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",

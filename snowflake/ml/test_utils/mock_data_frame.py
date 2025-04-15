@@ -1,6 +1,6 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import formatting
@@ -71,12 +71,12 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
             self.add_count_result(count_result, count_statement_params)
 
         # Queries are part of the dataframe but are currently not checked. Init only.
-        self._queries: Dict[str, List[str]] = dict()
+        self._queries: dict[str, list[str]] = dict()
         self._queries["queries"] = []
         self._queries["post_actions"] = []
 
     @property  # type: ignore[misc]
-    def __class__(self) -> Type[DataFrame]:  # type: ignore[override]
+    def __class__(self) -> type[DataFrame]:  # type: ignore[override]
         return DataFrame
 
     def __repr__(self) -> str:
@@ -98,13 +98,13 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def add_collect_result(
         self,
-        result: Union[List[snowpark.Row], MockAsyncJob],
-        statement_params: Optional[Dict[str, Any]] = None,
+        result: Union[list[snowpark.Row], MockAsyncJob],
+        statement_params: Optional[dict[str, Any]] = None,
         block: Optional[bool] = None,
     ) -> mock_snowml_base.MockSnowMLBase:
         """Convenience helper to set the expected result of a `collect()` operation."""
         check_statement_params = False
-        kwargs: Optional[Dict[str, Any]] = None
+        kwargs: Optional[dict[str, Any]] = None
         if statement_params:
             kwargs = {}
             kwargs["statement_params"] = statement_params
@@ -144,7 +144,7 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
     def add_mock_sort(
         self,
         *cols: type_utils.ColumnOrName,
-        ascending: Optional[Union[bool, int, List[Union[bool, int]]]] = None,
+        ascending: Optional[Union[bool, int, list[Union[bool, int]]]] = None,
         result: MockDataFrame | None = None,
     ) -> MockDataFrame:
         if ascending:
@@ -155,8 +155,8 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
 
     def add_mock_with_columns(
         self,
-        col_names: List[str],
-        values: List[Column],
+        col_names: list[str],
+        values: list[Column],
         result: MockDataFrame | None = None,
     ) -> MockDataFrame:
         return self.add_operation(
@@ -208,7 +208,7 @@ class MockDataFrame(mock_snowml_base.MockSnowMLBase):
         return mdfo.result
 
     @property
-    def queries(self) -> Dict[str, List[str]]:
+    def queries(self) -> dict[str, list[str]]:
         return self._queries
 
     def limit(self, *args: Any, **kwargs: Any) -> Any:

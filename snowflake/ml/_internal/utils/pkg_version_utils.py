@@ -1,6 +1,6 @@
 import sys
 import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Union
 
 from packaging.version import Version
 
@@ -8,7 +8,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.snowpark import AsyncJob, Row, Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
-cache: Dict[str, Optional[str]] = {}
+cache: dict[str, Optional[str]] = {}
 
 _PROJECT = "ModelDevelopment"
 _SUBPROJECT = "utils"
@@ -23,8 +23,8 @@ def is_relaxed() -> bool:
 
 
 def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
-    pkg_versions: List[str], session: Session, subproject: Optional[str] = None
-) -> List[str]:
+    pkg_versions: list[str], session: Session, subproject: Optional[str] = None
+) -> list[str]:
     if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
         return pkg_versions
     else:
@@ -32,9 +32,9 @@ def get_valid_pkg_versions_supported_in_snowflake_conda_channel(
 
 
 def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
-    pkg_versions: List[str], session: Session, subproject: Optional[str] = None
-) -> List[str]:
-    pkg_version_async_job_list: List[Tuple[str, AsyncJob]] = []
+    pkg_versions: list[str], session: Session, subproject: Optional[str] = None
+) -> list[str]:
+    pkg_version_async_job_list: list[tuple[str, AsyncJob]] = []
     for pkg_version in pkg_versions:
         if pkg_version not in cache:
             # Execute pkg version queries asynchronously.
@@ -64,7 +64,7 @@ def _get_valid_pkg_versions_supported_in_snowflake_conda_channel_async(
 
 def _query_pkg_version_supported_in_snowflake_conda_channel(
     pkg_version: str, session: Session, block: bool, subproject: Optional[str] = None
-) -> Union[AsyncJob, List[Row]]:
+) -> Union[AsyncJob, list[Row]]:
     tokens = pkg_version.split("==")
     if len(tokens) != 2:
         raise RuntimeError(
@@ -102,9 +102,9 @@ def _query_pkg_version_supported_in_snowflake_conda_channel(
     return pkg_version_list_or_async_job
 
 
-def _get_conda_packages_and_emit_warnings(pkg_versions: List[str]) -> List[str]:
-    pkg_version_conda_list: List[str] = []
-    pkg_version_warning_list: List[List[str]] = []
+def _get_conda_packages_and_emit_warnings(pkg_versions: list[str]) -> list[str]:
+    pkg_version_conda_list: list[str] = []
+    pkg_version_warning_list: list[list[str]] = []
     for pkg_version in pkg_versions:
         try:
             conda_pkg_version = cache[pkg_version]

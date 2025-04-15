@@ -1,5 +1,3 @@
-from typing import List
-
 import _test_util
 from absl.testing import absltest
 
@@ -13,7 +11,7 @@ class EmbedTest1024Test(absltest.TestCase):
     text = "|text|"
 
     @staticmethod
-    def embed_text_1024_for_test(model: str, text: str) -> List[float]:
+    def embed_text_1024_for_test(model: str, text: str) -> list[float]:
         return [0.0] * 1024
 
     def setUp(self) -> None:

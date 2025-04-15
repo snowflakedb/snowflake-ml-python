@@ -1,7 +1,7 @@
 import os
 import random
 import tempfile
-from typing import Any, Dict, Generator
+from typing import Any, Generator
 
 import numpy as np
 import torch
@@ -66,9 +66,9 @@ class TestSnowflakeFileSet(fileset_integ_test_base.TestSnowflakeFileSetBase):
         self._validate_snowpark_dataframe(df)
 
     def _validate_torch_datapipe(
-        self, datapipe: data.IterDataPipe[Dict[str, npt.NDArray[Any]]], batch_size: int, drop_last_batch: bool
+        self, datapipe: data.IterDataPipe[dict[str, npt.NDArray[Any]]], batch_size: int, drop_last_batch: bool
     ) -> None:
-        def numpy_batch_generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator() -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in data.DataLoader(datapipe, batch_size=None, num_workers=0):
                 numpy_batch = {}
                 for k, v in batch.items():

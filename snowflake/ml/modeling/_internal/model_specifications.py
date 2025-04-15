@@ -1,5 +1,3 @@
-from typing import List
-
 import cloudpickle as cp
 import numpy as np
 
@@ -11,7 +9,7 @@ class ModelSpecifications:
     A dataclass to define model based specifications like required imports, and package dependencies for Sproc/Udfs.
     """
 
-    def __init__(self, imports: List[str], pkgDependencies: List[str]) -> None:
+    def __init__(self, imports: list[str], pkgDependencies: list[str]) -> None:
         self.imports = imports
         self.pkgDependencies = pkgDependencies
 
@@ -20,7 +18,7 @@ class SKLearnModelSpecifications(ModelSpecifications):
     def __init__(self) -> None:
         import sklearn
 
-        imports: List[str] = ["sklearn"]
+        imports: list[str] = ["sklearn"]
         # TODO(snandamuri): Replace cloudpickle with joblib after latest version of joblib is added to snowflake conda.
         pkgDependencies = [
             f"numpy=={np.__version__}",
@@ -56,8 +54,8 @@ class XGBoostModelSpecifications(ModelSpecifications):
         import sklearn
         import xgboost
 
-        imports: List[str] = ["xgboost"]
-        pkgDependencies: List[str] = [
+        imports: list[str] = ["xgboost"]
+        pkgDependencies: list[str] = [
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"xgboost=={xgboost.__version__}",
@@ -71,8 +69,8 @@ class LightGBMModelSpecifications(ModelSpecifications):
         import lightgbm
         import sklearn
 
-        imports: List[str] = ["lightgbm"]
-        pkgDependencies: List[str] = [
+        imports: list[str] = ["lightgbm"]
+        pkgDependencies: list[str] = [
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"lightgbm=={lightgbm.__version__}",
@@ -86,8 +84,8 @@ class SklearnModelSelectionModelSpecifications(ModelSpecifications):
         import sklearn
         import xgboost
 
-        imports: List[str] = ["sklearn", "xgboost"]
-        pkgDependencies: List[str] = [
+        imports: list[str] = ["sklearn", "xgboost"]
+        pkgDependencies: list[str] = [
             f"numpy=={np.__version__}",
             f"scikit-learn=={sklearn.__version__}",
             f"cloudpickle=={cp.__version__}",

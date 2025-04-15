@@ -3,9 +3,10 @@ import inspect
 import logging
 import os
 import pathlib
+import tempfile
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -17,7 +18,7 @@ from absl.testing import absltest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
-from snowflake.ml._internal import file_utils
+from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import (
     identifier,
     jwt_generator,
@@ -115,13 +116,8 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         mv._service_ops._stage_client.create_tmp_stage(
             database_name=database_name_id, schema_name=schema_name_id, stage_name=stage_name
         )
-        stage_path = mv._service_ops._stage_client.fully_qualified_object_name(
-            database_name_id, schema_name_id, stage_name
-        )
 
-        deploy_spec_file_rel_path = model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH
-
-        mv._service_ops._model_deployment_spec.save(
+        deploy_spec = mv._service_ops._model_deployment_spec.save(
             database_name=mv._model_ops._model_version_client._database_name,
             schema_name=mv._model_ops._model_version_client._schema_name,
             model_name=mv._model_name,
@@ -144,26 +140,41 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             force_rebuild=force_rebuild,
             external_access_integrations=None,
         )
-
-        with (mv._service_ops.workspace_path / deploy_spec_file_rel_path).open("r", encoding="utf-8") as f:
-            deploy_spec_dict = yaml.safe_load(f)
+        inline_deploy_spec_enabled = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
+        if mv._service_ops._model_deployment_spec.workspace_path:
+            with pathlib.Path(deploy_spec).open("r", encoding="utf-8") as f:
+                deploy_spec_dict = yaml.safe_load(f)
+        else:
+            deploy_spec_dict = deploy_spec.to_dict()
 
         deploy_spec_dict["image_build"]["builder_image"] = self.BUILDER_IMAGE_PATH
         deploy_spec_dict["image_build"]["base_image"] = image_path
 
-        with (mv._service_ops.workspace_path / deploy_spec_file_rel_path).open("w", encoding="utf-8") as f:
-            yaml.dump(deploy_spec_dict, f)
-
-        file_utils.upload_directory_to_stage(
-            self.session,
-            local_path=mv._service_ops.workspace_path,
-            stage_path=pathlib.PurePosixPath(stage_path),
-        )
-
-        # deploy the model service
-        query_id, async_job = mv._service_ops._service_client.deploy_model(
-            stage_path=stage_path, model_deployment_spec_file_rel_path=deploy_spec_file_rel_path
-        )
+        if inline_deploy_spec_enabled:
+            # dict to yaml string
+            deploy_spec_yaml_str = yaml.dump(deploy_spec_dict)
+            # deploy the model service
+            query_id, async_job = mv._service_ops._service_client.deploy_model(
+                model_deployment_spec_yaml_str=deploy_spec_yaml_str,
+            )
+        else:
+            temp_dir = tempfile.TemporaryDirectory()
+            workspace_path = pathlib.Path(temp_dir.name)
+            deploy_spec_file_rel_path = model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH
+            stage_path = mv._service_ops._stage_client.fully_qualified_object_name(
+                database_name_id, schema_name_id, stage_name
+            )
+            with (workspace_path / deploy_spec_file_rel_path).open("w", encoding="utf-8") as f:
+                yaml.dump(deploy_spec_dict, f)
+            file_utils.upload_directory_to_stage(
+                self.session,
+                local_path=workspace_path,
+                stage_path=pathlib.PurePosixPath(stage_path),
+            )
+            # deploy the model service
+            query_id, async_job = mv._service_ops._service_client.deploy_model(
+                stage_path=stage_path, model_deployment_spec_file_rel_path=deploy_spec_file_rel_path
+            )
 
         # stream service logs in a thread
         model_build_service_name = sql_identifier.SqlIdentifier(mv._service_ops._get_model_build_service_name(query_id))
@@ -183,17 +194,17 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
         log_thread.join()
 
-        res = cast(str, cast(List[row.Row], async_job.result())[0][0])
+        res = cast(str, cast(list[row.Row], async_job.result())[0][0])
         logging.info(f"Inference service {service_name} deployment complete: {res}")
 
     def _test_registry_model_deployment(
         self,
         model: model_types.SupportedModelType,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         service_name: Optional[str] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
+        additional_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
@@ -205,9 +216,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         memory_requests: Optional[str] = None,
     ) -> ModelVersion:
         conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(
-                self.session, "snowflake-snowpark-python!=1.12.0, <1.21.1"
-            )
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
         ]
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)
@@ -241,7 +250,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     def _deploy_model_service(
         self,
         mv: ModelVersion,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         service_name: Optional[str] = None,
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,

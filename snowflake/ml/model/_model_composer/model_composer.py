@@ -3,13 +3,14 @@ import tempfile
 import uuid
 import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 from urllib import parse
 
 from absl import logging
 from packaging import requirements
 
 from snowflake import snowpark
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_source
@@ -43,7 +44,8 @@ class ModelComposer:
         session: Session,
         stage_path: str,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
+        save_location: Optional[str] = None,
     ) -> None:
         self.session = session
         self.stage_path: Union[pathlib.PurePosixPath, parse.ParseResult] = None  # type: ignore[assignment]
@@ -54,10 +56,29 @@ class ModelComposer:
             # The stage path is a user stage path
             self.stage_path = pathlib.PurePosixPath(stage_path)
 
-        self._workspace = tempfile.TemporaryDirectory()
-        self._packager_workspace = tempfile.TemporaryDirectory()
+        # Set up workspace based on save_location if provided, otherwise use temporary directory
+        self.save_location = save_location
+        if save_location:
+            # Use the save_location directory directly
+            self._workspace_path = pathlib.Path(save_location)
+            self._workspace_path.mkdir(exist_ok=True)
+            # ensure that the directory is empty
+            if any(self._workspace_path.iterdir()):
+                raise ValueError(f"The directory {self._workspace_path} is not empty.")
+            self._workspace = None
 
-        self.packager = model_packager.ModelPackager(local_dir_path=str(self._packager_workspace_path))
+            self._packager_workspace_path = self._workspace_path / ModelComposer.MODEL_DIR_REL_PATH
+            self._packager_workspace_path.mkdir(exist_ok=True)
+            self._packager_workspace = None
+        else:
+            # Use a temporary directory
+            self._workspace = tempfile.TemporaryDirectory()
+            self._workspace_path = pathlib.Path(self._workspace.name)
+
+            self._packager_workspace_path = self._workspace_path / ModelComposer.MODEL_DIR_REL_PATH
+            self._packager_workspace_path.mkdir(exist_ok=True)
+
+        self.packager = model_packager.ModelPackager(local_dir_path=str(self.packager_workspace_path))
         self.manifest = model_manifest.ModelManifest(workspace_path=self.workspace_path)
 
         self.model_file_rel_path = f"model-{uuid.uuid4().hex}.zip"
@@ -65,16 +86,16 @@ class ModelComposer:
         self._statement_params = statement_params
 
     def __del__(self) -> None:
-        self._workspace.cleanup()
-        self._packager_workspace.cleanup()
+        if self._workspace:
+            self._workspace.cleanup()
 
     @property
     def workspace_path(self) -> pathlib.Path:
-        return pathlib.Path(self._workspace.name)
+        return self._workspace_path
 
     @property
-    def _packager_workspace_path(self) -> pathlib.Path:
-        return pathlib.Path(self._packager_workspace.name)
+    def packager_workspace_path(self) -> pathlib.Path:
+        return self._packager_workspace_path
 
     @property
     def model_stage_path(self) -> str:
@@ -102,17 +123,18 @@ class ModelComposer:
         *,
         name: str,
         model: model_types.SupportedModelType,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.TargetPlatform]] = None,
+        metadata: Optional[dict[str, str]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
-        code_paths: Optional[List[str]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
+        code_paths: Optional[list[str]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
@@ -146,14 +168,14 @@ class ModelComposer:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
                 self.session,
-                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}")],
+                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
                 python_version=python_version or snowml_env.PYTHON_VERSION,
                 statement_params=self._statement_params,
             ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
 
             if len(snowml_matched_versions) < 1 and options.get("embed_local_ml_library", False) is False:
                 logging.info(
-                    f"Local snowflake-ml-python library has version {snowml_env.VERSION},"
+                    f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
                     " which is not available in the Snowflake server, embedding local ML library automatically."
                 )
                 options["embed_local_ml_library"] = True
@@ -167,6 +189,8 @@ class ModelComposer:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
+            target_platforms=target_platforms,
             python_version=python_version,
             ext_modules=ext_modules,
             code_paths=code_paths,
@@ -175,9 +199,6 @@ class ModelComposer:
         )
         assert self.packager.meta is not None
 
-        file_utils.copytree(
-            str(self._packager_workspace_path), str(self.workspace_path / ModelComposer.MODEL_DIR_REL_PATH)
-        )
         self.manifest.save(
             model_meta=self.packager.meta,
             model_rel_path=pathlib.PurePosixPath(ModelComposer.MODEL_DIR_REL_PATH),
@@ -208,7 +229,7 @@ class ModelComposer:
 
     def _get_data_sources(
         self, model: model_types.SupportedModelType, sample_input_data: Optional[model_types.SupportedDataType] = None
-    ) -> Optional[List[data_source.DataSource]]:
+    ) -> Optional[list[data_source.DataSource]]:
         data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
             data_sources = lineage_utils.get_data_sources(sample_input_data)

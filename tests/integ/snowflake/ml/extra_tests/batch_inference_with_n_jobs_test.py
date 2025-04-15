@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import inflection
 import numpy as np
 import pandas as pd
@@ -13,7 +11,7 @@ from snowflake.snowpark import DataFrame, Session
 
 
 class BatchInferenceWithNJobsTest(TestCase):
-    def _get_test_dataset(self) -> Tuple[pd.DataFrame, DataFrame, List[str], List[str]]:
+    def _get_test_dataset(self) -> tuple[pd.DataFrame, DataFrame, list[str], list[str]]:
         input_df_pandas = load_diabetes(as_frame=True).frame
         # Normalize column names
         input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]

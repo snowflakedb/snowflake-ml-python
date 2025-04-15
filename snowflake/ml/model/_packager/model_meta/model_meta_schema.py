@@ -1,7 +1,7 @@
 # This files contains schema definition of what will be written into model.yml
 # Changing this file should lead to a change of the schema version.
 from enum import Enum
-from typing import Any, Dict, List, Optional, TypedDict, Union
+from typing import Any, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -18,18 +18,20 @@ class FunctionProperties(Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: Required[str]
     pip: Required[str]
-    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
+    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
 
 
 class ModelRuntimeDict(TypedDict):
-    imports: Required[List[str]]
+    imports: Required[list[str]]
     dependencies: Required[ModelRuntimeDependenciesDict]
+    resource_constraint: NotRequired[Optional[dict[str, str]]]
 
 
 class ModelEnvDict(TypedDict):
     conda: Required[str]
     pip: Required[str]
-    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
+    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
+    resource_constraint: NotRequired[Optional[dict[str, str]]]
     python_version: Required[str]
     cuda_version: NotRequired[Optional[str]]
     snowpark_ml_version: Required[str]
@@ -102,25 +104,25 @@ class ModelBlobMetadataDict(TypedDict):
     model_type: Required[type_hints.SupportedModelHandlerType]
     path: Required[str]
     handler_version: Required[str]
-    function_properties: NotRequired[Dict[str, Dict[str, Any]]]
-    artifacts: NotRequired[Dict[str, str]]
+    function_properties: NotRequired[dict[str, dict[str, Any]]]
+    artifacts: NotRequired[dict[str, str]]
     options: NotRequired[ModelBlobOptions]
 
 
 class ModelMetadataDict(TypedDict):
     creation_timestamp: Required[str]
     env: Required[ModelEnvDict]
-    runtimes: NotRequired[Dict[str, ModelRuntimeDict]]
-    metadata: NotRequired[Optional[Dict[str, str]]]
+    runtimes: NotRequired[dict[str, ModelRuntimeDict]]
+    metadata: NotRequired[Optional[dict[str, str]]]
     model_type: Required[type_hints.SupportedModelHandlerType]
-    models: Required[Dict[str, ModelBlobMetadataDict]]
+    models: Required[dict[str, ModelBlobMetadataDict]]
     name: Required[str]
-    signatures: Required[Dict[str, Dict[str, Any]]]
+    signatures: Required[dict[str, dict[str, Any]]]
     version: Required[str]
     min_snowpark_ml_version: Required[str]
     task: Required[str]
     explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
-    function_properties: NotRequired[Dict[str, Dict[str, Any]]]
+    function_properties: NotRequired[dict[str, dict[str, Any]]]
 
 
 class ModelExplainAlgorithm(Enum):

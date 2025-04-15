@@ -2,7 +2,7 @@ import json
 import os
 import pathlib
 import warnings
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, cast
+from typing import Any, Callable, Iterable, Optional, Sequence, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -231,7 +231,7 @@ def validate_model_task(passed_model_task: model_types.Task, inferred_model_task
 
 
 def get_explain_target_method(
-    model_metadata: model_meta.ModelMetadata, target_methods_list: List[str]
+    model_metadata: model_meta.ModelMetadata, target_methods_list: list[str]
 ) -> Optional[str]:
     for method in model_metadata.signatures.keys():
         if method in target_methods_list:
@@ -248,7 +248,7 @@ def save_transformers_config_with_auto_map(local_model_path: str) -> None:
                 config_dict = json.load(f)
 
             # a. get repository and class_path from configs
-            auto_map_configs = cast(Dict[str, str], config_dict.get("auto_map", {}))
+            auto_map_configs = cast(dict[str, str], config_dict.get("auto_map", {}))
             for config_name, config_value in auto_map_configs.items():
                 repository, _, class_path = config_value.rpartition("--")
 

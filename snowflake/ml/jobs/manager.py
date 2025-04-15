@@ -1,6 +1,7 @@
+import logging
 import pathlib
 import textwrap
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
 from uuid import uuid4
 
 import yaml
@@ -13,11 +14,14 @@ from snowflake.ml.jobs._utils import payload_utils, spec_utils
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
+logger = logging.getLogger(__name__)
+
 _PROJECT = "MLJob"
 JOB_ID_PREFIX = "MLJOB_"
 
+T = TypeVar("T")
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
+
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["limit", "scope"])
 def list_jobs(
     limit: int = 10,
@@ -57,9 +61,8 @@ def list_jobs(
     return df
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
-def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob:
+def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob[Any]:
     """Retrieve a job service from the backend."""
     session = session or get_active_session()
 
@@ -71,7 +74,8 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
 
     try:
         # Validate that job exists by doing a status check
-        job = jb.MLJob(job_id, session=session)
+        # FIXME: Retrieve return path
+        job = jb.MLJob[Any](job_id, session=session)
         _ = job.status
         return job
     except SnowparkSQLException as e:
@@ -80,9 +84,8 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
         raise
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
-def delete_job(job: Union[str, jb.MLJob], session: Optional[snowpark.Session] = None) -> None:
+def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Session] = None) -> None:
     """Delete a job service from the backend. Status and logs will be lost."""
     if isinstance(job, jb.MLJob):
         job_id = job.id
@@ -93,23 +96,22 @@ def delete_job(job: Union[str, jb.MLJob], session: Optional[snowpark.Session] = 
     session.sql("DROP SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def submit_file(
     file_path: str,
     compute_pool: str,
     *,
     stage_name: str,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
-) -> jb.MLJob:
+) -> jb.MLJob[None]:
     """
     Submit a Python file as a job to the compute pool.
 
@@ -146,7 +148,6 @@ def submit_file(
     )
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def submit_directory(
     dir_path: str,
@@ -154,16 +155,16 @@ def submit_directory(
     *,
     entrypoint: str,
     stage_name: str,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
-) -> jb.MLJob:
+) -> jb.MLJob[None]:
     """
     Submit a directory containing Python script(s) as a job to the compute pool.
 
@@ -202,6 +203,46 @@ def submit_directory(
     )
 
 
+@overload
+def _submit_job(
+    source: str,
+    compute_pool: str,
+    *,
+    stage_name: str,
+    entrypoint: Optional[str] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
+    query_warehouse: Optional[str] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
+    num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
+    session: Optional[snowpark.Session] = None,
+) -> jb.MLJob[None]:
+    ...
+
+
+@overload
+def _submit_job(
+    source: Callable[..., T],
+    compute_pool: str,
+    *,
+    stage_name: str,
+    entrypoint: Optional[str] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
+    query_warehouse: Optional[str] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
+    num_instances: Optional[int] = None,
+    enable_metrics: bool = False,
+    session: Optional[snowpark.Session] = None,
+) -> jb.MLJob[T]:
+    ...
+
+
 @telemetry.send_api_usage_telemetry(
     project=_PROJECT,
     func_params_to_log=[
@@ -210,24 +251,26 @@ def submit_directory(
         # TODO: Log lengths of args, env_vars, and spec_overrides values
         "pip_requirements",
         "external_access_integrations",
+        "num_instances",
+        "enable_metrics",
     ],
 )
 def _submit_job(
-    source: Union[str, Callable[..., Any]],
+    source: Union[str, Callable[..., T]],
     compute_pool: str,
     *,
     stage_name: str,
     entrypoint: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
-) -> jb.MLJob:
+) -> jb.MLJob[T]:
     """
     Submit a job to the compute pool.
 
@@ -252,6 +295,12 @@ def _submit_job(
     Raises:
         RuntimeError: If required Snowflake features are not enabled.
     """
+    # Display warning about PrPr parameters
+    if num_instances is not None:
+        logger.warning(
+            "_submit_job() parameter 'num_instances' is in private preview since 1.8.2. Do not use it in production.",
+        )
+
     session = session or get_active_session()
     job_id = f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
     stage_name = "@" + stage_name.lstrip("@").rstrip("/")
@@ -314,5 +363,4 @@ def _submit_job(
             ) from e
         raise
 
-    # TODO: Wrap snowflake.core.service.JobService object
-    return jb.MLJob(job_id, session=session)
+    return jb.MLJob(job_id, service_spec=spec, session=session)

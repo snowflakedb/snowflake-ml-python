@@ -1,16 +1,5 @@
 import os
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Generator,
-    List,
-    Optional,
-    Sequence,
-    Type,
-    TypeVar,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Generator, Optional, Sequence, TypeVar
 
 import numpy.typing as npt
 from typing_extensions import deprecated
@@ -27,6 +16,7 @@ from snowflake.snowpark import context as sf_context
 
 if TYPE_CHECKING:
     import pandas as pd
+    import ray
     import tensorflow as tf
     from torch.utils import data as torch_data
 
@@ -42,7 +32,7 @@ DataConnectorType = TypeVar("DataConnectorType", bound="DataConnector")
 class DataConnector:
     """Snowflake data reader which provides application integration connectors"""
 
-    DEFAULT_INGESTOR_CLASS: Type[data_ingestor.DataIngestor] = ArrowIngestor
+    DEFAULT_INGESTOR_CLASS: type[data_ingestor.DataIngestor] = ArrowIngestor
 
     def __init__(
         self,
@@ -53,27 +43,22 @@ class DataConnector:
         self._kwargs = kwargs
 
     @classmethod
-    @snowpark._internal.utils.private_preview(version="1.6.0")
     def from_dataframe(
-        cls: Type[DataConnectorType],
+        cls: type[DataConnectorType],
         df: snowpark.DataFrame,
-        ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         if len(df.queries["queries"]) != 1 or len(df.queries["post_actions"]) != 0:
             raise ValueError("DataFrames with multiple queries and/or post-actions not supported")
-        return cast(
-            DataConnectorType,
-            cls.from_sql(df.queries["queries"][0], session=df._session, ingestor_class=ingestor_class, **kwargs),
-        )
+        return cls.from_sql(df.queries["queries"][0], session=df._session, ingestor_class=ingestor_class, **kwargs)
 
     @classmethod
-    @snowpark._internal.utils.private_preview(version="1.7.3")
     def from_sql(
-        cls: Type[DataConnectorType],
+        cls: type[DataConnectorType],
         query: str,
         session: Optional[snowpark.Session] = None,
-        ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         session = session or sf_context.get_active_session()
@@ -82,9 +67,9 @@ class DataConnector:
 
     @classmethod
     def from_dataset(
-        cls: Type[DataConnectorType],
+        cls: type[DataConnectorType],
         ds: "dataset.Dataset",
-        ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         dsv = ds.selected_version
@@ -101,10 +86,10 @@ class DataConnector:
         func_params_to_log=["sources", "ingestor_class"],
     )
     def from_sources(
-        cls: Type[DataConnectorType],
+        cls: type[DataConnectorType],
         session: snowpark.Session,
         sources: Sequence[data_source.DataSource],
-        ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None,
+        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
         **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
@@ -112,7 +97,7 @@ class DataConnector:
         return cls(ingestor, **kwargs)
 
     @property
-    def data_sources(self) -> List[data_source.DataSource]:
+    def data_sources(self) -> list[data_source.DataSource]:
         return self._ingestor.data_sources
 
     @telemetry.send_api_usage_telemetry(
@@ -138,7 +123,7 @@ class DataConnector:
         """
         import tensorflow as tf
 
-        def generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def generator() -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             yield from self._ingestor.to_batches(batch_size, shuffle, drop_last_batch)
 
         # Derive TensorFlow signature
@@ -241,6 +226,30 @@ class DataConnector:
         """
         return self._ingestor.to_pandas(limit)
 
+    @telemetry.send_api_usage_telemetry(
+        project=_PROJECT,
+        subproject_extractor=lambda self: type(self).__name__,
+        func_params_to_log=["limit"],
+    )
+    def to_ray_dataset(self) -> "ray.data.Dataset":
+        """Retrieve the Snowflake data as a Ray Dataset.
+
+        Returns:
+            A Ray Dataset.
+
+        Raises:
+            ImportError: If Ray is not installed in the local environment.
+        """
+        if hasattr(self._ingestor, "to_ray_dataset"):
+            return self._ingestor.to_ray_dataset()
+
+        try:
+            import ray
+
+            return ray.data.from_pandas(self._ingestor.to_pandas())
+        except ImportError as e:
+            raise ImportError("Ray is not installed, please install ray in your local environment.") from e
+
 
 # Switch to use Runtime's Data Ingester if running in ML runtime
 # Fail silently if the data ingester is not found
@@ -251,4 +260,3 @@ if os.getenv(IN_ML_RUNTIME_ENV_VAR) and os.getenv(USE_OPTIMIZED_DATA_INGESTOR):
         DataConnector.DEFAULT_INGESTOR_CLASS = get_ingester_class()
     except ImportError:
         """Runtime Default Ingester not found, ignore"""
-        pass

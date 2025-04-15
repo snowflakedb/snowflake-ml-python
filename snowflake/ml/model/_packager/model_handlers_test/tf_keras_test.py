@@ -1,7 +1,7 @@
 import os
 import tempfile
 import warnings
-from typing import Callable, Tuple
+from typing import Callable
 
 import numpy as np
 import tensorflow as tf
@@ -18,7 +18,7 @@ from snowflake.ml.model._signatures import (
 
 def _prepare_keras_subclass_model(
     dtype: tf.dtypes.DType = tf.float32,
-) -> Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
+) -> tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
     class KerasModel(tf_keras.Model):
         def __init__(self, n_hidden: int, n_out: int) -> None:
             super().__init__()
@@ -48,7 +48,7 @@ def _prepare_keras_subclass_model(
 
 def _prepare_keras_sequential_model(
     dtype: tf.dtypes.DType = tf.float32,
-) -> Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
+) -> tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     data_x = tf.convert_to_tensor(x, dtype=dtype)
@@ -71,7 +71,7 @@ def _prepare_keras_sequential_model(
 
 def _prepare_keras_functional_model(
     dtype: tf.dtypes.DType = tf.float32,
-) -> Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
+) -> tuple[tf_keras.Model, tf.Tensor, tf.Tensor]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     data_x = tf.convert_to_tensor(x, dtype=dtype)
@@ -97,7 +97,7 @@ class TensorflowHandlerTest(parameterized.TestCase):
         {"model_fn": _prepare_keras_functional_model},
     )
     def test_tensorflow_keras(
-        self, model_fn: Callable[[tf.dtypes.DType], Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]]
+        self, model_fn: Callable[[tf.dtypes.DType], tuple[tf_keras.Model, tf.Tensor, tf.Tensor]]
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = model_fn(tf.float32)
@@ -180,7 +180,7 @@ class TensorflowHandlerTest(parameterized.TestCase):
         {"model_fn": _prepare_keras_functional_model},
     )
     def test_tensorflow_keras_multiple_inputs(
-        self, model_fn: Callable[[tf.dtypes.DType], Tuple[tf_keras.Model, tf.Tensor, tf.Tensor]]
+        self, model_fn: Callable[[tf.dtypes.DType], tuple[tf_keras.Model, tf.Tensor, tf.Tensor]]
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = model_fn(tf.float32)

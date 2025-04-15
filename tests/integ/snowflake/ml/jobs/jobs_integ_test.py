@@ -2,7 +2,7 @@ import inspect
 import tempfile
 import textwrap
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Optional, cast
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -149,7 +149,7 @@ class JobManagerTest(parameterized.TestCase):
         {"scope": "schema not_exist_db.not_exist_schema"},
         {"scope": "compute_pool not_exist_pool"},
     )
-    def test_list_jobs_negative(self, **kwargs: str) -> None:
+    def test_list_jobs_negative(self, **kwargs: Any) -> None:
         with self.assertRaises(sp_exceptions.SnowparkSQLException):
             jobs.list_jobs(**kwargs, session=self.session)
 
@@ -165,7 +165,7 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_delete_job_negative(self) -> None:
         for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob(id, session=self.session)
+            job = jobs.MLJob[None](id, session=self.session)
             with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                 jobs.delete_job(job.id, session=self.session)
             with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
@@ -173,13 +173,22 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_get_status_negative(self) -> None:
         for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob(id, session=self.session)
+            job = jobs.MLJob[None](id, session=self.session)
             with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                 job.status
 
+    def test_get_logs(self) -> None:
+        # Submit a job
+        job = jm._submit_job(
+            lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
+        )
+
+        self.assertIsInstance(job.get_logs(), str)
+        self.assertIsInstance(job.get_logs(as_list=True), list)
+
     def test_get_logs_negative(self) -> None:
         for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob(id, session=self.session)
+            job = jobs.MLJob[None](id, session=self.session)
             with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                 job.get_logs()
 
@@ -192,7 +201,7 @@ class JobManagerTest(parameterized.TestCase):
             fudge_factor = 0.5
 
             # Create a dummy job
-            job = jobs.MLJob("dummy_job_id", session=self.session)
+            job = jobs.MLJob[None]("dummy_job_id", session=self.session)
             with mock.patch("snowflake.ml.jobs.job._get_status", return_value="RUNNING") as mock_get_status:
                 # Test waiting with timeout=0
                 start = time.monotonic()
@@ -239,16 +248,17 @@ class JobManagerTest(parameterized.TestCase):
         # self.assertIn("Job start", job.get_logs())
 
         # Wait for job to finish
-        rst = job.wait()
-        self.assertEqual(rst, "DONE")
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
         self.assertEqual(job.status, "DONE")
         self.assertIn("Job complete", job.get_logs())
+        self.assertIsNone(job.result())
 
         # Test loading job by ID
         loaded_job = jobs.get_job(job.id, session=self.session)
         self.assertEqual(loaded_job.status, "DONE")
         self.assertIn("Job start", loaded_job.get_logs())
         self.assertIn("Job complete", loaded_job.get_logs())
+        self.assertIsNone(loaded_job.result())
 
     def test_job_execution_metrics(self) -> None:
         payload = TestAsset("src/main.py")
@@ -316,11 +326,12 @@ class JobManagerTest(parameterized.TestCase):
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
-        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> None:
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> dict[str, Any]:
             from datetime import datetime
 
             print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}, arg3={arg3}] Job complete", flush=True)
+            return {"arg1": arg1, "arg2": arg2, "result": 100}
 
         class MyDataClass:
             def __init__(self, x: int, y: int) -> None:
@@ -331,7 +342,7 @@ class JobManagerTest(parameterized.TestCase):
                 return f"MyDataClass({self.x}, {self.y})"
 
         # Define parameter combinations to test
-        params: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = [
+        params: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
             (("Positional Arg", 5), {}),
             (("Positional Arg",), {"arg2": 5}),
             (tuple(), {"arg1": "Named Arg", "arg2": 5}),
@@ -341,7 +352,7 @@ class JobManagerTest(parameterized.TestCase):
         ]
 
         # Kick off jobs in parallel
-        job_list: List[jobs.MLJob] = []
+        job_list: list[jobs.MLJob[Any]] = []
         for i in range(len(params)):
             args, kwargs = params[i]
             job = decojob_fn(*args, **kwargs)
@@ -362,6 +373,56 @@ class JobManagerTest(parameterized.TestCase):
                 for k, v in kwargs.items():
                     self.assertIn(str(v), job_logs, f"key={k}")
 
+                job_result = cast(dict[str, Any], job.result())
+                self.assertIsInstance(job.result(), dict)
+                self.assertEqual(job_result.get("result"), 100)
+
+                loaded_job = jobs.get_job(job.id, session=self.session)
+                self.assertEqual(loaded_job.status, "DONE")
+                self.assertDictEqual(loaded_job.result(), job_result)
+
+    # TODO(SNOW-1911482): Enable test for Python 3.11+
+    @absltest.skipIf(  # type: ignore[misc]
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )
+    def test_job_decorator_negative_result(self) -> None:
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def func_no_return() -> None:
+            pass
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def func_with_error() -> None:
+            raise NotImplementedError("This function is expected to fail")
+
+        # Run jobs in parallel for speed
+        job1 = func_no_return()
+        job2 = func_with_error()
+
+        # Job 1 should succeed but return None
+        self.assertEqual(job1.wait(), "DONE", job1.get_logs())
+        self.assertIsNone(job1.result())
+
+        # Should be able to retrieve Job 1's exception by job ID
+        job1_loaded = jobs.get_job(job1.id, session=self.session)
+        self.assertIsNone(job1_loaded.result())
+
+        # Job 2 should fail
+        self.assertEqual(job2.wait(), "FAILED", job2.get_logs())
+        with self.assertRaisesRegex(RuntimeError, "Job execution failed") as job2_cm:
+            job2.result()
+        self.assertIsNotNone(getattr(job2_cm.exception, "__cause__", None))
+        self.assertIsInstance(job2_cm.exception.__cause__, NotImplementedError)
+        self.assertEqual(str(job2_cm.exception.__cause__), "This function is expected to fail")
+
+        # Should be able to retrieve Job 2's exception by job ID
+        job2_loaded = jobs.get_job(job2.id, session=self.session)
+        with self.assertRaisesRegex(RuntimeError, "Job execution failed") as job2_loaded_cm:
+            job2_loaded.result()
+        self.assertIsNotNone(getattr(job2_loaded_cm.exception, "__cause__", None))
+        self.assertIsInstance(job2_loaded_cm.exception.__cause__, NotImplementedError)
+        self.assertEqual(str(job2_loaded_cm.exception.__cause__), "This function is expected to fail")
+
     def test_job_runtime_api(self) -> None:
         # Submit this function via file to avoid pickling issues
         # TODO: Test this via job decorator as well
@@ -369,14 +430,13 @@ class JobManagerTest(parameterized.TestCase):
             import ray
 
             from snowflake.ml.data.data_connector import DataConnector
-            from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-            from snowflake.snowpark import Session
+            from snowflake.snowpark.context import get_active_session
 
             # Will throw a ConnectionError if Ray is not initialized
             ray.init(address="auto")
 
             # Validate simple data ingestion
-            session = Session.builder.configs(SnowflakeLoginOptions()).create()
+            session = get_active_session()
             num_rows = 100
             df = session.sql(
                 f"SELECT uniform(1, 1000, random()) as random_val FROM table(generator(rowcount => {num_rows}))"
@@ -490,18 +550,19 @@ class JobManagerTest(parameterized.TestCase):
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
 
-    def _submit_func_as_file(self, func: Callable[[], None]) -> jobs.MLJob:
+    def _submit_func_as_file(self, func: Callable[[], None]) -> jobs.MLJob[None]:
         func_source = inspect.getsource(func)
         payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
         with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
             temp_file.write(payload_str.encode("utf-8"))
             temp_file.flush()
-            return jobs.submit_file(
+            job: jobs.MLJob[None] = jobs.submit_file(
                 temp_file.name,
                 self.compute_pool,
                 stage_name="payload_stage",
                 session=self.session,
             )
+            return job
 
 
 if __name__ == "__main__":

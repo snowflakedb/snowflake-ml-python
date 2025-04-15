@@ -1,7 +1,7 @@
 import datetime
 import random
 import string
-from typing import List, Optional, Tuple, Union, cast
+from typing import Optional, Union, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -1026,7 +1026,7 @@ class FeatureStoreTest(parameterized.TestCase):
         spine_df = self._session.create_dataframe([(1, 101), (2, 202), (1, 90)], schema=["id", "ts"])
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
             spine_timestamp_col="ts",
             include_feature_view_timestamp_col=True,
         )
@@ -1073,7 +1073,7 @@ class FeatureStoreTest(parameterized.TestCase):
         spine_df = self._session.create_dataframe([(1), (2)], schema=["id"])
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1, fv2]),
         )
 
         compare_dataframe(
@@ -1089,7 +1089,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
         )
         compare_dataframe(
             actual_df=df.to_pandas(),
@@ -1103,7 +1103,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
             exclude_columns=["NAME"],
         )
         compare_dataframe(
@@ -2058,7 +2058,7 @@ class FeatureStoreTest(parameterized.TestCase):
         e = Entity("foo", ["id"])
         fs.register_entity(e)
 
-        def create_fvs(fs: FeatureStore, sql: str, overwrite: bool) -> Tuple[FeatureView, FeatureView, FeatureView]:
+        def create_fvs(fs: FeatureStore, sql: str, overwrite: bool) -> tuple[FeatureView, FeatureView, FeatureView]:
             fv1 = FeatureView(
                 name="fv1",
                 entities=[e],
@@ -2365,7 +2365,7 @@ class FeatureStoreTest(parameterized.TestCase):
             6. fv with multiple entities
         """
 
-        def create_point_in_time_test_tables(full_schema_path: str) -> Tuple[str, str, str]:
+        def create_point_in_time_test_tables(full_schema_path: str) -> tuple[str, str, str]:
             table_a = f"{full_schema_path}.A"
             self._session.sql(
                 f"""

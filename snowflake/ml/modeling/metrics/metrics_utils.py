@@ -1,6 +1,6 @@
 import math
 import warnings
-from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Collection, Iterable, Optional, Union
 
 import cloudpickle
 import numpy as np
@@ -18,7 +18,7 @@ INDEX = "INDEX"
 BATCH_SIZE = 1000
 
 
-def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, Any]) -> str:
+def register_accumulator_udtf(*, session: Session, statement_params: dict[str, Any]) -> str:
     """Registers accumulator UDTF in Snowflake and returns the name of the UDTF.
 
     Args:
@@ -47,7 +47,7 @@ def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, A
             else:
                 self._accumulated_row = self._accumulated_row + row
 
-        def end_partition(self) -> Iterable[Tuple[bytes]]:
+        def end_partition(self) -> Iterable[tuple[bytes]]:
             yield (cloudpickle.dumps(self._accumulated_row),)
 
     accumulator = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE_FUNCTION)
@@ -68,7 +68,7 @@ def register_accumulator_udtf(*, session: Session, statement_params: Dict[str, A
     return accumulator
 
 
-def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dict[str, Any]) -> str:
+def register_sharded_dot_sum_computer(*, session: Session, statement_params: dict[str, Any]) -> str:
     """Registers dot and sum computation UDTF in Snowflake and returns the name of the UDTF.
 
     Args:
@@ -110,7 +110,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
             # Square root of count - ddof
             self._sqrt_count_d = -1.0
 
-        def process(self, input_row: List[float], count: int, ddof: int) -> None:
+        def process(self, input_row: list[float], count: int, ddof: int) -> None:
             """Computes sum and dot product.
 
             Args:
@@ -138,7 +138,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
                 self.accumulate_batch_sum_and_dot_prod()
                 self._cur_count = 0
 
-        def end_partition(self) -> Iterable[Tuple[bytes, str]]:
+        def end_partition(self) -> Iterable[tuple[bytes, str]]:
             # 3. Compute sum and dot_prod for the remaining rows in the batch.
             if self._cur_count > 0:
                 self.accumulate_batch_sum_and_dot_prod()
@@ -185,7 +185,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: Dic
 
 def validate_and_return_dataframe_and_columns(
     *, df: snowpark.DataFrame, columns: Optional[Collection[str]] = None
-) -> Tuple[snowpark.DataFrame, Collection[str]]:
+) -> tuple[snowpark.DataFrame, Collection[str]]:
     """Validates that the columns are all numeric and returns a dataframe with those columns.
 
     Args:
@@ -212,8 +212,8 @@ def validate_and_return_dataframe_and_columns(
 
 
 def check_label_columns(
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
 ) -> None:
     """Check y true and y pred columns.
 
@@ -238,7 +238,7 @@ def check_label_columns(
         )
 
 
-def flatten_cols(cols: List[Optional[Union[str, List[str]]]]) -> List[str]:
+def flatten_cols(cols: list[Optional[Union[str, list[str]]]]) -> list[str]:
     res = []
     for col in cols:
         if isinstance(col, str):
@@ -251,7 +251,7 @@ def flatten_cols(cols: List[Optional[Union[str, List[str]]]]) -> List[str]:
 def unique_labels(
     *,
     df: snowpark.DataFrame,
-    columns: List[snowpark.Column],
+    columns: list[snowpark.Column],
 ) -> snowpark.DataFrame:
     """Extract indexed ordered unique labels as a dataframe.
 
@@ -311,7 +311,7 @@ def weighted_sum(
     sample_score_column: snowpark.Column,
     sample_weight_column: Optional[snowpark.Column] = None,
     normalize: bool = False,
-    statement_params: Dict[str, str],
+    statement_params: dict[str, str],
 ) -> float:
     """Weighted sum of the sample score column.
 

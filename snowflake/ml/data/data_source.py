@@ -1,5 +1,5 @@
 import dataclasses
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 
 @dataclasses.dataclass(frozen=True)
@@ -17,7 +17,7 @@ class DatasetInfo:
     fully_qualified_name: str
     version: str
     url: Optional[str] = None
-    exclude_cols: Optional[List[str]] = None
+    exclude_cols: Optional[list[str]] = None
 
 
 DataSource = Union[DataFrameInfo, DatasetInfo, str]

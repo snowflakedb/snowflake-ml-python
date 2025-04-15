@@ -1,5 +1,5 @@
 import os
-from typing import Any, List
+from typing import Any
 
 import numpy as np
 from absl.testing.absltest import TestCase, main
@@ -36,7 +36,7 @@ class DropInputColsTest(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()
@@ -47,10 +47,10 @@ class DropInputColsTest(TestCase):
     def _run_and_compare_result(
         self,
         transformer: Any,
-        input_cols: List[str],
-        output_cols: List[str],
+        input_cols: list[str],
+        output_cols: list[str],
         id_col: str,
-        data: List[List[Any]],
+        data: list[list[Any]],
     ) -> None:
         input_cols_extended = input_cols.copy()
         input_cols_extended.append(id_col)

@@ -2,7 +2,6 @@ import importlib
 import os
 import sys
 import tempfile
-from typing import List
 from unittest import TestCase
 
 import cloudpickle
@@ -35,7 +34,7 @@ class LabelEncoderTest(TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()

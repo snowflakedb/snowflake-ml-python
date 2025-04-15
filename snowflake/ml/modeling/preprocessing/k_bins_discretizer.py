@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import Dict, Iterable, List, Optional, Union, cast
+from typing import Iterable, Optional, Union, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -104,7 +104,7 @@ class KBinsDiscretizer(base.BaseTransformer):
     def __init__(
         self,
         *,
-        n_bins: Union[int, List[int]] = 5,
+        n_bins: Union[int, list[int]] = 5,
         encode: str = "onehot",
         strategy: str = "quantile",
         input_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -229,7 +229,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         # https://docs.google.com/document/d/1cilfCCtKYv6HvHqaqdZxfHAvQ0gg-t1AM8KYCQtJiLE/edit
         agg_queries = []
         for idx, col_name in enumerate(self.input_cols):
-            percentiles = np.linspace(0, 1, cast(List[int], self.n_bins)[idx] + 1)
+            percentiles = np.linspace(0, 1, cast(list[int], self.n_bins)[idx] + 1)
             for i, pct in enumerate(percentiles.tolist()):
                 agg_queries.append(F.percentile_cont(pct).within_group(col_name).alias(f"{col_name}_pct_{i}"))
         state_df = dataset.agg(agg_queries)
@@ -246,7 +246,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         self.bin_edges_ = np.zeros(len(self.input_cols), dtype=object)
         self.n_bins_ = np.zeros(len(self.input_cols), dtype=np.int_)
         start = 0
-        for i, b in enumerate(cast(List[int], self.n_bins)):
+        for i, b in enumerate(cast(list[int], self.n_bins)):
             self.bin_edges_[i] = decimal_to_float(state[start : start + b + 1])
             start += b + 1
             self.n_bins_[i] = len(self.bin_edges_[i]) - 1
@@ -275,7 +275,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         # 2. Populate internal state variables
         self.bin_edges_ = np.zeros(len(self.input_cols), dtype=object)
         self.n_bins_ = np.zeros(len(self.input_cols), dtype=np.int_)
-        for i, b in enumerate(cast(List[int], self.n_bins)):
+        for i, b in enumerate(cast(list[int], self.n_bins)):
             self.bin_edges_[i] = np.linspace(state[i * 2], state[i * 2 + 1], b + 1)
             self.n_bins_[i] = len(self.bin_edges_[i]) - 1
 
@@ -345,7 +345,7 @@ class KBinsDiscretizer(base.BaseTransformer):
             session=dataset._session,
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        def vec_bucketize_temp(x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]) -> T.PandasSeries[int]:
+        def vec_bucketize_temp(x: T.PandasSeries[float], boarders: T.PandasSeries[list[float]]) -> T.PandasSeries[int]:
             # NB: vectorized udf doesn't work well with const array arg, so we pass it in as a list via PandasSeries
             boarders = boarders[0]
             res = np.searchsorted(boarders[1:-1], x, side="right")
@@ -387,9 +387,9 @@ class KBinsDiscretizer(base.BaseTransformer):
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def vec_bucketize_sparse_output_temp(
-            x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
-        ) -> T.PandasSeries[Dict[str, int]]:
-            res: List[Dict[str, int]] = []
+            x: T.PandasSeries[float], boarders: T.PandasSeries[list[float]]
+        ) -> T.PandasSeries[dict[str, int]]:
+            res: list[dict[str, int]] = []
             boarders = boarders[0]
             buckets = np.searchsorted(boarders[1:-1], x, side="right")
             assert isinstance(buckets, np.ndarray), f"expecting buckets to be numpy ndarray, got {type(buckets)}"
@@ -434,9 +434,9 @@ class KBinsDiscretizer(base.BaseTransformer):
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
         def vec_bucketize_dense_output_temp(
-            x: T.PandasSeries[float], boarders: T.PandasSeries[List[float]]
-        ) -> T.PandasSeries[List[int]]:
-            res: List[npt.NDArray[np.int32]] = []
+            x: T.PandasSeries[float], boarders: T.PandasSeries[list[float]]
+        ) -> T.PandasSeries[list[int]]:
+            res: list[npt.NDArray[np.int32]] = []
             boarders = boarders[0]
             buckets = np.searchsorted(boarders[1:-1], x, side="right")
             assert isinstance(buckets, np.ndarray), f"expecting buckets to be numpy ndarray, got {type(buckets)}"
@@ -491,7 +491,7 @@ class KBinsDiscretizer(base.BaseTransformer):
         else:
             return transformed_dataset
 
-    def get_output_cols(self) -> List[str]:
+    def get_output_cols(self) -> list[str]:
         """
         Get output column names.
         Expand output column names for 'onehot-dense' encoding.

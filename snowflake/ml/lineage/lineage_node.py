@@ -1,6 +1,6 @@
 import json
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Set, Type, Union
+from typing import TYPE_CHECKING, Literal, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from snowflake.ml.model._client.model import model_version_impl
 
 _PROJECT = "LINEAGE"
-DOMAIN_LINEAGE_REGISTRY: Dict[str, Type["LineageNode"]] = {}
+DOMAIN_LINEAGE_REGISTRY: dict[str, type["LineageNode"]] = {}
 
 
 class LineageNode:
@@ -87,8 +87,8 @@ class LineageNode:
     def lineage(
         self,
         direction: Literal["upstream", "downstream"] = "downstream",
-        domain_filter: Optional[Set[Literal["feature_view", "dataset", "model", "table", "view"]]] = None,
-    ) -> List[Union["feature_view.FeatureView", "dataset.Dataset", "model_version_impl.ModelVersion", "LineageNode"]]:
+        domain_filter: Optional[set[Literal["feature_view", "dataset", "model", "table", "view"]]] = None,
+    ) -> list[Union["feature_view.FeatureView", "dataset.Dataset", "model_version_impl.ModelVersion", "LineageNode"]]:
         """
         Retrieves the lineage nodes connected to this node.
 
@@ -109,7 +109,7 @@ class LineageNode:
         if domain_filter is not None:
             domain_filter = {d.lower() for d in domain_filter}  # type: ignore[misc]
 
-        lineage_nodes: List["LineageNode"] = []
+        lineage_nodes: list["LineageNode"] = []
         for row in df.collect():
             lineage_object = (
                 json.loads(row["TARGET_OBJECT"])

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from absl.testing import absltest, parameterized
 from sklearn.linear_model import LinearRegression as SkLinearRegression
@@ -18,10 +18,10 @@ class TestEstimator(BaseTransformer):
     def __init__(
         self,
         estimator: Any,
-        dependencies: Optional[List[str]] = None,
+        dependencies: Optional[list[str]] = None,
         drop_input_cols: Optional[bool] = False,
-        file_names: Optional[List[str]] = None,
-        custom_states: Optional[List[str]] = None,
+        file_names: Optional[list[str]] = None,
+        custom_states: Optional[list[str]] = None,
         sample_weight_col: Optional[str] = None,
     ) -> None:
         super().__init__(
@@ -39,7 +39,7 @@ class TestEstimator(BaseTransformer):
     def _create_unfitted_sklearn_object(self) -> Any:
         return self._sklearn_object
 
-    def _get_dependencies(self) -> List[str]:
+    def _get_dependencies(self) -> list[str]:
         return self._deps or []
 
     def _fit(self, dataset: snowpark.DataFrame) -> "BaseTransformer":
@@ -54,7 +54,7 @@ class EstimatorsUtilsTest(parameterized.TestCase):
             ({"fake_param": [True, False, False]}, False),
         ]
     )  # type: ignore[misc]
-    def test_validate_sklearn_args(self, param_dict: Dict[str, Tuple[Any, Any, bool]], is_valid: bool) -> None:
+    def test_validate_sklearn_args(self, param_dict: dict[str, tuple[Any, Any, bool]], is_valid: bool) -> None:
         if not is_valid:
             with self.assertRaises(SnowflakeMLException):
                 validate_sklearn_args(param_dict, SkLinearRegression)

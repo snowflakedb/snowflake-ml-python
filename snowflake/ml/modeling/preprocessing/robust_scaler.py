@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -70,7 +70,7 @@ class RobustScaler(base.BaseTransformer):
         *,
         with_centering: bool = True,
         with_scaling: bool = True,
-        quantile_range: Tuple[float, float] = (25.0, 75.0),
+        quantile_range: tuple[float, float] = (25.0, 75.0),
         unit_variance: bool = False,
         input_cols: Optional[Union[str, Iterable[str]]] = None,
         output_cols: Optional[Union[str, Iterable[str]]] = None,
@@ -112,12 +112,12 @@ class RobustScaler(base.BaseTransformer):
         self.unit_variance = unit_variance
 
         self._state_is_set = False
-        self._center: Dict[str, float] = {}
-        self._scale: Dict[str, float] = {}
+        self._center: dict[str, float] = {}
+        self._scale: dict[str, float] = {}
 
         l_range = self.quantile_range[0] / 100.0
         r_range = self.quantile_range[1] / 100.0
-        self.custom_states: List[str] = [
+        self.custom_states: list[str] = [
             _utils.NumericStatistics.MEDIAN,
             "SQL>>>percentile_cont(" + str(l_range) + ") within group (order by {col_name})",
             "SQL>>>percentile_cont(" + str(r_range) + ") within group (order by {col_name})",
@@ -140,11 +140,11 @@ class RobustScaler(base.BaseTransformer):
         self._state_is_set = False
 
     @property
-    def center_(self) -> Optional[Dict[str, float]]:
+    def center_(self) -> Optional[dict[str, float]]:
         return None if (not self.with_centering or not self._state_is_set) else self._center
 
     @property
-    def scale_(self) -> Optional[Dict[str, float]]:
+    def scale_(self) -> Optional[dict[str, float]]:
         return None if (not self.with_scaling or not self._state_is_set) else self._scale
 
     def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "RobustScaler":

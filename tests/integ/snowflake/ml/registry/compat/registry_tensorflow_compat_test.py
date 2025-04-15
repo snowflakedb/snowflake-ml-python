@@ -1,5 +1,5 @@
 import uuid
-from typing import Callable, Tuple
+from typing import Callable
 
 import numpy as np
 from absl.testing import absltest
@@ -30,7 +30,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     def _prepare_registry_and_log_model_fn_factory_tf_keras_subclass(
         self,
-    ) -> Tuple[Callable[[session.Session, str, str, str], None], Tuple[str, str, str]]:
+    ) -> tuple[Callable[[session.Session, str, str, str], None], tuple[str, str, str]]:
         def prepare_registry_and_log_model(
             session: session.Session, test_db: str, test_schema: str, run_id: str
         ) -> None:
@@ -94,7 +94,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     def _prepare_registry_and_log_model_fn_factory_tf_keras_sequential(
         self,
-    ) -> Tuple[Callable[[session.Session, str, str, str], None], Tuple[str, str, str]]:
+    ) -> tuple[Callable[[session.Session, str, str, str], None], tuple[str, str, str]]:
         def prepare_registry_and_log_model(
             session: session.Session, test_db: str, test_schema: str, run_id: str
         ) -> None:
@@ -150,7 +150,7 @@ class RegistryTensorflowCompatTest(common_test_base.CommonTestBase):
 
     def _prepare_registry_and_log_model_fn_factory_tf_keras_functional(
         self,
-    ) -> Tuple[Callable[[session.Session, str, str, str], None], Tuple[str, str, str]]:
+    ) -> tuple[Callable[[session.Session, str, str, str], None], tuple[str, str, str]]:
         def prepare_registry_and_log_model(
             session: session.Session, test_db: str, test_schema: str, run_id: str
         ) -> None:

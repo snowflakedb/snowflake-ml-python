@@ -1,7 +1,7 @@
 import logging
 from math import ceil
 from pathlib import PurePath
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
@@ -54,9 +54,9 @@ def _get_image_spec(session: snowpark.Session, compute_pool: str, image_tag: Opt
 
 
 def generate_spec_overrides(
-    environment_vars: Optional[Dict[str, str]] = None,
-    custom_overrides: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    environment_vars: Optional[dict[str, str]] = None,
+    custom_overrides: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """
     Generate a dictionary of service specification overrides.
 
@@ -68,7 +68,7 @@ def generate_spec_overrides(
         Resulting service specifiation patch dict. Empty if no overrides were supplied.
     """
     # Generate container level overrides
-    container_spec: Dict[str, Any] = {
+    container_spec: dict[str, Any] = {
         "name": constants.DEFAULT_CONTAINER_NAME,
     }
     if environment_vars:
@@ -95,10 +95,10 @@ def generate_service_spec(
     session: snowpark.Session,
     compute_pool: str,
     payload: types.UploadedPayload,
-    args: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate a service specification for a job.
 
@@ -114,20 +114,14 @@ def generate_service_spec(
         Job service specification
     """
     is_multi_node = num_instances is not None and num_instances > 1
+    image_spec = _get_image_spec(session, compute_pool)
 
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
-    if is_multi_node:
-        # If the job is of multi-node, we will need a different image which contains
-        # module snowflake.runtime.utils.get_instance_ip
-        # TODO(SNOW-1961849): Remove the hard-coded image name
-        image_spec = _get_image_spec(session, compute_pool, constants.MULTINODE_HEADLESS_IMAGE_TAG)
-    else:
-        image_spec = _get_image_spec(session, compute_pool)
-    resource_requests: Dict[str, Union[str, int]] = {
+    resource_requests: dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
     }
-    resource_limits: Dict[str, Union[str, int]] = {
+    resource_limits: dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
     }
@@ -136,8 +130,8 @@ def generate_service_spec(
         resource_limits["nvidia.com/gpu"] = image_spec.resource_limits.gpu
 
     # Add local volumes for ephemeral logs and artifacts
-    volumes: List[Dict[str, str]] = []
-    volume_mounts: List[Dict[str, str]] = []
+    volumes: list[dict[str, str]] = []
+    volume_mounts: list[dict[str, str]] = []
     for volume_name, mount_path in [
         ("system-logs", "/var/log/managedservices/system/mlrs"),
         ("user-logs", "/var/log/managedservices/user/mlrs"),
@@ -191,7 +185,10 @@ def generate_service_spec(
 
     # TODO: Add hooks for endpoints for integration with TensorBoard etc
 
-    env_vars = {constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix()}
+    env_vars = {
+        constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix(),
+        constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
+    }
     endpoints = []
 
     if is_multi_node:
@@ -305,11 +302,11 @@ def merge_patch(base: Any, patch: Any, display_name: str = "") -> Any:
 
 
 def _merge_lists_of_dicts(
-    base: List[Dict[str, Any]],
-    patch: List[Dict[str, Any]],
+    base: list[dict[str, Any]],
+    patch: list[dict[str, Any]],
     merge_key: str = "name",
     display_name: str = "",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Attempts to merge lists of dicts by matching on a merge key (default "name").
     - If the merge key is missing, the behavior falls back to overwriting the list.

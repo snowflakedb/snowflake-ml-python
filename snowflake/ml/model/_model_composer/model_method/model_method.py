@@ -1,6 +1,6 @@
 import collections
 import pathlib
-from typing import List, Optional, TypedDict, Union
+from typing import Optional, TypedDict, Union
 
 from typing_extensions import NotRequired
 
@@ -137,8 +137,8 @@ class ModelMethod:
             )
 
         outputs: Union[
-            List[model_manifest_schema.ModelMethodSignatureField],
-            List[model_manifest_schema.ModelMethodSignatureFieldWithName],
+            list[model_manifest_schema.ModelMethodSignatureField],
+            list[model_manifest_schema.ModelMethodSignatureFieldWithName],
         ]
         if self.function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
             outputs = [

@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import dataset_metadata
 from absl.testing import absltest, parameterized
@@ -9,20 +9,20 @@ from snowflake.snowpark import dataframe
 
 
 class MockDataFrame(dataframe.DataFrame):
-    def __init__(self, query: str, columns: List[str]) -> None:
+    def __init__(self, query: str, columns: list[str]) -> None:
         self._query = query
         self._columns = [c.upper() for c in columns]
 
     @property
-    def queries(self) -> Dict[str, List[str]]:
+    def queries(self) -> dict[str, list[str]]:
         return {"queries": [self._query]}
 
     @property
-    def columns(self) -> List[str]:
+    def columns(self) -> list[str]:
         return self._columns
 
 
-def _create_feature_view(name: str, columns: List[str]) -> feature_view.FeatureView:
+def _create_feature_view(name: str, columns: list[str]) -> feature_view.FeatureView:
     df = MockDataFrame("test query", columns)
     return feature_view.FeatureView(
         name,

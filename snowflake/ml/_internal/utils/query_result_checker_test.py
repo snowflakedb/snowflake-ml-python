@@ -1,4 +1,4 @@
-from typing import List, cast
+from typing import cast
 
 from absl.testing.absltest import TestCase, main
 
@@ -88,7 +88,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         """Use SqlResultValidator to find a mismatch between the expected and actual result dimensions."""
         session = mock_session.MockSession(conn=None, test_case=self)
         query = "CREATE TABLE TEMP"
-        sql_result: List[Row] = []
+        sql_result: list[Row] = []
         expected_result = mock_data_frame.MockDataFrame(collect_result=sql_result)
         expected_result.add_operation(operation="collect", result=sql_result)
         session.add_mock_sql(query=query, result=expected_result)
@@ -117,7 +117,7 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         """Use SqlResultValidator to check that a specific column exists in the result."""
         session = mock_session.MockSession(conn=None, test_case=self)
         query = "CREATE TABLE TEMP"
-        sql_result: List[Row] = []
+        sql_result: list[Row] = []
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = (
             query_result_checker.SqlResultValidator(session=cast(snowpark.Session, session), query=query)

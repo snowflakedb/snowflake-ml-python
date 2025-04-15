@@ -4,7 +4,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import Any, Dict, List
+from typing import Any
 
 import cloudpickle
 import joblib
@@ -44,7 +44,7 @@ class NormalizerTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()
@@ -53,7 +53,7 @@ class NormalizerTest(parameterized.TestCase):
                 os.remove(filepath)
 
     @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore[misc]
-    def test_transform(self, norm: Dict[str, Any]) -> None:
+    def test_transform(self, norm: dict[str, Any]) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
         input_cols_extended = input_cols.copy()
         input_cols_extended.append(id_col)
@@ -143,7 +143,7 @@ class NormalizerTest(parameterized.TestCase):
             transformed_df.collect()
 
     @parameterized.parameters({"norm": "l2"}, {"norm": "l1"}, {"norm": "max"})  # type: ignore[misc]
-    def test_transform_pandas(self, norm: Dict[str, Any]) -> None:
+    def test_transform_pandas(self, norm: dict[str, Any]) -> None:
         input_cols, output_cols, id_col = NUMERIC_COLS, OUTPUT_COLS, ID_COL
         df_pandas, df = framework_utils.get_df(self._session, _DATA_NORMALIZE, SCHEMA, np.nan)
 

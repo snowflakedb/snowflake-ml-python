@@ -1,7 +1,7 @@
 import json
 import warnings
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -46,8 +46,8 @@ class DatasetVersion:
         self._version = version
         self._session: snowpark.Session = self._parent._session
 
-        self._properties: Optional[Dict[str, Any]] = None
-        self._raw_metadata: Optional[Dict[str, Any]] = None
+        self._properties: Optional[dict[str, Any]] = None
+        self._raw_metadata: Optional[dict[str, Any]] = None
         self._metadata: Optional[dataset_metadata.DatasetMetadata] = None
 
     @property
@@ -66,14 +66,14 @@ class DatasetVersion:
         return comment
 
     @property
-    def label_cols(self) -> List[str]:
+    def label_cols(self) -> list[str]:
         metadata = self._get_metadata()
         if metadata is None or metadata.label_cols is None:
             return []
         return metadata.label_cols
 
     @property
-    def exclude_cols(self) -> List[str]:
+    def exclude_cols(self) -> list[str]:
         metadata = self._get_metadata()
         if metadata is None or metadata.exclude_cols is None:
             return []
@@ -115,7 +115,7 @@ class DatasetVersion:
         return path
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def list_files(self, subdir: Optional[str] = None) -> List[snowpark.Row]:
+    def list_files(self, subdir: Optional[str] = None) -> list[snowpark.Row]:
         """Get the list of remote file paths for the current DatasetVersion."""
         return self._session.sql(f"LIST {self.url()}{subdir or ''}").collect(
             statement_params=_TELEMETRY_STATEMENT_PARAMS
@@ -244,7 +244,7 @@ class Dataset(lineage_node.LineageNode):
                 raise
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    def list_versions(self, detailed: bool = False) -> Union[List[str], List[snowpark.Row]]:
+    def list_versions(self, detailed: bool = False) -> Union[list[str], list[snowpark.Row]]:
         """Return list of versions"""
         versions = self._list_versions()
         versions.sort(key=lambda r: r[_DATASET_VERSION_NAME_COL])
@@ -271,8 +271,8 @@ class Dataset(lineage_node.LineageNode):
         version: str,
         input_dataframe: snowpark.DataFrame,
         shuffle: bool = False,
-        exclude_cols: Optional[List[str]] = None,
-        label_cols: Optional[List[str]] = None,
+        exclude_cols: Optional[list[str]] = None,
+        label_cols: Optional[list[str]] = None,
         properties: Optional[dataset_metadata.DatasetPropertiesType] = None,
         partition_by: Optional[str] = None,
         comment: Optional[str] = None,
@@ -423,7 +423,7 @@ class Dataset(lineage_node.LineageNode):
             statement_params=_TELEMETRY_STATEMENT_PARAMS
         )
 
-    def _list_versions(self, pattern: Optional[str] = None) -> List[snowpark.Row]:
+    def _list_versions(self, pattern: Optional[str] = None) -> list[snowpark.Row]:
         """Return list of versions"""
         try:
             pattern_clause = f" LIKE '{pattern}'" if pattern else ""
@@ -469,7 +469,7 @@ lineage_node.DOMAIN_LINEAGE_REGISTRY["dataset"] = Dataset
 # Utility methods
 
 
-def _get_schema_level_identifier(session: snowpark.Session, dataset_name: str) -> Tuple[str, str, str]:
+def _get_schema_level_identifier(session: snowpark.Session, dataset_name: str) -> tuple[str, str, str]:
     """Resolve a dataset name into a validated schema-level location identifier"""
     db, schema, object_name = identifier.parse_schema_level_object_identifier(dataset_name)
     db = db or session.get_current_database()

@@ -1,7 +1,7 @@
 import os
 import pathlib
 import tempfile
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -61,7 +61,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
     HANDLER_TYPE = "mlflow"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
     _DEFAULT_TARGET_METHOD = "predict"
@@ -204,7 +204,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
         def _create_custom_model(
             raw_model: "mlflow.pyfunc.PyFuncModel",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: "mlflow.pyfunc.PyFuncModel",
                 signature: model_signature.ModelSignature,
