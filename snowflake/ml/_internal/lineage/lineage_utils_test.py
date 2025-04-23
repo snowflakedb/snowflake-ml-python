@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Union, get_args
+from typing import Any, Optional, Union, get_args
 
 from absl.testing import absltest, parameterized
 
@@ -11,7 +11,7 @@ from snowflake.snowpark import functions as F
 
 class LineageUtilsTest(parameterized.TestCase):
     class TestSourcedObject:
-        def __init__(self, sources: Optional[List[data_source.DataSource]]) -> None:
+        def __init__(self, sources: Optional[list[data_source.DataSource]]) -> None:
             setattr(self, lineage_utils._DATA_SOURCES_ATTR, sources)
 
     def setUp(self) -> None:
@@ -69,7 +69,7 @@ class LineageUtilsTest(parameterized.TestCase):
         # ),
     )
     def test_get_data_sources(
-        self, args: List[TestSourcedObject], expected: Optional[List[data_source.DatasetInfo]]
+        self, args: list[TestSourcedObject], expected: Optional[list[data_source.DatasetInfo]]
     ) -> None:
         self.assertEqual(expected, lineage_utils.get_data_sources(*args))
 
@@ -82,7 +82,7 @@ class LineageUtilsTest(parameterized.TestCase):
         ],
         inplace=[True, False],
     )
-    def test_patch_dataframe(self, data_sources: List[data_source.DataSource], inplace: bool) -> None:
+    def test_patch_dataframe(self, data_sources: list[data_source.DataSource], inplace: bool) -> None:
         df = self.session.sql("SELECT 1")
         out_df = lineage_utils.patch_dataframe(df, data_sources=data_sources, inplace=inplace)
         self.validate_dataframe(out_df, data_sources)
@@ -195,7 +195,7 @@ class LineageUtilsTest(parameterized.TestCase):
         else:
             self.validate_dataframe(out_df, None)
 
-    def validate_dataframe(self, df: Any, data_sources: Optional[List[data_source.DataSource]]) -> None:
+    def validate_dataframe(self, df: Any, data_sources: Optional[list[data_source.DataSource]]) -> None:
         self.assertIsInstance(df, get_args(Union[snowpark.DataFrame, snowpark.RelationalGroupedDataFrame]))
         self.assertEqual(data_sources, lineage_utils.get_data_sources(df))
 

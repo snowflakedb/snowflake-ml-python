@@ -6,14 +6,16 @@ import re
 import tempfile
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union, cast
+from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
-from snowflake.ml._internal.utils import service_logger, sql_identifier
+from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
+from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
-from snowflake.snowpark import async_job, exceptions, row, session
+from snowflake.ml.model._signatures import snowpark_handler
+from snowflake.snowpark import async_job, dataframe, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
@@ -104,9 +106,9 @@ class ServiceOperator:
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
         force_rebuild: bool,
-        build_external_access_integrations: Optional[List[sql_identifier.SqlIdentifier]],
+        build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
         block: bool,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Fall back to the registry's database and schema if not provided
@@ -120,17 +122,7 @@ class ServiceOperator:
         image_repo_database_name = image_repo_database_name or database_name or self._database_name
         image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
         if self._workspace:
-            # create a temp stage
-            stage_name = sql_identifier.SqlIdentifier(
-                snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
-            )
-            self._stage_client.create_tmp_stage(
-                database_name=database_name,
-                schema_name=schema_name,
-                stage_name=stage_name,
-                statement_params=statement_params,
-            )
-            stage_path = self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)
+            stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
         else:
             stage_path = None
         spec_yaml_str_or_path = self._model_deployment_spec.save(
@@ -142,7 +134,7 @@ class ServiceOperator:
             service_schema_name=service_schema_name,
             service_name=service_name,
             image_build_compute_pool_name=image_build_compute_pool_name,
-            service_compute_pool_name=service_compute_pool_name,
+            inference_compute_pool_name=service_compute_pool_name,
             image_repo_database_name=image_repo_database_name,
             image_repo_schema_name=image_repo_schema_name,
             image_repo_name=image_repo_name,
@@ -210,7 +202,7 @@ class ServiceOperator:
         if block:
             log_thread.join()
 
-            res = cast(str, cast(List[row.Row], async_job.result())[0][0])
+            res = cast(str, cast(list[row.Row], async_job.result())[0][0])
             module_logger.info(f"Inference service {service_name} deployment complete: {res}")
             return res
         else:
@@ -219,10 +211,10 @@ class ServiceOperator:
     def _start_service_log_streaming(
         self,
         async_job: snowpark.AsyncJob,
-        services: List[ServiceLogInfo],
+        services: list[ServiceLogInfo],
         model_inference_service_exists: bool,
         force_rebuild: bool,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> threading.Thread:
         """Start the service log streaming in a separate thread."""
         log_thread = threading.Thread(
@@ -241,14 +233,14 @@ class ServiceOperator:
     def _stream_service_logs(
         self,
         async_job: snowpark.AsyncJob,
-        services: List[ServiceLogInfo],
+        services: list[ServiceLogInfo],
         model_inference_service_exists: bool,
         force_rebuild: bool,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Stream service logs while the async job is running."""
 
-        def fetch_logs(service: ServiceLogInfo, offset: int) -> Tuple[str, int]:
+        def fetch_logs(service: ServiceLogInfo, offset: int) -> tuple[str, int]:
             service_logs = self._service_client.get_service_logs(
                 database_name=service.database_name,
                 schema_name=service.schema_name,
@@ -393,7 +385,7 @@ class ServiceOperator:
         service_logger: logging.Logger,
         service: ServiceLogInfo,
         offset: int,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Fetch service logs after the async job is done to ensure no logs are missed."""
         try:
@@ -425,8 +417,8 @@ class ServiceOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
-        service_status_list_if_exists: Optional[List[service_sql.ServiceStatus]] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        service_status_list_if_exists: Optional[list[service_sql.ServiceStatus]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> bool:
         if service_status_list_if_exists is None:
             service_status_list_if_exists = [
@@ -448,3 +440,184 @@ class ServiceOperator:
             return any(service_status == status for status in service_status_list_if_exists)
         except exceptions.SnowparkSQLException:
             return False
+
+    def invoke_job_method(
+        self,
+        target_method: str,
+        signature: model_signature.ModelSignature,
+        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        job_database_name: Optional[sql_identifier.SqlIdentifier],
+        job_schema_name: Optional[sql_identifier.SqlIdentifier],
+        job_name: sql_identifier.SqlIdentifier,
+        compute_pool_name: sql_identifier.SqlIdentifier,
+        warehouse_name: sql_identifier.SqlIdentifier,
+        image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
+        image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
+        image_repo_name: sql_identifier.SqlIdentifier,
+        output_table_database_name: Optional[sql_identifier.SqlIdentifier],
+        output_table_schema_name: Optional[sql_identifier.SqlIdentifier],
+        output_table_name: sql_identifier.SqlIdentifier,
+        cpu_requests: Optional[str],
+        memory_requests: Optional[str],
+        gpu_requests: Optional[Union[int, str]],
+        num_workers: Optional[int],
+        max_batch_rows: Optional[int],
+        force_rebuild: bool,
+        build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
+        # fall back to the registry's database and schema if not provided
+        database_name = database_name or self._database_name
+        schema_name = schema_name or self._schema_name
+
+        # fall back to the model's database and schema if not provided then to the registry's database and schema
+        job_database_name = job_database_name or database_name or self._database_name
+        job_schema_name = job_schema_name or schema_name or self._schema_name
+
+        image_repo_database_name = image_repo_database_name or database_name or self._database_name
+        image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
+
+        input_table_database_name = job_database_name
+        input_table_schema_name = job_schema_name
+        output_table_database_name = output_table_database_name or database_name or self._database_name
+        output_table_schema_name = output_table_schema_name or schema_name or self._schema_name
+
+        if self._workspace:
+            stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
+        else:
+            stage_path = None
+
+        # validate and prepare input
+        if not isinstance(X, dataframe.DataFrame):
+            keep_order = True
+            output_with_input_features = False
+            df = model_signature._convert_and_validate_local_data(X, signature.inputs)
+            s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+                self._session, df, keep_order=keep_order, features=signature.inputs
+            )
+        else:
+            keep_order = False
+            output_with_input_features = True
+            s_df = X
+
+        # only write the index and feature input columns
+        cols = [snowpark_handler._KEEP_ORDER_COL_NAME] if snowpark_handler._KEEP_ORDER_COL_NAME in s_df.columns else []
+        cols += [
+            sql_identifier.SqlIdentifier(feature.name, case_sensitive=True).identifier() for feature in signature.inputs
+        ]
+        s_df = s_df.select(cols)
+        original_cols = s_df.columns
+
+        # input/output tables
+        fq_output_table_name = identifier.get_schema_level_object_identifier(
+            output_table_database_name.identifier(),
+            output_table_schema_name.identifier(),
+            output_table_name.identifier(),
+        )
+        tmp_input_table_id = sql_identifier.SqlIdentifier(
+            snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
+        )
+        fq_tmp_input_table_name = identifier.get_schema_level_object_identifier(
+            job_database_name.identifier(),
+            job_schema_name.identifier(),
+            tmp_input_table_id.identifier(),
+        )
+        s_df.write.save_as_table(
+            table_name=fq_tmp_input_table_name,
+            mode="errorifexists",
+            statement_params=statement_params,
+        )
+
+        try:
+            # save the spec
+            spec_yaml_str_or_path = self._model_deployment_spec.save(
+                database_name=database_name,
+                schema_name=schema_name,
+                model_name=model_name,
+                version_name=version_name,
+                job_database_name=job_database_name,
+                job_schema_name=job_schema_name,
+                job_name=job_name,
+                image_build_compute_pool_name=compute_pool_name,
+                inference_compute_pool_name=compute_pool_name,
+                image_repo_database_name=image_repo_database_name,
+                image_repo_schema_name=image_repo_schema_name,
+                image_repo_name=image_repo_name,
+                cpu=cpu_requests,
+                memory=memory_requests,
+                gpu=gpu_requests,
+                num_workers=num_workers,
+                max_batch_rows=max_batch_rows,
+                force_rebuild=force_rebuild,
+                external_access_integrations=build_external_access_integrations,
+                warehouse=warehouse_name,
+                target_method=target_method,
+                input_table_database_name=input_table_database_name,
+                input_table_schema_name=input_table_schema_name,
+                input_table_name=tmp_input_table_id,
+                output_table_database_name=output_table_database_name,
+                output_table_schema_name=output_table_schema_name,
+                output_table_name=output_table_name,
+            )
+            if self._workspace:
+                assert stage_path is not None
+                file_utils.upload_directory_to_stage(
+                    self._session,
+                    local_path=pathlib.Path(self._workspace.name),
+                    stage_path=pathlib.PurePosixPath(stage_path),
+                    statement_params=statement_params,
+                )
+
+            # deploy the job
+            query_id, async_job = self._service_client.deploy_model(
+                stage_path=stage_path if self._workspace else None,
+                model_deployment_spec_file_rel_path=(
+                    model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
+                ),
+                model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
+                statement_params=statement_params,
+            )
+
+            while not async_job.is_done():
+                time.sleep(5)
+        finally:
+            self._session.table(fq_tmp_input_table_name).drop_table()
+
+        # handle the output
+        df_res = self._session.table(fq_output_table_name)
+        if keep_order:
+            df_res = df_res.sort(
+                snowpark_handler._KEEP_ORDER_COL_NAME,
+                ascending=True,
+            )
+            df_res = df_res.drop(snowpark_handler._KEEP_ORDER_COL_NAME)
+
+        if not output_with_input_features:
+            df_res = df_res.drop(*original_cols)
+
+        # get final result
+        if not isinstance(X, dataframe.DataFrame):
+            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(df_res, features=signature.outputs)
+        else:
+            return df_res
+
+    def _create_temp_stage(
+        self,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> str:
+        stage_name = sql_identifier.SqlIdentifier(
+            snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
+        )
+        self._stage_client.create_tmp_stage(
+            database_name=database_name,
+            schema_name=schema_name,
+            stage_name=stage_name,
+            statement_params=statement_params,
+        )
+        return self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)  # stage path

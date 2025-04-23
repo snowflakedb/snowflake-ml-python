@@ -1,5 +1,5 @@
 from inspect import isclass
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
@@ -113,9 +113,9 @@ class FeatureStoreAccessTest(parameterized.TestCase):
         method: Callable[[], Any],
         required_access: Role,
         test_access: Role,
-        expected_result: Optional[Union[Type[Exception], Callable[[Any], Optional[bool]], Any]] = None,
-        expected_access_exception: Type[Exception] = RuntimeError,
-        access_exception_dict: Optional[Dict[Role, Type[Exception]]] = None,
+        expected_result: Optional[Union[type[Exception], Callable[[Any], Optional[bool]], Any]] = None,
+        expected_access_exception: type[Exception] = RuntimeError,
+        access_exception_dict: Optional[dict[Role, type[Exception]]] = None,
     ) -> Any:
         """
         Test a Feature Store API given a specified access level.
@@ -176,10 +176,10 @@ class FeatureStoreAccessTest(parameterized.TestCase):
     )  # type: ignore[misc]
     def test_init(
         self,
-        init_args: Dict[str, Any],
+        init_args: dict[str, Any],
         required_access: Role,
         test_access: Role,
-        expected_result: Optional[Type[Exception]],
+        expected_result: Optional[type[Exception]],
     ) -> None:
         schema = create_random_schema(
             self._session, "FS_TEST", database=self._test_database, additional_options="WITH MANAGED ACCESS"

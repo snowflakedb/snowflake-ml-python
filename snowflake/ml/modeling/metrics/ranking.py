@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 import cloudpickle
 import numpy as np
@@ -26,7 +26,7 @@ def precision_recall_curve(
     probas_pred_col_name: str,
     pos_label: Optional[Union[str, int]] = None,
     sample_weight_col_name: Optional[str] = None,
-) -> Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
+) -> tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
     """
     Compute precision-recall pairs for different probability thresholds.
 
@@ -125,7 +125,7 @@ def precision_recall_curve(
 
     kwargs = telemetry.get_sproc_statement_params_kwargs(precision_recall_curve_anon_sproc, statement_params)
     result_object = result.deserialize(session, precision_recall_curve_anon_sproc(session, **kwargs))
-    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
+    res: tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
     return res
 
 
@@ -133,8 +133,8 @@ def precision_recall_curve(
 def roc_auc_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_score_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_score_col_names: Union[str, list[str]],
     average: Optional[str] = "macro",
     sample_weight_col_name: Optional[str] = None,
     max_fpr: Optional[float] = None,
@@ -289,7 +289,7 @@ def roc_curve(
     pos_label: Optional[Union[str, int]] = None,
     sample_weight_col_name: Optional[str] = None,
     drop_intermediate: bool = True,
-) -> Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
+) -> tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]:
     """
     Compute Receiver operating characteristic (ROC).
 
@@ -380,6 +380,6 @@ def roc_curve(
     kwargs = telemetry.get_sproc_statement_params_kwargs(roc_curve_anon_sproc, statement_params)
     result_object = result.deserialize(session, roc_curve_anon_sproc(session, **kwargs))
 
-    res: Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
+    res: tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]] = result_object
 
     return res

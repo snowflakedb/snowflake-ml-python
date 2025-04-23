@@ -1,6 +1,6 @@
 # mypy: disable-error-code="import"
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, Literal, Sequence, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
 from typing_extensions import NotRequired
@@ -32,7 +32,7 @@ _SupportedBuiltins = Union[
     bool,
     str,
     bytes,
-    Dict[str, Union["_SupportedBuiltins", "_SupportedBuiltinsList"]],
+    dict[str, Union["_SupportedBuiltins", "_SupportedBuiltinsList"]],
     "_SupportedBuiltinsList",
 ]
 _SupportedNumpyDtype = Union[
@@ -153,7 +153,7 @@ class BaseModelSaveOption(TypedDict):
     embed_local_ml_library: NotRequired[bool]
     relax_version: NotRequired[bool]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
-    method_options: NotRequired[Dict[str, ModelMethodSaveOptions]]
+    method_options: NotRequired[dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
     save_location: NotRequired[str]
 

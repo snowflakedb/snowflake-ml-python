@@ -11,6 +11,7 @@ py_library(
         "model_manager.py",
     ],
     deps = [
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -23,7 +24,6 @@ py_library(
         "//snowflake/ml/model/_client/ops:model_ops",
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_model_composer:model_composer",
-        "//snowflake/ml/modeling/_internal:constants",
     ],
 )
 
@@ -34,11 +34,11 @@ py_test(
     ],
     deps = [
         ":model_manager",
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_model_composer:model_composer",
-        "//snowflake/ml/modeling/_internal:constants",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
     ],

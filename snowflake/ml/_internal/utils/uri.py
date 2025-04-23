@@ -1,5 +1,5 @@
 import posixpath
-from typing import Optional, Tuple
+from typing import Optional
 from urllib.parse import ParseResult, urlparse, urlunparse
 
 from snowflake.ml._internal.utils import identifier
@@ -68,7 +68,7 @@ def get_uri_from_snowflake_stage_path(stage_path: str) -> str:
     )
 
 
-def get_stage_and_path(stage_path: str) -> Tuple[str, str]:
+def get_stage_and_path(stage_path: str) -> tuple[str, str]:
     assert stage_path.startswith("@"), f"stage path should start with @, actual: {stage_path}"
     (db, schema, stage, path) = identifier.parse_snowflake_stage_path(
         posixpath.normpath(identifier.remove_prefix(stage_path, "@"))

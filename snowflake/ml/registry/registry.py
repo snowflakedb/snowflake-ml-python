@@ -1,6 +1,6 @@
 import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Union, overload
+from typing import Any, Optional, Union, overload
 
 import pandas as pd
 
@@ -36,7 +36,7 @@ class Registry:
         *,
         database_name: Optional[str] = None,
         schema_name: Optional[str] = None,
-        options: Optional[Dict[str, Any]] = None,
+        options: Optional[dict[str, Any]] = None,
     ) -> None:
         """Opens a registry within a pre-created Snowflake schema.
 
@@ -107,17 +107,18 @@ class Registry:
         model_name: str,
         version_name: Optional[str] = None,
         comment: Optional[str] = None,
-        metrics: Optional[Dict[str, Any]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
+        metrics: Optional[dict[str, Any]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        code_paths: Optional[List[str]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        code_paths: Optional[list[str]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
@@ -152,6 +153,7 @@ class Registry:
                 Format: {channel_name: artifact_repository_name}, where:
                    - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
                    - artifact_repository_name: The name or URL of the repository to fetch packages from.
+            resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
                 {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
@@ -232,6 +234,7 @@ class Registry:
             "conda_dependencies",
             "pip_requirements",
             "artifact_repository_map",
+            "resource_constraint",
             "target_platforms",
             "python_version",
             "signatures",
@@ -244,17 +247,18 @@ class Registry:
         model_name: str,
         version_name: Optional[str] = None,
         comment: Optional[str] = None,
-        metrics: Optional[Dict[str, Any]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.SupportedTargetPlatformType]] = None,
+        metrics: Optional[dict[str, Any]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        code_paths: Optional[List[str]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        code_paths: Optional[list[str]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
@@ -289,6 +293,7 @@ class Registry:
                 Format: {channel_name: artifact_repository_name}, where:
                    - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
                    - artifact_repository_name: The name or URL of the repository to fetch packages from.
+            resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
                 {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
             python_version: Python version in which the model is run. Defaults to None.
@@ -373,6 +378,7 @@ class Registry:
                 conda_dependencies,
                 pip_requirements,
                 artifact_repository_map,
+                resource_constraint,
                 target_platforms,
                 python_version,
                 signatures,
@@ -407,6 +413,7 @@ class Registry:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             target_platforms=target_platforms,
             python_version=python_version,
             signatures=signatures,
@@ -442,7 +449,7 @@ class Registry:
         project=_TELEMETRY_PROJECT,
         subproject=_MODEL_TELEMETRY_SUBPROJECT,
     )
-    def models(self) -> List[Model]:
+    def models(self) -> list[Model]:
         """Get all models in the schema where the registry is opened.
 
         Returns:
@@ -568,7 +575,7 @@ class Registry:
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
     @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
-    def show_model_monitors(self) -> List[snowpark.Row]:
+    def show_model_monitors(self) -> list[snowpark.Row]:
         """Show all model monitors in the registry.
 
         Returns:

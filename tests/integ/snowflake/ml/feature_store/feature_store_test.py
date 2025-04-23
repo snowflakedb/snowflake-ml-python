@@ -1,7 +1,7 @@
 import datetime
 import random
 import string
-from typing import List, Optional, Tuple, Union, cast
+from typing import Optional, Union, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -16,7 +16,6 @@ from common_utils import (
     create_random_schema,
     get_test_warehouse_name,
 )
-from snowflake.ml.version import VERSION
 
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
@@ -32,6 +31,7 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewStatus,
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml.version import VERSION
 from snowflake.snowpark import Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
 
@@ -270,7 +270,7 @@ class FeatureStoreTest(parameterized.TestCase):
         # create entity already exists
         with self.assertWarnsRegex(UserWarning, "Entity .* already exists..*"):
             fs.register_entity(Entity("User", ["a", "b", "c"]))
-        # captitalized entity name is treated the same
+        # capitalized entity name is treated the same
         with self.assertWarnsRegex(UserWarning, "Entity.* already exists.*"):
             fs.register_entity(Entity("USER", ["a", "b", "c"]))
 
@@ -1026,7 +1026,7 @@ class FeatureStoreTest(parameterized.TestCase):
         spine_df = self._session.create_dataframe([(1, 101), (2, 202), (1, 90)], schema=["id", "ts"])
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
             spine_timestamp_col="ts",
             include_feature_view_timestamp_col=True,
         )
@@ -1073,7 +1073,7 @@ class FeatureStoreTest(parameterized.TestCase):
         spine_df = self._session.create_dataframe([(1), (2)], schema=["id"])
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1, fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1, fv2]),
         )
 
         compare_dataframe(
@@ -1089,7 +1089,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
         )
         compare_dataframe(
             actual_df=df.to_pandas(),
@@ -1103,7 +1103,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
         df = fs.retrieve_feature_values(
             spine_df=spine_df,
-            features=cast(List[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
+            features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1.slice(["name"]), fv2]),
             exclude_columns=["NAME"],
         )
         compare_dataframe(
@@ -1599,7 +1599,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
     def test_generate_dataset_as_table_external_schema(self) -> None:
         database_name = self._session.get_current_database()
-        schema_name = create_random_schema(self._session, "FS_TEST_EXTERNAL_SCHEMA", database=database_name)
+        schema_name = create_random_schema(self._session, FS_INTEG_TEST_DATASET_SCHEMA, database=database_name)
         fs = self._create_feature_store()
         self.assertNotEqual(fs._config.schema, schema_name)
 
@@ -1770,7 +1770,7 @@ class FeatureStoreTest(parameterized.TestCase):
 
     def test_generate_dataset_as_dataset_external_schema(self) -> None:
         database_name = self._session.get_current_database()
-        schema_name = create_random_schema(self._session, "FS_TEST_EXTERNAL_SCHEMA", database=database_name)
+        schema_name = create_random_schema(self._session, FS_INTEG_TEST_DATASET_SCHEMA, database=database_name)
         fs = self._create_feature_store()
         self.assertNotEqual(fs._config.schema, schema_name)
 
@@ -2058,7 +2058,7 @@ class FeatureStoreTest(parameterized.TestCase):
         e = Entity("foo", ["id"])
         fs.register_entity(e)
 
-        def create_fvs(fs: FeatureStore, sql: str, overwrite: bool) -> Tuple[FeatureView, FeatureView, FeatureView]:
+        def create_fvs(fs: FeatureStore, sql: str, overwrite: bool) -> tuple[FeatureView, FeatureView, FeatureView]:
             fv1 = FeatureView(
                 name="fv1",
                 entities=[e],
@@ -2365,7 +2365,7 @@ class FeatureStoreTest(parameterized.TestCase):
             6. fv with multiple entities
         """
 
-        def create_point_in_time_test_tables(full_schema_path: str) -> Tuple[str, str, str]:
+        def create_point_in_time_test_tables(full_schema_path: str) -> tuple[str, str, str]:
             table_a = f"{full_schema_path}.A"
             self._session.sql(
                 f"""
@@ -2828,10 +2828,6 @@ class FeatureStoreTest(parameterized.TestCase):
         expected = ["C1", "C3"]
         result = FeatureStore._extract_cluster_by_columns(clause)
         self.assertEqual(result, expected, "Failed on parentheses with multiple identifiers")
-
-
-if __name__ == "__main__":
-    absltest.main()
 
 
 if __name__ == "__main__":

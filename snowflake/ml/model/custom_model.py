@@ -1,6 +1,6 @@
 import functools
 import inspect
-from typing import Any, Callable, Coroutine, Dict, Generator, List, Optional, Union
+from typing import Any, Callable, Coroutine, Generator, Optional, Union
 
 import anyio
 import pandas as pd
@@ -78,7 +78,7 @@ class ModelRef:
             return MethodRef(self, method_name)
         raise AttributeError(f"Method {method_name} not found in model {self._name}.")
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
         del state["_model"]
         return state
@@ -113,8 +113,8 @@ class ModelContext:
     def __init__(
         self,
         *,
-        artifacts: Optional[Union[Dict[str, str], str, model_types.SupportedModelType]] = None,
-        models: Optional[Union[Dict[str, model_types.SupportedModelType], str, model_types.SupportedModelType]] = None,
+        artifacts: Optional[Union[dict[str, str], str, model_types.SupportedModelType]] = None,
+        models: Optional[Union[dict[str, model_types.SupportedModelType], str, model_types.SupportedModelType]] = None,
         **kwargs: Optional[Union[str, model_types.SupportedModelType]],
     ) -> None:
         """Initialize the model context.
@@ -130,8 +130,8 @@ class ModelContext:
             ValueError: Raised when the model name is duplicated.
         """
 
-        self.artifacts: Dict[str, str] = dict()
-        self.model_refs: Dict[str, ModelRef] = dict()
+        self.artifacts: dict[str, str] = dict()
+        self.model_refs: dict[str, ModelRef] = dict()
 
         # In case that artifacts is a dictionary, assume the original usage,
         # which is to pass in a dictionary of artifacts.
@@ -185,7 +185,7 @@ class ModelContext:
         return self.model_refs[name]
 
     def __getitem__(self, key: str) -> Union[str, ModelRef]:
-        combined: Dict[str, Union[str, ModelRef]] = {**self.artifacts, **self.model_refs}
+        combined: dict[str, Union[str, ModelRef]] = {**self.artifacts, **self.model_refs}
         if key not in combined:
             raise KeyError(f"Key {key} not found in the kwargs, current available keys are: {combined.keys()}")
         return combined[key]
@@ -226,7 +226,7 @@ class CustomModel:
                 else:
                     raise TypeError("A non-method inference API function is not supported.")
 
-    def _get_partitioned_infer_methods(self) -> List[str]:
+    def _get_partitioned_infer_methods(self) -> list[str]:
         """Returns all methods in CLS with `partitioned_inference_api` as the outermost decorator."""
         rv = []
         for cls_method_str in dir(self):

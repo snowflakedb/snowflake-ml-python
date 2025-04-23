@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 
 import pandas as pd
 
@@ -224,7 +224,7 @@ class Model:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def versions(self) -> List[model_version_impl.ModelVersion]:
+    def versions(self) -> list[model_version_impl.ModelVersion]:
         """Get all versions in the model.
 
         Returns:
@@ -298,7 +298,7 @@ class Model:
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def show_tags(self) -> Dict[str, str]:
+    def show_tags(self) -> dict[str, str]:
         """Get a dictionary showing the tag and its value attached to the model.
 
         Returns:

@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, cast
+from typing import cast
 
 import boto3
 import requests
@@ -18,7 +18,7 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
     # Arbitrary bucket name and path comes from the mocked GS GET response
     bucket_name = "sfc-dev1"
 
-    urls: Dict[str, str] = {}
+    urls: dict[str, str] = {}
     content = b"hello world"
     db = "TESTDB"
     schema = "TESTSCHEMA"
@@ -97,7 +97,7 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
             result=self._mock_collect_res(prefix, collect_block=False),
         )
 
-    def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> List[snowpark.Row]:
+    def _mock_presigned_url_fetcher(self, files: str, lifetime: int = 0) -> list[snowpark.Row]:
         return [snowpark.Row(NAME=file, URL=self.urls[file]) for file in files]
 
     def test_moto_setup(self) -> None:
@@ -142,7 +142,7 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
         ("mydir/", ["mydir/helloworld"]),
         ("mydir/helloworld", ["mydir/helloworld"]),
     )
-    def test_ls(self, prefix: str, expected_res: List[str]) -> None:
+    def test_ls(self, prefix: str, expected_res: list[str]) -> None:
         """Test fsspec overridden method ls() could list objects."""
         self._add_mock_test_case(prefix)
         fs = self._create_new_snowfs()
@@ -155,7 +155,7 @@ class SFEmbeddedStageFileSystemTest(parameterized.TestCase):
         ("mydir/helloworld", ["", "mydir/helloworld"], False),
         ("mydir/nonexist_file", ["mydir", "mydir/nonexist_file"], False),
     )
-    def test_exists(self, file_path: str, mock_prefixes: List[str], expected_res: bool) -> None:
+    def test_exists(self, file_path: str, mock_prefixes: list[str], expected_res: bool) -> None:
         """Test fsspec method exists() could check if a path exists or not."""
         stagefs = self._create_new_snowfs()
         for prefix in mock_prefixes:

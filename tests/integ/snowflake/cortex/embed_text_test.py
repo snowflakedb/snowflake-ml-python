@@ -1,5 +1,3 @@
-from typing import List
-
 from absl.testing import absltest
 
 from snowflake import snowpark
@@ -27,7 +25,7 @@ class EmbedTextTest(absltest.TestCase):
         df_in = self._session.create_dataframe([snowpark.Row(model="e5-base-v2", text=_TEXT)])
         df_out = df_in.select(EmbedText768(functions.col("model"), functions.col("text")))
         res = df_out.collect()[0][0]
-        self.assertIsInstance(res, List)
+        self.assertIsInstance(res, list)
         self.assertEqual(len(res), 768)
         # Check a subset.
         for first, second in zip(res[:4], [-0.0174, -0.04528, -0.02869, 0.0189]):
@@ -37,7 +35,7 @@ class EmbedTextTest(absltest.TestCase):
         df_in = self._session.create_dataframe([snowpark.Row(model="multilingual-e5-large", text=_TEXT)])
         df_out = df_in.select(EmbedText1024(functions.col("model"), functions.col("text")))
         res = df_out.collect()[0][0]
-        self.assertIsInstance(res, List)
+        self.assertIsInstance(res, list)
         self.assertEqual(len(res), 1024)
         # Check a subset.
         for first, second in zip(res[:4], [0.0253, 0.0085, 0.0143, -0.0387]):

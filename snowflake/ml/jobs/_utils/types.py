@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import PurePath
-from typing import List, Literal, Optional, Union
+from typing import Literal, Optional, Union
 
 JOB_STATUS = Literal[
     "PENDING",
@@ -21,7 +21,7 @@ class PayloadEntrypoint:
 class UploadedPayload:
     # TODO: Include manifest of payload files for validation
     stage_path: PurePath
-    entrypoint: List[Union[str, PurePath]]
+    entrypoint: list[Union[str, PurePath]]
 
 
 @dataclass(frozen=True)

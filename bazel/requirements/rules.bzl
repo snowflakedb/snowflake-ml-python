@@ -59,6 +59,7 @@ def generate_requirement_file(
         cmd = "(echo -e \"" + _AUTOGEN_HEADERS.format(generation_cmd = generation_cmd) + "\" ; cat $(location :{generated}.body) ) > $@".format(
             generated = generated_file,
         )
+
     native.genrule(
         name = "gen_{name}".format(name = name),
         srcs = [

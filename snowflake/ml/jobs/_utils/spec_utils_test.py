@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from unittest import mock
 
 import yaml
@@ -9,7 +9,7 @@ from snowflake.ml.jobs._utils import spec_utils, types
 from snowflake.ml.jobs._utils.test_file_helper import TestAsset
 
 
-def _get_dict_difference(expected: Dict[str, Any], actual: Dict[str, Any], prefix: str = "") -> str:
+def _get_dict_difference(expected: dict[str, Any], actual: dict[str, Any], prefix: str = "") -> str:
     diff = []
     for key, value in expected.items():
         actual_value = actual.get(key)
@@ -182,7 +182,7 @@ class SpecUtilsTests(parameterized.TestCase):
             },
         ),
     )
-    def test_merge_patch(self, base: Dict[str, Any], override: Dict[str, Any], expected: Dict[str, Any]) -> None:
+    def test_merge_patch(self, base: dict[str, Any], override: dict[str, Any], expected: dict[str, Any]) -> None:
         actual = spec_utils.merge_patch(base, override)
         self.assertEqual(expected, actual)
 
@@ -283,7 +283,7 @@ class SpecUtilsTests(parameterized.TestCase):
             },
         },
     )
-    def test_generate_spec_overrides(self, *, expected: Dict[str, Any], **kwargs: Any) -> None:
+    def test_generate_spec_overrides(self, *, expected: dict[str, Any], **kwargs: Any) -> None:
         actual = spec_utils.generate_spec_overrides(**kwargs)
         self.assertEqual(expected, actual)
 
@@ -311,7 +311,7 @@ class SpecUtilsTests(parameterized.TestCase):
         expected: TestAsset,
         resources: types.ComputeResources,
         entrypoint: Path,
-        args: Optional[List[str]] = None,
+        args: Optional[list[str]] = None,
     ) -> None:
         with mock.patch("snowflake.ml.jobs._utils.spec_utils._get_image_spec") as mock_get_image_spec:
             mock_get_image_spec.return_value = types.ImageSpec(

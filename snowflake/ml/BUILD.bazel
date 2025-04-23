@@ -1,15 +1,8 @@
 load("//bazel:py_rules.bzl", "py_library")
-load(":version.bzl", "VERSION")
 
 package(default_visibility = ["//visibility:public"])
 
 exports_files(["requirements.bzl"])
-
-genrule(
-    name = "generate_version",
-    outs = ["version.py"],
-    cmd = "echo 'VERSION=\"" + VERSION + "\"'> $@",
-)
 
 py_library(
     name = "version",

@@ -2,7 +2,7 @@ import collections
 import logging
 import pathlib
 import warnings
-from typing import Dict, List, Optional, cast
+from typing import Optional, cast
 
 import yaml
 
@@ -45,10 +45,10 @@ class ModelManifest:
         self,
         model_meta: model_meta_api.ModelMetadata,
         model_rel_path: pathlib.PurePosixPath,
-        user_files: Optional[Dict[str, List[str]]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
-        data_sources: Optional[List[data_source.DataSource]] = None,
-        target_platforms: Optional[List[type_hints.TargetPlatform]] = None,
+        data_sources: Optional[list[data_source.DataSource]] = None,
+        target_platforms: Optional[list[type_hints.TargetPlatform]] = None,
     ) -> None:
         if options is None:
             options = {}
@@ -78,12 +78,13 @@ class ModelManifest:
             logger.info(f"Conda dependencies: {runtime_to_use.runtime_env.conda_dependencies}")
             logger.info(f"Pip requirements: {runtime_to_use.runtime_env.pip_requirements}")
             logger.info(f"artifact_repository_map: {runtime_to_use.runtime_env.artifact_repository_map}")
+            logger.info(f"resource_constraint: {runtime_to_use.runtime_env.resource_constraint}")
         runtime_dict = runtime_to_use.save(
             self.workspace_path, default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
         )
 
         self.function_generator = function_generator.FunctionGenerator(model_dir_rel_path=model_rel_path)
-        self.methods: List[model_method.ModelMethod] = []
+        self.methods: list[model_method.ModelMethod] = []
 
         for target_method in model_meta.signatures.keys():
             method = model_method.ModelMethod(
@@ -100,7 +101,7 @@ class ModelManifest:
 
             self.methods.append(method)
 
-        self.user_files: List[model_user_file.ModelUserFile] = []
+        self.user_files: list[model_user_file.ModelUserFile] = []
 
         if user_files is not None:
             for subdirectory, paths in user_files.items():
@@ -127,16 +128,19 @@ class ModelManifest:
         if model_meta.env.artifact_repository_map:
             dependencies["artifact_repository_map"] = runtime_dict["dependencies"]["artifact_repository_map"]
 
+        runtime = model_manifest_schema.ModelRuntimeDict(
+            language="PYTHON",
+            version=runtime_to_use.runtime_env.python_version,
+            imports=runtime_dict["imports"],
+            dependencies=dependencies,
+        )
+
+        if runtime_dict["resource_constraint"]:
+            runtime["resource_constraint"] = runtime_dict["resource_constraint"]
+
         manifest_dict = model_manifest_schema.ModelManifestDict(
             manifest_version=model_manifest_schema.MODEL_MANIFEST_VERSION,
-            runtimes={
-                self._DEFAULT_RUNTIME_NAME: model_manifest_schema.ModelRuntimeDict(
-                    language="PYTHON",
-                    version=runtime_to_use.runtime_env.python_version,
-                    imports=runtime_dict["imports"],
-                    dependencies=dependencies,
-                )
-            },
+            runtimes={self._DEFAULT_RUNTIME_NAME: runtime},
             methods=[
                 method.save(
                     self.workspace_path,
@@ -178,8 +182,8 @@ class ModelManifest:
         return res
 
     def _extract_lineage_info(
-        self, data_sources: Optional[List[data_source.DataSource]]
-    ) -> List[model_manifest_schema.LineageSourceDict]:
+        self, data_sources: Optional[list[data_source.DataSource]]
+    ) -> list[model_manifest_schema.LineageSourceDict]:
         result = []
         if data_sources:
             for source in data_sources:

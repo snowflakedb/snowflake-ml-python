@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, List, Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -38,9 +38,9 @@ class PandasTransformHandlers:
     def batch_inference(
         self,
         inference_method: str,
-        input_cols: List[str],
-        expected_output_cols: List[str],
-        snowpark_input_cols: Optional[List[str]] = None,
+        input_cols: list[str],
+        expected_output_cols: list[str],
+        snowpark_input_cols: Optional[list[str]] = None,
         drop_input_cols: Optional[bool] = False,
         *args: Any,
         **kwargs: Any,
@@ -147,8 +147,8 @@ class PandasTransformHandlers:
 
     def score(
         self,
-        input_cols: List[str],
-        label_cols: List[str],
+        input_cols: list[str],
+        label_cols: list[str],
         sample_weight_col: Optional[str],
         *args: Any,
         **kwargs: Any,

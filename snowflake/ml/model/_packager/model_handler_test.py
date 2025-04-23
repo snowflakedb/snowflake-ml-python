@@ -2,7 +2,7 @@ import datetime
 
 from absl.testing import absltest
 
-from snowflake.ml._internal import env as snowml_env
+from snowflake.ml import version as snowml_version
 from snowflake.ml.model._packager import model_handler
 from snowflake.ml.test_utils import test_env_utils
 
@@ -18,7 +18,7 @@ class ModelHandlerTest(absltest.TestCase):
                 # Validate version
                 datetime.datetime.strptime(handler.HANDLER_VERSION, "%Y-%m-%d")
                 # Validate min snowpark ml version
-                if handler._MIN_SNOWPARK_ML_VERSION != snowml_env.VERSION:
+                if handler._MIN_SNOWPARK_ML_VERSION != snowml_version.VERSION:
                     self.assertIn(
                         handler._MIN_SNOWPARK_ML_VERSION,
                         test_env_utils.get_snowpark_ml_released_versions(),

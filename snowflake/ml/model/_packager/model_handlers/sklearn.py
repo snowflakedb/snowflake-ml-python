@@ -1,13 +1,13 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, Union, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
-from snowflake.ml._internal import type_utils
+from snowflake.ml._internal import env, type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
@@ -19,7 +19,6 @@ from snowflake.ml.model._packager.model_meta import (
 )
 from snowflake.ml.model._packager.model_task import model_task_utils
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
-from snowflake.ml.modeling._internal.constants import IN_ML_RUNTIME_ENV_VAR
 
 if TYPE_CHECKING:
     import sklearn.base
@@ -49,7 +48,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
     HANDLER_TYPE = "sklearn"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     DEFAULT_TARGET_METHODS = [
         "predict",
@@ -113,7 +112,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 raise ValueError("Sample input data is required to enable explainability.")
 
         # If this is a pipeline and we are in the container runtime, check for distributed estimator.
-        if os.getenv(IN_ML_RUNTIME_ENV_VAR) and isinstance(model, sklearn.pipeline.Pipeline):
+        if env.IN_ML_RUNTIME and isinstance(model, sklearn.pipeline.Pipeline):
             model = _unpack_container_runtime_pipeline(model)
 
         if not is_sub_model:
@@ -265,7 +264,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         def _create_custom_model(
             raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
                 signature: model_signature.ModelSignature,

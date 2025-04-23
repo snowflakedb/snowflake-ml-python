@@ -72,7 +72,6 @@ class Normalizer(base.BaseTransformer):
 
         This is a stateless transformer, so there is nothing to reset.
         """
-        pass
 
     def _fit(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> "Normalizer":
         """

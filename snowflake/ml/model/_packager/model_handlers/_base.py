@@ -1,6 +1,6 @@
 import os
 from abc import abstractmethod
-from typing import Dict, Generic, Optional, Protocol, Type, final
+from typing import Generic, Optional, Protocol, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -14,7 +14,7 @@ class _BaseModelHandlerProtocol(Protocol[model_types._ModelType]):
     HANDLER_TYPE: model_types.SupportedModelHandlerType
     HANDLER_VERSION: str
     _MIN_SNOWPARK_ML_VERSION: str
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]]
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]]
 
     @classmethod
     @abstractmethod

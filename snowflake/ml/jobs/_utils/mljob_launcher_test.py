@@ -3,7 +3,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from absl.testing import absltest, parameterized
 
@@ -55,7 +55,7 @@ class MLJobLauncherTests(parameterized.TestCase):
         (0, {"status": "success from another function", "value": 0}),
         (None, {"status": "success from another function", "value": 0}),
     )
-    def test_run_script_with_function_and_args(self, arg_value: Optional[int], expected: Dict[str, Any]) -> None:
+    def test_run_script_with_function_and_args(self, arg_value: Optional[int], expected: dict[str, Any]) -> None:
         # Test running a script with a function that takes arguments
         args = [] if arg_value is None else [arg_value]
         result = mljob_launcher.main(self.function_script, *args, script_main_func="another_function")
@@ -82,14 +82,14 @@ class MLJobLauncherTests(parameterized.TestCase):
 
             # Check serialized results
             with open(self.result_path, "rb") as f:
-                pickled_result = pickle.load(f)
+                pickled_result: dict[str, Any] = pickle.load(f)
             pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
             self.assertTrue(pickled_result_obj.success)
             assert isinstance(pickled_result_obj.result, dict)
             self.assertEqual(pickled_result_obj.result["value"], 42)
 
             with open(self.result_json_path) as f:
-                json_result = json.load(f)
+                json_result: dict[str, Any] = json.load(f)
             json_result_obj = interop_utils.ExecutionResult.from_dict(json_result)
             self.assertTrue(json_result_obj.success)
             assert isinstance(json_result_obj.result, dict)
@@ -100,22 +100,30 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_main_error(self) -> None:
         # Test the main function with script that raises an error
         with self.assertRaises(RuntimeError):
-            mljob_launcher.main(self.error_script, [])
+            mljob_launcher.main(self.error_script)
 
         # Check serialized error results
         with open(self.result_path, "rb") as f:
-            pickled_result = pickle.load(f)
+            pickled_result: dict[str, Any] = pickle.load(f)
         pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
         self.assertFalse(pickled_result_obj.success)
         self.assertEqual(type(pickled_result_obj.exception), RuntimeError)
         self.assertIn("Test error from script", str(pickled_result_obj.exception))
+        pickled_exc_tb = pickled_result.get("exc_tb")
+        self.assertIsInstance(pickled_exc_tb, str)
+        self.assertNotIn("mljob_launcher.py", pickled_exc_tb)
+        self.assertNotIn("runpy", pickled_exc_tb)
 
         with open(self.result_json_path) as f:
-            json_result = json.load(f)
+            json_result: dict[str, Any] = json.load(f)
         json_result_obj = interop_utils.ExecutionResult.from_dict(json_result)
         self.assertFalse(json_result_obj.success)
         self.assertEqual(type(json_result_obj.exception), RuntimeError)
         self.assertIn("Test error from script", str(json_result_obj.exception))
+        json_exc_tb = json_result.get("exc_tb")
+        self.assertIsInstance(json_exc_tb, str)
+        self.assertNotIn("mljob_launcher.py", json_exc_tb)
+        self.assertNotIn("runpy", json_exc_tb)
 
     def test_function_error(self) -> None:
         # Test error in a function
@@ -137,7 +145,7 @@ class MLJobLauncherTests(parameterized.TestCase):
 
         # Test handling of complex, non-JSON-serializable results
         try:
-            result_obj = mljob_launcher.main(self.complex_script, [])
+            result_obj = mljob_launcher.main(self.complex_script)
             self.assertTrue(result_obj.success)
 
             # Check serialized results - pickle should handle complex objects

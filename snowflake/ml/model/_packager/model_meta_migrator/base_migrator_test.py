@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 from absl.testing import absltest
 
@@ -11,7 +11,7 @@ class MetaMigrator_1(base_migrator.BaseModelMetaMigrator):
     target_version = "version_1"
 
     @staticmethod
-    def upgrade(original_meta_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def upgrade(original_meta_dict: dict[str, Any]) -> dict[str, Any]:
         return original_meta_dict
 
 
@@ -20,13 +20,13 @@ class MetaMigrator_2(base_migrator.BaseModelMetaMigrator):
     target_version = "version_2"
 
     @staticmethod
-    def upgrade(original_meta_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def upgrade(original_meta_dict: dict[str, Any]) -> dict[str, Any]:
         raise migrator_utils.UnableToUpgradeError(last_supported_version="1.0.9")
 
 
 class BaseMigratorTest(absltest.TestCase):
     def test_model_meta_dependencies_no_packages(self) -> None:
-        bad_meta: Dict[str, Any] = {}
+        bad_meta: dict[str, Any] = {}
         migrator_1 = MetaMigrator_1()
         with self.assertRaisesRegex(
             NotImplementedError,

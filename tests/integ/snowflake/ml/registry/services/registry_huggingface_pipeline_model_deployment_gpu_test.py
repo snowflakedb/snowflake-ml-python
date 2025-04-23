@@ -1,6 +1,6 @@
 import os
 import tempfile
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -30,7 +30,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
     )
     def test_text_generation(
         self,
-        pip_requirements: Optional[List[str]],
+        pip_requirements: Optional[list[str]],
     ) -> None:
         import transformers
 

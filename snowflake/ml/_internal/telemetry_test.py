@@ -3,7 +3,7 @@ import pickle
 import threading
 import time
 import traceback
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Optional
 from unittest import mock
 
 import cloudpickle
@@ -11,6 +11,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake import connector
 from snowflake.connector import cursor, telemetry as connector_telemetry
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env, telemetry as utils_telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.snowpark import dataframe, session
@@ -19,7 +20,7 @@ from snowflake.snowpark._internal import error_message, server_connection
 _SOURCE = env.SOURCE
 _PROJECT = "Project"
 _SUBPROJECT = "Subproject"
-_VERSION = env.VERSION
+_VERSION = snowml_version.VERSION
 _PYTHON_VERSION = env.PYTHON_VERSION
 _OS = env.OS
 
@@ -209,14 +210,14 @@ class TelemetryTest(parameterized.TestCase):
         """Test get_function_usage_statement_params."""
 
         class DummyObject:
-            def foo(self, param: Any) -> Dict[str, Any]:
+            def foo(self, param: Any) -> dict[str, Any]:
                 frame = inspect.currentframe()
                 func_name = (
                     utils_telemetry.get_statement_params_full_func_name(frame, "DummyObject")
                     if frame
                     else "DummyObject.foo"
                 )
-                statement_params: Dict[str, Any] = utils_telemetry.get_function_usage_statement_params(
+                statement_params: dict[str, Any] = utils_telemetry.get_function_usage_statement_params(
                     project=_PROJECT,
                     subproject=_SUBPROJECT,
                     function_name=func_name,
@@ -299,7 +300,7 @@ class TelemetryTest(parameterized.TestCase):
         {"params": {"default_stmt_params": {"default": 0}}},
     )
     @mock.patch("snowflake.snowpark.session._get_active_sessions")
-    def test_add_stmt_params_to_df(self, mock_get_active_sessions: mock.MagicMock, params: Dict[str, Any]) -> None:
+    def test_add_stmt_params_to_df(self, mock_get_active_sessions: mock.MagicMock, params: dict[str, Any]) -> None:
         mock_get_active_sessions.return_value = {self.mock_session}
 
         def extract_api_calls(captured: Any) -> Any:
@@ -317,7 +318,7 @@ class TelemetryTest(parameterized.TestCase):
                 api_calls_extractor=extract_api_calls,
                 custom_tags={"custom_tag": "tag"},
             )
-            def foo(self, default_stmt_params: Optional[Dict[str, Any]] = None) -> dataframe.DataFrame:
+            def foo(self, default_stmt_params: Optional[dict[str, Any]] = None) -> dataframe.DataFrame:
                 mock_df: dataframe.DataFrame = absltest.mock.MagicMock(spec=dataframe.DataFrame)
                 if default_stmt_params is not None:
                     mock_df._statement_params = default_stmt_params.copy()  # type: ignore[assignment]
@@ -548,7 +549,7 @@ class TelemetryTest(parameterized.TestCase):
         def test_sproc_no_statement_params() -> None:
             return None
 
-        def test_sproc_statement_params(statement_params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        def test_sproc_statement_params(statement_params: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
             return statement_params
 
         statement_params = {"test": "test"}
@@ -747,7 +748,7 @@ class TelemetryTest(parameterized.TestCase):
         self.assertNotIn("snowml_telemetry_type", call_statement_params[1].keys())
 
     def _do_internal_statement_params_test(
-        self, func: Callable[[session.Session], None], expected_params: Optional[Dict[str, str]] = None
+        self, func: Callable[[session.Session], None], expected_params: Optional[dict[str, str]] = None
     ) -> None:
         # Set up a real Session with mocking starting at SnowflakeConnection
         mock_cursor = absltest.mock.MagicMock(spec=cursor.SnowflakeCursor)

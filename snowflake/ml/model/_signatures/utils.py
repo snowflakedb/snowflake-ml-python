@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -12,7 +12,7 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml.model._signatures import core
 
 
-def convert_list_to_ndarray(data: List[Any]) -> npt.NDArray[Any]:
+def convert_list_to_ndarray(data: list[Any]) -> npt.NDArray[Any]:
     """Create a numpy array from list or nested list. Avoid ragged list and unaligned types.
 
     Args:
@@ -49,7 +49,7 @@ def convert_list_to_ndarray(data: List[Any]) -> npt.NDArray[Any]:
 
 
 def rename_features(
-    features: Sequence[core.BaseFeatureSpec], feature_names: Optional[List[str]] = None
+    features: Sequence[core.BaseFeatureSpec], feature_names: Optional[list[str]] = None
 ) -> Sequence[core.BaseFeatureSpec]:
     """It renames the feature in features provided optional feature names.
 
@@ -104,7 +104,7 @@ def rename_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec
     return data
 
 
-def huggingface_pipeline_signature_auto_infer(task: str, params: Dict[str, Any]) -> Optional[core.ModelSignature]:
+def huggingface_pipeline_signature_auto_infer(task: str, params: dict[str, Any]) -> Optional[core.ModelSignature]:
     # Text
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ConversationalPipeline
@@ -351,7 +351,7 @@ def series_dropna(series: pd.Series) -> pd.Series:
     return series.dropna(inplace=False).reset_index(drop=True).convert_dtypes()
 
 
-def infer_list(name: str, data: List[Any]) -> core.BaseFeatureSpec:
+def infer_list(name: str, data: list[Any]) -> core.BaseFeatureSpec:
     """Infer the feature specification from a list.
 
     Args:
@@ -382,7 +382,7 @@ def infer_list(name: str, data: List[Any]) -> core.BaseFeatureSpec:
     return core.FeatureSpec(name=name, dtype=arr_dtype, shape=arr.shape)
 
 
-def infer_dict(name: str, data: Dict[str, Any]) -> core.FeatureGroupSpec:
+def infer_dict(name: str, data: dict[str, Any]) -> core.FeatureGroupSpec:
     """Infer the feature specification from a dictionary.
 
     Args:

@@ -1,23 +1,10 @@
-load("//bazel:py_rules.bzl", "py_genrule", "py_library", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-GEN_RUNTIME_REQ_CMD = "$(location //bazel/requirements:parse_and_generate_requirements) $(location //:requirements.yml) --schema $(location //bazel/requirements:requirements.schema.json) --mode version_requirements --format python > $@"
-
-py_genrule(
-    name = "gen_snowml_inference_alternative_requirements",
-    srcs = [
-        "//:requirements.yml",
-        "//bazel/requirements:requirements.schema.json",
-    ],
-    outs = ["_snowml_inference_alternative_requirements.py"],
-    cmd = GEN_RUNTIME_REQ_CMD,
-    tools = ["//bazel/requirements:parse_and_generate_requirements"],
-)
-
 py_library(
     name = "_snowml_inference_alternative_requirements",
-    srcs = [":gen_snowml_inference_alternative_requirements"],
+    srcs = [":_snowml_inference_alternative_requirements.py"],
 )
 
 py_library(

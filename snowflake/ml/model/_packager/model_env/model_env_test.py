@@ -9,6 +9,7 @@ import yaml
 from absl.testing import absltest
 from packaging import requirements, version
 
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.model._packager.model_env import model_env
 
@@ -21,7 +22,7 @@ class ModelEnvTest(absltest.TestCase):
         py_ver = version.parse(snowml_env.PYTHON_VERSION)
         self.assertEqual(env.python_version, f"{py_ver.major}.{py_ver.minor}")
         self.assertIsNone(env.cuda_version)
-        self.assertEqual(env.snowpark_ml_version, snowml_env.VERSION)
+        self.assertEqual(env.snowpark_ml_version, snowml_version.VERSION)
 
     def test_conda_dependencies(self) -> None:
         env = model_env.ModelEnv()
@@ -176,14 +177,14 @@ class ModelEnvTest(absltest.TestCase):
         env = model_env.ModelEnv(prefer_pip=True)
         env.include_if_absent([model_env.ModelDependency(requirement="channel::some-package", pip_name="some-package")])
         self.assertListEqual(env.conda_dependencies, [])
-        self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+        self.assertListEqual(env.pip_requirements, ["some-package"])
 
         env = model_env.ModelEnv(prefer_pip=True)
         env.conda_dependencies = ["channel::some-package==1.0.1"]
         env.include_if_absent(
             [model_env.ModelDependency(requirement="another-package>=1.0,<2", pip_name="some-package")]
         )
-        self.assertListEqual(env.conda_dependencies, ["another-package<2,>=1.0", "some-package==1.0.1"])
+        self.assertListEqual(env.conda_dependencies, ["another-package<2,>=1.0", "channel::some-package==1.0.1"])
         self.assertListEqual(env.pip_requirements, [])
 
     def test_include_if_absent_check_local(self) -> None:
@@ -818,7 +819,16 @@ class ModelEnvTest(absltest.TestCase):
 
         env.artifact_repository_map = {"channel": "db.sc.repo"}
 
-        self.assertListEqual(env.artifact_repository_map, {"channel": "db.sc.repo"})
+        self.assertDictEqual(env.artifact_repository_map, {"channel": "db.sc.repo"})
+
+    def test_resource_constraint(self) -> None:
+        env = model_env.ModelEnv()
+        env.conda_dependencies = ["somepackage==1.0.0,!=1.1"]
+        env.pip_requirements = ["pip-packages==3"]
+
+        env.resource_constraint = {"architecture": "x86"}
+
+        self.assertDictEqual(env.resource_constraint, {"architecture": "x86"})
 
     def test_load_from_conda_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -978,6 +988,8 @@ class ModelEnvTest(absltest.TestCase):
                     "python_version": "3.10",
                     "cuda_version": "11.7",
                     "snowpark_ml_version": "1.1.0",
+                    "artifact_repository_map": {},
+                    "resource_constraint": {},
                 },
             )
 
@@ -1011,6 +1023,8 @@ class ModelEnvTest(absltest.TestCase):
                     "python_version": "3.10",
                     "cuda_version": "11.7",
                     "snowpark_ml_version": "1.1.0",
+                    "artifact_repository_map": {},
+                    "resource_constraint": {},
                 },
             )
 
@@ -1091,7 +1105,7 @@ class ModelEnvTest(absltest.TestCase):
             env.pip_requirements = ["pip-package<1.2,>=1.0.1"]
             env.python_version = "3.10.2"
             env.cuda_version = "11.7.1"
-            env.snowpark_ml_version = f"{snowml_env.VERSION}+abcdef"
+            env.snowpark_ml_version = f"{snowml_version.VERSION}+abcdef"
 
             self.assertListEqual(env.validate_with_local_env(check_snowpark_ml_version=True), [])
             mock_validate_py_runtime_version.assert_called_once_with("3.10.2")
@@ -1126,6 +1140,24 @@ class ModelEnvTest(absltest.TestCase):
                     mock.call(requirements.Requirement("pip-package<1.2,>=1.0.1")),
                 ]
             )
+
+    def test_add_local_env_version(self) -> None:
+        with mock.patch.object(
+            env_utils, "get_local_installed_version_of_pip_package"
+        ) as mock_get_local_installed_version_of_pip_package:
+            mock_get_local_installed_version_of_pip_package.return_value = requirements.Requirement(
+                "pip-package==1.6.2"
+            )
+            env = model_env.ModelEnv()
+            env.conda_dependencies = ["pip_package"]
+            env.pip_requirements = ["pip-package"]
+
+            env2 = model_env.ModelEnv()
+            env2.conda_dependencies = ["channel::pip-package"]
+
+        self.assertEqual(env.pip_requirements, ["pip-package==1.6.2"])
+        self.assertEqual(env.conda_dependencies, ["pip-package==1.6.2"])
+        self.assertEqual(env2.conda_dependencies, ["channel::pip-package==1.6.2"])
 
 
 if __name__ == "__main__":

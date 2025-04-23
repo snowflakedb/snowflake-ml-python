@@ -8,16 +8,9 @@ py_library(
 )
 
 py_library(
-    name = "constants",
-    srcs = ["constants.py"],
-    deps = [],
-)
-
-py_library(
     name = "model_transformer_builder",
     srcs = ["model_transformer_builder.py"],
     deps = [
-        ":constants",
         ":transformer_protocols",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/modeling/_internal:estimator_utils",
@@ -31,7 +24,6 @@ py_test(
     name = "model_transformer_builder_test",
     srcs = ["model_transformer_builder_test.py"],
     deps = [
-        ":constants",
         ":estimator_utils",
         ":model_transformer_builder",
         ":transformer_protocols",
@@ -90,7 +82,6 @@ py_library(
     name = "model_trainer_builder",
     srcs = ["model_trainer_builder.py"],
     deps = [
-        ":constants",
         ":estimator_utils",
         ":model_trainer",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",
@@ -104,7 +95,6 @@ py_test(
     name = "model_trainer_builder_test",
     srcs = ["model_trainer_builder_test.py"],
     deps = [
-        ":constants",
         ":model_trainer",
         ":model_trainer_builder",
         "//snowflake/ml/modeling/_internal/local_implementations:pandas_trainer",

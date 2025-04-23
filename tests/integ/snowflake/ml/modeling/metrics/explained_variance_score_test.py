@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -62,7 +62,7 @@ class ExplainedVarianceScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]
@@ -87,7 +87,7 @@ class ExplainedVarianceScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"multioutput": ["raw_values", "uniform_average", [0.2, 1.0, 1.66]]}},
     )
-    def test_multioutput(self, params: Dict[str, Any]) -> None:
+    def test_multioutput(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _MULTILABEL_DATA, _MULTILABEL_SCHEMA)
 
         for multioutput in params["multioutput"]:
@@ -115,7 +115,7 @@ class ExplainedVarianceScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_force_finite(self, params: Dict[str, Any]) -> None:
+    def test_force_finite(self, params: dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]

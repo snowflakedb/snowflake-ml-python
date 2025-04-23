@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import numbers
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -214,7 +214,7 @@ class OneHotEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, List[type_utils.LiteralNDArrayType], Dict[str, type_utils.LiteralNDArrayType]] = "auto",
+        categories: Union[str, list[type_utils.LiteralNDArrayType], dict[str, type_utils.LiteralNDArrayType]] = "auto",
         drop: Optional[Union[str, npt.ArrayLike]] = None,
         sparse: bool = False,
         handle_unknown: str = "error",
@@ -238,23 +238,23 @@ class OneHotEncoder(base.BaseTransformer):
         ) or self.min_frequency is not None
 
         # Fit state
-        self.categories_: Dict[str, type_utils.LiteralNDArrayType] = {}
-        self._categories_list: List[type_utils.LiteralNDArrayType] = []
+        self.categories_: dict[str, type_utils.LiteralNDArrayType] = {}
+        self._categories_list: list[type_utils.LiteralNDArrayType] = []
         self.drop_idx_: Optional[npt.NDArray[np.int_]] = None
         self._drop_idx_after_grouping: Optional[npt.NDArray[np.int_]] = None
-        self._n_features_outs: List[int] = []
-        self._snowpark_cols: Dict[str, List[str]] = dict()
+        self._n_features_outs: list[int] = []
+        self._snowpark_cols: dict[str, list[str]] = dict()
 
         # Fit state if output columns are set before fitting
-        self._dense_output_cols_mappings: Dict[str, List[str]] = {}
-        self._inferred_output_cols: List[str] = []
+        self._dense_output_cols_mappings: dict[str, list[str]] = {}
+        self._inferred_output_cols: list[str] = []
 
         self.set_input_cols(input_cols)
         self.set_output_cols(output_cols)
         self.set_passthrough_cols(passthrough_cols)
 
     @property
-    def infrequent_categories_(self) -> List[Optional[type_utils.LiteralNDArrayType]]:
+    def infrequent_categories_(self) -> list[Optional[type_utils.LiteralNDArrayType]]:
         """Infrequent categories for each feature."""
         # raises an AttributeError if `_infrequent_indices` is not defined
         infrequent_indices = self._infrequent_indices
@@ -329,7 +329,7 @@ class OneHotEncoder(base.BaseTransformer):
             self._drop_idx_after_grouping = sklearn_encoder.drop_idx_
         self._n_features_outs = sklearn_encoder._n_features_outs
 
-        _state_pandas_counts: List[pd.DataFrame] = []
+        _state_pandas_counts: list[pd.DataFrame] = []
         for idx, input_col in enumerate(self.input_cols):
             self.categories_[input_col] = self._categories_list[idx]
             _column_counts = (
@@ -362,7 +362,7 @@ class OneHotEncoder(base.BaseTransformer):
         self._n_features_outs = self._compute_n_features_outs()
         self._update_categories_state()
 
-    def _fit_category_state(self, dataset: snowpark.DataFrame, return_counts: bool) -> Dict[str, Any]:
+    def _fit_category_state(self, dataset: snowpark.DataFrame, return_counts: bool) -> dict[str, Any]:
         """
         Get the number of samples, categories and (optional) category counts of dataset.
         Fitted categories are assigned to the object.
@@ -552,7 +552,7 @@ class OneHotEncoder(base.BaseTransformer):
             categories_pandas = categories_pandas.rename(columns={_STATE: categories_col})
 
             # {column_name: ndarray([category])}
-            categories: Dict[str, type_utils.LiteralNDArrayType] = categories_pandas.set_index(_COLUMN_NAME).to_dict()[
+            categories: dict[str, type_utils.LiteralNDArrayType] = categories_pandas.set_index(_COLUMN_NAME).to_dict()[
                 categories_col
             ]
             # Giving the original type back to categories.
@@ -769,7 +769,7 @@ class OneHotEncoder(base.BaseTransformer):
 
         state_pandas = self._state_pandas
 
-        def map_encoded_value(row: pd.Series) -> Dict[str, Any]:
+        def map_encoded_value(row: pd.Series) -> dict[str, Any]:
             n_features_out = row[_N_FEATURES_OUT]
             encoding = row[_ENCODING]
             encoded_value = {str(encoding): 1, "array_length": n_features_out}
@@ -836,7 +836,7 @@ class OneHotEncoder(base.BaseTransformer):
         """
         state_pandas = self._state_pandas
 
-        def map_encoded_value(row: pd.Series) -> List[int]:
+        def map_encoded_value(row: pd.Series) -> list[int]:
             n_features_out = row[_N_FEATURES_OUT]
             encoding = row[_ENCODING]
             encoded_value = [0] * n_features_out
@@ -934,7 +934,7 @@ class OneHotEncoder(base.BaseTransformer):
             packages=["numpy", "scikit-learn"],
             statement_params=telemetry.get_statement_params(base.PROJECT, base.SUBPROJECT, self.__class__.__name__),
         )
-        def one_hot_encoder_sparse_transform(data: pd.DataFrame) -> List[List[Optional[Dict[Any, Any]]]]:
+        def one_hot_encoder_sparse_transform(data: pd.DataFrame) -> list[list[Optional[dict[Any, Any]]]]:
             data = data.replace({np.nan: None})  # fill NA with None as represented in `categories_`
             transformed_csr = encoder_sklearn.transform(data)
             transformed_coo = transformed_csr.tocoo()
@@ -943,7 +943,7 @@ class OneHotEncoder(base.BaseTransformer):
             transformed_vals = []
             for _, row in data.iterrows():
                 base_encoding = 0
-                row_transformed_vals: List[Optional[Dict[Any, Any]]] = []
+                row_transformed_vals: list[Optional[dict[Any, Any]]] = []
                 for col_idx, val in row.items():
                     if val in encoder_sklearn.categories_[col_idx] or encoder_sklearn.handle_unknown != "ignore":
                         if col_idx > 0:
@@ -1101,7 +1101,7 @@ class OneHotEncoder(base.BaseTransformer):
     def _handle_unknown_in_transform(
         self,
         transformed_dataset: snowpark.DataFrame,
-        input_cols: Optional[List[str]] = None,
+        input_cols: Optional[list[str]] = None,
     ) -> snowpark.DataFrame:
         """
         Handle unknown values in the transformed dataset.
@@ -1206,7 +1206,7 @@ class OneHotEncoder(base.BaseTransformer):
         if not self._infrequent_enabled:
             return drop_idx
 
-        default_to_infrequent: Optional[List[int]] = self._default_to_infrequent_mappings[feature_idx]
+        default_to_infrequent: Optional[list[int]] = self._default_to_infrequent_mappings[feature_idx]
         if default_to_infrequent is None:
             return drop_idx
 
@@ -1346,7 +1346,7 @@ class OneHotEncoder(base.BaseTransformer):
             self.drop_idx_ = np.asarray(drop_idx_, dtype=object)
 
     def _fit_infrequent_category_mapping(
-        self, n_samples: int, category_counts: Dict[str, Dict[str, Dict[str, int]]]
+        self, n_samples: int, category_counts: dict[str, dict[str, dict[str, int]]]
     ) -> None:
         """
         Fit infrequent categories.
@@ -1442,7 +1442,7 @@ class OneHotEncoder(base.BaseTransformer):
         output = np.flatnonzero(infrequent_mask)
         return output if output.size > 0 else None
 
-    def _compute_n_features_outs(self) -> List[int]:
+    def _compute_n_features_outs(self) -> list[int]:
         """Compute the n_features_out for each input feature."""
         output = [len(cats) for cats in self._categories_list]
 
@@ -1463,7 +1463,7 @@ class OneHotEncoder(base.BaseTransformer):
 
         return output
 
-    def get_output_cols(self) -> List[str]:
+    def get_output_cols(self) -> list[str]:
         """
         Output columns getter.
 
@@ -1472,7 +1472,7 @@ class OneHotEncoder(base.BaseTransformer):
         """
         return self._inferred_output_cols
 
-    def _get_inferred_output_cols(self) -> List[str]:
+    def _get_inferred_output_cols(self) -> list[str]:
         """
         Get output column names meeting Snowflake requirements.
         Only useful when fitting a pandas dataframe.
@@ -1556,11 +1556,11 @@ class OneHotEncoder(base.BaseTransformer):
         sklearn_initial_keywords: Optional[Union[str, Iterable[str]]] = None,
         sklearn_unused_keywords: Optional[Union[str, Iterable[str]]] = None,
         snowml_only_keywords: Optional[Union[str, Iterable[str]]] = None,
-        sklearn_added_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-        sklearn_added_kwarg_value_to_version_dict: Optional[Dict[str, Dict[str, str]]] = None,
-        sklearn_deprecated_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-        sklearn_removed_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        sklearn_added_keyword_to_version_dict: Optional[dict[str, str]] = None,
+        sklearn_added_kwarg_value_to_version_dict: Optional[dict[str, dict[str, str]]] = None,
+        sklearn_deprecated_keyword_to_version_dict: Optional[dict[str, str]] = None,
+        sklearn_removed_keyword_to_version_dict: Optional[dict[str, str]] = None,
+    ) -> dict[str, Any]:
         """Modified snowflake.ml.framework.base.Base.get_sklearn_args with `sparse` and `sparse_output` handling."""
         default_sklearn_args = _utils.get_default_args(default_sklearn_obj.__class__.__init__)
         given_args = self.get_params()
@@ -1580,7 +1580,7 @@ class OneHotEncoder(base.BaseTransformer):
         if version.parse(sklearn_version) >= version.parse(_SKLEARN_DEPRECATED_KEYWORD_TO_VERSION_DICT["sparse"]):
             given_args["sparse_output"] = given_args.pop("sparse")
 
-        sklearn_args: Dict[str, Any] = _utils.get_filtered_valid_sklearn_args(
+        sklearn_args: dict[str, Any] = _utils.get_filtered_valid_sklearn_args(
             args=given_args,
             default_sklearn_args=default_sklearn_args,
             sklearn_initial_keywords=sklearn_initial_keywords,

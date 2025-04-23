@@ -1,7 +1,7 @@
 import math
 from contextlib import contextmanager
 from timeit import default_timer
-from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
+from typing import Any, Callable, Generator, Iterable, Optional
 
 import snowflake.snowpark.functions as F
 from snowflake import snowpark
@@ -17,17 +17,17 @@ def timer() -> Generator[Callable[[], float], None, None]:
     yield lambda: elapser()
 
 
-def _flatten(L: Iterable[List[Any]]) -> List[Any]:
+def _flatten(L: Iterable[list[Any]]) -> list[Any]:
     return [val for sublist in L for val in sublist]
 
 
 def map_dataframe_by_column(
     df: snowpark.DataFrame,
-    cols: List[str],
-    map_func: Callable[[snowpark.DataFrame, List[str]], snowpark.DataFrame],
+    cols: list[str],
+    map_func: Callable[[snowpark.DataFrame, list[str]], snowpark.DataFrame],
     partition_size: int,
-    statement_params: Optional[Dict[str, Any]] = None,
-) -> List[List[Any]]:
+    statement_params: Optional[dict[str, Any]] = None,
+) -> list[list[Any]]:
     """Applies the `map_func` to the input DataFrame by parallelizing it over subsets of the column.
 
     Because the return results are materialized as Python lists *in memory*, this method should
@@ -84,7 +84,7 @@ def map_dataframe_by_column(
             unioned_df = mapped_df if unioned_df is None else unioned_df.union_all(mapped_df)
 
     # Store results in a list of size |n_partitions| x |n_rows| x |n_output_cols|
-    all_results: List[List[List[Any]]] = [[] for _ in range(n_partitions - 1)]
+    all_results: list[list[list[Any]]] = [[] for _ in range(n_partitions - 1)]
 
     # Collect the results of the first n-1 partitions, removing the partition_id column
     unioned_result = unioned_df.collect(statement_params=statement_params) if unioned_df is not None else []

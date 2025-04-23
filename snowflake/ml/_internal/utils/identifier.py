@@ -1,5 +1,5 @@
 import re
-from typing import Any, List, Optional, Tuple, Union, overload
+from typing import Any, Optional, Union, overload
 
 from snowflake.snowpark._internal.analyzer import analyzer_utils
 
@@ -112,7 +112,7 @@ def get_inferred_name(name: str) -> str:
     return escaped_id
 
 
-def concat_names(names: List[str]) -> str:
+def concat_names(names: list[str]) -> str:
     """Concatenates `names` to form one valid id.
 
 
@@ -142,7 +142,7 @@ def rename_to_valid_snowflake_identifier(name: str) -> str:
 
 def parse_schema_level_object_identifier(
     object_name: str,
-) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any]]:
+) -> tuple[Union[str, Any], Union[str, Any], Union[str, Any]]:
     """Parse a string which starts with schema level object.
 
     Args:
@@ -172,7 +172,7 @@ def parse_schema_level_object_identifier(
 
 def parse_snowflake_stage_path(
     path: str,
-) -> Tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:
+) -> tuple[Union[str, Any], Union[str, Any], Union[str, Any], Union[str, Any]]:
     """Parse a string which represents a snowflake stage path.
 
     Args:
@@ -260,11 +260,11 @@ def get_unescaped_names(ids: str) -> str:
 
 
 @overload
-def get_unescaped_names(ids: List[str]) -> List[str]:
+def get_unescaped_names(ids: list[str]) -> list[str]:
     ...
 
 
-def get_unescaped_names(ids: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
+def get_unescaped_names(ids: Optional[Union[str, list[str]]]) -> Optional[Union[str, list[str]]]:
     """Given a user provided identifier(s), this method will compute the equivalent column name identifier(s) in the
     response pandas dataframe(i.e., in the response of snowpark_df.to_pandas()) using the rules defined here
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.
@@ -308,11 +308,11 @@ def get_inferred_names(names: str) -> str:
 
 
 @overload
-def get_inferred_names(names: List[str]) -> List[str]:
+def get_inferred_names(names: list[str]) -> list[str]:
     ...
 
 
-def get_inferred_names(names: Optional[Union[str, List[str]]]) -> Optional[Union[str, List[str]]]:
+def get_inferred_names(names: Optional[Union[str, list[str]]]) -> Optional[Union[str, list[str]]]:
     """Given a user provided *string(s)*, this method will compute the equivalent column name identifier(s)
     in case of column name contains special characters, and maintains case-sensitivity
     https://docs.snowflake.com/en/sql-reference/identifiers-syntax.

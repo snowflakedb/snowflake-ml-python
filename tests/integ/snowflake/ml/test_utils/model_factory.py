@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import TYPE_CHECKING, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import inflection
 import numpy as np
@@ -33,7 +33,7 @@ class DEVICE(Enum):
 
 class ModelFactory:
     @staticmethod
-    def prepare_sklearn_model() -> Tuple[svm.SVC, npt.ArrayLike, npt.ArrayLike]:
+    def prepare_sklearn_model() -> tuple[svm.SVC, npt.ArrayLike, npt.ArrayLike]:
         digits = datasets.load_digits()
         target_digit = 6
         num_training_examples = 10
@@ -42,7 +42,7 @@ class ModelFactory:
 
         clf = svm.SVC(gamma=svc_gamma, C=svc_C, probability=True)
 
-        def one_vs_all(dataset: npt.NDArray[np.float64], digit: int) -> List[bool]:
+        def one_vs_all(dataset: npt.NDArray[np.float64], digit: int) -> list[bool]:
             return [x == digit for x in dataset]
 
         # Train a classifier using num_training_examples and use the last 100 examples for test.
@@ -56,7 +56,7 @@ class ModelFactory:
         return clf, test_features, test_labels
 
     @staticmethod
-    def prepare_xgboost_model() -> Tuple[xgboost.XGBRegressor, pd.DataFrame, pd.DataFrame]:
+    def prepare_xgboost_model() -> tuple[xgboost.XGBRegressor, pd.DataFrame, pd.DataFrame]:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -67,7 +67,7 @@ class ModelFactory:
         return regressor, cal_X_test, cal_y_test
 
     @staticmethod
-    def prepare_snowml_model_xgb() -> Tuple[XGBClassifier, pd.DataFrame, pd.DataFrame]:
+    def prepare_snowml_model_xgb() -> tuple[XGBClassifier, pd.DataFrame, pd.DataFrame]:
         """Prepare SnowML XGBClassifier model.
 
         Returns:
@@ -92,7 +92,7 @@ class ModelFactory:
         return (clf_xgb, df.drop(columns=label_cols).head(10), df)
 
     @staticmethod
-    def prepare_snowml_pipeline(session: Session) -> Tuple[Pipeline, DataFrame]:
+    def prepare_snowml_pipeline(session: Session) -> tuple[Pipeline, DataFrame]:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -151,7 +151,7 @@ class ModelFactory:
         return pipeline, iris_df.drop(label_cols).limit(10)
 
     @staticmethod
-    def prepare_snowml_model_logistic() -> Tuple[LogisticRegression, pd.DataFrame]:
+    def prepare_snowml_model_logistic() -> tuple[LogisticRegression, pd.DataFrame]:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -167,7 +167,7 @@ class ModelFactory:
         return estimator, df.drop(columns=label_cols).head(10)
 
     @staticmethod
-    def prepare_snowml_model_gmm() -> Tuple[GaussianMixture, pd.DataFrame, pd.DataFrame]:
+    def prepare_snowml_model_gmm() -> tuple[GaussianMixture, pd.DataFrame, pd.DataFrame]:
         iris = datasets.load_iris()
         # For an unsupervised learning model, there is no need for a target column.
         df = pd.DataFrame(data=np.c_[iris["data"]], columns=iris["feature_names"])
@@ -181,7 +181,7 @@ class ModelFactory:
         return estimator, df.head(10), df
 
     @staticmethod
-    def prepare_gpt2_model(local_cache_dir: Optional[str] = None) -> Tuple[custom_model.CustomModel, pd.DataFrame]:
+    def prepare_gpt2_model(local_cache_dir: Optional[str] = None) -> tuple[custom_model.CustomModel, pd.DataFrame]:
         """
         Pretrained GPT2 model from huggingface.
         """
@@ -223,7 +223,7 @@ class ModelFactory:
     @staticmethod
     def prepare_torch_model(
         dtype: "torch.dtype", force_remote_gpu_inference: bool = False
-    ) -> Tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
+    ) -> tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
         import torch
 
         class TorchModel(torch.nn.Module):
@@ -269,7 +269,7 @@ class ModelFactory:
     @staticmethod
     def prepare_jittable_torch_model(
         dtype: "torch.dtype", force_remote_gpu_inference: bool = False
-    ) -> Tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
+    ) -> tuple["torch.nn.Module", "torch.Tensor", "torch.Tensor"]:
         import torch
 
         class TorchModel(torch.nn.Module):
@@ -302,7 +302,7 @@ class ModelFactory:
         return model, data_x, data_y
 
     @staticmethod
-    def prepare_tf_model() -> Tuple["tf.keras.Model", "tf.Tensor"]:
+    def prepare_tf_model() -> tuple["tf.keras.Model", "tf.Tensor"]:
         import tensorflow as tf
 
         class SimpleModule(tf.Module):

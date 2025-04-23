@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Literal, Optional, Sequence
+from typing import TYPE_CHECKING, Literal, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -45,7 +45,7 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
     @staticmethod
     def infer_signature(data: "xgboost.DMatrix", role: Literal["input", "output"]) -> Sequence[core.BaseFeatureSpec]:
         feature_prefix = f"{XGBoostDMatrixHandler.FEATURE_PREFIX}_"
-        features: List[core.BaseFeatureSpec] = []
+        features: list[core.BaseFeatureSpec] = []
         role_prefix = (
             XGBoostDMatrixHandler.INPUT_PREFIX if role == "input" else XGBoostDMatrixHandler.OUTPUT_PREFIX
         ) + "_"

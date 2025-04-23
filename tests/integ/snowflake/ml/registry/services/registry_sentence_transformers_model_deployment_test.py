@@ -1,7 +1,7 @@
 import os
 import random
 import tempfile
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
@@ -34,7 +34,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
     )
     def test_sentence_transformers(
         self,
-        pip_requirements: Optional[List[str]],
+        pip_requirements: Optional[list[str]],
     ) -> None:
         import sentence_transformers
 

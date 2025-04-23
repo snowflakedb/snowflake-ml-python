@@ -1,5 +1,3 @@
-from typing import Set
-
 from snowflake import snowpark
 
 # Constants for privileges.
@@ -35,7 +33,7 @@ PRIVILEGE_OVERRIDE_SHARE_RESTRICTIONS = "OVERRIDE SHARE RESTRICTIONS"
 PRIVILEGE_PURCHASE_DATA_EXCHANGE_LISTING = "PURCHASE DATA EXCHANGE LISTING"
 
 
-def get_role_privileges(session: snowpark.Session, role_name: str) -> Set[str]:
+def get_role_privileges(session: snowpark.Session, role_name: str) -> set[str]:
     """Returns the set of privileges for the given role.
 
     Args:

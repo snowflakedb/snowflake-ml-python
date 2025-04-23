@@ -2,7 +2,7 @@ import copy
 import json
 import os
 import tempfile
-from typing import TYPE_CHECKING, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 from unittest import mock
 
 import numpy as np
@@ -94,7 +94,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         task: str,
         model_id: str,
         udf_test_input: pd.DataFrame,
-        options: Dict[str, object],
+        options: dict[str, object],
         check_pipeline_fn: Callable[["transformers.Pipeline", "transformers.Pipeline"], None],
         check_udf_res_fn: Callable[[pd.DataFrame], None],
         signature: Optional[model_signature.ModelSignature] = None,

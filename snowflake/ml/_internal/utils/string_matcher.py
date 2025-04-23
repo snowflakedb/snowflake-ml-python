@@ -1,5 +1,4 @@
 import re
-from typing import Dict, List
 
 import sqlparse
 from absl.logging import logging
@@ -42,7 +41,7 @@ class StringMatcherSql:
     def __init__(self, expected: str) -> None:
         self._expected_tokens = self._normalize(expected)
 
-    def _normalize(self, sql: str) -> List[sqlparse.sql.Token]:
+    def _normalize(self, sql: str) -> list[sqlparse.sql.Token]:
         """Normalize SQL query: strip comments, uppercase keywords and unquoted identifiers."""
         normalized_parsed_query = sqlparse.parse(
             sqlparse.format(sql.strip(), keyword_case="upper", identifier_case="upper", strip_comments=True)
@@ -53,7 +52,7 @@ class StringMatcherSql:
         )
         return [t for t in normalized_parsed_query[0].flatten()]
 
-    def _format_sql_tokens(self, tokens: List[sqlparse.sql.Token], diff: Dict[int, str]) -> str:
+    def _format_sql_tokens(self, tokens: list[sqlparse.sql.Token], diff: dict[int, str]) -> str:
         """Format SQL tokens into a string while highlighting differences."""
         output = []
         for ti in range(len(tokens)):

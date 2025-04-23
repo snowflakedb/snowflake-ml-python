@@ -3,7 +3,7 @@
 import inspect
 import warnings
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, Optional, Union
+from typing import Any, Callable, Iterable, Optional, Union
 
 import numpy as np
 import sklearn
@@ -62,7 +62,7 @@ class BasicStatistics(str, Enum):
     MODE = "mode"
 
 
-def get_default_args(func: Callable[..., None]) -> Dict[str, Any]:
+def get_default_args(func: Callable[..., None]) -> dict[str, Any]:
     signature = inspect.signature(func)
     return {k: v.default for k, v in signature.parameters.items() if v.default is not inspect.Parameter.empty}
 
@@ -72,16 +72,16 @@ def generate_value_with_prefix(prefix: str) -> str:
 
 
 def get_filtered_valid_sklearn_args(
-    args: Dict[str, Any],
-    default_sklearn_args: Dict[str, Any],
+    args: dict[str, Any],
+    default_sklearn_args: dict[str, Any],
     sklearn_initial_keywords: Optional[Union[str, Iterable[str]]] = None,
     sklearn_unused_keywords: Optional[Union[str, Iterable[str]]] = None,
     snowml_only_keywords: Optional[Union[str, Iterable[str]]] = None,
-    sklearn_added_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-    sklearn_added_kwarg_value_to_version_dict: Optional[Dict[str, Dict[str, str]]] = None,
-    sklearn_deprecated_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-    sklearn_removed_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
+    sklearn_added_keyword_to_version_dict: Optional[dict[str, str]] = None,
+    sklearn_added_kwarg_value_to_version_dict: Optional[dict[str, dict[str, str]]] = None,
+    sklearn_deprecated_keyword_to_version_dict: Optional[dict[str, str]] = None,
+    sklearn_removed_keyword_to_version_dict: Optional[dict[str, str]] = None,
+) -> dict[str, Any]:
     """
     Get valid sklearn keyword arguments with non-default values.
 
@@ -241,7 +241,7 @@ def to_native_format(obj: Any) -> Any:
     return obj.to_sklearn()
 
 
-def table_exists(session: snowpark.Session, table_name: str, statement_params: Dict[str, Any]) -> bool:
+def table_exists(session: snowpark.Session, table_name: str, statement_params: dict[str, Any]) -> bool:
     try:
         session.table(table_name).limit(0).collect(statement_params=statement_params)
         return True

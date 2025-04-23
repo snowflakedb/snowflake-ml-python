@@ -1,7 +1,7 @@
 import copy
 import pathlib
 import warnings
-from typing import List, Optional
+from typing import Optional
 
 from packaging import requirements
 
@@ -37,7 +37,7 @@ class ModelRuntime:
         self,
         name: str,
         env: model_env.ModelEnv,
-        imports: Optional[List[str]] = None,
+        imports: Optional[list[str]] = None,
         is_warehouse: bool = False,
         is_gpu: bool = False,
         loading_from_file: bool = False,
@@ -102,6 +102,7 @@ class ModelRuntime:
                 if env_dict.get("artifact_repository_map") is not None
                 else {},
             ),
+            resource_constraint=env_dict["resource_constraint"],
         )
 
     @staticmethod
@@ -116,6 +117,7 @@ class ModelRuntime:
         env.cuda_version = meta_env.cuda_version
         env.snowpark_ml_version = meta_env.snowpark_ml_version
         env.artifact_repository_map = meta_env.artifact_repository_map
+        env.resource_constraint = meta_env.resource_constraint
 
         conda_env_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["conda"])
         pip_requirements_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["pip"])

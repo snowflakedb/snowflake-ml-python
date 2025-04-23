@@ -2,10 +2,11 @@ import enum
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Callable, Dict, List, Optional, Union, overload
+from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
 
+from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
@@ -32,7 +33,7 @@ class ModelVersion(lineage_node.LineageNode):
     _service_ops: service_ops.ServiceOperator
     _model_name: sql_identifier.SqlIdentifier
     _version_name: sql_identifier.SqlIdentifier
-    _functions: List[model_manifest_schema.ModelFunctionInfo]
+    _functions: list[model_manifest_schema.ModelFunctionInfo]
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -152,7 +153,7 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def show_metrics(self) -> Dict[str, Any]:
+    def show_metrics(self) -> dict[str, Any]:
         """Show all metrics logged with the model version.
 
         Returns:
@@ -293,7 +294,7 @@ class ModelVersion(lineage_node.LineageNode):
             statement_params=statement_params,
         )
 
-    def _get_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
+    def _get_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -327,7 +328,7 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def show_functions(self) -> List[model_manifest_schema.ModelFunctionInfo]:
+    def show_functions(self) -> list[model_manifest_schema.ModelFunctionInfo]:
         """Show all functions information in a model version that is callable.
 
         Returns:
@@ -405,11 +406,6 @@ class ModelVersion(lineage_node.LineageNode):
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
 
-        Raises:
-            ValueError: When no method with the corresponding name is available.
-            ValueError: When there are more than 1 target methods available in the model but no function name specified.
-            ValueError: When the partition column is not a valid Snowflake identifier.
-
         Returns:
             The prediction data. It would be the same type dataframe as your input.
         """
@@ -422,29 +418,7 @@ class ModelVersion(lineage_node.LineageNode):
             # Partition column must be a valid identifier
             partition_column = sql_identifier.SqlIdentifier(partition_column)
 
-        functions: List[model_manifest_schema.ModelFunctionInfo] = self._functions
-
-        if function_name:
-            req_method_name = sql_identifier.SqlIdentifier(function_name).identifier()
-            find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
-                lambda method: method["name"] == req_method_name
-            )
-            target_function_info = next(
-                filter(find_method, functions),
-                None,
-            )
-            if target_function_info is None:
-                raise ValueError(
-                    f"There is no method with name {function_name} available in the model"
-                    f" {self.fully_qualified_model_name} version {self.version_name}"
-                )
-        elif len(functions) != 1:
-            raise ValueError(
-                f"There are more than 1 target methods available in the model {self.fully_qualified_model_name}"
-                f" version {self.version_name}. Please specify a `function_name` when calling the `run` method."
-            )
-        else:
-            target_function_info = functions[0]
+        target_function_info = self._get_function_info(function_name=function_name)
 
         if service_name:
             database_name_id, schema_name_id, service_name_id = sql_identifier.parse_fully_qualified_name(service_name)
@@ -474,6 +448,33 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
                 is_partitioned=target_function_info["is_partitioned"],
             )
+
+    def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
+        functions: list[model_manifest_schema.ModelFunctionInfo] = self._functions
+
+        if function_name:
+            req_method_name = sql_identifier.SqlIdentifier(function_name).identifier()
+            find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
+                lambda method: method["name"] == req_method_name
+            )
+            target_function_info = next(
+                filter(find_method, functions),
+                None,
+            )
+            if target_function_info is None:
+                raise ValueError(
+                    f"There is no method with name {function_name} available in the model"
+                    f" {self.fully_qualified_model_name} version {self.version_name}"
+                )
+        elif len(functions) != 1:
+            raise ValueError(
+                f"There are more than 1 target methods available in the model {self.fully_qualified_model_name}"
+                f" version {self.version_name}. Please specify a `function_name` when calling the `run` method."
+            )
+        else:
+            target_function_info = functions[0]
+
+        return target_function_info
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT, subproject=_TELEMETRY_SUBPROJECT, func_params_to_log=["export_mode"]
@@ -684,7 +685,7 @@ class ModelVersion(lineage_node.LineageNode):
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
-        build_external_access_integrations: Optional[List[str]] = None,
+        build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
@@ -751,7 +752,7 @@ class ModelVersion(lineage_node.LineageNode):
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
-        build_external_access_integrations: Optional[List[str]] = None,
+        build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
@@ -911,6 +912,73 @@ class ModelVersion(lineage_node.LineageNode):
             service_database_name=database_name_id,
             service_schema_name=schema_name_id,
             service_name=service_name_id,
+            statement_params=statement_params,
+        )
+
+    @snowpark._internal.utils.private_preview(version="1.8.3")
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+    )
+    def run_job(
+        self,
+        X: Union[pd.DataFrame, "dataframe.DataFrame"],
+        *,
+        job_name: str,
+        compute_pool: str,
+        image_repo: str,
+        output_table_name: str,
+        function_name: Optional[str] = None,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        gpu_requests: Optional[Union[str, int]] = None,
+        num_workers: Optional[int] = None,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = False,
+        build_external_access_integrations: Optional[list[str]] = None,
+    ) -> Union[pd.DataFrame, dataframe.DataFrame]:
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+        target_function_info = self._get_function_info(function_name=function_name)
+        job_db_id, job_schema_id, job_id = sql_identifier.parse_fully_qualified_name(job_name)
+        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
+        output_table_db_id, output_table_schema_id, output_table_id = sql_identifier.parse_fully_qualified_name(
+            output_table_name
+        )
+        warehouse = self._service_ops._session.get_current_warehouse()
+        assert warehouse, "No active warehouse selected in the current session."
+        return self._service_ops.invoke_job_method(
+            target_method=target_function_info["target_method"],
+            signature=target_function_info["signature"],
+            X=X,
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            job_database_name=job_db_id,
+            job_schema_name=job_schema_id,
+            job_name=job_id,
+            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
+            warehouse_name=sql_identifier.SqlIdentifier(warehouse),
+            image_repo_database_name=image_repo_db_id,
+            image_repo_schema_name=image_repo_schema_id,
+            image_repo_name=image_repo_id,
+            output_table_database_name=output_table_db_id,
+            output_table_schema_name=output_table_schema_id,
+            output_table_name=output_table_id,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
+            gpu_requests=gpu_requests,
+            num_workers=num_workers,
+            max_batch_rows=max_batch_rows,
+            force_rebuild=force_rebuild,
+            build_external_access_integrations=(
+                None
+                if build_external_access_integrations is None
+                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
+            ),
             statement_params=statement_params,
         )
 

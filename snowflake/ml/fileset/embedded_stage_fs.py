@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional
 
 from snowflake import snowpark
 from snowflake.connector import connection
@@ -75,8 +75,8 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
         return stage_path
 
     def _fetch_presigned_urls(
-        self, files: List[str], url_lifetime: float = stage_fs._PRESIGNED_URL_LIFETIME_SEC
-    ) -> List[Tuple[str, str]]:
+        self, files: list[str], url_lifetime: float = stage_fs._PRESIGNED_URL_LIFETIME_SEC
+    ) -> list[tuple[str, str]]:
         """Fetch presigned urls for the given files."""
         # SnowURL requires full snow://<domain>/<entity>/versions/<version> as the stage path arg to get_presigned_Url
         versions_dict = defaultdict(list)
@@ -85,7 +85,7 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
             assert match is not None and match.group("relpath") is not None
             versions_dict[match.group("version")].append(match.group("relpath"))
         try:
-            async_jobs: List[snowpark.AsyncJob] = []
+            async_jobs: list[snowpark.AsyncJob] = []
             for version, version_files in versions_dict.items():
                 for file in version_files:
                     stage_loc = f"{self.stage_name}/versions/{version}"
@@ -100,7 +100,7 @@ class SFEmbeddedStageFileSystem(stage_fs.SFStageFileSystem):
                         ),
                     )
                     async_jobs.append(query_result)
-            presigned_urls: List[Tuple[str, str]] = [
+            presigned_urls: list[tuple[str, str]] = [
                 (r["NAME"], r["URL"]) for job in async_jobs for r in stage_fs._resolve_async_job(job)
             ]
             return presigned_urls

@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple, Union
+from typing import Any, Union
 
 from snowflake.ml.modeling.metrics import metrics_utils
 from tests.integ.snowflake.ml.modeling.framework import utils
@@ -14,8 +14,8 @@ _NUM_ROWS.append(_NUM_ROW_LARGE)
 
 
 def gen_test_cases(
-    types: List[DataType], low: Union[int, List[int]] = MIN_INT, high: Union[int, List[int]] = MAX_INT
-) -> Tuple[List[List[Any]], List[str]]:
+    types: list[DataType], low: Union[int, list[int]] = MIN_INT, high: Union[int, list[int]] = MAX_INT
+) -> tuple[list[list[Any]], list[str]]:
     """
     Generate metrics test cases. The last test case has a large data size.
 
@@ -29,7 +29,7 @@ def gen_test_cases(
         The 1st column of test data is "ID".
     """
     data_list = []
-    snowflake_identifiers: List[str] = []
+    snowflake_identifiers: list[str] = []
     for num_row in _NUM_ROWS:
         data, identifiers = utils.gen_fuzz_data(
             rows=num_row,

@@ -11,7 +11,7 @@ T = TypeVar("T")
 class LazyType(Generic[T]):
     """Utility type to help defer need of importing."""
 
-    def __init__(self, klass: Union[str, Type[T]]) -> None:
+    def __init__(self, klass: Union[str, type[T]]) -> None:
         self.qualname = ""
         if isinstance(klass, str):
             parts = klass.rsplit(".", 1)
@@ -30,7 +30,7 @@ class LazyType(Generic[T]):
         return self.isinstance(obj)
 
     @classmethod
-    def from_type(cls, typ_: Union["LazyType[T]", Type[T]]) -> "LazyType[T]":
+    def from_type(cls, typ_: Union["LazyType[T]", type[T]]) -> "LazyType[T]":
         if isinstance(typ_, LazyType):
             return typ_
         return cls(typ_)
@@ -48,7 +48,7 @@ class LazyType(Generic[T]):
     def __repr__(self) -> str:
         return f'LazyType("{self.module}", "{self.qualname}")'
 
-    def get_class(self) -> Type[T]:
+    def get_class(self) -> type[T]:
         if self._runtime_class is None:
             try:
                 m = importlib.import_module(self.module)

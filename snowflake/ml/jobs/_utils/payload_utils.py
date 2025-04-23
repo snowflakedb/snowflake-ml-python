@@ -6,17 +6,7 @@ import pickle
 import sys
 import textwrap
 from pathlib import Path, PurePath
-from typing import (
-    Any,
-    Callable,
-    List,
-    Optional,
-    Type,
-    Union,
-    cast,
-    get_args,
-    get_origin,
-)
+from typing import Any, Callable, Optional, Union, cast, get_args, get_origin
 
 import cloudpickle as cp
 
@@ -277,7 +267,7 @@ class JobPayload:
         source: Union[str, Path, Callable[..., Any]],
         entrypoint: Optional[Union[str, Path]] = None,
         *,
-        pip_requirements: Optional[List[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
     ) -> None:
         self.source = Path(source) if isinstance(source, str) else source
         self.entrypoint = Path(entrypoint) if isinstance(entrypoint, str) else entrypoint
@@ -364,7 +354,7 @@ class JobPayload:
                     auto_compress=False,
                 )
 
-        python_entrypoint: List[Union[str, PurePath]] = [
+        python_entrypoint: list[Union[str, PurePath]] = [
             PurePath("mljob_launcher.py"),
             entrypoint.file_path.relative_to(source),
         ]
@@ -381,7 +371,7 @@ class JobPayload:
         )
 
 
-def _get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
+def _get_parameter_type(param: inspect.Parameter) -> Optional[type[object]]:
     # Unwrap Optional type annotations
     param_type = param.annotation
     if get_origin(param_type) is Union and len(get_args(param_type)) == 2 and type(None) in get_args(param_type):
@@ -390,10 +380,10 @@ def _get_parameter_type(param: inspect.Parameter) -> Optional[Type[object]]:
     # Return None for empty type annotations
     if param_type == inspect.Parameter.empty:
         return None
-    return cast(Type[object], param_type)
+    return cast(type[object], param_type)
 
 
-def _validate_parameter_type(param_type: Type[object], param_name: str) -> None:
+def _validate_parameter_type(param_type: type[object], param_name: str) -> None:
     # Validate param_type is a supported type
     if param_type not in _SUPPORTED_ARG_TYPES:
         raise ValueError(

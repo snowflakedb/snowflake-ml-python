@@ -2,7 +2,7 @@ import inspect
 import os
 import pathlib
 import sys
-from typing import Dict, Optional, Type, cast, final
+from typing import Optional, cast, final
 
 import anyio
 import cloudpickle
@@ -28,7 +28,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
     HANDLER_TYPE = "custom"
     HANDLER_VERSION = "2023-12-01"
     _MIN_SNOWPARK_ML_VERSION = "1.0.12"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     @classmethod
     def can_handle(cls, model: model_types.SupportedModelType) -> TypeGuard["custom_model.CustomModel"]:
@@ -99,7 +99,11 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
             for sub_name, model_ref in model.context.model_refs.items():
                 handler = model_handler.find_handler(model_ref.model)
                 if handler is None:
-                    raise TypeError("Your input type to custom model is not currently supported")
+                    raise TypeError(
+                        f"Model {sub_name} in model context is not a supported model type. See "
+                        "https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/"
+                        "bring-your-own-model-types for more details."
+                    )
                 sub_model = handler.cast_model(model_ref.model)
                 handler.save_model(
                     name=sub_name,
@@ -161,7 +165,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
             name: str(pathlib.PurePath(model_blob_path) / pathlib.PurePosixPath(rel_path))
             for name, rel_path in artifacts_meta.items()
         }
-        models: Dict[str, model_types.SupportedModelType] = dict()
+        models: dict[str, model_types.SupportedModelType] = dict()
         for sub_model_name, _ref in context.model_refs.items():
             model_type = model_meta.models[sub_model_name].model_type
             handler = model_handler.load_handler(model_type)

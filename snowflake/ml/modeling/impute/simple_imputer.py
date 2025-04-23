@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import copy
 import warnings
-from typing import Any, Dict, Iterable, Optional, Type, Union
+from typing import Any, Iterable, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -25,7 +25,7 @@ STRATEGY_TO_STATE_DICT = {
     "most_frequent": _utils.BasicStatistics.MODE,
 }
 
-SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: Dict[Type[T.DataType], npt.DTypeLike] = {
+SNOWFLAKE_DATATYPE_TO_NUMPY_DTYPE_MAP: dict[type[T.DataType], npt.DTypeLike] = {
     T.ByteType: np.dtype("int8"),
     T.ShortType: np.dtype("int16"),
     T.IntegerType: np.dtype("int32"),
@@ -164,7 +164,7 @@ class SimpleImputer(base.BaseTransformer):
 
         self.fill_value = fill_value
         self.missing_values = missing_values
-        self.statistics_: Dict[str, Any] = {}
+        self.statistics_: dict[str, Any] = {}
         # TODO(hayu): [SNOW-752265] Support SimpleImputer keep_empty_features.
         #  Add back when `keep_empty_features` is supported.
         # self.keep_empty_features = keep_empty_features
@@ -195,7 +195,7 @@ class SimpleImputer(base.BaseTransformer):
             del self.feature_names_in_
             del self._sklearn_fit_dtype
 
-    def _get_dataset_input_col_datatypes(self, dataset: snowpark.DataFrame) -> Dict[str, T.DataType]:
+    def _get_dataset_input_col_datatypes(self, dataset: snowpark.DataFrame) -> dict[str, T.DataType]:
         """
         Checks that the input columns are all the same datatype category(except for most_frequent strategy) and
         returns the datatype.
@@ -211,7 +211,7 @@ class SimpleImputer(base.BaseTransformer):
                 supported.
         """
 
-        def check_type_consistency(col_types: Dict[str, T.DataType]) -> None:
+        def check_type_consistency(col_types: dict[str, T.DataType]) -> None:
             is_numeric_type = None
             for col_name, col_type in col_types.items():
                 if is_numeric_type is None:

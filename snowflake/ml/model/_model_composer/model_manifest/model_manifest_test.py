@@ -524,6 +524,33 @@ class ModelManifestTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_model_manifest_resource_constraint(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                pip_requirements=["xgboost"],
+                resource_constraint={"architecture": "x86"},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm.save(meta, pathlib.PurePosixPath("model"))
+            with open(os.path.join(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_manifest")
+                        .joinpath("fixtures")
+                        .joinpath("MANIFEST_9.yml")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
     def test_model_manifest_user_files(self) -> None:
         with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))

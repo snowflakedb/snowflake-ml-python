@@ -1,4 +1,4 @@
-from typing import Dict, cast
+from typing import cast
 
 from typing_extensions import Unpack
 
@@ -25,7 +25,7 @@ class ModelBlobMeta:
         self.handler_version = kwargs["handler_version"]
         self.function_properties = kwargs.get("function_properties", {})
 
-        self.artifacts: Dict[str, str] = {}
+        self.artifacts: dict[str, str] = {}
         artifacts = kwargs.get("artifacts", None)
         if artifacts:
             self.artifacts = artifacts

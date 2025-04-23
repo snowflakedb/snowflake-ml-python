@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import numbers
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -102,7 +102,7 @@ class OrdinalEncoder(base.BaseTransformer):
     def __init__(
         self,
         *,
-        categories: Union[str, List[type_utils.LiteralNDArrayType], Dict[str, type_utils.LiteralNDArrayType]] = "auto",
+        categories: Union[str, list[type_utils.LiteralNDArrayType], dict[str, type_utils.LiteralNDArrayType]] = "auto",
         handle_unknown: str = "error",
         unknown_value: Optional[Union[int, float]] = None,
         encoded_missing_value: Union[int, float] = np.nan,
@@ -161,9 +161,9 @@ class OrdinalEncoder(base.BaseTransformer):
         self.unknown_value = unknown_value
         self.encoded_missing_value = encoded_missing_value
 
-        self.categories_: Dict[str, type_utils.LiteralNDArrayType] = {}
-        self._categories_list: List[type_utils.LiteralNDArrayType] = []
-        self._missing_indices: Dict[int, int] = {}
+        self.categories_: dict[str, type_utils.LiteralNDArrayType] = {}
+        self._categories_list: list[type_utils.LiteralNDArrayType] = []
+        self._missing_indices: dict[int, int] = {}
         self._infrequent_enabled = False
         self._vocab_table_name = snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
 
@@ -221,7 +221,7 @@ class OrdinalEncoder(base.BaseTransformer):
 
         self._categories_list = sklearn_encoder.categories_
 
-        _state_pandas_ordinals: List[pd.DataFrame] = []
+        _state_pandas_ordinals: list[pd.DataFrame] = []
         for idx, input_col in enumerate(sorted(self.input_cols)):
             self.categories_[input_col] = self._categories_list[idx]
             # A column with values [a, b, b, None, a] will get mapped into a `_column_ordinals`
@@ -673,7 +673,7 @@ class OrdinalEncoder(base.BaseTransformer):
     def _check_unknown(
         self,
         dataset: snowpark.DataFrame,
-        statement_params: Dict[str, Any],
+        statement_params: dict[str, Any],
         batch: bool = False,
     ) -> None:
         """
@@ -690,8 +690,8 @@ class OrdinalEncoder(base.BaseTransformer):
 
         def create_unknown_df(
             dataset: snowpark.DataFrame,
-            input_cols: List[str],
-            output_cols: List[str],
+            input_cols: list[str],
+            output_cols: list[str],
         ) -> snowpark.DataFrame:
             # dataframe with unknown values
             # columns: COLUMN_NAME, UNKNOWN_VALUE

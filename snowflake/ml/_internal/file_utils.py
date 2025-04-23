@@ -11,18 +11,7 @@ import sys
 import tarfile
 import tempfile
 import zipfile
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Literal,
-    Optional,
-    Set,
-    Tuple,
-    Union,
-)
+from typing import Any, Callable, Generator, Literal, Optional, Union
 from urllib import parse
 
 import cloudpickle
@@ -37,7 +26,7 @@ GENERATED_PY_FILE_EXT = (".pyc", ".pyo", ".pyd", ".pyi")
 def copytree(
     src: "Union[str, os.PathLike[str]]",
     dst: "Union[str, os.PathLike[str]]",
-    ignore: Optional[Callable[..., Set[str]]] = None,
+    ignore: Optional[Callable[..., set[str]]] = None,
     dirs_exist_ok: bool = False,
 ) -> "Union[str, os.PathLike[str]]":
     """This is a forked version of shutil.copytree that remove all copystat, to make sure it works in Sproc.
@@ -170,7 +159,7 @@ def zip_python_package(zipfile_path: str, package_name: str, ignore_generated_py
 
 
 def hash_directory(
-    directory: Union[str, pathlib.Path], *, ignore_hidden: bool = False, excluded_files: Optional[List[str]] = None
+    directory: Union[str, pathlib.Path], *, ignore_hidden: bool = False, excluded_files: Optional[list[str]] = None
 ) -> str:
     """Hash the **content** of a folder recursively using SHA-1.
 
@@ -186,7 +175,7 @@ def hash_directory(
         excluded_files = []
 
     def _update_hash_from_dir(
-        directory: Union[str, pathlib.Path], hash: "hashlib._Hash", *, ignore_hidden: bool, excluded_files: List[str]
+        directory: Union[str, pathlib.Path], hash: "hashlib._Hash", *, ignore_hidden: bool, excluded_files: list[str]
     ) -> "hashlib._Hash":
         assert pathlib.Path(directory).is_dir(), "Provided path is not a directory."
         for path in sorted(pathlib.Path(directory).iterdir(), key=lambda p: str(p).lower()):
@@ -208,7 +197,7 @@ def hash_directory(
     ).hexdigest()
 
 
-def get_all_modules(dirname: str, prefix: str = "") -> List[str]:
+def get_all_modules(dirname: str, prefix: str = "") -> list[str]:
     modules = [mod.name for mod in pkgutil.iter_modules([dirname], prefix=prefix)]
     subdirs = [f.path for f in os.scandir(dirname) if f.is_dir()]
     for sub_dirname in subdirs:
@@ -248,7 +237,7 @@ def _create_tar_gz_stream(source_dir: str, arcname: Optional[str] = None) -> Gen
         yield output_stream
 
 
-def get_package_path(package_name: str, strategy: Literal["first", "last"] = "first") -> Tuple[str, str]:
+def get_package_path(package_name: str, strategy: Literal["first", "last"] = "first") -> tuple[str, str]:
     """[Obsolete]Return the path to where a package is defined and its start location.
     Example 1: snowflake.ml -> path/to/site-packages/snowflake/ml, path/to/site-packages
     Example 2: zip_imported_module -> path/to/some/zipfile.zip/zip_imported_module, path/to/some/zipfile.zip
@@ -267,7 +256,7 @@ def get_package_path(package_name: str, strategy: Literal["first", "last"] = "fi
     return pkg_path, pkg_start_path
 
 
-def stage_object(session: snowpark.Session, object: object, stage_location: str) -> List[snowpark.PutResult]:
+def stage_object(session: snowpark.Session, object: object, stage_location: str) -> list[snowpark.PutResult]:
     temp_file = tempfile.NamedTemporaryFile(delete=False)
     temp_file_path = temp_file.name
     temp_file.close()
@@ -279,7 +268,7 @@ def stage_object(session: snowpark.Session, object: object, stage_location: str)
 
 
 def stage_file_exists(
-    session: snowpark.Session, stage_location: str, file_name: str, statement_params: Dict[str, Any]
+    session: snowpark.Session, stage_location: str, file_name: str, statement_params: dict[str, Any]
 ) -> bool:
     try:
         res = session.sql(f"list {stage_location}/{file_name}").collect(statement_params=statement_params)
@@ -297,7 +286,7 @@ def upload_directory_to_stage(
     local_path: pathlib.Path,
     stage_path: Union[pathlib.PurePosixPath, parse.ParseResult],
     *,
-    statement_params: Optional[Dict[str, Any]] = None,
+    statement_params: Optional[dict[str, Any]] = None,
 ) -> None:
     """Upload a local folder recursively to a stage and keep the structure.
 
@@ -350,7 +339,7 @@ def download_directory_from_stage(
     stage_path: pathlib.PurePosixPath,
     local_path: pathlib.Path,
     *,
-    statement_params: Optional[Dict[str, Any]] = None,
+    statement_params: Optional[dict[str, Any]] = None,
 ) -> None:
     """Upload a folder in stage recursively to a folder in local and keep the structure.
 

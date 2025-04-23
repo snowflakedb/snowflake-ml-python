@@ -2,13 +2,13 @@ import functools
 import importlib
 import pkgutil
 from types import ModuleType
-from typing import Any, Callable, Dict, Optional, Type, TypeVar, cast
+from typing import Any, Callable, Optional, TypeVar, cast
 
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_handlers import _base
 
 _HANDLERS_BASE = "snowflake.ml.model._packager.model_handlers"
-_MODEL_HANDLER_REGISTRY: Dict[str, Type[_base.BaseModelHandler[model_types.SupportedModelType]]] = dict()
+_MODEL_HANDLER_REGISTRY: dict[str, type[_base.BaseModelHandler[model_types.SupportedModelType]]] = dict()
 _IS_HANDLER_LOADED = False
 
 
@@ -54,7 +54,7 @@ def ensure_handlers_registration(fn: F) -> F:
 @ensure_handlers_registration
 def find_handler(
     model: model_types.SupportedModelType,
-) -> Optional[Type[_base.BaseModelHandler[model_types.SupportedModelType]]]:
+) -> Optional[type[_base.BaseModelHandler[model_types.SupportedModelType]]]:
     for handler in _MODEL_HANDLER_REGISTRY.values():
         if handler.can_handle(model):
             return handler
@@ -64,7 +64,7 @@ def find_handler(
 @ensure_handlers_registration
 def load_handler(
     target_model_type: model_types.SupportedModelHandlerType,
-) -> Optional[Type[_base.BaseModelHandler[model_types.SupportedModelType]]]:
+) -> Optional[type[_base.BaseModelHandler[model_types.SupportedModelType]]]:
     for model_type, handler in _MODEL_HANDLER_REGISTRY.items():
         if target_model_type == model_type:
             return handler

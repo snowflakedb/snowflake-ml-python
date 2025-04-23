@@ -3,7 +3,7 @@ import inspect
 import os
 import posixpath
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import cloudpickle as cp
@@ -73,10 +73,10 @@ class SnowparkTransformHandlers:
     def batch_inference(
         self,
         inference_method: str,
-        input_cols: List[str],
-        expected_output_cols: List[str],
+        input_cols: list[str],
+        expected_output_cols: list[str],
         session: Session,
-        dependencies: List[str],
+        dependencies: list[str],
         drop_input_cols: Optional[bool] = False,
         expected_output_cols_type: Optional[str] = "",
         *args: Any,
@@ -229,11 +229,11 @@ class SnowparkTransformHandlers:
 
     def score(
         self,
-        input_cols: List[str],
-        label_cols: List[str],
+        input_cols: list[str],
+        label_cols: list[str],
         session: Session,
-        dependencies: List[str],
-        score_sproc_imports: List[str],
+        dependencies: list[str],
+        score_sproc_imports: list[str],
         sample_weight_col: Optional[str] = None,
         *args: Any,
         **kwargs: Any,
@@ -308,12 +308,12 @@ class SnowparkTransformHandlers:
         )
         def score_wrapper_sproc(
             session: Session,
-            sql_queries: List[str],
+            sql_queries: list[str],
             stage_score_file_name: str,
-            input_cols: List[str],
-            label_cols: List[str],
+            input_cols: list[str],
+            label_cols: list[str],
             sample_weight_col: Optional[str],
-            score_statement_params: Dict[str, str],
+            score_statement_params: dict[str, str],
         ) -> float:
             import inspect
             import os
@@ -382,7 +382,7 @@ class SnowparkTransformHandlers:
 
         return score
 
-    def _get_validated_snowpark_dependencies(self, session: Session, dependencies: List[str]) -> List[str]:
+    def _get_validated_snowpark_dependencies(self, session: Session, dependencies: list[str]) -> list[str]:
         """A helper function to validate dependencies and return the available packages that exists
         in the snowflake anaconda channel
 

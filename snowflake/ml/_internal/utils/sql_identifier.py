@@ -1,4 +1,4 @@
-from typing import List, Optional, Tuple, Union
+from typing import Optional, Union
 
 from snowflake.ml._internal.utils import identifier
 
@@ -77,13 +77,13 @@ class SqlIdentifier(str):
         return super().__hash__()
 
 
-def to_sql_identifiers(list_of_str: List[str], *, case_sensitive: bool = False) -> List[SqlIdentifier]:
+def to_sql_identifiers(list_of_str: list[str], *, case_sensitive: bool = False) -> list[SqlIdentifier]:
     return [SqlIdentifier(val, case_sensitive=case_sensitive) for val in list_of_str]
 
 
 def parse_fully_qualified_name(
     name: str,
-) -> Tuple[Optional[SqlIdentifier], Optional[SqlIdentifier], SqlIdentifier]:
+) -> tuple[Optional[SqlIdentifier], Optional[SqlIdentifier], SqlIdentifier]:
     db, schema, object = identifier.parse_schema_level_object_identifier(name)
 
     assert name is not None, f"Unable parse the input name `{name}` as fully qualified."

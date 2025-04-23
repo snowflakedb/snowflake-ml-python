@@ -5,13 +5,14 @@ import platform
 import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
-from typing import DefaultDict, List, cast
+from typing import DefaultDict, cast
 from unittest import mock
 
 import yaml
 from absl.testing import absltest
 from packaging import requirements, specifiers, version
 
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils, relax_version_strategy
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import row, session
@@ -139,7 +140,7 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertListEqual(rl, trl)
 
     def test_append_conda_dependency(self) -> None:
-        rd: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(list)
+        rd: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(list)
         with self.assertRaises(env_utils.DuplicateDependencyError):
             rd["a"] = [requirements.Requirement("python-package==1.0.1")]
             ra = requirements.Requirement("python-package!=1.0.2")
@@ -248,7 +249,7 @@ class EnvUtilsTest(absltest.TestCase):
 
         r = requirements.Requirement(env_utils.SNOWPARK_ML_PKG_NAME)
         self.assertEqual(
-            requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}"),
+            requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}"),
             env_utils.get_local_installed_version_of_pip_package(r),
         )
 
@@ -682,7 +683,7 @@ class EnvUtilsTest(absltest.TestCase):
             env_utils.parse_python_version_string("python>2.7.16")
 
     def test_find_conda_dep_spec(self) -> None:
-        conda_reqs: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(
+        conda_reqs: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(
             list,
             {
                 env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("somepackage==1.0.0")],
@@ -713,7 +714,7 @@ class EnvUtilsTest(absltest.TestCase):
         self.assertIsNone(env_utils._find_pip_req_spec(pip_reqs, pkg_name="random_package"))
 
     def test_find_dep_spec(self) -> None:
-        conda_reqs: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(
+        conda_reqs: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(
             list,
             {
                 env_utils.DEFAULT_CHANNEL_NAME: [requirements.Requirement("somepackage==1.0.0")],
@@ -844,7 +845,7 @@ class EnvUtilsTest(absltest.TestCase):
 
 class EnvFileTest(absltest.TestCase):
     def test_conda_env_file(self) -> None:
-        cd: DefaultDict[str, List[requirements.Requirement]]
+        cd: DefaultDict[str, list[requirements.Requirement]]
 
         with tempfile.TemporaryDirectory() as tmpdir:
             cd = collections.defaultdict(list)
@@ -1062,7 +1063,7 @@ class EnvFileTest(absltest.TestCase):
 
     def test_generate_requirements_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            rl: List[requirements.Requirement] = []
+            rl: list[requirements.Requirement] = []
             pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
             env_utils.save_requirements_file(pip_file_path, rl)
             loaded_rl = env_utils.load_requirements_file(pip_file_path)

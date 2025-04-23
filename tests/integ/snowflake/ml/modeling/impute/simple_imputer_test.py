@@ -3,7 +3,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import Any, Dict, List
+from typing import Any
 
 import cloudpickle
 import joblib
@@ -36,7 +36,7 @@ class SimpleImputerTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
         self._retrieve_dataset()
 
     def tearDown(self) -> None:
@@ -67,7 +67,7 @@ class SimpleImputerTest(parameterized.TestCase):
         df_pandas, df = framework_utils.get_df(self._session, DATA, SCHEMA)
         self._dataset = {"pandas_dataframe": df_pandas, "snowpark_dataframe": df}
 
-    def _convert_statistics_numpy_array(self, arr: Dict[str, Any]) -> np.typing.NDArray:
+    def _convert_statistics_numpy_array(self, arr: dict[str, Any]) -> np.typing.NDArray:
         return np.array(list(arr.values()))
 
     @parameterized.product(dataset_type=["pandas_dataframe", "snowpark_dataframe"])  # type: ignore[misc]

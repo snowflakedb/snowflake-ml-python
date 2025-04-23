@@ -8,7 +8,6 @@ python3 snowflake/ml/experimental/amauser/transformer/build_file_autogen.py
 
 import os
 from dataclasses import dataclass, field
-from typing import List
 
 import inflection
 from absl import app
@@ -19,8 +18,8 @@ from codegen import sklearn_wrapper_autogen as swa
 @dataclass(frozen=True)
 class ModuleInfo:
     module_name: str
-    exclude_list: List[str] = field(default_factory=list)
-    include_list: List[str] = field(default_factory=list)
+    exclude_list: list[str] = field(default_factory=list)
+    include_list: list[str] = field(default_factory=list)
 
 
 MODULES = [
@@ -174,7 +173,7 @@ def get_test_build_file_content(module: ModuleInfo, module_root_dir: str) -> str
     )
 
 
-def main(argv: List[str]) -> None:
+def main(argv: list[str]) -> None:
     del argv  # Unused.
 
     # For each module

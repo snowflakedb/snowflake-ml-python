@@ -1,10 +1,12 @@
 import inspect
+import json
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Optional
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.registry import registry
+from snowflake.snowpark import exceptions as sp_exceptions
 from tests.integ.snowflake.ml.test_utils import (
     common_test_base,
     db_manager,
@@ -38,15 +40,16 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
     def _test_registry_model(
         self,
         model: model_types.SupportedModelType,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[List[str]] = None,
+        additional_dependencies: Optional[list[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
-        function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
+        function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -61,6 +64,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         # Get the name of the caller as the model name
         name = f"model_{inspect.stack()[1].function}"
         version = f"ver_{version_suffix}"
+
         mv = self.registry.log_model(
             model=model,
             model_name=name,
@@ -70,6 +74,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             options=options,
             signatures=signatures,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             pip_requirements=pip_requirements,
         )
 
@@ -89,18 +94,86 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
 
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
 
+    def _test_registry_model_target_platforms(
+        self,
+        model: model_types.SupportedModelType,
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        additional_dependencies: Optional[list[str]] = None,
+        options: Optional[model_types.ModelSaveOption] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[str]] = None,
+        expect_error: Optional[bool] = False,
+    ) -> None:
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+        if additional_dependencies:
+            conda_dependencies.extend(additional_dependencies)
+
+        version_suffix = self._run_id
+
+        # Get the name of the caller as the model name
+        name = f"model_{inspect.stack()[1].function}"
+        version = f"ver_{version_suffix}"
+
+        if expect_error:
+            with self.assertRaises(sp_exceptions.SnowparkSQLException):
+                _ = self.registry.log_model(
+                    model=model,
+                    model_name=name,
+                    version_name=version,
+                    sample_input_data=sample_input_data,
+                    conda_dependencies=conda_dependencies,
+                    options=options,
+                    signatures=None,
+                    target_platforms=target_platforms,
+                    artifact_repository_map=artifact_repository_map,
+                    pip_requirements=pip_requirements,
+                )
+            return
+        else:
+            mv = self.registry.log_model(
+                model=model,
+                model_name=name,
+                version_name=version,
+                sample_input_data=sample_input_data,
+                conda_dependencies=conda_dependencies,
+                options=options,
+                signatures=None,
+                target_platforms=target_platforms,
+                artifact_repository_map=artifact_repository_map,
+                pip_requirements=pip_requirements,
+            )
+
+        show_versions_res = self.session.sql(f"SHOW VERSIONS IN MODEL {mv.model_name}").collect()
+        runnable_in = json.loads(show_versions_res[0]["runnable_in"])
+
+        self.assertEqual(runnable_in, target_platforms)
+
+        if "WAREHOUSE" in runnable_in:
+            for target_method, (test_input, check_func) in prediction_assert_fns.items():
+                res = mv.run(test_input, function_name=target_method)
+                check_func(res)
+
+        self.registry.delete_model(model_name=name)
+
+        self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
+
     def _test_registry_model_from_model_version(
         self,
         model: model_types.SupportedModelType,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[List[str]] = None,
+        additional_dependencies: Optional[list[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
-        function_type_assert: Optional[Dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
+        function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -126,6 +199,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             options=options,
             signatures=signatures,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             pip_requirements=pip_requirements,
         )
 

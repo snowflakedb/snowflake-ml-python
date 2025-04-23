@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.ml._internal.exceptions import error_codes, exceptions
@@ -11,13 +11,9 @@ CORTEX_FUNCTIONS_TELEMETRY_PROJECT = "CortexFunctions"
 class SnowflakeAuthenticationException(Exception):
     """This exception is raised when there is an issue with Snowflake's configuration."""
 
-    pass
-
 
 class SnowflakeConfigurationException(Exception):
     """This exception is raised when there is an issue with Snowflake's configuration."""
-
-    pass
 
 
 # Calls a sql function, handling both immediate (e.g. python types) and batch
@@ -25,8 +21,8 @@ class SnowflakeConfigurationException(Exception):
 def call_sql_function(
     function: str,
     session: Optional[snowpark.Session],
-    *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
-) -> Union[str, List[float], snowpark.Column]:
+    *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]],
+) -> Union[str, list[float], snowpark.Column]:
     handle_as_column = False
 
     for arg in args:
@@ -34,15 +30,15 @@ def call_sql_function(
             handle_as_column = True
 
     if handle_as_column:
-        return cast(Union[str, List[float], snowpark.Column], _call_sql_function_column(function, *args))
+        return cast(Union[str, list[float], snowpark.Column], _call_sql_function_column(function, *args))
     return cast(
-        Union[str, List[float], snowpark.Column],
+        Union[str, list[float], snowpark.Column],
         _call_sql_function_immediate(function, session, *args),
     )
 
 
 def _call_sql_function_column(
-    function: str, *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]]
+    function: str, *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]]
 ) -> snowpark.Column:
     return cast(snowpark.Column, functions.builtin(function)(*args))
 
@@ -50,8 +46,8 @@ def _call_sql_function_column(
 def _call_sql_function_immediate(
     function: str,
     session: Optional[snowpark.Session],
-    *args: Union[str, List[str], snowpark.Column, Dict[str, Union[int, float]]],
-) -> Union[str, List[float]]:
+    *args: Union[str, list[str], snowpark.Column, dict[str, Union[int, float]]],
+) -> Union[str, list[float]]:
     session = session or context.get_active_session()
     if session is None:
         raise SnowflakeAuthenticationException(

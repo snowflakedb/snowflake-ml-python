@@ -1,7 +1,7 @@
 import enum
 import json
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import platform_capabilities
@@ -47,7 +47,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         gpu: Optional[Union[str, int]],
         force_rebuild: bool,
         external_access_integration: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         actual_image_repo_database = image_repo_database_name or self._database_name
         actual_image_repo_schema = image_repo_schema_name or self._schema_name
@@ -76,8 +76,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
         stage_path: Optional[str] = None,
         model_deployment_spec_yaml_str: Optional[str] = None,
         model_deployment_spec_file_rel_path: Optional[str] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[str, snowpark.AsyncJob]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, snowpark.AsyncJob]:
         assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
         if model_deployment_spec_yaml_str:
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('{model_deployment_spec_yaml_str}')"
@@ -95,9 +95,9 @@ class ServiceSQLClient(_base._BaseSQLClient):
         service_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
         input_df: dataframe.DataFrame,
-        input_args: List[sql_identifier.SqlIdentifier],
-        returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
-        statement_params: Optional[Dict[str, Any]] = None,
+        input_args: list[sql_identifier.SqlIdentifier],
+        returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> dataframe.DataFrame:
         with_statements = []
         actual_database_name = database_name or self._database_name
@@ -181,7 +181,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         service_name: sql_identifier.SqlIdentifier,
         instance_id: str = "0",
         container_name: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> str:
         system_func = "SYSTEM$GET_SERVICE_LOGS"
         rows = (
@@ -206,8 +206,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
         include_message: bool = False,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[ServiceStatus, Optional[str]]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> tuple[ServiceStatus, Optional[str]]:
         system_func = "SYSTEM$GET_SERVICE_STATUS"
         rows = (
             query_result_checker.SqlResultValidator(
@@ -231,7 +231,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -245,8 +245,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         fully_qualified_service_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         res = (
             query_result_checker.SqlResultValidator(

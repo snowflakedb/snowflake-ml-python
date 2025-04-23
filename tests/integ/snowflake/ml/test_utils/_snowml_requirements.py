@@ -1,0 +1,32 @@
+# DO NOT EDIT!
+# Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
+
+REQUIREMENTS = [
+    "absl-py>=0.15,<2",
+    "aiohttp!=4.0.0a0, !=4.0.0a1",
+    "anyio>=3.5.0,<5",
+    "cachetools>=3.1.1,<6",
+    "cloudpickle>=2.0.0,<3",
+    "cryptography",
+    "fsspec>=2024.6.1,<2026",
+    "importlib_resources>=6.1.1, <7",
+    "numpy>=1.23,<2",
+    "packaging>=20.9,<25",
+    "pandas>=1.0.0,<3",
+    "pyarrow",
+    "pydantic>=2.8.2, <3",
+    "pyjwt>=2.0.0, <3",
+    "pytimeparse>=1.1.8,<2",
+    "pyyaml>=6.0,<7",
+    "requests",
+    "retrying>=1.3.3,<2",
+    "s3fs>=2024.6.1,<2026",
+    "scikit-learn>=1.4,<1.6",
+    "scipy>=1.9,<2",
+    "snowflake-connector-python>=3.12.0,<4",
+    "snowflake-snowpark-python>=1.17.0,<2,!=1.26.0",
+    "snowflake.core>=1.0.2,<2",
+    "sqlparse>=0.4,<1",
+    "typing-extensions>=4.1.0,<5",
+    "xgboost>=1.7.3,<3",
+]

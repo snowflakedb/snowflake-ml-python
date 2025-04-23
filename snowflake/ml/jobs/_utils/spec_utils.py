@@ -1,7 +1,7 @@
 import logging
 from math import ceil
 from pathlib import PurePath
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
@@ -15,10 +15,7 @@ def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.C
     if not rows:
         raise ValueError(f"Compute pool '{compute_pool}' not found")
     instance_family: str = rows[0]["instance_family"]
-
-    # Get the cloud we're using (AWS, Azure, etc)
-    region = snowflake_env.get_regions(session)[snowflake_env.get_current_region_id(session)]
-    cloud = region["cloud"]
+    cloud = snowflake_env.get_current_cloud(session, default=snowflake_env.SnowflakeCloudType.AWS)
 
     return (
         constants.COMMON_INSTANCE_FAMILIES.get(instance_family)
@@ -26,22 +23,14 @@ def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.C
     )
 
 
-def _get_image_spec(session: snowpark.Session, compute_pool: str, image_tag: Optional[str] = None) -> types.ImageSpec:
+def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.ImageSpec:
     # Retrieve compute pool node resources
     resources = _get_node_resources(session, compute_pool=compute_pool)
 
     # Use MLRuntime image
     image_repo = constants.DEFAULT_IMAGE_REPO
     image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
-
-    # Try to pull latest image tag from server side if possible
-    if not image_tag:
-        query_result = session.sql("SHOW PARAMETERS LIKE 'constants.RUNTIME_BASE_IMAGE_TAG' IN ACCOUNT").collect()
-        if query_result:
-            image_tag = query_result[0]["value"]
-
-    if image_tag is None:
-        image_tag = constants.DEFAULT_IMAGE_TAG
+    image_tag = constants.DEFAULT_IMAGE_TAG
 
     # TODO: Should each instance consume the entire pod?
     return types.ImageSpec(
@@ -54,9 +43,9 @@ def _get_image_spec(session: snowpark.Session, compute_pool: str, image_tag: Opt
 
 
 def generate_spec_overrides(
-    environment_vars: Optional[Dict[str, str]] = None,
-    custom_overrides: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    environment_vars: Optional[dict[str, str]] = None,
+    custom_overrides: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """
     Generate a dictionary of service specification overrides.
 
@@ -68,7 +57,7 @@ def generate_spec_overrides(
         Resulting service specifiation patch dict. Empty if no overrides were supplied.
     """
     # Generate container level overrides
-    container_spec: Dict[str, Any] = {
+    container_spec: dict[str, Any] = {
         "name": constants.DEFAULT_CONTAINER_NAME,
     }
     if environment_vars:
@@ -95,10 +84,10 @@ def generate_service_spec(
     session: snowpark.Session,
     compute_pool: str,
     payload: types.UploadedPayload,
-    args: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate a service specification for a job.
 
@@ -117,11 +106,11 @@ def generate_service_spec(
     image_spec = _get_image_spec(session, compute_pool)
 
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
-    resource_requests: Dict[str, Union[str, int]] = {
+    resource_requests: dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
     }
-    resource_limits: Dict[str, Union[str, int]] = {
+    resource_limits: dict[str, Union[str, int]] = {
         "cpu": f"{int(image_spec.resource_requests.cpu * 1000)}m",
         "memory": f"{image_spec.resource_limits.memory}Gi",
     }
@@ -130,8 +119,8 @@ def generate_service_spec(
         resource_limits["nvidia.com/gpu"] = image_spec.resource_limits.gpu
 
     # Add local volumes for ephemeral logs and artifacts
-    volumes: List[Dict[str, str]] = []
-    volume_mounts: List[Dict[str, str]] = []
+    volumes: list[dict[str, str]] = []
+    volume_mounts: list[dict[str, str]] = []
     for volume_name, mount_path in [
         ("system-logs", "/var/log/managedservices/system/mlrs"),
         ("user-logs", "/var/log/managedservices/user/mlrs"),
@@ -302,11 +291,11 @@ def merge_patch(base: Any, patch: Any, display_name: str = "") -> Any:
 
 
 def _merge_lists_of_dicts(
-    base: List[Dict[str, Any]],
-    patch: List[Dict[str, Any]],
+    base: list[dict[str, Any]],
+    patch: list[dict[str, Any]],
     merge_key: str = "name",
     display_name: str = "",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Attempts to merge lists of dicts by matching on a merge key (default "name").
     - If the merge key is missing, the behavior falls back to overwriting the list.

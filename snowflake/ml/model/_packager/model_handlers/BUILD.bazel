@@ -16,9 +16,11 @@ py_library(
     name = "_utils",
     srcs = ["_utils.py"],
     deps = [
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_model_composer/model_method",
+        "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_signatures:snowpark_handler",
         "//snowflake/ml/model/_signatures:utils",

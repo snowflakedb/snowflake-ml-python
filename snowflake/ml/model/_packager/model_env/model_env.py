@@ -3,10 +3,11 @@ import itertools
 import os
 import pathlib
 import warnings
-from typing import DefaultDict, Dict, List, Optional
+from typing import DefaultDict, Optional
 
 from packaging import requirements, version
 
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 
@@ -19,9 +20,8 @@ _DEFAULT_CONDA_ENV_FILENAME = "conda.yml"
 _DEFAULT_PIP_REQUIREMENTS_FILENAME = "requirements.txt"
 
 # The default CUDA version is chosen based on the driver availability in SPCS.
-# If changing this version, we need also change the version of default PyTorch in HuggingFace pipeline handler to
-# make sure they are compatible.
-DEFAULT_CUDA_VERSION = "11.8"
+# Make sure they are aligned with default CUDA version in inference server.
+DEFAULT_CUDA_VERSION = "12.4"
 
 
 class ModelEnv:
@@ -38,15 +38,16 @@ class ModelEnv:
         self.prefer_pip: bool = prefer_pip
         self.conda_env_rel_path = pathlib.PurePosixPath(pathlib.Path(conda_env_rel_path).as_posix())
         self.pip_requirements_rel_path = pathlib.PurePosixPath(pathlib.Path(pip_requirements_rel_path).as_posix())
-        self.artifact_repository_map: Optional[Dict[str, str]] = None
-        self._conda_dependencies: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(list)
-        self._pip_requirements: List[requirements.Requirement] = []
+        self.artifact_repository_map: Optional[dict[str, str]] = None
+        self.resource_constraint: Optional[dict[str, str]] = None
+        self._conda_dependencies: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(list)
+        self._pip_requirements: list[requirements.Requirement] = []
         self._python_version: version.Version = version.parse(snowml_env.PYTHON_VERSION)
         self._cuda_version: Optional[version.Version] = None
-        self._snowpark_ml_version: version.Version = version.parse(snowml_env.VERSION)
+        self._snowpark_ml_version: version.Version = version.parse(snowml_version.VERSION)
 
     @property
-    def conda_dependencies(self) -> List[str]:
+    def conda_dependencies(self) -> list[str]:
         """List of conda channel and dependencies from that to run the model"""
         return sorted(
             f"{chan}::{str(req)}" if chan else str(req)
@@ -57,24 +58,24 @@ class ModelEnv:
     @conda_dependencies.setter
     def conda_dependencies(
         self,
-        conda_dependencies: Optional[List[str]] = None,
+        conda_dependencies: Optional[list[str]] = None,
     ) -> None:
         self._conda_dependencies = env_utils.validate_conda_dependency_string_list(
-            conda_dependencies if conda_dependencies else []
+            conda_dependencies if conda_dependencies else [], add_local_version_specifier=True
         )
 
     @property
-    def pip_requirements(self) -> List[str]:
+    def pip_requirements(self) -> list[str]:
         """List of pip Python packages requirements for running the model."""
         return sorted(list(map(str, self._pip_requirements)))
 
     @pip_requirements.setter
     def pip_requirements(
         self,
-        pip_requirements: Optional[List[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
     ) -> None:
         self._pip_requirements = env_utils.validate_pip_requirement_string_list(
-            pip_requirements if pip_requirements else []
+            pip_requirements if pip_requirements else [], add_local_version_specifier=True
         )
 
     @property
@@ -117,7 +118,7 @@ class ModelEnv:
 
     def include_if_absent(
         self,
-        pkgs: List[ModelDependency],
+        pkgs: list[ModelDependency],
         check_local_version: bool = False,
     ) -> None:
         """Append requirements into model env if absent. Depending on the environment, requirements may be added
@@ -128,7 +129,7 @@ class ModelEnv:
             check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
         """
         if (self.pip_requirements or self.prefer_pip) and not self.conda_dependencies and pkgs:
-            pip_pkg_reqs: List[str] = []
+            pip_pkg_reqs: list[str] = []
             warnings.warn(
                 (
                     "Dependencies specified from pip requirements."
@@ -145,7 +146,7 @@ class ModelEnv:
         else:
             self._include_if_absent_conda(pkgs, check_local_version)
 
-    def _include_if_absent_conda(self, pkgs: List[ModelDependency], check_local_version: bool = False) -> None:
+    def _include_if_absent_conda(self, pkgs: list[ModelDependency], check_local_version: bool = False) -> None:
         """Append requirements into model env conda dependencies if absent.
 
         Args:
@@ -190,7 +191,7 @@ class ModelEnv:
                         stacklevel=2,
                     )
 
-    def _include_if_absent_pip(self, pkgs: List[str], check_local_version: bool = False) -> None:
+    def _include_if_absent_pip(self, pkgs: list[str], check_local_version: bool = False) -> None:
         """Append pip requirements into model env pip requirements if absent.
 
         Args:
@@ -207,7 +208,7 @@ class ModelEnv:
             except env_utils.DuplicateDependencyError:
                 pass
 
-    def remove_if_present_conda(self, conda_pkgs: List[str]) -> None:
+    def remove_if_present_conda(self, conda_pkgs: list[str]) -> None:
         """Remove conda requirements from model env if present.
 
         Args:
@@ -352,13 +353,14 @@ class ModelEnv:
     def load_from_dict(self, base_dir: pathlib.Path, env_dict: model_meta_schema.ModelEnvDict) -> None:
         self.conda_env_rel_path = pathlib.PurePosixPath(env_dict["conda"])
         self.pip_requirements_rel_path = pathlib.PurePosixPath(env_dict["pip"])
-        self.artifact_repository_map = env_dict.get("artifact_repository_map", None)
+        self.artifact_repository_map = env_dict.get("artifact_repository_map")
+        self.resource_constraint = env_dict.get("resource_constraint")
 
         self.load_from_conda_file(base_dir / self.conda_env_rel_path)
         self.load_from_pip_file(base_dir / self.pip_requirements_rel_path)
 
         self.python_version = env_dict["python_version"]
-        self.cuda_version = env_dict.get("cuda_version", None)
+        self.cuda_version = env_dict.get("cuda_version")
         self.snowpark_ml_version = env_dict["snowpark_ml_version"]
 
     def save_as_dict(
@@ -381,7 +383,8 @@ class ModelEnv:
         return {
             "conda": self.conda_env_rel_path.as_posix(),
             "pip": self.pip_requirements_rel_path.as_posix(),
-            "artifact_repository_map": self.artifact_repository_map if self.artifact_repository_map is not None else {},
+            "artifact_repository_map": self.artifact_repository_map or {},
+            "resource_constraint": self.resource_constraint or {},
             "python_version": self.python_version,
             "cuda_version": self.cuda_version,
             "snowpark_ml_version": self.snowpark_ml_version,
@@ -389,7 +392,7 @@ class ModelEnv:
 
     def validate_with_local_env(
         self, check_snowpark_ml_version: bool = False
-    ) -> List[env_utils.IncorrectLocalEnvironmentError]:
+    ) -> list[env_utils.IncorrectLocalEnvironmentError]:
         errors = []
         try:
             env_utils.validate_py_runtime_version(str(self._python_version))
@@ -413,10 +416,10 @@ class ModelEnv:
 
         if check_snowpark_ml_version:
             # For Modeling model
-            if self._snowpark_ml_version.base_version != snowml_env.VERSION:
+            if self._snowpark_ml_version.base_version != snowml_version.VERSION:
                 errors.append(
                     env_utils.IncorrectLocalEnvironmentError(
-                        f"The local installed version of Snowpark ML library is {snowml_env.VERSION} "
+                        f"The local installed version of Snowpark ML library is {snowml_version.VERSION} "
                         f"which differs from required version {self.snowpark_ml_version}."
                     )
                 )

@@ -1,7 +1,7 @@
 import dataclasses
 import json
 import typing
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 _PROPERTY_TYPE_KEY = "$proptype$"
 DATASET_SCHEMA_VERSION = "1"
@@ -20,15 +20,15 @@ class FeatureStoreMetadata:
     """
 
     spine_query: str
-    serialized_feature_views: Optional[List[str]] = None
-    compact_feature_views: Optional[List[str]] = None
+    serialized_feature_views: Optional[list[str]] = None
+    compact_feature_views: Optional[list[str]] = None
     spine_timestamp_col: Optional[str] = None
 
     def to_json(self) -> str:
         return json.dumps(dataclasses.asdict(self))
 
     @classmethod
-    def from_json(cls, input_json: Union[Dict[str, Any], str, bytes]) -> "FeatureStoreMetadata":
+    def from_json(cls, input_json: Union[dict[str, Any], str, bytes]) -> "FeatureStoreMetadata":
         if isinstance(input_json, dict):
             return cls(**input_json)
         return cls(**json.loads(input_json))
@@ -61,8 +61,8 @@ class DatasetMetadata:
 
     source_query: str
     owner: str
-    exclude_cols: Optional[List[str]] = None
-    label_cols: Optional[List[str]] = None
+    exclude_cols: Optional[list[str]] = None
+    label_cols: Optional[list[str]] = None
     properties: Optional[DatasetPropertiesType] = None
     schema_version: str = dataclasses.field(default=DATASET_SCHEMA_VERSION, init=False)
 
@@ -78,11 +78,11 @@ class DatasetMetadata:
         return json.dumps(state_dict)
 
     @classmethod
-    def from_json(cls, input_json: Union[Dict[str, Any], str, bytes]) -> "DatasetMetadata":
+    def from_json(cls, input_json: Union[dict[str, Any], str, bytes]) -> "DatasetMetadata":
         if not input_json:
             raise ValueError("json_str was empty or None")
         try:
-            state_dict: Dict[str, Any] = (
+            state_dict: dict[str, Any] = (
                 input_json if isinstance(input_json, dict) else json.loads(input_json, strict=False)
             )
 

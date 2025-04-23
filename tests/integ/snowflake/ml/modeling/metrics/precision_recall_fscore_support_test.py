@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -232,8 +232,8 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
     )
     def test_average_binary_samples(
         self,
-        y_true: Union[str, List[str]],
-        y_pred: Union[str, List[str]],
+        y_true: Union[str, list[str]],
+        y_pred: Union[str, list[str]],
         average: Optional[str],
         data_index: int,
         sample_weight_col_name: Optional[str],

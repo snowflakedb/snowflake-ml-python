@@ -1,4 +1,4 @@
-from typing import List, cast
+from typing import cast
 
 from absl.testing import absltest
 
@@ -75,7 +75,7 @@ class TableManagerTest(absltest.TestCase):
     def test_validate_table_exist(self) -> None:
         table_name = "testtable"
         schema_name = "testschema"
-        empty_row_list: List[snowpark.Row] = []
+        empty_row_list: list[snowpark.Row] = []
         test_cases = [
             (empty_row_list, False),
             ([snowpark.Row(**{"number of rows inserted": 1})], True),

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model._client.sql import _base
@@ -11,7 +11,7 @@ class StageSQLClient(_base._BaseSQLClient):
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         stage_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,

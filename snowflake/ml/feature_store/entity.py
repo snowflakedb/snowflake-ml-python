@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Optional
 
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
@@ -22,7 +22,7 @@ class Entity:
     It can also be used for FeatureView search and lineage tracking.
     """
 
-    def __init__(self, name: str, join_keys: List[str], *, desc: str = "") -> None:
+    def __init__(self, name: str, join_keys: list[str], *, desc: str = "") -> None:
         """
         Creates an Entity instance.
 
@@ -51,11 +51,11 @@ class Entity:
         self._validate(name, join_keys)
 
         self.name: SqlIdentifier = SqlIdentifier(name)
-        self.join_keys: List[SqlIdentifier] = to_sql_identifiers(join_keys)
+        self.join_keys: list[SqlIdentifier] = to_sql_identifiers(join_keys)
         self.owner: Optional[str] = None
         self.desc: str = desc
 
-    def _validate(self, name: str, join_keys: List[str]) -> None:
+    def _validate(self, name: str, join_keys: list[str]) -> None:
         if len(name) > _ENTITY_NAME_LENGTH_LIMIT:
             raise ValueError(f"Entity name `{name}` exceeds maximum length: {_ENTITY_NAME_LENGTH_LIMIT}")
         if _FEATURE_VIEW_ENTITY_TAG_DELIMITER in name:
@@ -73,7 +73,7 @@ class Entity:
             if len(k) > _ENTITY_JOIN_KEY_LENGTH_LIMIT:
                 raise ValueError(f"Join key: {k} exceeds length limit {_ENTITY_JOIN_KEY_LENGTH_LIMIT}.")
 
-    def _to_dict(self) -> Dict[str, str]:
+    def _to_dict(self) -> dict[str, str]:
         entity_dict = self.__dict__.copy()
         for k, v in entity_dict.items():
             if isinstance(v, SqlIdentifier):
@@ -81,7 +81,7 @@ class Entity:
         return entity_dict
 
     @staticmethod
-    def _construct_entity(name: str, join_keys: List[str], desc: str, owner: str) -> "Entity":
+    def _construct_entity(name: str, join_keys: list[str], desc: str, owner: str) -> "Entity":
         e = Entity(name, join_keys, desc=desc)
         e.owner = owner
         return e

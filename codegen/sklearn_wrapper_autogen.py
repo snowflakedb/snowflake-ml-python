@@ -6,7 +6,7 @@ import sys
 import types
 from collections import namedtuple
 from enum import Enum
-from typing import Iterable, List, Optional
+from typing import Iterable, Optional
 
 from absl import logging
 
@@ -38,7 +38,7 @@ class AutogenTool:
         template_path: str,
         output_path: str,
         gen_mode: GenMode = GenMode.SRC,
-        class_list: Optional[List[str]] = None,
+        class_list: Optional[list[str]] = None,
     ) -> None:
         self.gen_mode = gen_mode
         self.template_path = template_path
@@ -52,7 +52,7 @@ class AutogenTool:
             raise AssertionError("template_path and output_path must be specified.")
 
     @staticmethod
-    def get_estimator_class_names(module_name: str) -> List[str]:
+    def get_estimator_class_names(module_name: str) -> list[str]:
         """Inspects the module and computes the list of estimator classes supported AutogenTool.
 
         Args:
@@ -76,7 +76,7 @@ class AutogenTool:
                 class_names.append(transformer[0])
         return class_names
 
-    def generate(self, module_name: str, skip_code_gen: bool = False) -> List[str]:
+    def generate(self, module_name: str, skip_code_gen: bool = False) -> list[str]:
         """Autogenerate snowflake estimator wrappers for the given list of SKLearn or XGBoost modules.
 
         Args:
@@ -101,7 +101,7 @@ class AutogenTool:
 
     def _generate_src_files(
         self, module_name: str, generators: Iterable[swg.WrapperGeneratorBase], skip_code_gen: bool = False
-    ) -> List[str]:
+    ) -> list[str]:
         """Autogenerate snowflake estimator wrappers for the given SKLearn or XGBoost module.
 
         Args:
@@ -138,7 +138,7 @@ class AutogenTool:
 
     def _generate_test_files(
         self, module_name: str, generators: Iterable[swg.WrapperGeneratorBase], skip_code_gen: bool = False
-    ) -> List[str]:
+    ) -> list[str]:
         """Autogenerate integ tests for snowflake estimator wrappers for the given SKLearn or XGBoost
         module.
 
@@ -173,7 +173,7 @@ class AutogenTool:
 
         return generated_files_list
 
-    def _get_wrapper_generators(self, module: types.ModuleType) -> List[swg.WrapperGeneratorBase]:
+    def _get_wrapper_generators(self, module: types.ModuleType) -> list[swg.WrapperGeneratorBase]:
         """
         Construct wrapper generators for all the supported estimator classes in the given module.
 

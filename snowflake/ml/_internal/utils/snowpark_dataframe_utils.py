@@ -1,13 +1,13 @@
 import logging
 import warnings
-from typing import List, Optional
+from typing import Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.snowpark import functions, types
 
 
-def cast_snowpark_dataframe(df: snowpark.DataFrame, ignore_columns: Optional[List[str]] = None) -> snowpark.DataFrame:
+def cast_snowpark_dataframe(df: snowpark.DataFrame, ignore_columns: Optional[list[str]] = None) -> snowpark.DataFrame:
     """Cast columns in the dataframe to types that are compatible with tensor.
 
     It assists FileSet.make() in performing implicit data casting.

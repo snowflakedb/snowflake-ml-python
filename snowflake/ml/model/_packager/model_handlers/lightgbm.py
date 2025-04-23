@@ -1,16 +1,6 @@
 import os
 import warnings
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Callable,
-    Dict,
-    Optional,
-    Type,
-    Union,
-    cast,
-    final,
-)
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -41,7 +31,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
     HANDLER_TYPE = "lightgbm"
     HANDLER_VERSION = "2024-03-19"
     _MIN_SNOWPARK_ML_VERSION = "1.3.1"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model.pkl"
     DEFAULT_TARGET_METHODS = ["predict", "predict_proba"]
@@ -215,7 +205,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
         def _create_custom_model(
             raw_model: Union["lightgbm.Booster", "lightgbm.LGBMModel"],
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: Union["lightgbm.Booster", "lightgbm.LGBMModel"],
                 signature: model_signature.ModelSignature,
@@ -250,7 +240,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
 
                 return fn
 
-            type_method_dict: Dict[str, Any] = {"_raw_model": raw_model}
+            type_method_dict: dict[str, Any] = {"_raw_model": raw_model}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

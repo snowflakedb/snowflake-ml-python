@@ -10,7 +10,7 @@ import traceback
 from collections import namedtuple
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union, cast
+from typing import Any, Callable, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.snowpark import exceptions as sp_exceptions
@@ -33,7 +33,7 @@ class ExecutionResult:
     def success(self) -> bool:
         return self.exception is None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return the serializable dictionary."""
         if isinstance(self.exception, BaseException):
             exc_type = type(self.exception)
@@ -50,7 +50,7 @@ class ExecutionResult:
         }
 
     @classmethod
-    def from_dict(cls, result_dict: Dict[str, Any]) -> "ExecutionResult":
+    def from_dict(cls, result_dict: dict[str, Any]) -> "ExecutionResult":
         if not isinstance(result_dict.get("success"), bool):
             raise ValueError("Invalid result dictionary")
 
@@ -242,11 +242,11 @@ def _install_sys_excepthook() -> None:
         original_excepthook = sys.excepthook
 
         def custom_excepthook(
-            exc_type: Type[BaseException],
+            exc_type: type[BaseException],
             exc_value: BaseException,
             exc_tb: Optional[TracebackType],
             *,
-            seen_exc_ids: Optional[Set[int]] = None,
+            seen_exc_ids: Optional[set[int]] = None,
         ) -> None:
             if seen_exc_ids is None:
                 seen_exc_ids = set()
@@ -331,7 +331,7 @@ def _install_ipython_hook() -> bool:
     except ImportError:
         return False
 
-    def parse_traceback_str(traceback_str: str) -> List[Tuple[str, int, str, str]]:
+    def parse_traceback_str(traceback_str: str) -> list[tuple[str, int, str, str]]:
         return [
             (m.group("filename"), int(m.group("lineno")), m.group("name"), m.group("line"))
             for m in re.finditer(_TRACEBACK_ENTRY_PATTERN, traceback_str)
@@ -342,13 +342,13 @@ def _install_ipython_hook() -> bool:
 
         def custom_format_exception_as_a_whole(
             self: VerboseTB,
-            etype: Type[BaseException],
+            etype: type[BaseException],
             evalue: Optional[BaseException],
             etb: Optional[TracebackType],
             number_of_lines_of_context: int,
             tb_offset: Optional[int],
             **kwargs: Any,
-        ) -> List[List[str]]:
+        ) -> list[list[str]]:
             if (remote_err := _retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteError):
                 # Implementation forked from IPython.core.ultratb.VerboseTB.format_exception_as_a_whole
                 head = self.prepare_header(remote_err.exc_type, long_version=False).replace(
@@ -388,7 +388,7 @@ def _install_ipython_hook() -> bool:
             etb: Optional[TracebackType],
             tb_offset: Optional[int] = None,
             **kwargs: Any,
-        ) -> List[str]:
+        ) -> list[str]:
             if (remote_err := _retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteError):
                 tb_list = [
                     (m.group("filename"), m.group("lineno"), m.group("name"), m.group("line"))
@@ -400,7 +400,7 @@ def _install_ipython_hook() -> bool:
                         "(most recent call last)",
                         "(from remote execution)",
                     )
-                return cast(List[str], out_list)
+                return cast(list[str], out_list)
             return original_structured_traceback(  # type: ignore[no-any-return]
                 self, etype, evalue, etb, tb_offset, **kwargs
             )

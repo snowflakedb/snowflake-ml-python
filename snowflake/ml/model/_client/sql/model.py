@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model._client.sql import _base
@@ -24,8 +24,8 @@ class ModelSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
         validate_result: bool = True,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         actual_database_name = database_name or self._database_name
         actual_schema_name = schema_name or self._schema_name
         fully_qualified_schema_name = ".".join([actual_database_name.identifier(), actual_schema_name.identifier()])
@@ -57,8 +57,8 @@ class ModelSQLClient(_base._BaseSQLClient):
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
         validate_result: bool = True,
         check_model_details: bool = False,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         like_sql = ""
         if version_name:
             like_sql = f" LIKE '{version_name.resolved()}'"
@@ -90,7 +90,7 @@ class ModelSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         comment: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -107,7 +107,7 @@ class ModelSQLClient(_base._BaseSQLClient):
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -124,7 +124,7 @@ class ModelSQLClient(_base._BaseSQLClient):
         new_model_db: Optional[sql_identifier.SqlIdentifier],
         new_model_schema: Optional[sql_identifier.SqlIdentifier],
         new_model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         # Use registry's database and schema if a non fully qualified new model name is provided.
         new_fully_qualified_name = self.fully_qualified_object_name(new_model_db, new_model_schema, new_model_name)

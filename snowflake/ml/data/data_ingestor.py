@@ -1,15 +1,4 @@
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Dict,
-    Iterator,
-    List,
-    Optional,
-    Protocol,
-    Sequence,
-    Type,
-    TypeVar,
-)
+from typing import TYPE_CHECKING, Any, Iterator, Optional, Protocol, Sequence, TypeVar
 
 from numpy import typing as npt
 
@@ -26,12 +15,12 @@ DataIngestorType = TypeVar("DataIngestorType", bound="DataIngestor")
 class DataIngestor(Protocol):
     @classmethod
     def from_sources(
-        cls: Type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource]
+        cls: type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource]
     ) -> DataIngestorType:
         raise NotImplementedError
 
     @property
-    def data_sources(self) -> List[data_source.DataSource]:
+    def data_sources(self) -> list[data_source.DataSource]:
         raise NotImplementedError
 
     def to_batches(
@@ -39,7 +28,7 @@ class DataIngestor(Protocol):
         batch_size: int,
         shuffle: bool = True,
         drop_last_batch: bool = True,
-    ) -> Iterator[Dict[str, npt.NDArray[Any]]]:
+    ) -> Iterator[dict[str, npt.NDArray[Any]]]:
         raise NotImplementedError
 
     def to_pandas(self, limit: Optional[int] = None) -> "pd.DataFrame":

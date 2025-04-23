@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Mapping, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -15,7 +15,7 @@ MODEL_JSON_MODEL_NAME_FIELD = "model_name"
 MODEL_JSON_VERSION_NAME_FIELD = "version_name"
 
 
-def _build_sql_list_from_columns(columns: List[sql_identifier.SqlIdentifier]) -> str:
+def _build_sql_list_from_columns(columns: list[sql_identifier.SqlIdentifier]) -> str:
     sql_list = ", ".join([f"'{column}'" for column in columns])
     return f"({sql_list})"
 
@@ -60,17 +60,17 @@ class ModelMonitorSQLClient:
         function_name: str,
         warehouse_name: sql_identifier.SqlIdentifier,
         timestamp_column: sql_identifier.SqlIdentifier,
-        id_columns: List[sql_identifier.SqlIdentifier],
-        prediction_score_columns: List[sql_identifier.SqlIdentifier],
-        prediction_class_columns: List[sql_identifier.SqlIdentifier],
-        actual_score_columns: List[sql_identifier.SqlIdentifier],
-        actual_class_columns: List[sql_identifier.SqlIdentifier],
+        id_columns: list[sql_identifier.SqlIdentifier],
+        prediction_score_columns: list[sql_identifier.SqlIdentifier],
+        prediction_class_columns: list[sql_identifier.SqlIdentifier],
+        actual_score_columns: list[sql_identifier.SqlIdentifier],
+        actual_class_columns: list[sql_identifier.SqlIdentifier],
         refresh_interval: str,
         aggregation_window: str,
         baseline_database: Optional[sql_identifier.SqlIdentifier] = None,
         baseline_schema: Optional[sql_identifier.SqlIdentifier] = None,
         baseline: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         baseline_sql = ""
         if baseline:
@@ -103,7 +103,7 @@ class ModelMonitorSQLClient:
         database_name: Optional[sql_identifier.SqlIdentifier] = None,
         schema_name: Optional[sql_identifier.SqlIdentifier] = None,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         search_database_name = database_name or self._database_name
         search_schema_name = schema_name or self._schema_name
@@ -116,8 +116,8 @@ class ModelMonitorSQLClient:
     def show_model_monitors(
         self,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[snowpark.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[snowpark.Row]:
         fully_qualified_schema_name = ".".join([self._database_name.identifier(), self._schema_name.identifier()])
         return (
             query_result_checker.SqlResultValidator(
@@ -135,7 +135,7 @@ class ModelMonitorSQLClient:
         database_name: Optional[sql_identifier.SqlIdentifier] = None,
         schema_name: Optional[sql_identifier.SqlIdentifier] = None,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> bool:
         search_database_name = database_name or self._database_name
         search_schema_name = schema_name or self._schema_name
@@ -153,7 +153,7 @@ class ModelMonitorSQLClient:
     def validate_monitor_warehouse(
         self,
         warehouse_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Validate warehouse provided for monitoring exists.
 
@@ -177,11 +177,11 @@ class ModelMonitorSQLClient:
         *,
         source_column_schema: Mapping[str, types.DataType],
         timestamp_column: sql_identifier.SqlIdentifier,
-        prediction_score_columns: List[sql_identifier.SqlIdentifier],
-        prediction_class_columns: List[sql_identifier.SqlIdentifier],
-        actual_score_columns: List[sql_identifier.SqlIdentifier],
-        actual_class_columns: List[sql_identifier.SqlIdentifier],
-        id_columns: List[sql_identifier.SqlIdentifier],
+        prediction_score_columns: list[sql_identifier.SqlIdentifier],
+        prediction_class_columns: list[sql_identifier.SqlIdentifier],
+        actual_score_columns: list[sql_identifier.SqlIdentifier],
+        actual_class_columns: list[sql_identifier.SqlIdentifier],
+        id_columns: list[sql_identifier.SqlIdentifier],
     ) -> None:
         """Ensures all columns exist in the source table.
 
@@ -221,11 +221,11 @@ class ModelMonitorSQLClient:
         source_schema: Optional[sql_identifier.SqlIdentifier],
         source: sql_identifier.SqlIdentifier,
         timestamp_column: sql_identifier.SqlIdentifier,
-        prediction_score_columns: List[sql_identifier.SqlIdentifier],
-        prediction_class_columns: List[sql_identifier.SqlIdentifier],
-        actual_score_columns: List[sql_identifier.SqlIdentifier],
-        actual_class_columns: List[sql_identifier.SqlIdentifier],
-        id_columns: List[sql_identifier.SqlIdentifier],
+        prediction_score_columns: list[sql_identifier.SqlIdentifier],
+        prediction_class_columns: list[sql_identifier.SqlIdentifier],
+        actual_score_columns: list[sql_identifier.SqlIdentifier],
+        actual_class_columns: list[sql_identifier.SqlIdentifier],
+        id_columns: list[sql_identifier.SqlIdentifier],
     ) -> None:
         source_database = source_database or self._database_name
         source_schema = source_schema or self._schema_name
@@ -250,7 +250,7 @@ class ModelMonitorSQLClient:
         self,
         operation: str,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         if operation not in {"SUSPEND", "RESUME"}:
             raise ValueError(f"Operation {operation} not supported for altering Dynamic Tables")
@@ -263,7 +263,7 @@ class ModelMonitorSQLClient:
     def suspend_monitor(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._alter_monitor(
             operation="SUSPEND",
@@ -274,7 +274,7 @@ class ModelMonitorSQLClient:
     def resume_monitor(
         self,
         monitor_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._alter_monitor(
             operation="RESUME",

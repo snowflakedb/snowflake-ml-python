@@ -1,7 +1,7 @@
 import os
 import pathlib
 import tempfile
-from typing import Any, Dict, cast
+from typing import Any, cast
 from unittest import mock
 from urllib import parse
 
@@ -26,7 +26,7 @@ class ModelInterfaceTest(parameterized.TestCase):
         {"params": {"use_save_location": False}},
         {"params": {"use_save_location": True}},
     )
-    def test_save_interface(self, params: Dict[str, Any]) -> None:
+    def test_save_interface(self, params: dict[str, Any]) -> None:
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)
 

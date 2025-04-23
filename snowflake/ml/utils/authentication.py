@@ -1,7 +1,7 @@
 import http
 import logging
 from datetime import timedelta
-from typing import Dict, Optional
+from typing import Optional
 
 import requests
 from cryptography.hazmat.primitives.asymmetric import types
@@ -10,7 +10,7 @@ from requests import auth
 from snowflake.ml._internal.utils import jwt_generator
 
 logger = logging.getLogger(__name__)
-_JWT_TOKEN_CACHE: Dict[str, Dict[int, str]] = {}
+_JWT_TOKEN_CACHE: dict[str, dict[int, str]] = {}
 
 
 def get_jwt_token_generator(

@@ -35,9 +35,9 @@ py_library(
     deps = [
         ":data_ingestor",
         ":torch_utils",
+        "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/data/_internal:arrow_ingestor",
-        "//snowflake/ml/modeling/_internal:constants",
     ],
 )
 

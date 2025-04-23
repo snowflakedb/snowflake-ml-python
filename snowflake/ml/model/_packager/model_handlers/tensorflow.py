@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import pandas as pd
 from packaging import version
@@ -38,7 +38,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
     HANDLER_TYPE = "tensorflow"
     HANDLER_VERSION = "2025-03-01"
     _MIN_SNOWPARK_ML_VERSION = "1.8.0"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {
         "2023-12-01": tensorflow_migrator_2023_12_01.TensorflowHandlerMigrator20231201,
         "2025-01-01": tensorflow_migrator_2025_01_01.TensorflowHandlerMigrator20250101,
     }
@@ -188,7 +188,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
             dependencies,
             check_local_version=True,
         )
-        model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
+        model_meta.env.cuda_version = kwargs.get("cuda_version", handlers_utils.get_default_cuda_version())
 
     @classmethod
     def load_model(
@@ -230,7 +230,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         def _create_custom_model(
             raw_model: "tensorflow.Module",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             multiple_inputs = cast(
                 model_meta_schema.TensorflowModelBlobOptions, model_meta.models[model_meta.name].options
             )["multiple_inputs"]

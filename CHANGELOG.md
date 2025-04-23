@@ -1,10 +1,20 @@
 # Release History
 
-## 1.8.2
+## 1.8.3
 
 ### Bug Fixes
 
 ### Behavior Change
+
+### New Features
+
+- Registry: Default to the runtime cuda version if available when logging a GPU model in Container Runtime.
+- ML Job: Added `as_list` argument to `MLJob.get_logs()` to enable retrieving logs
+  as a list of strings
+- Registry: Support `ModelVersion.run_job` to run inference with a single-node Snowpark Container Services job.
+- DataConnector: Removed PrPr decorators
+
+## 1.8.2
 
 ### New Features
 
@@ -16,7 +26,6 @@
   `snowflake.snowpark.context.get_active_session()`
 - Registry: Introducing `save_location` to `log_model` using the `options` argument.
   User's can provide the path to write the model version's files that get stored in Snowflake's stage.
-- Registry: Include model dependencies in pip requirements by default when logging in Container Runtime.
 
 ```python
 reg.log_model(
@@ -28,8 +37,9 @@ reg.log_model(
 )
 ```
 
-- ML Job (PrPr): Add `instance_id` argument to `get_logs` and `show_logs` method to support multi node log retrieval
-- ML Job (PrPr): Add `job.get_instance_status(instance_id=...)` API to support multi node status retrieval
+- Registry: Include model dependencies in pip requirements by default when logging in Container Runtime.
+- Multi-node ML Job (PrPr): Add `instance_id` argument to `get_logs` and `show_logs` method to support multi node log retrieval
+- Multi-node ML Job (PrPr): Add `job.get_instance_status(instance_id=...)` API to support multi node status retrieval
 
 ## 1.8.1 (03-26-2025)
 
@@ -38,8 +48,6 @@ reg.log_model(
 - Registry: Fix a bug that caused `unsupported model type` error while logging a sklearn model with `score_samples`
   inference method.
 - Registry: Fix a bug that model inference service creation fails on an existing and suspended service.
-
-### Behavior Change
 
 ### New Features
 

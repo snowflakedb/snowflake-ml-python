@@ -5,7 +5,7 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 import cloudpickle
 import importlib_resources
@@ -68,7 +68,7 @@ class OneHotEncoderTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()
@@ -89,7 +89,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         return bool(is_nnz_equal) and np.allclose(native_arr, sklearn_arr)
 
     @staticmethod
-    def convert_sparse_df_to_arr(sparse_df: DataFrame, output_cols: List[str], id_col: str) -> np.ndarray:
+    def convert_sparse_df_to_arr(sparse_df: DataFrame, output_cols: list[str], id_col: str) -> np.ndarray:
         """Convert sparse transformed dataframe to an array of [row, column]."""
         if pd.__version__ < "2.1.0":
             sparse_output_pandas = (
@@ -100,7 +100,7 @@ class OneHotEncoderTest(parameterized.TestCase):
                 sparse_df.sort(id_col)[output_cols].to_pandas().map(lambda x: json.loads(x) if x else None)
             )
 
-        def map_output(x: Optional[Dict[str, Any]]) -> Optional[List[int]]:
+        def map_output(x: Optional[dict[str, Any]]) -> Optional[list[int]]:
             """Map {encoding: 1, "array_length": length} to [encoding, length]."""
             if x is None:
                 return None
@@ -194,7 +194,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         {"params": {"categories": list}},
         {"params": {"categories": dict}},
     )
-    def test_fit_pandas(self, params: Dict[str, Any]) -> None:
+    def test_fit_pandas(self, params: dict[str, Any]) -> None:
         """
         Verify that:
             (1) an encoder fit on a pandas dataframe matches its sklearn counterpart on `categories_`, and
@@ -247,7 +247,7 @@ class OneHotEncoderTest(parameterized.TestCase):
             self.assertEqual(sklearn_cats.tolist(), pandas_cats.tolist())
 
         # Validate that transformer state is equivalent whether fitted with pandas or Snowpark DataFrame.
-        attrs: Dict[str, _EqualityFunc] = {
+        attrs: dict[str, _EqualityFunc] = {
             "categories_": equal_list_of(equal_np_array),
             "drop_idx_": equal_np_array,
             "_n_features_outs": equal_default,
@@ -256,7 +256,7 @@ class OneHotEncoderTest(parameterized.TestCase):
             "_default_to_infrequent_mappings": equal_list_of(equal_optional_of(equal_np_array)),
         }
 
-        mismatched_attributes: Dict[str, Tuple[Any, Any]] = {}
+        mismatched_attributes: dict[str, tuple[Any, Any]] = {}
         for attr, equality_func in attrs.items():
             attr1 = getattr(encoder1, attr, None)
             attr2 = getattr(encoder2, attr, None)
@@ -1617,7 +1617,7 @@ class OneHotEncoderTest(parameterized.TestCase):
         {"params": {"sparse": False, "min_frequency": 2}},
         {"params": {"sparse": False, "max_categories": 2}},
     )
-    def test_get_output_cols_dense(self, params: Dict[str, Any]) -> None:
+    def test_get_output_cols_dense(self, params: dict[str, Any]) -> None:
         """
         Test dense output columns getter.
 
