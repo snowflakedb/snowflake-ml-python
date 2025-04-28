@@ -2,7 +2,7 @@ import collections
 import logging
 import os
 import time
-from typing import Any, Deque, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any, Deque, Iterator, Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -71,7 +71,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         return cls(session, sources)
 
     @property
-    def data_sources(self) -> List[data_source.DataSource]:
+    def data_sources(self) -> list[data_source.DataSource]:
         return self._data_sources
 
     def to_batches(
@@ -79,7 +79,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         batch_size: int,
         shuffle: bool = True,
         drop_last_batch: bool = True,
-    ) -> Iterator[Dict[str, npt.NDArray[Any]]]:
+    ) -> Iterator[dict[str, npt.NDArray[Any]]]:
         """Iterate through PyArrow Dataset to generate batches whose length equals to expected batch size.
 
         As we are generating batches with the exactly same length, the last few rows in each file might get left as they
@@ -120,7 +120,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
 
     def _get_dataset(self, shuffle: bool) -> pds.Dataset:
         format = self._format
-        sources: List[Any] = []
+        sources: list[Any] = []
         source_format = None
         for source in self._data_sources:
             if isinstance(source, str):
@@ -155,7 +155,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         pa_dataset: pds.Dataset = pds.dataset(sources, format=format, **self._kwargs)
         return pa_dataset
 
-    def _get_batches_from_buffer(self, batch_size: int) -> Dict[str, npt.NDArray[Any]]:
+    def _get_batches_from_buffer(self, batch_size: int) -> dict[str, npt.NDArray[Any]]:
         """Generate new batches from the existing record batch buffer."""
         cnt_rbs_num_rows = 0
         candidates = []
@@ -180,7 +180,7 @@ class ArrowIngestor(data_ingestor.DataIngestor):
         return _record_batch_to_arrays(res)
 
 
-def _merge_record_batches(record_batches: List[pa.RecordBatch]) -> pa.RecordBatch:
+def _merge_record_batches(record_batches: list[pa.RecordBatch]) -> pa.RecordBatch:
     """Merge a list of arrow RecordBatches into one. Similar to MergeTables."""
     if not record_batches:
         return _EMPTY_RECORD_BATCH
@@ -192,7 +192,7 @@ def _merge_record_batches(record_batches: List[pa.RecordBatch]) -> pa.RecordBatc
     return batches[0]
 
 
-def _record_batch_to_arrays(rb: pa.RecordBatch) -> Dict[str, npt.NDArray[Any]]:
+def _record_batch_to_arrays(rb: pa.RecordBatch) -> dict[str, npt.NDArray[Any]]:
     """Transform the record batch to a (string, numpy array) dict."""
     batch_dict = {}
     for column, column_schema in zip(rb, rb.schema):

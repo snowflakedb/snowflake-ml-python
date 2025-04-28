@@ -9,7 +9,7 @@ import logging
 import socket
 import sys
 import time
-from typing import Any, Dict, List, Set
+from typing import Any
 
 import ray
 from constants import (
@@ -33,34 +33,34 @@ class ShutdownSignal:
         self.acknowledged_workers = set()
         logging.info(f"ShutdownSignal actor created on {self.hostname}")
 
-    def request_shutdown(self) -> Dict[str, Any]:
+    def request_shutdown(self) -> dict[str, Any]:
         """Signal workers to shut down"""
         self.shutdown_requested = True
         self.timestamp = time.time()
         logging.info(f"Shutdown requested by head node at {self.timestamp}")
         return {"status": "shutdown_requested", "timestamp": self.timestamp, "host": self.hostname}
 
-    def should_shutdown(self) -> Dict[str, Any]:
+    def should_shutdown(self) -> dict[str, Any]:
         """Check if shutdown has been requested"""
         return {"shutdown": self.shutdown_requested, "timestamp": self.timestamp, "host": self.hostname}
 
-    def ping(self) -> Dict[str, Any]:
+    def ping(self) -> dict[str, Any]:
         """Simple method to test connectivity"""
         return {"status": "alive", "host": self.hostname}
 
-    def acknowledge_shutdown(self, worker_id: str) -> Dict[str, Any]:
+    def acknowledge_shutdown(self, worker_id: str) -> dict[str, Any]:
         """Worker acknowledges it has received the shutdown signal and is terminating"""
         self.acknowledged_workers.add(worker_id)
         logging.info(f"Worker {worker_id} acknowledged shutdown. Total acknowledged: {len(self.acknowledged_workers)}")
 
         return {"status": "acknowledged", "worker_id": worker_id, "acknowledged_count": len(self.acknowledged_workers)}
 
-    def get_acknowledgment_workers(self) -> Set[str]:
+    def get_acknowledgment_workers(self) -> set[str]:
         """Get the set of workers who have acknowledged shutdown"""
         return self.acknowledged_workers
 
 
-def get_worker_node_ids() -> List[str]:
+def get_worker_node_ids() -> list[str]:
     """Get the IDs of all active worker nodes.
 
     Returns:
@@ -127,7 +127,7 @@ def verify_shutdown(shutdown_signal: ActorHandle) -> None:
     logging.debug(f"Shutdown status check: {check}")
 
 
-def wait_for_acknowledgments(shutdown_signal: ActorHandle, worker_node_ids: List[str], wait_time: int) -> None:
+def wait_for_acknowledgments(shutdown_signal: ActorHandle, worker_node_ids: list[str], wait_time: int) -> None:
     """Wait for workers to acknowledge shutdown.
 
     Args:

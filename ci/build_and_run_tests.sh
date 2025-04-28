@@ -192,8 +192,8 @@ TEMP_TEST_DIR=$(mktemp -d "${WORKSPACE}/tmp_XXXXX")
 trap 'rm -rf "${TEMP_TEST_DIR}"' EXIT
 
 pushd ${SNOWML_DIR}
-# Get the version from snowflake/ml/version.bzl
-VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.bzl | cut -d'"' -f2)
+# Get the version from snowflake/ml/version.py
+VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.py| cut -d'"' -f2)
 echo "Extracted Package Version from code: ${VERSION}"
 
 # Generate and copy auto-gen tests.
@@ -314,6 +314,10 @@ for i in "${!groups[@]}"; do
         group_coverage_report_files[$i]=$(mktemp "${TEMP_TEST_DIR}/junit_report_${group}_XXXXX")
         COMMON_PYTEST_FLAG+=(--junitxml "${group_coverage_report_files[$i]}")
     fi
+
+    export HF_HUB_DOWNLOAD_TIMEOUT=86400
+    export HF_HUB_ETAG_TIMEOUT=86400
+    export HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/huggingfaceml/huggingface-remote
 
     pushd "${group}"
     if [ "${ENV}" = "pip" ]; then

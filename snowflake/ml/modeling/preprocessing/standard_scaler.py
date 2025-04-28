@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -106,11 +106,11 @@ class StandardScaler(base.BaseTransformer):
         self.with_mean = with_mean
         self.with_std = with_std
 
-        self.scale_: Optional[Dict[str, float]] = {} if with_std else None
-        self.mean_: Optional[Dict[str, float]] = {} if with_mean else None
-        self.var_: Optional[Dict[str, float]] = {} if with_std else None
+        self.scale_: Optional[dict[str, float]] = {} if with_std else None
+        self.mean_: Optional[dict[str, float]] = {} if with_mean else None
+        self.var_: Optional[dict[str, float]] = {} if with_std else None
 
-        self.custom_states: List[str] = []
+        self.custom_states: list[str] = []
         if with_mean:
             self.custom_states.append(_utils.NumericStatistics.MEAN)
         if with_std:

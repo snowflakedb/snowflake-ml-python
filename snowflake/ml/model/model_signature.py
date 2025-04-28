@@ -1,18 +1,7 @@
 import enum
 import json
 import warnings
-from typing import (
-    Any,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Sequence,
-    Tuple,
-    Type,
-    Union,
-    cast,
-)
+from typing import Any, Literal, Optional, Sequence, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -30,7 +19,7 @@ from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._signatures import (
     base_handler,
-    builtins_handler as builtins_handler,
+    builtins_handler,
     core,
     dmatrix_handler,
     numpy_handler,
@@ -48,7 +37,7 @@ FeatureGroupSpec = core.FeatureGroupSpec
 ModelSignature = core.ModelSignature
 
 
-_LOCAL_DATA_HANDLERS: List[Type[base_handler.BaseDataHandler[Any]]] = [
+_LOCAL_DATA_HANDLERS: list[type[base_handler.BaseDataHandler[Any]]] = [
     pandas_handler.PandasDataFrameHandler,
     numpy_handler.NumpyArrayHandler,
     builtins_handler.ListOfBuiltinHandler,
@@ -414,7 +403,7 @@ class SnowparkIdentifierRule(enum.Enum):
 
 def _get_dataframe_values_range(
     df: snowflake.snowpark.DataFrame,
-) -> Dict[str, Union[Tuple[int, int], Tuple[float, float]]]:
+) -> dict[str, Union[tuple[int, int], tuple[float, float]]]:
     columns = [
         F.array_construct(F.min(field.name), F.max(field.name)).as_(field.name)
         for field in df.schema.fields
@@ -429,7 +418,7 @@ def _get_dataframe_values_range(
             original_exception=ValueError(f"Unable to get the value range of fields {df.columns}"),
         )
     return cast(
-        Dict[str, Union[Tuple[int, int], Tuple[float, float]]],
+        dict[str, Union[tuple[int, int], tuple[float, float]]],
         {
             sql_identifier.SqlIdentifier(k, case_sensitive=True).identifier(): (json.loads(v)[0], json.loads(v)[1])
             for k, v in res[0].as_dict().items()
@@ -456,7 +445,7 @@ def _validate_snowpark_data(
         - inferred: signature `a` - Snowpark DF `"a"`, use `get_inferred_name`
         - normalized: signature `a` - Snowpark DF `A`, use `resolve_identifier`
     """
-    errors: Dict[SnowparkIdentifierRule, List[Exception]] = {
+    errors: dict[SnowparkIdentifierRule, list[Exception]] = {
         SnowparkIdentifierRule.INFERRED: [],
         SnowparkIdentifierRule.NORMALIZED: [],
     }
@@ -549,7 +538,7 @@ def _validate_snowpark_type_feature(
     field: spt.StructField,
     ft_type: DataType,
     ft_name: str,
-    value_range: Optional[Union[Tuple[int, int], Tuple[float, float]]],
+    value_range: Optional[Union[tuple[int, int], tuple[float, float]]],
     strict: bool = False,
 ) -> None:
     field_data_type = field.datatype
@@ -716,8 +705,8 @@ def _convert_and_validate_local_data(
 def infer_signature(
     input_data: model_types.SupportedLocalDataType,
     output_data: model_types.SupportedLocalDataType,
-    input_feature_names: Optional[List[str]] = None,
-    output_feature_names: Optional[List[str]] = None,
+    input_feature_names: Optional[list[str]] = None,
+    output_feature_names: Optional[list[str]] = None,
     input_data_limit: Optional[int] = 100,
     output_data_limit: Optional[int] = 100,
 ) -> core.ModelSignature:

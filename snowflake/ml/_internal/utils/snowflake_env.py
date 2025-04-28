@@ -1,15 +1,15 @@
 import enum
-from typing import Any, Dict, Optional, TypedDict, cast
+from typing import Any, Optional, TypedDict, cast
 
 from packaging import version
 from typing_extensions import NotRequired, Required
 
 from snowflake.ml._internal.utils import query_result_checker
-from snowflake.snowpark import session
+from snowflake.snowpark import exceptions as sp_exceptions, session
 
 
 def get_current_snowflake_version(
-    sess: session.Session, *, statement_params: Optional[Dict[str, Any]] = None
+    sess: session.Session, *, statement_params: Optional[dict[str, Any]] = None
 ) -> version.Version:
     """Get Snowflake Version as a version.Version object follow PEP way of versioning, that is to say:
         "7.44.2 b202312132139364eb71238" to <Version('7.44.2+b202312132139364eb71238')>
@@ -60,8 +60,8 @@ class SnowflakeRegion(TypedDict):
 
 
 def get_regions(
-    sess: session.Session, *, statement_params: Optional[Dict[str, Any]] = None
-) -> Dict[str, SnowflakeRegion]:
+    sess: session.Session, *, statement_params: Optional[dict[str, Any]] = None
+) -> dict[str, SnowflakeRegion]:
     res = (
         query_result_checker.SqlResultValidator(sess, "SHOW REGIONS", statement_params=statement_params)
         .has_column("snowflake_region")
@@ -93,7 +93,7 @@ def get_regions(
     return res_dict
 
 
-def get_current_region_id(sess: session.Session, *, statement_params: Optional[Dict[str, Any]] = None) -> str:
+def get_current_region_id(sess: session.Session, *, statement_params: Optional[dict[str, Any]] = None) -> str:
     res = (
         query_result_checker.SqlResultValidator(
             sess, "SELECT CURRENT_REGION() AS CURRENT_REGION", statement_params=statement_params
@@ -103,3 +103,25 @@ def get_current_region_id(sess: session.Session, *, statement_params: Optional[D
     )
 
     return cast(str, res.CURRENT_REGION)
+
+
+def get_current_cloud(
+    sess: session.Session,
+    default: Optional[SnowflakeCloudType] = None,
+    *,
+    statement_params: Optional[dict[str, Any]] = None,
+) -> SnowflakeCloudType:
+    region_id = get_current_region_id(sess, statement_params=statement_params)
+    try:
+        region = get_regions(sess, statement_params=statement_params)[region_id]
+        return region["cloud"]
+    except sp_exceptions.SnowparkSQLException:
+        # SHOW REGIONS not available, try to infer cloud from region name
+        region_name = region_id.split(".", 1)[-1]  # Drop region group if any, e.g. PUBLIC
+        cloud_name_maybe = region_name.split("_", 1)[0]  # Extract cloud name, e.g. AWS_US_WEST -> AWS
+        try:
+            return SnowflakeCloudType.from_value(cloud_name_maybe)
+        except ValueError:
+            if default:
+                return default
+            raise

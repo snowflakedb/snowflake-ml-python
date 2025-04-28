@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -32,12 +32,12 @@ class ExampleHelper:
 
     def _clear(self) -> None:
         self._selected_example = None
-        self._source_tables: List[str] = []
-        self._source_dfs: List[DataFrame] = []
-        self._excluded_columns: List[sql_identifier.SqlIdentifier] = []
-        self._label_columns: List[sql_identifier.SqlIdentifier] = []
+        self._source_tables: list[str] = []
+        self._source_dfs: list[DataFrame] = []
+        self._excluded_columns: list[sql_identifier.SqlIdentifier] = []
+        self._label_columns: list[sql_identifier.SqlIdentifier] = []
         self._timestamp_column: Optional[sql_identifier.SqlIdentifier] = None
-        self._epoch_to_timestamp_cols: List[str] = []
+        self._epoch_to_timestamp_cols: list[str] = []
         self._add_id_column: Optional[sql_identifier.SqlIdentifier] = None
         self._training_spine_table: str = ""
 
@@ -53,7 +53,7 @@ class ExampleHelper:
                 rows.append((f_name, source_dict["model_category"], source_dict["desc"], source_dict["label_columns"]))
         return self._session.create_dataframe(rows, schema=["NAME", "MODEL_CATEGORY", "DESC", "LABEL_COLS"])
 
-    def load_draft_feature_views(self) -> List[FeatureView]:
+    def load_draft_feature_views(self) -> list[FeatureView]:
         """Return all feature views in an example.
 
         Returns:
@@ -74,7 +74,7 @@ class ExampleHelper:
 
         return fvs
 
-    def load_entities(self) -> List[Entity]:
+    def load_entities(self) -> list[Entity]:
         """Return all entities in an example.
 
         Returns:
@@ -88,7 +88,7 @@ class ExampleHelper:
         with open(file_path) as fs:
             return yaml.safe_load(fs)
 
-    def _create_file_format(self, format_dict: Dict[str, str], format_name: str) -> None:
+    def _create_file_format(self, format_dict: dict[str, str], format_name: str) -> None:
         """Create a file name with given name."""
         self._session.sql(
             f"""
@@ -110,7 +110,7 @@ class ExampleHelper:
             """
         ).collect()
 
-    def _load_csv(self, schema_dict: Dict[str, str], temp_stage_name: str) -> List[str]:
+    def _load_csv(self, schema_dict: dict[str, str], temp_stage_name: str) -> list[str]:
         # create temp file format
         file_format_name = f"{self._database_name}.{self._dataset_schema}.feature_store_temp_format"
         format_str = ""
@@ -145,7 +145,7 @@ class ExampleHelper:
 
         return [schema_dict["destination_table_name"]]
 
-    def _load_parquet(self, schema_dict: Dict[str, str], temp_stage_name: str) -> List[str]:
+    def _load_parquet(self, schema_dict: dict[str, str], temp_stage_name: str) -> list[str]:
         regex_pattern = schema_dict["load_files_pattern"]
         all_files = self._session.sql(f"list @{temp_stage_name}").collect()
         filtered_files = [item["name"] for item in all_files if re.match(regex_pattern, item["name"])]
@@ -187,7 +187,7 @@ class ExampleHelper:
 
         return result
 
-    def _load_source_data(self, schema_yaml_file: str) -> List[str]:
+    def _load_source_data(self, schema_yaml_file: str) -> list[str]:
         """Parse a yaml schema file and load data into Snowflake.
 
         Args:
@@ -210,7 +210,7 @@ class ExampleHelper:
         else:
             return self._load_csv(schema_dict, temp_stage_name)
 
-    def load_example(self, example_name: str) -> List[str]:
+    def load_example(self, example_name: str) -> list[str]:
         """Select the active example and load its datasets to Snowflake.
 
         Args:
@@ -247,7 +247,7 @@ class ExampleHelper:
 
         return self.load_source_data(source_yaml_data)
 
-    def load_source_data(self, source_data_name: str) -> List[str]:
+    def load_source_data(self, source_data_name: str) -> list[str]:
         """Load source data into Snowflake.
 
         Args:
@@ -269,10 +269,10 @@ class ExampleHelper:
     def get_current_schema(self) -> str:
         return self._dataset_schema
 
-    def get_label_cols(self) -> List[str]:
+    def get_label_cols(self) -> list[str]:
         return [item.resolved() for item in self._label_columns]
 
-    def get_excluded_cols(self) -> List[str]:
+    def get_excluded_cols(self) -> list[str]:
         return [item.resolved() for item in self._excluded_columns]
 
     def get_training_data_timestamp_col(self) -> Optional[str]:

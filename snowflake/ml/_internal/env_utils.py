@@ -6,12 +6,13 @@ import textwrap
 import warnings
 from enum import Enum
 from importlib import metadata as importlib_metadata
-from typing import Any, DefaultDict, Dict, List, Optional, Tuple
+from typing import Any, DefaultDict, Optional
 
 import yaml
 from packaging import requirements, specifiers, version
 
 import snowflake.connector
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, relax_version_strategy
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import context, exceptions, session
@@ -27,8 +28,8 @@ class CONDA_OS(Enum):
 
 
 _NODEFAULTS = "nodefaults"
-_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
-_SNOWFLAKE_CONDA_PACKAGE_CACHE: Dict[str, List[version.Version]] = {}
+_SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE: dict[str, list[version.Version]] = {}
+_SNOWFLAKE_CONDA_PACKAGE_CACHE: dict[str, list[version.Version]] = {}
 _SUPPORTED_PACKAGE_SPEC_OPS = ["==", ">=", "<=", ">", "<"]
 
 DEFAULT_CHANNEL_NAME = ""
@@ -64,7 +65,7 @@ def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:
     return r
 
 
-def _validate_conda_dependency_string(dep_str: str) -> Tuple[str, requirements.Requirement]:
+def _validate_conda_dependency_string(dep_str: str) -> tuple[str, requirements.Requirement]:
     """Validate conda dependency string like `pytorch == 1.12.1` or `conda-forge::transformer` and split the channel
         name before the double colon and requirement specification after that.
 
@@ -115,7 +116,7 @@ class DuplicateDependencyInMultipleChannelsError(Exception):
     ...
 
 
-def append_requirement_list(req_list: List[requirements.Requirement], p_req: requirements.Requirement) -> None:
+def append_requirement_list(req_list: list[requirements.Requirement], p_req: requirements.Requirement) -> None:
     """Append a requirement to an existing requirement list. If need and able to merge, merge it, otherwise, append it.
 
     Args:
@@ -134,7 +135,7 @@ def append_requirement_list(req_list: List[requirements.Requirement], p_req: req
 
 
 def append_conda_dependency(
-    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]], p_chan_dep: Tuple[str, requirements.Requirement]
+    conda_chan_deps: DefaultDict[str, list[requirements.Requirement]], p_chan_dep: tuple[str, requirements.Requirement]
 ) -> None:
     """Append a conda dependency to an existing conda dependencies dict, if not existed in any channel.
         To avoid making unnecessary modification to dict, we check the existence first, then try to merge, then append,
@@ -164,45 +165,73 @@ def append_conda_dependency(
     conda_chan_deps[p_channel].append(p_req)
 
 
-def validate_pip_requirement_string_list(req_str_list: List[str]) -> List[requirements.Requirement]:
-    """Validate the a list of pip requirement string according to PEP 508.
+def validate_pip_requirement_string_list(
+    req_str_list: list[str], add_local_version_specifier: bool = False
+) -> list[requirements.Requirement]:
+    """Validate the list of pip requirement strings according to PEP 508.
 
     Args:
-        req_str_list: The list of string contains the pip requirement specification.
+        req_str_list: The list of strings containing the pip requirement specification.
+        add_local_version_specifier: if True, add the version specifier of the locally installed package version to
+            requirements without version specifiers.
 
     Returns:
         A requirements.Requirement list containing the requirement information.
     """
-    seen_pip_requirement_list: List[requirements.Requirement] = []
+    seen_pip_requirement_list: list[requirements.Requirement] = []
     for req_str in req_str_list:
         append_requirement_list(seen_pip_requirement_list, _validate_pip_requirement_string(req_str=req_str))
+
+    if add_local_version_specifier:
+        # For any requirement string that does not contain a specifier, add the specifier of a locally installed version
+        # if it exists.
+        seen_pip_requirement_list = list(
+            map(
+                lambda req: req if req.specifier else get_local_installed_version_of_pip_package(req),
+                seen_pip_requirement_list,
+            )
+        )
 
     return seen_pip_requirement_list
 
 
-def validate_conda_dependency_string_list(dep_str_list: List[str]) -> DefaultDict[str, List[requirements.Requirement]]:
+def validate_conda_dependency_string_list(
+    dep_str_list: list[str], add_local_version_specifier: bool = False
+) -> DefaultDict[str, list[requirements.Requirement]]:
     """Validate a list of conda dependency string, find any duplicate package across different channel and create a dict
         to represent the whole dependencies.
 
     Args:
         dep_str_list: The list of string contains the conda dependency specification.
+        add_local_version_specifier: if True, add the version specifier of the locally installed package version to
+            requirements without version specifiers.
 
     Returns:
         A dict mapping from the channel name to the list of requirements from that channel.
     """
     validated_conda_dependency_list = list(map(_validate_conda_dependency_string, dep_str_list))
-    ret_conda_dependency_dict: DefaultDict[str, List[requirements.Requirement]] = collections.defaultdict(list)
+    ret_conda_dependency_dict: DefaultDict[str, list[requirements.Requirement]] = collections.defaultdict(list)
     for p_channel, p_req in validated_conda_dependency_list:
         append_conda_dependency(ret_conda_dependency_dict, (p_channel, p_req))
+
+    if add_local_version_specifier:
+        # For any conda dependency string that does not contain a specifier, add the specifier of a locally installed
+        # version if it exists. This is best-effort: if the conda package does not have the same name as the pip
+        # package, it won't be found in the local environment.
+        for channel_str, reqs in ret_conda_dependency_dict.items():
+            reqs = list(
+                map(lambda req: req if req.specifier else get_local_installed_version_of_pip_package(req), reqs)
+            )
+            ret_conda_dependency_dict[channel_str] = reqs
 
     return ret_conda_dependency_dict
 
 
 def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement) -> requirements.Requirement:
     """Get the local installed version of a given pip package requirement.
-        If the package is locally installed, and the local version meet the specifier of the requirements, return a new
+        If the package is locally installed, and the local version meets the specifier of the requirements, return a new
         requirement specifier that pins the version.
-        If the local version does not meet the specifier of the requirements, a warn will be omitted and returns
+        If the local version does not meet the specifier of the requirements, a warning will be emitted and returns
         the original package requirement.
         If the package is not locally installed or not found, the original package requirement is returned.
 
@@ -217,7 +246,7 @@ def get_local_installed_version_of_pip_package(pip_req: requirements.Requirement
         local_dist_version = local_dist.version
     except importlib_metadata.PackageNotFoundError:
         if pip_req.name == SNOWPARK_ML_PKG_NAME:
-            local_dist_version = snowml_env.VERSION
+            local_dist_version = snowml_version.VERSION
         else:
             return pip_req
     new_pip_req = copy.deepcopy(pip_req)
@@ -372,8 +401,8 @@ def relax_requirement_version(req: requirements.Requirement) -> requirements.Req
 
 
 def get_matched_package_versions_in_information_schema_with_active_session(
-    reqs: List[requirements.Requirement], python_version: str
-) -> Dict[str, List[version.Version]]:
+    reqs: list[requirements.Requirement], python_version: str
+) -> dict[str, list[version.Version]]:
     try:
         session = context.get_active_session()
     except exceptions.SnowparkSessionException:
@@ -383,10 +412,10 @@ def get_matched_package_versions_in_information_schema_with_active_session(
 
 def get_matched_package_versions_in_information_schema(
     session: session.Session,
-    reqs: List[requirements.Requirement],
+    reqs: list[requirements.Requirement],
     python_version: str,
-    statement_params: Optional[Dict[str, Any]] = None,
-) -> Dict[str, List[version.Version]]:
+    statement_params: Optional[dict[str, Any]] = None,
+) -> dict[str, list[version.Version]]:
     """Look up the information_schema table to check if a package with the specified specifier exists in the Snowflake
     Conda channel. Note that this is not the source of truth due to the potential delay caused by a package that might
     exist in the information_schema table but has not yet become available in the Snowflake Conda channel.
@@ -400,8 +429,8 @@ def get_matched_package_versions_in_information_schema(
     Returns:
         A Dict, whose key is the package name, and value is a list of versions match the requirements.
     """
-    ret_dict: Dict[str, List[version.Version]] = {}
-    reqs_to_request: List[requirements.Requirement] = []
+    ret_dict: dict[str, list[version.Version]] = {}
+    reqs_to_request: list[requirements.Requirement] = []
     for req in reqs:
         if req.name in _SNOWFLAKE_INFO_SCHEMA_PACKAGE_CACHE:
             available_versions = list(
@@ -457,7 +486,7 @@ def get_matched_package_versions_in_information_schema(
 
 def save_conda_env_file(
     path: pathlib.Path,
-    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
+    conda_chan_deps: DefaultDict[str, list[requirements.Requirement]],
     python_version: str,
     cuda_version: Optional[str] = None,
     default_channel_override: str = SNOWFLAKE_CONDA_CHANNEL_URL,
@@ -478,7 +507,7 @@ def save_conda_env_file(
     """
     assert path.suffix in [".yml", ".yaml"], "Conda environment file should have extension of yml or yaml."
     path.parent.mkdir(parents=True, exist_ok=True)
-    env: Dict[str, Any] = dict()
+    env: dict[str, Any] = dict()
     env["name"] = "snow-env"
     # Get all channels in the dependencies, ordered by the number of the packages which belongs to and put into
     # channels section.
@@ -505,7 +534,7 @@ def save_conda_env_file(
         yaml.safe_dump(env, stream=f, default_flow_style=False)
 
 
-def save_requirements_file(path: pathlib.Path, pip_deps: List[requirements.Requirement]) -> None:
+def save_requirements_file(path: pathlib.Path, pip_deps: list[requirements.Requirement]) -> None:
     """Generate Python requirements.txt file in the given directory path.
 
     Args:
@@ -521,9 +550,9 @@ def save_requirements_file(path: pathlib.Path, pip_deps: List[requirements.Requi
 
 def load_conda_env_file(
     path: pathlib.Path,
-) -> Tuple[
-    DefaultDict[str, List[requirements.Requirement]],
-    Optional[List[requirements.Requirement]],
+) -> tuple[
+    DefaultDict[str, list[requirements.Requirement]],
+    Optional[list[requirements.Requirement]],
     Optional[str],
     Optional[str],
 ]:
@@ -601,7 +630,7 @@ def load_conda_env_file(
     return conda_dep_dict, pip_deps_list if pip_deps_list else None, python_version, cuda_version
 
 
-def load_requirements_file(path: pathlib.Path) -> List[requirements.Requirement]:
+def load_requirements_file(path: pathlib.Path) -> list[requirements.Requirement]:
     """Load Python requirements.txt file from the given directory path.
 
     Args:
@@ -641,8 +670,8 @@ def parse_python_version_string(dep: str) -> Optional[str]:
 
 
 def _find_conda_dep_spec(
-    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]], pkg_name: str
-) -> Optional[Tuple[str, requirements.Requirement]]:
+    conda_chan_deps: DefaultDict[str, list[requirements.Requirement]], pkg_name: str
+) -> Optional[tuple[str, requirements.Requirement]]:
     for channel in conda_chan_deps:
         spec = next(filter(lambda req: req.name == pkg_name, conda_chan_deps[channel]), None)
         if spec:
@@ -650,14 +679,14 @@ def _find_conda_dep_spec(
     return None
 
 
-def _find_pip_req_spec(pip_reqs: List[requirements.Requirement], pkg_name: str) -> Optional[requirements.Requirement]:
+def _find_pip_req_spec(pip_reqs: list[requirements.Requirement], pkg_name: str) -> Optional[requirements.Requirement]:
     spec = next(filter(lambda req: req.name == pkg_name, pip_reqs), None)
     return spec
 
 
 def find_dep_spec(
-    conda_chan_deps: DefaultDict[str, List[requirements.Requirement]],
-    pip_reqs: List[requirements.Requirement],
+    conda_chan_deps: DefaultDict[str, list[requirements.Requirement]],
+    pip_reqs: list[requirements.Requirement],
     conda_pkg_name: str,
     pip_pkg_name: Optional[str] = None,
     remove_spec: bool = False,

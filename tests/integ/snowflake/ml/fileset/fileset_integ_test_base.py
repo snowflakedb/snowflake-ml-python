@@ -1,6 +1,6 @@
 import random
 import uuid
-from typing import Any, Callable, Dict, Generator
+from typing import Any, Callable, Generator
 
 import numpy as np
 from absl.testing import absltest
@@ -100,7 +100,7 @@ class TestSnowflakeFileSetBase(common_test_base.CommonTestBase):
         self,
         batch_size: int,
         drop_last_batch: bool,
-        numpy_batch_generator: Callable[[], Generator[Dict[str, npt.NDArray[Any]], None, None]],
+        numpy_batch_generator: Callable[[], Generator[dict[str, npt.NDArray[Any]], None, None]],
     ) -> None:
         if drop_last_batch:
             expected_num_rows = self.num_rows - self.num_rows % batch_size

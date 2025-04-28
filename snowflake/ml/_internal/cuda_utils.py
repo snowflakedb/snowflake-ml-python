@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 from packaging import version
 
@@ -12,7 +12,7 @@ class TorchCompatibilityConfig:
     # Pytorch version(major.minor.micro).
     torch: str
     # List of supporting CUDA versions(major.minor).
-    cudas: List[str]
+    cudas: list[str]
 
 
 # Used for testing only to make sure valid config

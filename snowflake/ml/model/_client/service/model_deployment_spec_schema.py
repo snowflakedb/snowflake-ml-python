@@ -1,33 +1,53 @@
-from typing import List, TypedDict
+from typing import Optional
 
-from typing_extensions import NotRequired, Required
-
-
-class ModelDict(TypedDict):
-    name: Required[str]
-    version: Required[str]
+from pydantic import BaseModel
 
 
-class ImageBuildDict(TypedDict):
-    compute_pool: Required[str]
-    image_repo: Required[str]
-    force_rebuild: Required[bool]
-    external_access_integrations: NotRequired[List[str]]
+class Model(BaseModel):
+    name: str
+    version: str
 
 
-class ServiceDict(TypedDict):
-    name: Required[str]
-    compute_pool: Required[str]
-    ingress_enabled: Required[bool]
-    max_instances: Required[int]
-    cpu: NotRequired[str]
-    memory: NotRequired[str]
-    gpu: NotRequired[str]
-    num_workers: NotRequired[int]
-    max_batch_rows: NotRequired[int]
+class ImageBuild(BaseModel):
+    compute_pool: str
+    image_repo: str
+    force_rebuild: bool
+    external_access_integrations: Optional[list[str]] = None
 
 
-class ModelDeploymentSpecDict(TypedDict):
-    models: Required[List[ModelDict]]
-    image_build: Required[ImageBuildDict]
-    service: Required[ServiceDict]
+class Service(BaseModel):
+    name: str
+    compute_pool: str
+    ingress_enabled: bool
+    max_instances: int
+    cpu: Optional[str] = None
+    memory: Optional[str] = None
+    gpu: Optional[str] = None
+    num_workers: Optional[int] = None
+    max_batch_rows: Optional[int] = None
+
+
+class Job(BaseModel):
+    name: str
+    compute_pool: str
+    cpu: Optional[str] = None
+    memory: Optional[str] = None
+    gpu: Optional[str] = None
+    num_workers: Optional[int] = None
+    max_batch_rows: Optional[int] = None
+    warehouse: str
+    target_method: str
+    input_table_name: str
+    output_table_name: str
+
+
+class ModelServiceDeploymentSpec(BaseModel):
+    models: list[Model]
+    image_build: ImageBuild
+    service: Service
+
+
+class ModelJobDeploymentSpec(BaseModel):
+    models: list[Model]
+    image_build: ImageBuild
+    job: Job

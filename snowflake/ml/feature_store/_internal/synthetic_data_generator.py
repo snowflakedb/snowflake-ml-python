@@ -4,7 +4,7 @@ import sched
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Optional, cast
 
 from absl.logging import logging
 
@@ -57,7 +57,7 @@ class SyntheticDataGenerator:
         if self._trigger_thread is not None:
             self._trigger_thread.join()
 
-    def _collect_metadata(self) -> Tuple[StructType, Dict[str, Stats]]:
+    def _collect_metadata(self) -> tuple[StructType, dict[str, Stats]]:
         df = self._session.table([self._database, self._schema, self._source_table])
         df_stats = df.to_pandas().describe()
         stats = {}

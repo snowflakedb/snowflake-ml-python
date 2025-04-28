@@ -3,7 +3,7 @@ import importlib
 import os
 import sys
 import tempfile
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import cloudpickle
 import numpy as np
@@ -45,7 +45,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()
@@ -104,7 +104,7 @@ class OrdinalEncoderTest(parameterized.TestCase):
         {"params": {"handle_unknown": "use_encoded_value", "unknown_value": -1}},
         {"params": {"encoded_missing_value": -1}},
     )
-    def test_fit_pandas(self, params: Dict[str, Any]) -> None:
+    def test_fit_pandas(self, params: dict[str, Any]) -> None:
         """
         Verify that:
             (1) an encoder fit on a pandas dataframe matches its sklearn counterpart on `categories_`, and
@@ -138,12 +138,12 @@ class OrdinalEncoderTest(parameterized.TestCase):
             self.assertEqual(sklearn_cats.tolist(), pandas_cats.tolist())
 
         # Validate that transformer state is equivalent whether fitted with pandas or Snowpark DataFrame.
-        attrs: Dict[str, _EqualityFunc] = {
+        attrs: dict[str, _EqualityFunc] = {
             "categories_": equal_list_of(equal_np_array),
             "_missing_indices": equal_default,
         }
 
-        mismatched_attributes: Dict[str, Tuple[Any, Any]] = {}
+        mismatched_attributes: dict[str, tuple[Any, Any]] = {}
         for attr, equality_func in attrs.items():
             attr1 = getattr(encoder1, attr, None)
             attr2 = getattr(encoder2, attr, None)

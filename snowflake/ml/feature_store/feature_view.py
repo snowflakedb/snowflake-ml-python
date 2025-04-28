@@ -6,7 +6,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -49,7 +49,7 @@ _RESULT_SCAN_QUERY_PATTERN = re.compile(
 class _FeatureViewMetadata:
     """Represent metadata tracked on top of FV backend object"""
 
-    entities: List[str]
+    entities: list[str]
     timestamp_col: str
 
     def to_json(self) -> str:
@@ -73,7 +73,7 @@ class _CompactRepresentation:
     sch: str
     name: str
     version: str
-    feature_indices: Optional[List[int]] = None
+    feature_indices: Optional[list[int]] = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -110,7 +110,7 @@ class FeatureViewStatus(Enum):
 @dataclass(frozen=True)
 class FeatureViewSlice:
     feature_view_ref: FeatureView
-    names: List[SqlIdentifier]
+    names: list[SqlIdentifier]
 
     def __repr__(self) -> str:
         states = (f"{k}={v}" for k, v in vars(self).items())
@@ -148,7 +148,7 @@ class FeatureViewSlice:
             feature_indices=self._feature_names_to_indices(),
         )
 
-    def _feature_names_to_indices(self) -> List[int]:
+    def _feature_names_to_indices(self) -> list[int]:
         name_to_indices_map = {name: idx for idx, name in enumerate(self.feature_view_ref.feature_names)}
         return [name_to_indices_map[n] for n in self.names]
 
@@ -161,7 +161,7 @@ class FeatureView(lineage_node.LineageNode):
     def __init__(
         self,
         name: str,
-        entities: List[Entity],
+        entities: list[Entity],
         feature_df: DataFrame,
         *,
         timestamp_col: Optional[str] = None,
@@ -170,7 +170,7 @@ class FeatureView(lineage_node.LineageNode):
         warehouse: Optional[str] = None,
         initialize: str = "ON_CREATE",
         refresh_mode: str = "AUTO",
-        cluster_by: Optional[List[str]] = None,
+        cluster_by: Optional[list[str]] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -198,7 +198,7 @@ class FeatureView(lineage_node.LineageNode):
                 after you register the feature view. It supports ON_CREATE (default) or ON_SCHEDULE. ON_CREATE refreshes
                 the feature view synchronously at creation. ON_SCHEDULE refreshes the feature view at the next scheduled
                 refresh. It is only effective when refresh_freq is not None.
-            refresh_mode: The refresh mode of managed feature view. The value can be 'AUTO', 'FULL' or 'INCREMENETAL'.
+            refresh_mode: The refresh mode of managed feature view. The value can be 'AUTO', 'FULL' or 'INCREMENTAL'.
                 For managed feature view, the default value is 'AUTO'. For static feature view it has no effect.
                 Check https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table for for details.
             cluster_by: Columns to cluster the feature view by.
@@ -209,7 +209,7 @@ class FeatureView(lineage_node.LineageNode):
         Example::
 
             >>> fs = FeatureStore(...)
-            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> # draft_fv is a local object that hasn't materialized to Snowflake backend yet.
             >>> feature_df = session.sql("select f_1, f_2 from source_table")
             >>> draft_fv = FeatureView(
             ...     name="my_fv",
@@ -232,7 +232,7 @@ class FeatureView(lineage_node.LineageNode):
         """
 
         self._name: SqlIdentifier = SqlIdentifier(name)
-        self._entities: List[Entity] = entities
+        self._entities: list[Entity] = entities
         self._feature_df: DataFrame = feature_df
         self._timestamp_col: Optional[SqlIdentifier] = (
             SqlIdentifier(timestamp_col) if timestamp_col is not None else None
@@ -254,7 +254,7 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_mode: Optional[str] = refresh_mode
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
-        self._cluster_by: List[SqlIdentifier] = (
+        self._cluster_by: list[SqlIdentifier] = (
             [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
         )
 
@@ -264,7 +264,7 @@ class FeatureView(lineage_node.LineageNode):
 
         self._validate()
 
-    def slice(self, names: List[str]) -> FeatureViewSlice:
+    def slice(self, names: list[str]) -> FeatureViewSlice:
         """
         Select a subset of features within the FeatureView.
 
@@ -343,7 +343,7 @@ class FeatureView(lineage_node.LineageNode):
             raise RuntimeError(f"FeatureView {self.name} has not been registered.")
         return f"{self._database}.{self._schema}.{FeatureView._get_physical_name(self.name, self.version)}"
 
-    def attach_feature_desc(self, descs: Dict[str, str]) -> FeatureView:
+    def attach_feature_desc(self, descs: dict[str, str]) -> FeatureView:
         """
         Associate feature level descriptions to the FeatureView.
 
@@ -396,7 +396,7 @@ class FeatureView(lineage_node.LineageNode):
         return self._name
 
     @property
-    def entities(self) -> List[Entity]:
+    def entities(self) -> list[Entity]:
         return self._entities
 
     @property
@@ -408,7 +408,7 @@ class FeatureView(lineage_node.LineageNode):
         return self._timestamp_col
 
     @property
-    def cluster_by(self) -> Optional[List[SqlIdentifier]]:
+    def cluster_by(self) -> Optional[list[SqlIdentifier]]:
         return self._cluster_by
 
     @property
@@ -463,11 +463,11 @@ class FeatureView(lineage_node.LineageNode):
         return self._status
 
     @property
-    def feature_names(self) -> List[SqlIdentifier]:
+    def feature_names(self) -> list[SqlIdentifier]:
         return list(self._feature_desc.keys()) if self._feature_desc is not None else []
 
     @property
-    def feature_descs(self) -> Optional[Dict[SqlIdentifier, str]]:
+    def feature_descs(self) -> Optional[dict[SqlIdentifier, str]]:
         return self._feature_desc
 
     def list_columns(self) -> DataFrame:
@@ -687,7 +687,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         if self._initialize not in ["ON_CREATE", "ON_SCHEDULE"]:
             raise ValueError("'initialize' only supports ON_CREATE or ON_SCHEDULE.")
 
-    def _get_column_names(self) -> Optional[List[SqlIdentifier]]:
+    def _get_column_names(self) -> Optional[list[SqlIdentifier]]:
         try:
             return to_sql_identifiers(self._infer_schema_df.columns)
         except SnowparkSQLException as e:
@@ -699,7 +699,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             )
             return None
 
-    def _get_feature_names(self) -> Optional[List[SqlIdentifier]]:
+    def _get_feature_names(self) -> Optional[list[SqlIdentifier]]:
         join_keys = [k for e in self._entities for k in e.join_keys]
         ts_col = [self._timestamp_col] if self._timestamp_col is not None else []
         feature_names = self._get_column_names()
@@ -733,7 +733,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             and self._owner == other._owner
         )
 
-    def _to_dict(self) -> Dict[str, str]:
+    def _to_dict(self) -> dict[str, str]:
         fv_dict = self.__dict__.copy()
         if "_feature_df" in fv_dict:
             fv_dict.pop("_feature_df")
@@ -898,13 +898,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
     @staticmethod
     def _construct_feature_view(
         name: str,
-        entities: List[Entity],
+        entities: list[Entity],
         feature_df: DataFrame,
         timestamp_col: Optional[str],
         desc: str,
         version: str,
         status: FeatureViewStatus,
-        feature_descs: Dict[str, str],
+        feature_descs: dict[str, str],
         refresh_freq: Optional[str],
         database: str,
         schema: str,
@@ -915,7 +915,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         owner: Optional[str],
         infer_schema_df: Optional[DataFrame],
         session: Session,
-        cluster_by: Optional[List[str]] = None,
+        cluster_by: Optional[list[str]] = None,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -944,7 +944,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         return fv
 
     #
-    def _get_default_cluster_by(self) -> List[SqlIdentifier]:
+    def _get_default_cluster_by(self) -> list[SqlIdentifier]:
         """
         Get default columns to cluster the feature view by.
         Default cluster_by columns are join keys from entities and timestamp_col if it exists

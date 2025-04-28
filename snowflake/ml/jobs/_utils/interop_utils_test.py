@@ -1,6 +1,6 @@
 import sys
 from types import TracebackType
-from typing import Any, Type
+from typing import Any
 from unittest import mock
 
 from absl.testing import absltest
@@ -175,7 +175,7 @@ class TestInteropUtils(absltest.TestCase):
 
         # Setup a failing custom excepthook
         def failing_custom_excepthook(
-            exc_type: Type[BaseException], exc_value: BaseException, exc_tb: TracebackType, **kwargs: Any
+            exc_type: type[BaseException], exc_value: BaseException, exc_tb: TracebackType, **kwargs: Any
         ) -> None:
             raise RuntimeError("Hook failed!")
 

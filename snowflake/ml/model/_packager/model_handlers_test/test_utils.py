@@ -1,10 +1,10 @@
 import json
-from typing import Any, List
+from typing import Any
 
 import numpy.typing as npt
 
 
-def convert2D_json_to_3D(array: npt.NDArray[Any]) -> List[List[List[Any]]]:
+def convert2D_json_to_3D(array: npt.NDArray[Any]) -> list[list[list[Any]]]:
     final_array = []
     for i in range(array.shape[0]):
         dim_2 = []

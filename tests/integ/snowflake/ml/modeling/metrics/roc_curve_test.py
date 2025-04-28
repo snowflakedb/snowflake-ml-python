@@ -1,6 +1,6 @@
 import os
 import tempfile
-from typing import Any, Dict
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -46,7 +46,7 @@ class RocCurveTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"pos_label": [0, 2, 4]}},
     )
-    def test_pos_label(self, params: Dict[str, Any]) -> None:
+    def test_pos_label(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for pos_label in params["pos_label"]:
@@ -69,7 +69,7 @@ class RocCurveTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"sample_weight_col_name": [None, _SAMPLE_WEIGHT_COL]}},
     )
-    def test_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for sample_weight_col_name in params["sample_weight_col_name"]:
@@ -93,7 +93,7 @@ class RocCurveTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"drop_intermediate": [True, False]}},
     )
-    def test_drop_intermediate(self, params: Dict[str, Any]) -> None:
+    def test_drop_intermediate(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for drop_intermediate in params["drop_intermediate"]:

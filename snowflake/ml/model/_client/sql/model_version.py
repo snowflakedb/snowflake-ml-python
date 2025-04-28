@@ -1,7 +1,7 @@
 import json
 import pathlib
 import textwrap
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 from urllib.parse import ParseResult
 
 from snowflake.ml._internal.utils import (
@@ -34,7 +34,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         stage_path: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -56,7 +56,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         fq_source_model_name = self.fully_qualified_object_name(
             source_database_name, source_schema_name, source_model_name
@@ -78,7 +78,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         sql = (
             f"CREATE MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
@@ -97,7 +97,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         sql = (
             f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
@@ -116,7 +116,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         sql = (
             f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
@@ -138,7 +138,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         stage_path: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -160,7 +160,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         fq_source_model_name = self.fully_qualified_object_name(
             source_database_name, source_schema_name, source_model_name
@@ -182,7 +182,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -201,7 +201,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         alias_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -219,7 +219,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_or_alias_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -239,8 +239,8 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         version_name: sql_identifier.SqlIdentifier,
         file_path: pathlib.PurePosixPath,
         is_dir: bool = False,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         # Workaround for snowURL bug.
         trailing_slash = "/" if is_dir else ""
 
@@ -276,7 +276,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         version_name: sql_identifier.SqlIdentifier,
         file_path: pathlib.PurePosixPath,
         target_path: pathlib.Path,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> pathlib.Path:
         stage_location = pathlib.PurePosixPath(
             self.fully_qualified_object_name(database_name, schema_name, model_name),
@@ -310,8 +310,8 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         res = query_result_checker.SqlResultValidator(
             self._session,
             (
@@ -331,7 +331,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         comment: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,
@@ -351,9 +351,9 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         version_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
         input_df: dataframe.DataFrame,
-        input_args: List[sql_identifier.SqlIdentifier],
-        returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
-        statement_params: Optional[Dict[str, Any]] = None,
+        input_args: list[sql_identifier.SqlIdentifier],
+        returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -433,10 +433,10 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         version_name: sql_identifier.SqlIdentifier,
         method_name: sql_identifier.SqlIdentifier,
         input_df: dataframe.DataFrame,
-        input_args: List[sql_identifier.SqlIdentifier],
-        returns: List[Tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
+        input_args: list[sql_identifier.SqlIdentifier],
+        returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         partition_column: Optional[sql_identifier.SqlIdentifier],
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
         is_partitioned: bool = True,
     ) -> dataframe.DataFrame:
         with_statements = []
@@ -529,13 +529,13 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
     def set_metadata(
         self,
-        metadata_dict: Dict[str, Any],
+        metadata_dict: dict[str, Any],
         *,
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         json_metadata = json.dumps(metadata_dict)
         query_result_checker.SqlResultValidator(
@@ -554,7 +554,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         query_result_checker.SqlResultValidator(
             self._session,

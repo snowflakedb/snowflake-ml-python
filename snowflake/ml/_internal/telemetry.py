@@ -8,25 +8,13 @@ import sys
 import time
 import traceback
 import types
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterable,
-    List,
-    Mapping,
-    Optional,
-    Set,
-    Tuple,
-    TypeVar,
-    Union,
-    cast,
-)
+from typing import Any, Callable, Iterable, Mapping, Optional, TypeVar, Union, cast
 
 from typing_extensions import ParamSpec
 
 from snowflake import connector
 from snowflake.connector import telemetry as connector_telemetry, time_util
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -99,13 +87,13 @@ class _TelemetrySourceType(enum.Enum):
     AUGMENT_TELEMETRY = "SNOWML_AUGMENT_TELEMETRY"
 
 
-_statement_params_context_var: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar("statement_params")
+_statement_params_context_var: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar("statement_params")
 
 
 class _StatementParamsPatchManager:
     def __init__(self) -> None:
-        self._patch_cache: Set[server_connection.ServerConnection] = set()
-        self._context_var: contextvars.ContextVar[Dict[str, str]] = _statement_params_context_var
+        self._patch_cache: set[server_connection.ServerConnection] = set()
+        self._context_var: contextvars.ContextVar[dict[str, str]] = _statement_params_context_var
 
     def apply_patches(self) -> None:
         try:
@@ -117,7 +105,7 @@ class _StatementParamsPatchManager:
         except snowpark_exceptions.SnowparkSessionException:
             pass
 
-    def set_statement_params(self, statement_params: Dict[str, str]) -> None:
+    def set_statement_params(self, statement_params: dict[str, str]) -> None:
         # Only set value if not already set in context
         if not self._context_var.get({}):
             self._context_var.set(statement_params)
@@ -152,7 +140,6 @@ class _StatementParamsPatchManager:
                 if throw_on_patch_fail:  # primarily used for testing
                     raise
                 # TODO: Log a warning, this probably means there was a breaking change in Snowpark/SnowflakeConnection
-                pass
 
     def _patch_with_statement_params(
         self, target: object, function_name: str, param_name: str = "statement_params"
@@ -197,10 +184,10 @@ class _StatementParamsPatchManager:
 
         setattr(target, function_name, wrapper)
 
-    def __getstate__(self) -> Dict[str, Any]:
+    def __getstate__(self) -> dict[str, Any]:
         return {}
 
-    def __setstate__(self, state: Dict[str, Any]) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         # unpickling does not call __init__ by default, do it manually here
         self.__init__()  # type: ignore[misc]
 
@@ -210,7 +197,7 @@ _patch_manager = _StatementParamsPatchManager()
 
 def get_statement_params(
     project: str, subproject: Optional[str] = None, class_name: Optional[str] = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get telemetry statement parameters.
 
@@ -231,8 +218,8 @@ def get_statement_params(
 
 
 def add_statement_params_custom_tags(
-    statement_params: Optional[Dict[str, Any]], custom_tags: Mapping[str, Any]
-) -> Dict[str, Any]:
+    statement_params: Optional[dict[str, Any]], custom_tags: Mapping[str, Any]
+) -> dict[str, Any]:
     """
     Add custom_tags to existing statement_params.  Overwrite keys in custom_tags dict that already exist.
     If existing statement_params are not provided, do nothing as the information cannot be effectively tracked.
@@ -246,7 +233,7 @@ def add_statement_params_custom_tags(
     """
     if not statement_params:
         return {}
-    existing_custom_tags: Dict[str, Any] = statement_params.pop(TelemetryField.KEY_CUSTOM_TAGS.value, {})
+    existing_custom_tags: dict[str, Any] = statement_params.pop(TelemetryField.KEY_CUSTOM_TAGS.value, {})
     existing_custom_tags.update(custom_tags)
     # NOTE: This can be done with | operator after upgrade from py3.8
     return {
@@ -289,17 +276,17 @@ def get_function_usage_statement_params(
     *,
     function_category: str = TelemetryField.FUNC_CAT_USAGE.value,
     function_name: Optional[str] = None,
-    function_parameters: Optional[Dict[str, Any]] = None,
+    function_parameters: Optional[dict[str, Any]] = None,
     api_calls: Optional[
-        List[
+        list[
             Union[
-                Dict[str, Union[Callable[..., Any], str]],
+                dict[str, Union[Callable[..., Any], str]],
                 Union[Callable[..., Any], str],
             ]
         ]
     ] = None,
-    custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
-) -> Dict[str, Any]:
+    custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
+) -> dict[str, Any]:
     """
     Get function usage statement parameters.
 
@@ -321,12 +308,12 @@ def get_function_usage_statement_params(
         >>> df.collect(statement_params=statement_params)
     """
     telemetry_type = f"{env.SOURCE.lower()}_{TelemetryField.TYPE_FUNCTION_USAGE.value}"
-    statement_params: Dict[str, Any] = {
+    statement_params: dict[str, Any] = {
         connector_telemetry.TelemetryField.KEY_SOURCE.value: env.SOURCE,
         TelemetryField.KEY_PROJECT.value: project,
         TelemetryField.KEY_SUBPROJECT.value: subproject,
         TelemetryField.KEY_OS.value: env.OS,
-        TelemetryField.KEY_VERSION.value: env.VERSION,
+        TelemetryField.KEY_VERSION.value: snowml_version.VERSION,
         TelemetryField.KEY_PYTHON_VERSION.value: env.PYTHON_VERSION,
         connector_telemetry.TelemetryField.KEY_TYPE.value: telemetry_type,
         TelemetryField.KEY_CATEGORY.value: function_category,
@@ -339,7 +326,7 @@ def get_function_usage_statement_params(
     if api_calls:
         statement_params[TelemetryField.KEY_API_CALLS.value] = []
         for api_call in api_calls:
-            if isinstance(api_call, Dict):
+            if isinstance(api_call, dict):
                 telemetry_api_call = api_call.copy()
                 # convert Callable to str
                 for field, api in api_call.items():
@@ -388,7 +375,7 @@ def send_custom_usage(
     *,
     telemetry_type: str,
     subproject: Optional[str] = None,
-    data: Optional[Dict[str, Any]] = None,
+    data: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> None:
     active_session = next(iter(session._get_active_sessions()))
@@ -409,17 +396,17 @@ def send_api_usage_telemetry(
     api_calls_extractor: Optional[
         Callable[
             ...,
-            List[
+            list[
                 Union[
-                    Dict[str, Union[Callable[..., Any], str]],
+                    dict[str, Union[Callable[..., Any], str]],
                     Union[Callable[..., Any], str],
                 ]
             ],
         ]
     ] = None,
-    sfqids_extractor: Optional[Callable[..., List[str]]] = None,
+    sfqids_extractor: Optional[Callable[..., list[str]]] = None,
     subproject_extractor: Optional[Callable[[Any], str]] = None,
-    custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
+    custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
     """
     Decorator that sends API usage telemetry and adds function usage statement parameters to the dataframe returned by
@@ -454,7 +441,7 @@ def send_api_usage_telemetry(
         def wrap(*args: Any, **kwargs: Any) -> _ReturnValue:
             params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
 
-            api_calls: List[Union[Dict[str, Union[Callable[..., Any], str]], Callable[..., Any], str]] = []
+            api_calls: list[Union[dict[str, Union[Callable[..., Any], str]], Callable[..., Any], str]] = []
             if api_calls_extractor:
                 extracted_api_calls = api_calls_extractor(args[0])
                 for api_call in extracted_api_calls:
@@ -484,7 +471,7 @@ def send_api_usage_telemetry(
                 custom_tags=custom_tags,
             )
 
-            def update_stmt_params_if_snowpark_df(obj: _ReturnValue, statement_params: Dict[str, Any]) -> _ReturnValue:
+            def update_stmt_params_if_snowpark_df(obj: _ReturnValue, statement_params: dict[str, Any]) -> _ReturnValue:
                 """
                 Update SnowML function usage statement parameters to the object if it is a Snowpark DataFrame.
                 Used to track APIs returning a Snowpark DataFrame.
@@ -614,7 +601,7 @@ def _get_full_func_name(func: Callable[..., Any]) -> str:
 
 def _get_func_params(
     func: Callable[..., Any], func_params_to_log: Optional[Iterable[str]], args: Any, kwargs: Any
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Get function parameters.
 
@@ -639,7 +626,7 @@ def _get_func_params(
     return params
 
 
-def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kwargs: Any) -> Tuple[bool, Any]:
+def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kwargs: Any) -> tuple[bool, Any]:
     """
     Function to extract a specified argument value.
 
@@ -702,11 +689,11 @@ class _SourceTelemetryClient:
         self.source: str = env.SOURCE
         self.project: Optional[str] = project
         self.subproject: Optional[str] = subproject
-        self.version = env.VERSION
+        self.version = snowml_version.VERSION
         self.python_version: str = env.PYTHON_VERSION
         self.os: str = env.OS
 
-    def _send(self, msg: Dict[str, Any], timestamp: Optional[int] = None) -> None:
+    def _send(self, msg: dict[str, Any], timestamp: Optional[int] = None) -> None:
         """
         Add telemetry data to a batch in connector client.
 
@@ -720,7 +707,7 @@ class _SourceTelemetryClient:
             telemetry_data = connector_telemetry.TelemetryData(message=msg, timestamp=timestamp)
             self._telemetry.try_add_log_to_batch(telemetry_data)
 
-    def _create_basic_telemetry_data(self, telemetry_type: str) -> Dict[str, Any]:
+    def _create_basic_telemetry_data(self, telemetry_type: str) -> dict[str, Any]:
         message = {
             connector_telemetry.TelemetryField.KEY_SOURCE.value: self.source,
             TelemetryField.KEY_PROJECT.value: self.project,
@@ -738,10 +725,10 @@ class _SourceTelemetryClient:
         func_name: str,
         function_category: str,
         duration: float,
-        func_params: Optional[Dict[str, Any]] = None,
-        api_calls: Optional[List[Dict[str, Any]]] = None,
-        sfqids: Optional[List[Any]] = None,
-        custom_tags: Optional[Dict[str, Union[bool, int, str, float]]] = None,
+        func_params: Optional[dict[str, Any]] = None,
+        api_calls: Optional[list[dict[str, Any]]] = None,
+        sfqids: Optional[list[Any]] = None,
+        custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
         error: Optional[str] = None,
         error_code: Optional[str] = None,
         stack_trace: Optional[str] = None,
@@ -761,7 +748,7 @@ class _SourceTelemetryClient:
             error_code: Error code.
             stack_trace: Error stack trace.
         """
-        data: Dict[str, Any] = {
+        data: dict[str, Any] = {
             TelemetryField.KEY_FUNC_NAME.value: func_name,
             TelemetryField.KEY_CATEGORY.value: function_category,
         }
@@ -775,7 +762,7 @@ class _SourceTelemetryClient:
             data[TelemetryField.KEY_CUSTOM_TAGS.value] = custom_tags
 
         telemetry_type = f"{self.source.lower()}_{TelemetryField.TYPE_FUNCTION_USAGE.value}"
-        message: Dict[str, Any] = {
+        message: dict[str, Any] = {
             **self._create_basic_telemetry_data(telemetry_type),
             TelemetryField.KEY_DATA.value: data,
             TelemetryField.KEY_DURATION.value: duration,
@@ -795,7 +782,7 @@ class _SourceTelemetryClient:
             self._telemetry.send_batch()
 
 
-def get_sproc_statement_params_kwargs(sproc: Callable[..., Any], statement_params: Dict[str, Any]) -> Dict[str, Any]:
+def get_sproc_statement_params_kwargs(sproc: Callable[..., Any], statement_params: dict[str, Any]) -> dict[str, Any]:
     """
     Get statement_params keyword argument for sproc call.
 

@@ -1,6 +1,6 @@
 import json
 from contextlib import contextmanager
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from absl import logging
 
@@ -29,7 +29,7 @@ class PlatformCapabilities:
 
     _instance: Optional["PlatformCapabilities"] = None
     # Used for unittesting only. This is to avoid the need to mock the session object or reaching out to Snowflake
-    _mock_features: Optional[Dict[str, Any]] = None
+    _mock_features: Optional[dict[str, Any]] = None
 
     @classmethod
     def get_instance(cls, session: Optional[snowpark_session.Session] = None) -> "PlatformCapabilities":
@@ -41,7 +41,7 @@ class PlatformCapabilities:
         return cls._instance
 
     @classmethod
-    def set_mock_features(cls, features: Optional[Dict[str, Any]] = None) -> None:
+    def set_mock_features(cls, features: Optional[dict[str, Any]] = None) -> None:
         cls._mock_features = features
 
     @classmethod
@@ -52,7 +52,7 @@ class PlatformCapabilities:
     # Python 3.11. So, we are ignoring the type for this method.
     @classmethod  # type: ignore[arg-type]
     @contextmanager
-    def mock_features(cls, features: Dict[str, Any]) -> None:  # type: ignore[misc]
+    def mock_features(cls, features: dict[str, Any]) -> None:  # type: ignore[misc]
         logging.debug(f"Setting mock features: {features}")
         cls.set_mock_features(features)
         try:
@@ -71,7 +71,7 @@ class PlatformCapabilities:
         return self._get_bool_feature("ENABLE_BUNDLE_MODULE_CHECKOUT", False)
 
     @staticmethod
-    def _get_features(session: snowpark_session.Session) -> Dict[str, Any]:
+    def _get_features(session: snowpark_session.Session) -> dict[str, Any]:
         try:
             result = (
                 query_result_checker.SqlResultValidator(
@@ -99,7 +99,7 @@ class PlatformCapabilities:
         return {}
 
     def __init__(
-        self, *, session: Optional[snowpark_session.Session] = None, features: Optional[Dict[str, Any]] = None
+        self, *, session: Optional[snowpark_session.Session] = None, features: Optional[dict[str, Any]] = None
     ) -> None:
         # This is for testing purposes only.
         if features:

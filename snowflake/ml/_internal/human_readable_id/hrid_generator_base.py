@@ -15,7 +15,6 @@ In this module you will find:
 
 import math
 from abc import ABC, abstractmethod
-from typing import Dict, List, Tuple
 
 
 class HRIDBase(ABC):
@@ -28,12 +27,11 @@ class HRIDBase(ABC):
     @abstractmethod
     def __id_generator__(self) -> int:
         """The generator to use to generate new IDs. The implementer needs to provide this."""
-        pass
 
-    __hrid_structure__: Tuple[str, ...]
+    __hrid_structure__: tuple[str, ...]
     """The HRID structure to be generated. The implementer needs to provide this."""
 
-    __hrid_words__: Dict[str, Tuple[str, ...]]
+    __hrid_words__: dict[str, tuple[str, ...]]
     """The mapping between the HRID parts and the words to use. The implementer needs to provide this."""
 
     __separator__ = "_"
@@ -82,7 +80,7 @@ class HRIDBase(ABC):
             hrid.append(str(values[idxs[i]]))
         return self.__separator__.join(hrid)
 
-    def generate(self) -> Tuple[int, str]:
+    def generate(self) -> tuple[int, str]:
         """Generate an ID and the corresponding HRID.
 
         Returns:
@@ -92,7 +90,7 @@ class HRIDBase(ABC):
         hrid = self.id_to_hrid(id)
         return (id, hrid)
 
-    def _id_to_idxs(self, id: int) -> List[int]:
+    def _id_to_idxs(self, id: int) -> list[int]:
         """Take the ID and convert it to indices into the HRID words.
 
         Args:
@@ -109,7 +107,7 @@ class HRIDBase(ABC):
             idxs.append((id & mask) >> shift)
         return idxs
 
-    def _hrid_to_idxs(self, hrid: str) -> List[int]:
+    def _hrid_to_idxs(self, hrid: str) -> list[int]:
         """Take the HRID and convert it to indices into the HRID words.
 
         Args:

@@ -1,6 +1,6 @@
 import copy
 import functools
-from typing import Callable, Dict, List, Optional, TypeVar
+from typing import Callable, Optional, TypeVar
 
 from typing_extensions import ParamSpec
 
@@ -15,16 +15,15 @@ _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def remote(
     compute_pool: str,
     *,
     stage_name: str,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    env_vars: Optional[Dict[str, str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,

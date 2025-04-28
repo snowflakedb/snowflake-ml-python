@@ -1,5 +1,5 @@
 import warnings
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from packaging import version
 
@@ -13,7 +13,7 @@ class HuggingFacePipelineModel:
         revision: Optional[str] = None,
         token: Optional[str] = None,
         trust_remote_code: Optional[bool] = None,
-        model_kwargs: Optional[Dict[str, Any]] = None,
+        model_kwargs: Optional[dict[str, Any]] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -65,6 +65,7 @@ class HuggingFacePipelineModel:
             warnings.warn(
                 "The `use_auth_token` argument is deprecated and will be removed in v5 of Transformers.",
                 FutureWarning,
+                stacklevel=2,
             )
             if token is not None:
                 raise ValueError(
@@ -183,7 +184,8 @@ class HuggingFacePipelineModel:
             warnings.warn(
                 f"No model was supplied, defaulted to {model} and revision"
                 f" {revision} ({transformers.pipelines.HUGGINGFACE_CO_RESOLVE_ENDPOINT}/{model}).\n"
-                "Using a pipeline without specifying a model name and revision in production is not recommended."
+                "Using a pipeline without specifying a model name and revision in production is not recommended.",
+                stacklevel=2,
             )
             if config is None and isinstance(model, str):
                 config_obj = transformers.AutoConfig.from_pretrained(
@@ -200,7 +202,8 @@ class HuggingFacePipelineModel:
             if kwargs.get("device", None) is not None:
                 warnings.warn(
                     "Both `device` and `device_map` are specified. `device` will override `device_map`. You"
-                    " will most likely encounter unexpected behavior. Please remove `device` and keep `device_map`."
+                    " will most likely encounter unexpected behavior. Please remove `device` and keep `device_map`.",
+                    stacklevel=2,
                 )
 
         # ==== End pipeline logic from transformers ====

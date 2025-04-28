@@ -1,5 +1,5 @@
 import random
-from typing import Any, Dict, Generator, List
+from typing import Any, Generator
 
 import numpy as np
 import pandas as pd
@@ -24,7 +24,7 @@ np.random.seed(0)
 random.seed(0)
 
 
-def create_data_connectors(session: snowpark.Session, create: bool, num_rows: int) -> List[data.DataConnector]:
+def create_data_connectors(session: snowpark.Session, create: bool, num_rows: int) -> list[data.DataConnector]:
     rst = []
 
     # DataFrame connector
@@ -93,7 +93,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
     def test_to_tf_dataset(self, batch_size: int, shuffle: bool, drop_last_batch: bool) -> None:
         import tensorflow as tf
 
-        def numpy_batch_generator(ds: tf.data.Dataset) -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator(ds: tf.data.Dataset) -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in ds:
                 numpy_batch = {}
                 for k, v in batch.items():
@@ -120,7 +120,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
         import torch
         import torch.utils.data as torch_data
 
-        def numpy_batch_generator(dp: torch_data.IterDataPipe) -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator(dp: torch_data.IterDataPipe) -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in torch_data.DataLoader(dp, batch_size=None, num_workers=0):
                 numpy_batch = {}
                 for k, v in batch.items():
@@ -147,7 +147,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
         import torch
         import torch.utils.data as torch_data
 
-        def numpy_batch_generator(ds: torch_data.Dataset) -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator(ds: torch_data.Dataset) -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in torch_data.DataLoader(ds, batch_size=batch_size, drop_last=drop_last_batch, num_workers=0):
                 numpy_batch = {}
                 for k, v in batch.items():
@@ -173,7 +173,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
         self,
         batch_size: int,
         drop_last_batch: bool,
-        numpy_batch_generator: Generator[Dict[str, npt.NDArray[Any]], None, None],
+        numpy_batch_generator: Generator[dict[str, npt.NDArray[Any]], None, None],
     ) -> None:
         if drop_last_batch:
             expected_num_rows = self.num_rows - self.num_rows % batch_size

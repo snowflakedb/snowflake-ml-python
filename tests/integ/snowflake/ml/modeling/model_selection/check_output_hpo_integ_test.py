@@ -4,7 +4,7 @@ to match all kinds of input and output for GridSearchCV/RandomSearchCV.
 """
 
 import inspect
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Union
 from unittest import mock
 
 import cloudpickle as cp
@@ -34,7 +34,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-def _load_iris_data() -> Tuple[pd.DataFrame, List[str], List[str]]:
+def _load_iris_data() -> tuple[pd.DataFrame, list[str], list[str]]:
     input_df_pandas = load_iris(as_frame=True).frame
     input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
     input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
@@ -45,7 +45,7 @@ def _load_iris_data() -> Tuple[pd.DataFrame, List[str], List[str]]:
     return input_df_pandas, input_cols, label_col
 
 
-def matrix_scorer(clf: SkLinearRegression, X: npt.NDArray[Any], y: npt.NDArray[np.int_]) -> Dict[str, float]:
+def matrix_scorer(clf: SkLinearRegression, X: npt.NDArray[Any], y: npt.NDArray[np.int_]) -> dict[str, float]:
     y_pred = clf.predict(X)
     return {
         "mean_absolute_error": mean_absolute_error(y, y_pred),
@@ -54,7 +54,7 @@ def matrix_scorer(clf: SkLinearRegression, X: npt.NDArray[Any], y: npt.NDArray[n
     }
 
 
-def refit_strategy(cv_results: Dict[str, Any]) -> Any:
+def refit_strategy(cv_results: dict[str, Any]) -> Any:
     precision_threshold = 0.3
     cv_results_ = pd.DataFrame(cv_results)
     high_precision_cv_results = cv_results_[cv_results_["mean_test_score"] > precision_threshold]
@@ -79,7 +79,7 @@ class HPOCorrectness(parameterized.TestCase):
     def tearDown(self) -> None:
         self._session.close()
 
-    def _compare_cv_results(self, cv_result_1: Dict[str, Any], cv_result_2: Dict[str, Any]) -> None:
+    def _compare_cv_results(self, cv_result_1: dict[str, Any], cv_result_2: dict[str, Any]) -> None:
         # compare the keys
         self.assertEqual(cv_result_1.keys(), cv_result_2.keys())
         # compare the values
@@ -356,9 +356,9 @@ class HPOCorrectness(parameterized.TestCase):
         self,
         mock_is_single_node: mock.MagicMock,
         is_single_node: bool,
-        params: Union[Dict[str, Any], List[Dict[str, Any]]],
-        cv: Union[int, BaseCrossValidator, List[Tuple[Union[List[int], npt.NDArray[np.int_]]]]],
-        kwargs: Dict[str, Any],
+        params: Union[dict[str, Any], list[dict[str, Any]]],
+        cv: Union[int, BaseCrossValidator, list[tuple[Union[list[int], npt.NDArray[np.int_]]]]],
+        kwargs: dict[str, Any],
     ) -> None:
         mock_is_single_node.return_value = is_single_node
 

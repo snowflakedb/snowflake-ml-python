@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, Optional, TypedDict
+from typing import Any, Optional, TypedDict
 
 from typing_extensions import NotRequired
 
@@ -14,7 +14,7 @@ MODEL_VERSION_METADATA_SCHEMA_VERSION = "2024-01-01"
 
 
 class ModelVersionMetadataSchema(TypedDict):
-    metrics: NotRequired[Dict[str, Any]]
+    metrics: NotRequired[dict[str, Any]]
 
 
 class MetadataOperator:
@@ -44,7 +44,7 @@ class MetadataOperator:
         )
 
     @staticmethod
-    def _parse(metadata_dict: Dict[str, Any]) -> ModelVersionMetadataSchema:
+    def _parse(metadata_dict: dict[str, Any]) -> ModelVersionMetadataSchema:
         loaded_metadata_schema_version = metadata_dict.get("snowpark_ml_schema_version", None)
         if loaded_metadata_schema_version is None:
             return ModelVersionMetadataSchema(metrics={})
@@ -65,8 +65,8 @@ class MetadataOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         version_info_list = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -89,7 +89,7 @@ class MetadataOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> ModelVersionMetadataSchema:
         metadata_dict = self._get_current_metadata_dict(
             database_name=database_name,
@@ -108,7 +108,7 @@ class MetadataOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         metadata_dict = self._get_current_metadata_dict(
             database_name=database_name,

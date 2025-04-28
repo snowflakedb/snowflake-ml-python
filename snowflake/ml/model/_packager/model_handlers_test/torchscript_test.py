@@ -1,7 +1,6 @@
 import os
 import tempfile
 import warnings
-from typing import Tuple
 
 import numpy as np
 import torch
@@ -31,7 +30,7 @@ class TorchModel(torch.nn.Module):
 
 def _prepare_torch_model(
     dtype: torch.dtype = torch.float32,
-) -> Tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.nn.Module, torch.Tensor, torch.Tensor]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     data_x = torch.from_numpy(x).to(dtype=dtype)

@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Protocol, TypedDict, Union
+from typing import Any, Optional, Protocol, TypedDict, Union
 
 import pandas as pd
 
@@ -29,9 +29,9 @@ class LocalModelTransformHandlers(Protocol):
     def batch_inference(
         self,
         inference_method: str,
-        input_cols: List[str],
-        expected_output_cols: List[str],
-        snowpark_input_cols: Optional[List[str]],
+        input_cols: list[str],
+        expected_output_cols: list[str],
+        snowpark_input_cols: Optional[list[str]],
         drop_input_cols: Optional[bool] = False,
         *args: Any,
         **kwargs: Any,
@@ -57,8 +57,8 @@ class LocalModelTransformHandlers(Protocol):
 
     def score(
         self,
-        input_cols: List[str],
-        label_cols: List[str],
+        input_cols: list[str],
+        label_cols: list[str],
         sample_weight_col: Optional[str],
         *args: Any,
         **kwargs: Any,
@@ -105,10 +105,10 @@ class RemoteModelTransformHandlers(Protocol):
     def batch_inference(
         self,
         inference_method: str,
-        input_cols: List[str],
-        expected_output_cols: List[str],
+        input_cols: list[str],
+        expected_output_cols: list[str],
         session: snowpark.Session,
-        dependencies: List[str],
+        dependencies: list[str],
         drop_input_cols: Optional[bool] = False,
         expected_output_cols_type: Optional[str] = "",
         *args: Any,
@@ -137,11 +137,11 @@ class RemoteModelTransformHandlers(Protocol):
 
     def score(
         self,
-        input_cols: List[str],
-        label_cols: List[str],
+        input_cols: list[str],
+        label_cols: list[str],
         session: snowpark.Session,
-        dependencies: List[str],
-        score_sproc_imports: List[str],
+        dependencies: list[str],
+        score_sproc_imports: list[str],
         sample_weight_col: Optional[str] = None,
         *args: Any,
         **kwargs: Any,
@@ -173,10 +173,10 @@ ModelTransformHandlers = Union[LocalModelTransformHandlers, RemoteModelTransform
 class BatchInferenceKwargsTypedDict(TypedDict, total=False):
     """A typed dict specifying all possible optional keyword args accepted by batch_inference() methods."""
 
-    snowpark_input_cols: Optional[List[str]]
+    snowpark_input_cols: Optional[list[str]]
     drop_input_cols: Optional[bool]
     session: snowpark.Session
-    dependencies: List[str]
+    dependencies: list[str]
     expected_output_cols_type: str
     n_neighbors: Optional[int]
     return_distance: bool
@@ -186,5 +186,5 @@ class ScoreKwargsTypedDict(TypedDict, total=False):
     """A typed dict specifying all possible optional keyword args accepted by score() methods."""
 
     session: snowpark.Session
-    dependencies: List[str]
-    score_sproc_imports: List[str]
+    dependencies: list[str]
+    score_sproc_imports: list[str]

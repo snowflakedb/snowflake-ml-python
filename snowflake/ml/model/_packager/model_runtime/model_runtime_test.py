@@ -28,6 +28,19 @@ _BASIC_DEPENDENCIES_TARGET_RELAXED_WAREHOUSE = list(
 
 
 class ModelRuntimeTest(absltest.TestCase):
+    def _check_deps(self, dep_target: list[str], deps: list[str]) -> None:
+        # Dependencies without specifiers will have specifiers added according to local version. Check these separately.
+        dep_target_no_specifier = []
+        for d in dep_target:
+            channel, _, req_str = d.rpartition("::")
+            if not requirements.Requirement(req_str).specifier:
+                dep_target_no_specifier.append(d)
+
+        self.assertTrue(all([any([d2.startswith(d1) for d2 in deps]) for d1 in dep_target_no_specifier]))
+
+        dep_target = [d for d in dep_target if d not in dep_target_no_specifier]
+        self.assertContainsSubset(dep_target, deps)
+
     def test_model_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             m_env = model_env.ModelEnv()
@@ -45,6 +58,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -69,6 +83,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -94,6 +109,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -118,6 +134,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -145,6 +162,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -173,6 +191,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/cpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
@@ -197,7 +216,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_dup_basic_dep_other_channel(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -216,7 +235,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_dup_basic_dep_pip(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -233,13 +252,14 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_additional_conda_dep(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             dep_target = _BASIC_DEPENDENCIES_TARGET_RELAXED[:]
             dep_target.append("pytorch")
             dep_target.sort()
+
             m_env = model_env.ModelEnv()
             m_env.snowpark_ml_version = "1.0.0"
             m_env.conda_dependencies = dep_target
@@ -250,7 +270,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_additional_pip_dep(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -266,7 +286,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_additional_dep_both(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -283,7 +303,7 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/cpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
-            self.assertContainsSubset(dep_target, dependencies["dependencies"])
+            self._check_deps(dep_target, dependencies["dependencies"])
 
     def test_model_runtime_gpu(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
@@ -304,6 +324,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/gpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
             with open(os.path.join(workspace, "runtimes/gpu/env/conda.yml"), encoding="utf-8") as f:
@@ -333,6 +354,7 @@ class ModelRuntimeTest(absltest.TestCase):
                         "pip": "runtimes/gpu/env/requirements.txt",
                         "artifact_repository_map": {},
                     },
+                    "resource_constraint": {},
                 },
             )
 
@@ -354,6 +376,31 @@ class ModelRuntimeTest(absltest.TestCase):
                             "my_channel": "db.sch.my_repo",
                         },
                     },
+                    "resource_constraint": {},
+                },
+            )
+
+    def test_resource_constraint(self) -> None:
+        with tempfile.TemporaryDirectory() as workspace:
+            m_env = model_env.ModelEnv()
+            m_env.snowpark_ml_version = "1.0.0"
+            m_env.conda_dependencies = ["pytorch"]
+
+            m_env.resource_constraint = {"architecture": "x86"}
+
+            mr = model_runtime.ModelRuntime("gpu", m_env, is_gpu=True)
+            returned_dict = mr.save(pathlib.Path(workspace))
+
+            self.assertDictEqual(
+                returned_dict,
+                {
+                    "imports": [],
+                    "dependencies": {
+                        "conda": "runtimes/gpu/env/conda.yml",
+                        "pip": "runtimes/gpu/env/requirements.txt",
+                        "artifact_repository_map": {},
+                    },
+                    "resource_constraint": {"architecture": "x86"},
                 },
             )
 

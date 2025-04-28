@@ -1,5 +1,5 @@
 import io
-from typing import Any, Dict
+from typing import Any
 from unittest import mock
 
 import cloudpickle as cp
@@ -143,7 +143,7 @@ each_cv_result_return_train = [
     },
 ]
 
-SAMPLES: Dict[str, Dict[str, Any]] = {
+SAMPLES: dict[str, dict[str, Any]] = {
     "basic": {
         "estimator": GridSearchCV(estimator=PCA(), param_grid={"n_components": range(1, 3)}, cv=3),
         "n_splits": 3,
@@ -262,7 +262,7 @@ class SnowparkHandlersUnitTest(parameterized.TestCase):
             provider = ModelSpecificationsBuilder.build(model=LGBMRegressor())
             self.assertEqual(provider.imports, ["lightgbm"])
 
-    def _compare_cv_results(self, cv_result_1: Dict[str, Any], cv_result_2: Dict[str, Any]) -> None:
+    def _compare_cv_results(self, cv_result_1: dict[str, Any], cv_result_2: dict[str, Any]) -> None:
         # compare the keys
         self.assertEqual(sorted(cv_result_1.keys()), sorted(cv_result_2.keys()))
         # compare the values

@@ -1,4 +1,4 @@
-from typing import Any, Dict, cast
+from typing import Any, cast
 from unittest import mock
 
 import pandas as pd
@@ -12,7 +12,6 @@ from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
-from snowflake.ml.modeling._internal import constants
 from snowflake.ml.registry._manager import model_manager
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
@@ -27,7 +26,7 @@ class ModelManagerTest(parameterized.TestCase):
         model_name="ModelManagerTest", framework_type="snowml", number_of_functions=2
     )
 
-    def _build_expected_create_model_statement_params(self, model_version_name: str) -> Dict[str, Any]:
+    def _build_expected_create_model_statement_params(self, model_version_name: str) -> dict[str, Any]:
         return {
             **self.base_statement_params,
             telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {
@@ -231,6 +230,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -312,6 +312,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=m_conda_dependency,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -377,6 +378,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=m_pip_requirements,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -446,6 +448,7 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 python_version=m_python_version,
                 user_files=None,
                 code_paths=m_code_paths,
@@ -513,6 +516,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -637,6 +641,7 @@ class ModelManagerTest(parameterized.TestCase):
                 target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
                 python_version=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
@@ -659,6 +664,7 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
                 artifact_repository_map=None,
+                resource_constraint=None,
                 python_version=None,
                 user_files=None,
                 code_paths=None,
@@ -713,6 +719,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -849,9 +856,9 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
 
-        with mock.patch(
-            "os.getenv", side_effect=lambda k, d=None: "True" if k == constants.IN_ML_RUNTIME_ENV_VAR else d
-        ), mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+        with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"), mock.patch.object(
+            self.m_r._model_ops, "validate_existence", return_value=False
+        ), mock.patch.object(
             self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
         ), mock.patch.object(
             model_composer.ModelComposer, "save", return_value=m_model_metadata
@@ -876,6 +883,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
                 python_version=None,
                 user_files=None,
@@ -911,7 +919,6 @@ class ModelManagerTest(parameterized.TestCase):
 
     def test_artifact_repository(self) -> None:
         m_model = mock.MagicMock()
-        m_model_metadata = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
@@ -947,6 +954,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map={"mychannel": "TEMP.TEST.MYREPO"},
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -973,6 +981,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map={"mychannel": "TEMP.SCH.MYREPO"},
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 user_files=None,
@@ -999,6 +1008,54 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map={"mychannel": "DB.SCH.MYREPO"},
+                resource_constraint=None,
+                target_platforms=None,
+                python_version=None,
+                user_files=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+                task=type_hints.Task.UNKNOWN,
+            )
+
+    def test_resource_constraint(self) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ), mock.patch.object(
+            ModelOperator, "set_comment"
+        ), mock.patch.object(
+            self.m_r._model_ops._metadata_ops, "save"
+        ), mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {"ENABLE_BUNDLE_MODULE_CHECKOUT": False}
+        ):
+            self.m_r.log_model(
+                model=m_model,
+                model_name="FOO.BAR.MODEL",
+                version_name="V1",
+                comment="this is comment",
+                metrics={"a": 1},
+                resource_constraint={"architecture": "x86"},
+                statement_params=self.base_statement_params,
+            )
+            mock_save.assert_called_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                artifact_repository_map=None,
+                resource_constraint={"architecture": "x86"},
                 target_platforms=None,
                 python_version=None,
                 user_files=None,

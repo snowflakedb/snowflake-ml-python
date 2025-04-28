@@ -1,5 +1,3 @@
-from typing import List
-
 from snowflake.ml.feature_store import FeatureView
 from snowflake.ml.feature_store.examples.new_york_taxi_features.entities import trip_id
 from snowflake.snowpark import DataFrame, Session
@@ -7,7 +5,7 @@ from snowflake.snowpark import DataFrame, Session
 
 # This function will be invoked by example_helper.py. Do not change the name.
 def create_draft_feature_view(
-    session: Session, source_dfs: List[DataFrame], source_tables: List[str], database: str, schema: str
+    session: Session, source_dfs: list[DataFrame], source_tables: list[str], database: str, schema: str
 ) -> FeatureView:
     """Create a draft feature view."""
     feature_df = session.sql(

@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Optional
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -43,7 +43,7 @@ def create_random_schema(
 
 
 def compare_dataframe(
-    actual_df: pd.DataFrame, target_data: Dict[str, Any], sort_cols: List[str], exclude_cols: Optional[List[str]] = None
+    actual_df: pd.DataFrame, target_data: dict[str, Any], sort_cols: list[str], exclude_cols: Optional[list[str]] = None
 ) -> None:
     if exclude_cols is not None:
         for c in exclude_cols:
@@ -56,13 +56,13 @@ def compare_dataframe(
     )
 
 
-def compare_feature_views(actual_fvs: List[FeatureView], target_fvs: List[FeatureView]) -> None:
+def compare_feature_views(actual_fvs: list[FeatureView], target_fvs: list[FeatureView]) -> None:
     assert len(actual_fvs) == len(target_fvs)
     for actual_fv, target_fv in zip(actual_fvs, target_fvs):
         assert actual_fv == target_fv, f"{actual_fv.name} doesn't match {target_fv.name}"
 
 
-def create_mock_session(trouble_query: str, exception: Exception, config: Optional[Dict[str, str]] = None) -> Any:
+def create_mock_session(trouble_query: str, exception: Exception, config: Optional[dict[str, str]] = None) -> Any:
     def side_effect(session: Session) -> Callable[[Any], Any]:
         original_sql = session.sql
 

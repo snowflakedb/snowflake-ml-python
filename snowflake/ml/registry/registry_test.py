@@ -161,6 +161,7 @@ class RegistryTest(absltest.TestCase):
                 pip_requirements=None,
                 target_platforms=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 python_version=m_python_version,
                 signatures=m_signatures,
                 sample_input_data=m_sample_input_data,
@@ -189,6 +190,7 @@ class RegistryTest(absltest.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map=None,
+                resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
                 signatures=None,
@@ -242,6 +244,38 @@ class RegistryTest(absltest.TestCase):
                 conda_dependencies=None,
                 pip_requirements=None,
                 artifact_repository_map={"a": "b.c"},
+                resource_constraint=None,
+                target_platforms=None,
+                python_version=None,
+                signatures=None,
+                sample_input_data=None,
+                user_files=None,
+                code_paths=None,
+                ext_modules=None,
+                options=None,
+                statement_params=mock.ANY,
+                task=type_hints.Task.UNKNOWN,
+            )
+
+    def test_log_model_with_resource_constraint(self) -> None:
+        m_model_version = mock.MagicMock()
+        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+            self.m_r.log_model(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+                resource_constraint={"architecture": "x86"},
+            )
+            mock_log_model.assert_called_once_with(
+                model=m_model_version,
+                model_name="MODEL",
+                version_name="v1",
+                comment=None,
+                metrics=None,
+                conda_dependencies=None,
+                pip_requirements=None,
+                artifact_repository_map=None,
+                resource_constraint={"architecture": "x86"},
                 target_platforms=None,
                 python_version=None,
                 signatures=None,

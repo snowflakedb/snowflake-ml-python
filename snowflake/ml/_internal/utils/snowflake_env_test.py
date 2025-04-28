@@ -1,14 +1,14 @@
-from typing import cast
+from typing import Optional, Union, cast
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.test_utils import mock_data_frame, mock_session
-from snowflake.snowpark import Row, Session
+from snowflake.snowpark import Row, Session, exceptions as sp_exceptions
 
 
-class SnowflakeEnvTest(absltest.TestCase):
+class SnowflakeEnvTest(parameterized.TestCase):
     def test_current_snowflake_version_1(self) -> None:
         session = mock_session.MockSession(conn=None, test_case=self)
         query = "SELECT CURRENT_VERSION() AS CURRENT_VERSION"
@@ -99,6 +99,39 @@ class SnowflakeEnvTest(absltest.TestCase):
         session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         actual_result = snowflake_env.get_current_region_id(cast(Session, session))
         self.assertEqual(actual_result, "PUBLIC.AWS_US_WEST_2")
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("AWS_US_WEST_2", "aws"),
+        ("PUBLIC.AWS_US_WEST_2", "aws"),
+        ("AZURE_EASTUS2", "azure"),
+        ("GCP_EUROPE_WEST2", "gcp"),
+        ("PREPROD6", "aws", "aws"),
+        ("PUBLIC.PREPROD6", "aws", "aws"),
+        ("PREPROD6", ValueError("enum not found")),
+        ("PUBLIC.PREPROD6", ValueError("enum not found")),
+    )
+    def test_get_current_cloud_no_show_regions(
+        self, region: str, expected: Union[str, Exception], default_cloud: Optional[str] = None
+    ) -> None:
+        session = mock_session.MockSession(conn=None, test_case=self)
+
+        # Configure CURRENT_REGION() query
+        query1 = "SELECT CURRENT_REGION() AS CURRENT_REGION"
+        sql_result1 = [Row(CURRENT_REGION=region)]
+        session.add_mock_sql(query=query1, result=mock_data_frame.MockDataFrame(sql_result1))
+
+        # Configure SHOW REGIONS query
+        query2 = "SHOW REGIONS"
+        sql_result2 = sp_exceptions.SnowparkSQLException("Unsupported statement type 'SHOW DEPLOYMENT_LOCATION'")
+        session.add_mock_sql(query=query2, result=mock_data_frame.MockDataFrame(sql_result2))
+
+        default = snowflake_env.SnowflakeCloudType(default_cloud) if default_cloud is not None else None
+        if isinstance(expected, Exception):
+            with self.assertRaisesRegex(type(expected), str(expected)):
+                snowflake_env.get_current_cloud(cast(Session, session), default=default)
+        else:
+            actual_result = snowflake_env.get_current_cloud(cast(Session, session), default=default)
+            self.assertEqual(actual_result, snowflake_env.SnowflakeCloudType(expected))
 
 
 if __name__ == "__main__":

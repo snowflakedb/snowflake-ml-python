@@ -8,25 +8,13 @@ import re
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    Tuple,
-    TypeVar,
-    Union,
-    cast,
-    overload,
-)
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast, overload
 
 import packaging.version as pkg_version
-import snowflake.ml.version as snowml_version
 from pytimeparse.timeparse import timeparse
 from typing_extensions import Concatenate, ParamSpec
 
+import snowflake.ml.version as snowml_version
 from snowflake.ml import dataset
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.exceptions import (
@@ -164,7 +152,7 @@ class _FeatureStoreConfig:
 
 
 def switch_warehouse(
-    f: Callable[Concatenate[FeatureStore, _Args], _RT]
+    f: Callable[Concatenate[FeatureStore, _Args], _RT],
 ) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
     @functools.wraps(f)
     def wrapper(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
@@ -189,7 +177,7 @@ def dispatch_decorator() -> Callable[
     Callable[Concatenate[FeatureStore, _Args], _RT],
 ]:
     def decorator(
-        f: Callable[Concatenate[FeatureStore, _Args], _RT]
+        f: Callable[Concatenate[FeatureStore, _Args], _RT],
     ) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
         @telemetry.send_api_usage_telemetry(project=_PROJECT)
         @switch_warehouse
@@ -500,7 +488,7 @@ class FeatureStore:
         Example::
 
             >>> fs = FeatureStore(...)
-            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> # draft_fv is a local object that hasn't materialized to Snowflake backend yet.
             >>> feature_df = session.sql("select f_1, f_2 from source_table")
             >>> draft_fv = FeatureView("my_fv", [entities], feature_df)
             >>> print(draft_fv.status)
@@ -837,7 +825,7 @@ class FeatureStore:
             entity_name = SqlIdentifier(entity_name)
             return self._optimized_find_feature_views(entity_name, feature_view_name)
         else:
-            output_values: List[List[Any]] = []
+            output_values: list[list[Any]] = []
             for row, _ in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
                 self._extract_feature_view_info(row, output_values)
             return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
@@ -861,7 +849,7 @@ class FeatureStore:
         Example::
 
             >>> fs = FeatureStore(...)
-            >>> # draft_fv is a local object that hasn't materiaized to Snowflake backend yet.
+            >>> # draft_fv is a local object that hasn't materialized to Snowflake backend yet.
             >>> draft_fv = FeatureView(
             ...     name='foo',
             ...     entities=[e1],
@@ -1353,10 +1341,10 @@ class FeatureStore:
     def retrieve_feature_values(
         self,
         spine_df: DataFrame,
-        features: Union[List[Union[FeatureView, FeatureViewSlice]], List[str]],
+        features: Union[list[Union[FeatureView, FeatureViewSlice]], list[str]],
         *,
         spine_timestamp_col: Optional[str] = None,
-        exclude_columns: Optional[List[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
     ) -> DataFrame:
         """
@@ -1401,11 +1389,11 @@ class FeatureStore:
         if len(features) == 0:
             raise ValueError("features cannot be empty")
         if isinstance(features[0], str):
-            features = self._load_serialized_feature_views(cast(List[str], features))
+            features = self._load_serialized_feature_views(cast(list[str], features))
 
         df, _ = self._join_features(
             spine_df,
-            cast(List[Union[FeatureView, FeatureViewSlice]], features),
+            cast(list[Union[FeatureView, FeatureViewSlice]], features),
             spine_timestamp_col,
             include_feature_view_timestamp_col,
         )
@@ -1419,12 +1407,12 @@ class FeatureStore:
     def generate_training_set(
         self,
         spine_df: DataFrame,
-        features: List[Union[FeatureView, FeatureViewSlice]],
+        features: list[Union[FeatureView, FeatureViewSlice]],
         *,
         save_as: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[List[str]] = None,
-        exclude_columns: Optional[List[str]] = None,
+        spine_label_cols: Optional[list[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
     ) -> DataFrame:
         """
@@ -1515,12 +1503,12 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: List[Union[FeatureView, FeatureViewSlice]],
+        features: list[Union[FeatureView, FeatureViewSlice]],
         *,
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[List[str]] = None,
-        exclude_columns: Optional[List[str]] = None,
+        spine_label_cols: Optional[list[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
         output_type: Literal["dataset"] = "dataset",
@@ -1532,13 +1520,13 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: List[Union[FeatureView, FeatureViewSlice]],
+        features: list[Union[FeatureView, FeatureViewSlice]],
         *,
         output_type: Literal["table"],
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[List[str]] = None,
-        exclude_columns: Optional[List[str]] = None,
+        spine_label_cols: Optional[list[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
     ) -> DataFrame:
@@ -1549,12 +1537,12 @@ class FeatureStore:
         self,
         name: str,
         spine_df: DataFrame,
-        features: List[Union[FeatureView, FeatureViewSlice]],
+        features: list[Union[FeatureView, FeatureViewSlice]],
         *,
         version: Optional[str] = None,
         spine_timestamp_col: Optional[str] = None,
-        spine_label_cols: Optional[List[str]] = None,
-        exclude_columns: Optional[List[str]] = None,
+        spine_label_cols: Optional[list[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
         output_type: Literal["dataset", "table"] = "dataset",
@@ -1687,7 +1675,7 @@ class FeatureStore:
             ) from e
 
     @dispatch_decorator()
-    def load_feature_views_from_dataset(self, ds: dataset.Dataset) -> List[Union[FeatureView, FeatureViewSlice]]:
+    def load_feature_views_from_dataset(self, ds: dataset.Dataset) -> list[Union[FeatureView, FeatureViewSlice]]:
         """
         Retrieve FeatureViews used during Dataset construction.
 
@@ -1798,7 +1786,7 @@ class FeatureStore:
         )
         return existing_fv
 
-    def _recompose_join_keys(self, join_key: str) -> List[str]:
+    def _recompose_join_keys(self, join_key: str) -> list[str]:
         # ALLOWED_VALUES in TAG will follow format ["key_1,key2,..."]
         # since keys are already resolved following the SQL identifier rule on the write path,
         # we simply parse the keys back and wrap them with quotes to preserve cases
@@ -1906,10 +1894,10 @@ class FeatureStore:
     def _join_features(
         self,
         spine_df: DataFrame,
-        features: List[Union[FeatureView, FeatureViewSlice]],
+        features: list[Union[FeatureView, FeatureViewSlice]],
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool,
-    ) -> Tuple[DataFrame, List[SqlIdentifier]]:
+    ) -> tuple[DataFrame, list[SqlIdentifier]]:
         for f in features:
             f = f.feature_view_ref if isinstance(f, FeatureViewSlice) else f
             if f.status == FeatureViewStatus.DRAFT:
@@ -2070,7 +2058,7 @@ class FeatureStore:
         f_df: DataFrame,
         f_table_name: str,
         f_ts_col: SqlIdentifier,
-        join_keys: List[SqlIdentifier],
+        join_keys: list[SqlIdentifier],
     ) -> str:
         s_df = self._session.sql(s_query)
         s_only_cols = [col for col in to_sql_identifiers(s_df.columns) if col not in [*join_keys, s_ts_col]]
@@ -2078,7 +2066,7 @@ class FeatureStore:
         join_keys_str = ", ".join(join_keys)
         temp_prefix = "_FS_TEMP_"
 
-        def join_cols(cols: List[SqlIdentifier], end_comma: bool, rename: bool, prefix: str = "") -> str:
+        def join_cols(cols: list[SqlIdentifier], end_comma: bool, rename: bool, prefix: str = "") -> str:
             if not cols:
                 return ""
             cols = [f"{prefix}{col}" for col in cols]  # type: ignore[misc]
@@ -2174,7 +2162,7 @@ class FeatureStore:
     # TODO: SHOW DYNAMIC TABLES is very slow while other show objects are fast, investigate with DT in SNOW-902804.
     def _get_fv_backend_representations(
         self, object_name: Optional[SqlIdentifier], prefix_match: bool = False
-    ) -> List[Tuple[Row, _FeatureStoreObjTypes]]:
+    ) -> list[tuple[Row, _FeatureStoreObjTypes]]:
         dynamic_table_results = [
             (d, _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW)
             for d in self._find_object("DYNAMIC TABLES", object_name, prefix_match)
@@ -2232,18 +2220,18 @@ class FeatureStore:
         filters = [lambda d: d["entityName"].startswith(feature_view_name.resolved())] if feature_view_name else None
         res = self._lookup_tagged_objects(self._get_entity_name(entity_name), filters)
 
-        output_values: List[List[Any]] = []
+        output_values: list[list[Any]] = []
         for r in res:
             row = fv_maps[SqlIdentifier(r["entityName"], case_sensitive=True)]
             self._extract_feature_view_info(row, output_values)
 
         return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
-    def _extract_feature_view_info(self, row: Row, output_values: List[List[Any]]) -> None:
+    def _extract_feature_view_info(self, row: Row, output_values: list[list[Any]]) -> None:
         name, version = row["name"].split(_FEATURE_VIEW_NAME_DELIMITER)
         fv_metadata, _ = self._lookup_feature_view_metadata(row, FeatureView._get_physical_name(name, version))
 
-        values: List[Any] = []
+        values: list[Any] = []
         values.append(name)
         values.append(version)
         values.append(row["database_name"])
@@ -2259,7 +2247,7 @@ class FeatureStore:
         values.append(json.dumps(self._extract_cluster_by_columns(row["cluster_by"])) if "cluster_by" in row else None)
         output_values.append(values)
 
-    def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> Tuple[_FeatureViewMetadata, str]:
+    def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> tuple[_FeatureViewMetadata, str]:
         if len(row["text"]) == 0:
             # NOTE: if this is a shared feature view, then text column will be empty due to privacy constraints.
             # So instead of looking at original query text, we will obtain metadata by querying the tag value.
@@ -2288,7 +2276,7 @@ class FeatureStore:
             query = m.group("query")
             return (fv_metadata, query)
 
-    def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: List[Row]) -> FeatureView:
+    def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: list[Row]) -> FeatureView:
         def find_and_compose_entity(name: str) -> Entity:
             name = SqlIdentifier(name).resolved()
             for e in entity_list:
@@ -2374,7 +2362,7 @@ class FeatureStore:
             )
             return fv
 
-    def _fetch_column_descs(self, obj_type: str, obj_name: SqlIdentifier) -> Dict[str, str]:
+    def _fetch_column_descs(self, obj_type: str, obj_name: SqlIdentifier) -> dict[str, str]:
         res = self._session.sql(f"DESC {obj_type} {self._get_fully_qualified_name(obj_name)}").collect(
             statement_params=self._telemetry_stmp
         )
@@ -2390,7 +2378,7 @@ class FeatureStore:
         object_type: str,
         object_name: Optional[SqlIdentifier],
         prefix_match: bool = False,
-    ) -> List[Row]:
+    ) -> list[Row]:
         """Try to find an object by given type and name pattern.
 
         Args:
@@ -2443,9 +2431,9 @@ class FeatureStore:
         return result
 
     def _load_serialized_feature_views(
-        self, serialized_feature_views: List[str]
-    ) -> List[Union[FeatureView, FeatureViewSlice]]:
-        results: List[Union[FeatureView, FeatureViewSlice]] = []
+        self, serialized_feature_views: list[str]
+    ) -> list[Union[FeatureView, FeatureViewSlice]]:
+        results: list[Union[FeatureView, FeatureViewSlice]] = []
         for obj in serialized_feature_views:
             try:
                 obj_type = json.loads(obj)[_FEATURE_OBJ_TYPE]
@@ -2461,14 +2449,14 @@ class FeatureStore:
         return results
 
     def _load_compact_feature_views(
-        self, compact_feature_views: List[str]
-    ) -> List[Union[FeatureView, FeatureViewSlice]]:
-        results: List[Union[FeatureView, FeatureViewSlice]] = []
+        self, compact_feature_views: list[str]
+    ) -> list[Union[FeatureView, FeatureViewSlice]]:
+        results: list[Union[FeatureView, FeatureViewSlice]] = []
         for obj in compact_feature_views:
             results.append(FeatureView._load_from_compact_repr(self._session, obj))
         return results
 
-    def _exclude_columns(self, df: DataFrame, exclude_columns: List[str]) -> DataFrame:
+    def _exclude_columns(self, df: DataFrame, exclude_columns: list[str]) -> DataFrame:
         exclude_columns = to_sql_identifiers(exclude_columns)  # type: ignore[assignment]
         df_cols = to_sql_identifiers(df.columns)
         for col in exclude_columns:
@@ -2501,8 +2489,8 @@ class FeatureStore:
             )
 
     def _filter_results(
-        self, results: List[Dict[str, str]], filter_fns: Optional[List[Callable[[Dict[str, str]], bool]]] = None
-    ) -> List[Dict[str, str]]:
+        self, results: list[dict[str, str]], filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+    ) -> list[dict[str, str]]:
         if filter_fns is None:
             return results
 
@@ -2513,8 +2501,8 @@ class FeatureStore:
         return filtered_results
 
     def _lookup_tags(
-        self, domain: str, obj_name: str, filter_fns: Optional[List[Callable[[Dict[str, str]], bool]]] = None
-    ) -> List[Dict[str, str]]:
+        self, domain: str, obj_name: str, filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+    ) -> list[dict[str, str]]:
         """
         Lookup tag values for a given object, optionally apply filters on the results.
 
@@ -2552,8 +2540,8 @@ class FeatureStore:
             ) from e
 
     def _lookup_tagged_objects(
-        self, tag_name: str, filter_fns: Optional[List[Callable[[Dict[str, str]], bool]]] = None
-    ) -> List[Dict[str, str]]:
+        self, tag_name: str, filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+    ) -> list[dict[str, str]]:
         """
         Lookup objects based on specified tag name, optionally apply filters on the results.
 
@@ -2589,7 +2577,7 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to lookup tagged objects for {tag_name}: {e}"),
             ) from e
 
-    def _collapse_object_versions(self) -> List[pkg_version.Version]:
+    def _collapse_object_versions(self) -> list[pkg_version.Version]:
         try:
             res = self._lookup_tagged_objects(_FEATURE_STORE_OBJECT_TAG)
         except Exception:
@@ -2636,7 +2624,7 @@ class FeatureStore:
         return feature_view
 
     @staticmethod
-    def _extract_cluster_by_columns(cluster_by_clause: str) -> List[str]:
+    def _extract_cluster_by_columns(cluster_by_clause: str) -> list[str]:
         # Use regex to extract elements inside the parentheses.
         match = re.search(r"\((.*?)\)", cluster_by_clause)
         if match:

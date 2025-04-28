@@ -3,7 +3,7 @@ Aux file for test purposes, keeping test data for json-mode related tests in one
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Union
+from typing import Any, Union
 
 from pandas.core.interchange.dataframe_protocol import Column
 
@@ -17,8 +17,8 @@ class JsonModeTestUtils:
     prompt: Union[str, list[ConversationMessage], Column]
     response_format: ResponseFormat
     error_message_sql: str
-    error_message_rest: Dict[str, Any]
-    expected_response: Dict[str, Any]
+    error_message_rest: dict[str, Any]
+    expected_response: dict[str, Any]
 
 
 response_format_with_bad_input = JsonModeTestUtils(

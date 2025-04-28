@@ -1,5 +1,5 @@
 import pathlib
-from typing import List, cast
+from typing import cast
 from unittest import mock
 
 import numpy as np
@@ -47,7 +47,7 @@ class ModelOpsTest(absltest.TestCase):
         )
 
     def _add_id_check_mock_operations(
-        self, m_df: mock_data_frame.MockDataFrame, collect_result: List[Row]
+        self, m_df: mock_data_frame.MockDataFrame, collect_result: list[Row]
     ) -> mock_data_frame.MockDataFrame:
         m_df.add_operation(operation="select", args=("_ID",))
         m_df.add_operation(operation="limit", args=(1,))
@@ -259,7 +259,7 @@ class ModelOpsTest(absltest.TestCase):
             )
 
     def test_validate_existence_2(self) -> None:
-        m_list_res: List[Row] = []
+        m_list_res: list[Row] = []
         with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
             res = self.m_ops.validate_existence(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -307,7 +307,7 @@ class ModelOpsTest(absltest.TestCase):
             )
 
     def test_validate_existence_4(self) -> None:
-        m_list_res: List[Row] = []
+        m_list_res: list[Row] = []
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions:
@@ -398,7 +398,7 @@ class ModelOpsTest(absltest.TestCase):
             )
 
     def test_show_tags(self) -> None:
-        m_list_res: List[Row] = [
+        m_list_res: list[Row] = [
             Row(TAG_DATABASE="DB", TAG_SCHEMA="schema", TAG_NAME="MYTAG", TAG_VALUE="tag content"),
             Row(TAG_DATABASE="MYDB", TAG_SCHEMA="SCHEMA", TAG_NAME="my_another_tag", TAG_VALUE=1),
         ]

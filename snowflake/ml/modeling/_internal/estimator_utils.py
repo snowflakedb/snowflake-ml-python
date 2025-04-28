@@ -1,7 +1,7 @@
 import inspect
 import numbers
 import os
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any, Callable
 
 import cloudpickle as cp
 import numpy as np
@@ -16,7 +16,7 @@ from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
-def validate_sklearn_args(args: Dict[str, Tuple[Any, Any, bool]], klass: type) -> Dict[str, Any]:
+def validate_sklearn_args(args: dict[str, tuple[Any, Any, bool]], klass: type) -> dict[str, Any]:
     """Validate if all the keyword args are supported by current version of SKLearn/XGBoost object.
 
     Args:
@@ -71,7 +71,7 @@ def transform_snowml_obj_to_sklearn_obj(obj: Any) -> Any:
         return obj
 
 
-def gather_dependencies(obj: Any) -> Set[str]:
+def gather_dependencies(obj: Any) -> set[str]:
     """Gathers dependencies from the SnowML Estimator and Transformer objects.
 
     Args:
@@ -82,7 +82,7 @@ def gather_dependencies(obj: Any) -> Set[str]:
     """
 
     if isinstance(obj, list) or isinstance(obj, tuple):
-        deps: Set[str] = set()
+        deps: set[str] = set()
         for elem in obj:
             deps = deps | set(gather_dependencies(elem))
         return deps
@@ -167,8 +167,8 @@ def get_module_name(model: object) -> str:
 
 
 def handle_inference_result(
-    inference_res: Any, output_cols: List[str], inference_method: str, within_udf: bool = False
-) -> Tuple[npt.NDArray[Any], List[str]]:
+    inference_res: Any, output_cols: list[str], inference_method: str, within_udf: bool = False
+) -> tuple[npt.NDArray[Any], list[str]]:
     if isinstance(inference_res, list) and len(inference_res) > 0 and isinstance(inference_res[0], np.ndarray):
         # In case of multioutput estimators, predict_proba, decision_function etc., functions return a list of
         # ndarrays. We need to concatenate them.
@@ -248,7 +248,7 @@ def create_temp_stage(session: Session) -> str:
 
 
 def upload_model_to_stage(
-    stage_name: str, estimator: object, session: Session, statement_params: Dict[str, str]
+    stage_name: str, estimator: object, session: Session, statement_params: dict[str, str]
 ) -> str:
     """Util method to pickle and upload the model to a temp Snowflake stage.
 

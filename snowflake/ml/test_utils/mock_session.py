@@ -1,6 +1,6 @@
 from __future__ import annotations  # for return self methods
 
-from typing import Any, Optional, Type, Union
+from typing import Any, Optional, Union
 from unittest import TestCase
 
 from snowflake import snowpark
@@ -53,7 +53,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         self._test_case = test_case if test_case else TestCase()
 
     @property  # type: ignore[misc]
-    def __class__(self) -> Type[Session]:  # type: ignore[override]
+    def __class__(self) -> type[Session]:  # type: ignore[override]
         return Session
 
     # Helpers for setting up the MockDataFrame.
@@ -122,4 +122,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         return None
 
     def get_current_schema(self) -> Optional[str]:
+        return None
+
+    def get_current_warehouse(self) -> Optional[str]:
         return None

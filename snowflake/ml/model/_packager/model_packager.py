@@ -1,6 +1,6 @@
 import os
 from types import ModuleType
-from typing import Dict, List, Optional
+from typing import Optional
 
 from absl import logging
 
@@ -38,16 +38,17 @@ class ModelPackager:
         *,
         name: str,
         model: model_types.SupportedModelType,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.TargetPlatform]] = None,
+        metadata: Optional[dict[str, str]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
-        code_paths: Optional[List[str]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
+        code_paths: Optional[list[str]] = None,
         options: model_types.ModelSaveOption,
         task: model_types.Task = model_types.Task.UNKNOWN,
     ) -> model_meta.ModelMetadata:
@@ -76,6 +77,7 @@ class ModelPackager:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             python_version=python_version,
             task=task,
             target_platforms=target_platforms,

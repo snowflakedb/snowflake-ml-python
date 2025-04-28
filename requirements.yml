@@ -61,8 +61,6 @@
 # all extras requirements. All extras requirements will be labeled as `run_constrained` in conda's meta.yaml.
 
 # `tags`: Set tags to filter some of the requirements in specific cases. The current valid tags include:
-#   - `model_packaging`: Used by model packaging and deployment to indicate the core requirements to save and load the
-#   model.
 #   - `build_essential`: Used to indicate the packages composing the build environment.
 #   - `build_test_env`: Used to indicate the package is required in build and test environment to run the tests.
 
@@ -93,8 +91,6 @@
 - name: cloudpickle
   dev_version: 2.2.1
   version_requirements: '>=2.0.0,<3'
-  tags:
-    - model_packaging
 - name: cryptography
   dev_version: 39.0.1
   version_requirements: ''
@@ -173,6 +169,7 @@
   version_requirements: ''
 - name: pydantic
   dev_version: 2.8.2
+  version_requirements: '>=2.8.2, <3'
 - name: pyjwt
   dev_version: 2.8.0
   version_requirements: '>=2.0.0, <3'

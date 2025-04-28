@@ -1,5 +1,5 @@
 import numbers
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from unittest import mock
 
 import inflection
@@ -25,7 +25,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-def _load_iris_data() -> Tuple[pd.DataFrame, List[str], List[str]]:
+def _load_iris_data() -> tuple[pd.DataFrame, list[str], list[str]]:
     input_df_pandas = load_iris(as_frame=True).frame
     input_df_pandas.columns = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns]
     input_df_pandas["INDEX"] = input_df_pandas.reset_index().index
@@ -50,7 +50,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
     def tearDown(self):
         self._session.close()
 
-    def _compare_cv_results(self, cv_result_1: Dict[str, Any], cv_result_2: Dict[str, Any]) -> None:
+    def _compare_cv_results(self, cv_result_1: dict[str, Any], cv_result_2: dict[str, Any]) -> None:
         # compare the keys
         self.assertEqual(cv_result_1.keys(), cv_result_2.keys())
         # compare the values

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterator, List, Optional, Union
+from typing import Any, Iterator, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -7,7 +7,7 @@ import torch.utils.data
 from snowflake.ml.data import data_ingestor
 
 
-class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
+class TorchDatasetWrapper(torch.utils.data.IterableDataset[dict[str, Any]]):
     """Wrap a DataIngestor into a PyTorch IterableDataset"""
 
     def __init__(
@@ -32,7 +32,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
         self._squeeze_outputs = squeeze
         self._expand_dims = expand_dims
 
-    def __iter__(self) -> Iterator[Dict[str, Union[npt.NDArray[Any], List[Any]]]]:
+    def __iter__(self) -> Iterator[dict[str, Union[npt.NDArray[Any], list[Any]]]]:
         max_idx = 0
         filter_idx = 0
         worker_info = torch.utils.data.get_worker_info()
@@ -59,7 +59,7 @@ class TorchDatasetWrapper(torch.utils.data.IterableDataset[Dict[str, Any]]):
                 counter = 0
 
 
-class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[Dict[str, Any]]):
+class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[dict[str, Any]]):
     """Wrap a DataIngestor into a PyTorch IterDataPipe"""
 
     def __init__(
@@ -77,7 +77,7 @@ class TorchDataPipeWrapper(TorchDatasetWrapper, torch.utils.data.IterDataPipe[Di
 
 def _preprocess_array(
     arr: npt.NDArray[Any], squeeze: bool = False, expand_dims: bool = True
-) -> Union[npt.NDArray[Any], List[np.object_]]:
+) -> Union[npt.NDArray[Any], list[np.object_]]:
     """Preprocesses batch column values."""
     single_dimensional = arr.ndim < 2 and not arr.dtype == np.object_
 

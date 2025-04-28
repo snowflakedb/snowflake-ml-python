@@ -1,6 +1,6 @@
 # This files contains schema definition of what will be written into MANIFEST.yml
 import enum
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union
+from typing import Any, Literal, Optional, TypedDict, Union
 
 from typing_extensions import NotRequired, Required
 
@@ -20,14 +20,15 @@ class ModelMethodFunctionTypes(enum.Enum):
 class ModelRuntimeDependenciesDict(TypedDict):
     conda: NotRequired[str]
     pip: NotRequired[str]
-    artifact_repository_map: NotRequired[Optional[Dict[str, str]]]
+    artifact_repository_map: NotRequired[Optional[dict[str, str]]]
 
 
 class ModelRuntimeDict(TypedDict):
     language: Required[Literal["PYTHON"]]
     version: Required[str]
-    imports: Required[List[str]]
+    imports: Required[list[str]]
     dependencies: Required[ModelRuntimeDependenciesDict]
+    resource_constraint: NotRequired[Optional[dict[str, str]]]
 
 
 class ModelMethodSignatureField(TypedDict):
@@ -43,8 +44,8 @@ class ModelFunctionMethodDict(TypedDict):
     runtime: Required[str]
     type: Required[str]
     handler: Required[str]
-    inputs: Required[List[ModelMethodSignatureFieldWithName]]
-    outputs: Required[Union[List[ModelMethodSignatureField], List[ModelMethodSignatureFieldWithName]]]
+    inputs: Required[list[ModelMethodSignatureFieldWithName]]
+    outputs: Required[Union[list[ModelMethodSignatureField], list[ModelMethodSignatureFieldWithName]]]
 
 
 ModelMethodDict = ModelFunctionMethodDict
@@ -71,12 +72,12 @@ class ModelFunctionInfo(TypedDict):
 class ModelFunctionInfoDict(TypedDict):
     name: Required[str]
     target_method: Required[str]
-    signature: Required[Dict[str, Any]]
+    signature: Required[dict[str, Any]]
 
 
 class SnowparkMLDataDict(TypedDict):
     schema_version: Required[str]
-    functions: Required[List[ModelFunctionInfoDict]]
+    functions: Required[list[ModelFunctionInfoDict]]
 
 
 class LineageSourceTypes(enum.Enum):
@@ -92,9 +93,9 @@ class LineageSourceDict(TypedDict):
 
 class ModelManifestDict(TypedDict):
     manifest_version: Required[str]
-    runtimes: Required[Dict[str, ModelRuntimeDict]]
-    methods: Required[List[ModelMethodDict]]
-    user_data: NotRequired[Dict[str, Any]]
-    user_files: NotRequired[List[str]]
-    lineage_sources: NotRequired[List[LineageSourceDict]]
-    target_platforms: NotRequired[List[str]]
+    runtimes: Required[dict[str, ModelRuntimeDict]]
+    methods: Required[list[ModelMethodDict]]
+    user_data: NotRequired[dict[str, Any]]
+    user_files: NotRequired[list[str]]
+    lineage_sources: NotRequired[list[LineageSourceDict]]
+    target_platforms: NotRequired[list[str]]

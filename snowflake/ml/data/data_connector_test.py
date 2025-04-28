@@ -1,4 +1,4 @@
-from typing import Dict, Iterable, Optional
+from typing import Iterable, Optional
 from unittest import mock
 
 import numpy as np
@@ -36,7 +36,7 @@ class DataConnectorTest(parameterized.TestCase):
 
         # also make sure that the datapipe can be a terminal datapipe for DataLoader
         dp = self._sut.to_torch_datapipe(batch_size=2, shuffle=False, drop_last_batch=True)
-        dl: Iterable[Dict[str, torch.Tensor]] = torch_data.DataLoader(dp, batch_size=None, num_workers=0)
+        dl: Iterable[dict[str, torch.Tensor]] = torch_data.DataLoader(dp, batch_size=None, num_workers=0)
         for tensor_batch in dl:
             for col, tensor in tensor_batch.items():
                 if col != "col3":

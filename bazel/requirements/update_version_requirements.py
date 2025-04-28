@@ -4,7 +4,7 @@ import argparse
 import logging
 import os
 import sys
-from typing import Dict, Optional, Tuple
+from typing import Optional
 
 import requests
 from packaging.requirements import Requirement
@@ -84,7 +84,7 @@ def bump_upper_bound(latest: Version) -> str:
     return f"{major + 1}"
 
 
-def parse_version_requirements(req: str) -> Optional[Tuple[str, str]]:
+def parse_version_requirements(req: str) -> Optional[tuple[str, str]]:
     """
     Parse the version_requirements string using packaging.requirements.
 
@@ -145,7 +145,7 @@ def update_version_requirement(req: str, latest_version: Version) -> Optional[st
 
 
 def update_requirements(
-    package_entry: Dict[str, str],
+    package_entry: dict[str, str],
     latest_pypi: Optional[Version],
     latest_conda: Optional[Version],
     dry_run: bool,

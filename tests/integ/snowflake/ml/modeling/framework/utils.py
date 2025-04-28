@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -21,7 +21,7 @@ DATA = [
     ["7", "b", "g1ehQlL80t", -10.0, -12.564],
 ]
 
-DATA_NONE_NAN: List[List[Any]] = [
+DATA_NONE_NAN: list[list[Any]] = [
     ["1", "a", "g1ehQlL80t", -1.0, 0.0],
     ["2", "a", "zOyDvcyZ2s", None, np.nan],
     ["3", "b", None, 2.0, 2253463.5342],
@@ -52,7 +52,7 @@ DATA_ALL_NONE = [
 ]
 
 
-DATA_BOOLEAN: List[List[Any]] = [
+DATA_BOOLEAN: list[list[Any]] = [
     ["1", "c", "g1ehQlL80t", True, True],
     ["2", "a", "zOyDvcyZ2s", None, False],
     ["3", "b", "zOyDvcyZ2s", False, None],
@@ -152,8 +152,8 @@ class DataType(Enum):
 
 
 def gen_fuzz_data(
-    rows: int, types: List[DataType], low: Union[int, List[int]] = MIN_INT, high: Union[int, List[int]] = MAX_INT
-) -> Tuple[List[Any], List[str]]:
+    rows: int, types: list[DataType], low: Union[int, list[int]] = MIN_INT, high: Union[int, list[int]] = MAX_INT
+) -> tuple[list[Any], list[str]]:
     """
     Generate random data based on input column types and row count.
     First column in the result data will be an ID column for indexing.
@@ -171,7 +171,7 @@ def gen_fuzz_data(
     Raises:
         ValueError: if data type is not supported
     """
-    data: List[npt.NDArray[Any]] = [np.arange(1, rows + 1, 1)]
+    data: list[npt.NDArray[Any]] = [np.arange(1, rows + 1, 1)]
     snowflake_identifiers = ["ID"]
 
     for idx, t in enumerate(types):
@@ -191,10 +191,10 @@ def gen_fuzz_data(
 
 def get_df(
     session: Session,
-    data: List[List[Any]],
-    schema: List[str],
+    data: list[list[Any]],
+    schema: list[str],
     fillna: Optional[Union[object, ArrayLike]] = None,
-) -> Tuple[pd.DataFrame, DataFrame]:
+) -> tuple[pd.DataFrame, DataFrame]:
     """Create pandas dataframe and Snowpark dataframes from input data. The schema passed should be
     a snowflake schema using snowflake identifiers.
 
@@ -365,7 +365,7 @@ def equal_optional_of(equality_func: _EqualityFunc) -> _EqualityFunc:
 
 
 def equal_list_of(equality_func: _EqualityFunc) -> _EqualityFunc:
-    def f(x1: List[Any], x2: List[Any]) -> bool:
+    def f(x1: list[Any], x2: list[Any]) -> bool:
         return len(x1) == len(x2) and all([equality_func(y1, y2) for (y1, y2) in zip(x1, x2)])
 
     return f

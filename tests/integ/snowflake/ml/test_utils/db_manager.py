@@ -1,5 +1,5 @@
 import datetime
-from typing import List, Optional
+from typing import Optional
 from uuid import uuid4
 
 from snowflake import snowpark
@@ -235,7 +235,7 @@ class DBManager:
     def drop_function(
         self,
         function_name: Optional[str] = None,
-        args: Optional[List[str]] = None,
+        args: Optional[list[str]] = None,
         function_def: Optional[str] = None,
         schema_name: Optional[str] = None,
         db_name: Optional[str] = None,

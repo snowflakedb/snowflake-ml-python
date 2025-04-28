@@ -1,5 +1,5 @@
 import random
-from typing import Any, Dict, Generator
+from typing import Any, Generator
 
 import numpy as np
 import tensorflow as tf
@@ -54,7 +54,7 @@ class TestSnowflakeFileSetTensorflow(fileset_integ_test_base.TestSnowflakeFileSe
         self._validate_tf_dataset(ds, batch_size, drop_last_batch)
 
     def _validate_tf_dataset(self, dataset: "tf.data.Dataset", batch_size: int, drop_last_batch: bool) -> None:
-        def numpy_batch_generator() -> Generator[Dict[str, npt.NDArray[Any]], None, None]:
+        def numpy_batch_generator() -> Generator[dict[str, npt.NDArray[Any]], None, None]:
             for batch in dataset:
                 numpy_batch = {}
                 for k, v in batch.items():

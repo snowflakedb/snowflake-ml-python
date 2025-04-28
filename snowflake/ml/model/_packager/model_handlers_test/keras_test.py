@@ -1,7 +1,7 @@
 import os
 import tempfile
 import warnings
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable
 
 import keras
 import numpy as np
@@ -13,7 +13,7 @@ from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._signatures import numpy_handler, utils as model_signature_utils
 
 
-def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
+def _prepare_keras_subclass_model() -> tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
     @keras.saving.register_keras_serializable()
     class KerasModel(keras.Model):
         def __init__(self, n_hidden: int, n_out: int, **kwargs: Any) -> None:
@@ -28,7 +28,7 @@ def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.NDArray[np.float64
             x = self.fc_2(x)
             return x  # type: ignore[no-any-return]
 
-        def get_config(self) -> Dict[str, Any]:
+        def get_config(self) -> dict[str, Any]:
             base_config = super().get_config()
             config = {"n_hidden": self.n_hidden, "n_out": self.n_out}
             return {**base_config, **config}
@@ -43,7 +43,7 @@ def _prepare_keras_subclass_model() -> Tuple[keras.Model, npt.NDArray[np.float64
     return model, x, y
 
 
-def _prepare_keras_sequential_model() -> Tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
+def _prepare_keras_sequential_model() -> tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     y = np.random.random_integers(0, 1, (batch_size,)).astype(np.float32)
@@ -59,7 +59,7 @@ def _prepare_keras_sequential_model() -> Tuple[keras.Model, npt.NDArray[np.float
     return model, x, y
 
 
-def _prepare_keras_functional_model() -> Tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
+def _prepare_keras_functional_model() -> tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]:
     n_input, n_hidden, n_out, batch_size, learning_rate = 10, 15, 1, 100, 0.01
     x = np.random.rand(batch_size, n_input)
     y = np.random.random_integers(0, 1, (batch_size,)).astype(np.float32)
@@ -80,7 +80,7 @@ class KerasHandlerTest(parameterized.TestCase):
         {"model_fn": _prepare_keras_functional_model},
     )
     def test_keras(
-        self, model_fn: Callable[[], Tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]]
+        self, model_fn: Callable[[], tuple[keras.Model, npt.NDArray[np.float64], npt.NDArray[np.float32]]]
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model, data_x, data_y = model_fn()

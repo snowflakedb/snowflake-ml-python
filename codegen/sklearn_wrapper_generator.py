@@ -4,7 +4,7 @@ import os
 import textwrap
 from abc import abstractmethod
 from collections.abc import Iterable
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import inflection
 import numpy as np
@@ -131,7 +131,7 @@ class WrapperGeneratorFactory:
         return False
 
     @staticmethod
-    def _is_transformer_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_transformer_obj(class_object: tuple[str, type]) -> bool:
         """Checks if the given object is a data transformer object.
 
         Args:
@@ -143,7 +143,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "TransformerMixin")
 
     @staticmethod
-    def _is_classifier_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_classifier_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object can learn and predict sparse labels values (typically strings or
         bounded number of integer numerical label values).
 
@@ -156,7 +156,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ClassifierMixin")
 
     @staticmethod
-    def _is_meta_estimator_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_meta_estimator_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object requires an `estimator` parameter.
         bounded number of integer numerical label values).
 
@@ -169,7 +169,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "MetaEstimatorMixin")
 
     @staticmethod
-    def _is_selector_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_selector_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object performs feature selection given a support mask.
 
         Args:
@@ -181,7 +181,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "SelectorMixin")
 
     @staticmethod
-    def _is_regressor_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_regressor_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object can learn and predict continuous numerical label values
         (typically float label values).
 
@@ -194,7 +194,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "RegressorMixin")
 
     @staticmethod
-    def _is_data_module_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_data_module_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given class belongs to the SKLearn data module.
 
         Args:
@@ -206,7 +206,7 @@ class WrapperGeneratorFactory:
         return class_object[1].__module__ == "sklearn.preprocessing._data"
 
     @staticmethod
-    def _is_preprocessing_module_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_preprocessing_module_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given class belongs to the SKLearn preprocessing module.
 
         Args:
@@ -218,7 +218,7 @@ class WrapperGeneratorFactory:
         return class_object[1].__module__.startswith("sklearn.preprocessing")
 
     @staticmethod
-    def _is_cross_decomposition_module_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_cross_decomposition_module_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given class belongs to the SKLearn cross_decomposition module.
 
         Args:
@@ -230,7 +230,7 @@ class WrapperGeneratorFactory:
         return class_object[1].__module__.startswith("sklearn.cross_decomposition")
 
     @staticmethod
-    def _is_multioutput_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_multioutput_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator can learn and predict multiple labels (multi-label not multi-class)
         at a time.
 
@@ -243,7 +243,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "MultiOutputMixin")
 
     @staticmethod
-    def _is_multioutput_estimator_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_multioutput_estimator_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator is a multioutput estimator.
 
         Args:
@@ -255,7 +255,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_MultiOutputEstimator")
 
     @staticmethod
-    def _is_k_neighbors_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_k_neighbors_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator is a k-neighbors estimator.
 
         Args:
@@ -279,7 +279,7 @@ class WrapperGeneratorFactory:
         return module_name.split(".")[0] == "xgboost"
 
     @staticmethod
-    def _is_deterministic(class_object: Tuple[str, type]) -> bool:
+    def _is_deterministic(class_object: tuple[str, type]) -> bool:
         """Checks if the given module is deterministic or not
 
         Args:
@@ -295,7 +295,7 @@ class WrapperGeneratorFactory:
         )
 
     @staticmethod
-    def _is_deterministic_cross_platform(class_object: Tuple[str, type]) -> bool:
+    def _is_deterministic_cross_platform(class_object: tuple[str, type]) -> bool:
         """Checks if the given module is deterministic or not across different platforms
 
         Args:
@@ -319,7 +319,7 @@ class WrapperGeneratorFactory:
         return module_name.split(".")[0] == "lightgbm"
 
     @staticmethod
-    def _is_pls(class_object: Tuple[str, type]) -> bool:
+    def _is_pls(class_object: tuple[str, type]) -> bool:
         """Check if given module is PLS.
 
         Args:
@@ -331,7 +331,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_PLS")
 
     @staticmethod
-    def _is_heterogeneous_ensemble_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_heterogeneous_ensemble_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object is ensemble of learners(voting, stacking).
 
         Args:
@@ -343,7 +343,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_BaseHeterogeneousEnsemble")
 
     @staticmethod
-    def _is_stacking_ensemble_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_stacking_ensemble_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object is staking ensemble of learners.
 
         Args:
@@ -355,7 +355,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_BaseStacking")
 
     @staticmethod
-    def _is_voting_ensemble_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_voting_ensemble_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object is voting ensemble of learners.
 
         Args:
@@ -367,7 +367,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_BaseVoting")
 
     @staticmethod
-    def _is_chain_multioutput_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_chain_multioutput_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object is of type chain multioutput meta-estimator.
 
         Args:
@@ -379,7 +379,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "_BaseChain")
 
     @staticmethod
-    def _is_hist_gradient_boosting_regressor_obj(class_object: Tuple[str, type]) -> bool:
+    def _is_hist_gradient_boosting_regressor_obj(class_object: tuple[str, type]) -> bool:
         """Check if the given estimator object is of type histogram-based gradient boosting regression tree.
 
         Args:
@@ -391,7 +391,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "HistGradientBoostingRegressor")
 
     @staticmethod
-    def _is_single_col_input(class_object: Tuple[str, type]) -> bool:
+    def _is_single_col_input(class_object: tuple[str, type]) -> bool:
         """Check if given estimator object can only accept one column at a time.
 
         Args:
@@ -403,7 +403,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "IsotonicRegression")
 
     @staticmethod
-    def _is_positive_value_input(class_object: Tuple[str, type]) -> bool:
+    def _is_positive_value_input(class_object: tuple[str, type]) -> bool:
         """Check if given estimator object can only accept positive values input.
 
         Args:
@@ -415,7 +415,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "AdditiveChi2Sampler")
 
     @staticmethod
-    def _is_grid_search_cv(class_object: Tuple[str, type]) -> bool:
+    def _is_grid_search_cv(class_object: tuple[str, type]) -> bool:
         """Check if given module is GridSearchCV.
 
         Args:
@@ -427,7 +427,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "GridSearchCV")
 
     @staticmethod
-    def _is_randomized_search_cv(class_object: Tuple[str, type]) -> bool:
+    def _is_randomized_search_cv(class_object: tuple[str, type]) -> bool:
         """Check if given module is RandomizedSearchCV.
 
         Args:
@@ -439,7 +439,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "RandomizedSearchCV")
 
     @staticmethod
-    def _is_column_transformer(class_object: Tuple[str, type]) -> bool:
+    def _is_column_transformer(class_object: tuple[str, type]) -> bool:
         """Check if given module is ColumnTransformer.
 
         Args:
@@ -451,7 +451,7 @@ class WrapperGeneratorFactory:
         return WrapperGeneratorFactory._is_class_of_type(class_object[1], "ColumnTransformer")
 
     @staticmethod
-    def _is_iterative_imputer(class_object: Tuple[str, type]) -> bool:
+    def _is_iterative_imputer(class_object: tuple[str, type]) -> bool:
         """Check if given module is IterativeImputer.
 
         Args:
@@ -479,7 +479,7 @@ class WrapperGeneratorFactory:
             return "snowflake.ml.modeling." + module_name
 
     @staticmethod
-    def can_generate_wrapper(class_object: Tuple[str, type]) -> bool:
+    def can_generate_wrapper(class_object: tuple[str, type]) -> bool:
         """Returns if the generator can generate wrapper and test classes for the given meta class object.
 
         Args:
@@ -496,7 +496,7 @@ class WrapperGeneratorFactory:
         return False
 
     @staticmethod
-    def read(class_object: Tuple[str, type], module_name: str) -> "WrapperGeneratorBase":
+    def read(class_object: tuple[str, type], module_name: str) -> "WrapperGeneratorBase":
         """
         Read a scikit-learn estimator class object and return generator object with appropriate
         template fields filled in.
@@ -593,7 +593,7 @@ class WrapperGeneratorBase:
        estimator/transformer scenarios.
     """
 
-    def __init__(self, module_name: str, class_object: Tuple[str, type]) -> None:
+    def __init__(self, module_name: str, class_object: tuple[str, type]) -> None:
         self.root_module_name = module_name
         self.module_name = module_name
         self.class_object = class_object
@@ -613,7 +613,7 @@ class WrapperGeneratorBase:
         # Doc strings
         self.original_class_docstring = ""
         self.estimator_class_docstring = ""
-        self.estimator_function_docstring: Dict[str, str] = {}
+        self.estimator_function_docstring: dict[str, str] = {}
         self.transformer_class_docstring = ""
         self.original_fit_docstring = ""
         self.fit_docstring = ""
@@ -632,18 +632,18 @@ class WrapperGeneratorBase:
 
         # Import strings
         self.estimator_imports = ""
-        self.estimator_imports_list: List[str] = []
-        self.score_sproc_imports: List[str] = []
+        self.estimator_imports_list: list[str] = []
+        self.score_sproc_imports: list[str] = []
         self.wrapper_provider_class = ""
         self.additional_import_statements = ""
 
         # Test strings
         self.test_dataset_func = ""
         self.test_estimator_input_args = ""
-        self.test_estimator_input_args_list: List[str] = []
+        self.test_estimator_input_args_list: list[str] = []
         self.test_class_name = ""
         self.test_estimator_imports = ""
-        self.test_estimator_imports_list: List[str] = []
+        self.test_estimator_imports_list: list[str] = []
 
         # Dependencies
         self.predict_udf_deps = ""

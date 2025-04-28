@@ -964,6 +964,162 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
+    def test_run_job(self) -> None:
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                }
+            ),
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": "__CALL__",
+                    "target_method": "__call__",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+        self.m_mv._functions = m_methods
+
+        with self.assertRaisesRegex(ValueError, "There is no method with name PREDICT available in the model"):
+            self.m_mv.run_job(
+                X=m_df,
+                job_name="TEST_JOB",
+                compute_pool="TEST_COMPUTE_POOL",
+                image_repo="TEST_IMAGE_REPO",
+                output_table_name="TEST_OUTPUT_TABLE",
+                function_name="PREDICT",
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=["TEST_EAI"],
+            )
+
+        with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
+            self.m_mv.run_job(
+                X=m_df,
+                job_name="TEST_JOB",
+                compute_pool="TEST_COMPUTE_POOL",
+                image_repo="TEST_IMAGE_REPO",
+                output_table_name="TEST_OUTPUT_TABLE",
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=["TEST_EAI"],
+            )
+
+        with mock.patch.object(
+            self.m_mv._service_ops, "invoke_job_method", return_value=m_df
+        ) as mock_invoke_job_method, mock.patch.object(
+            self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
+        ):
+            self.m_mv.run_job(
+                X=m_df,
+                job_name="TEST_JOB",
+                compute_pool="TEST_COMPUTE_POOL",
+                image_repo="TEST_IMAGE_REPO",
+                output_table_name="TEST_OUTPUT_TABLE",
+                function_name='"predict"',
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=["TEST_EAI"],
+            )
+            mock_invoke_job_method.assert_called_once_with(
+                target_method="predict",
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                job_database_name=None,
+                job_schema_name=None,
+                job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
+                warehouse_name="TEST_WAREHOUSE",
+                image_repo_database_name=None,
+                image_repo_schema_name=None,
+                image_repo_name=sql_identifier.SqlIdentifier("TEST_IMAGE_REPO"),
+                output_table_database_name=None,
+                output_table_schema_name=None,
+                output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("TEST_EAI")],
+                statement_params=mock.ANY,
+            )
+
+        with mock.patch.object(
+            self.m_mv._service_ops, "invoke_job_method", return_value=m_df
+        ) as mock_invoke_job_method, mock.patch.object(
+            self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
+        ):
+            # fully qualified names
+            self.m_mv.run_job(
+                X=m_df,
+                job_name="DB.SCHEMA.TEST_JOB",
+                compute_pool="TEST_COMPUTE_POOL",
+                image_repo="DB.SCHEMA.TEST_IMAGE_REPO",
+                output_table_name="DB.SCHEMA.TEST_OUTPUT_TABLE",
+                function_name='"predict"',
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=["TEST_EAI"],
+            )
+            mock_invoke_job_method.assert_called_once_with(
+                target_method="predict",
+                signature=_DUMMY_SIG["predict"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                job_database_name=sql_identifier.SqlIdentifier("DB"),
+                job_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
+                warehouse_name=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
+                image_repo_database_name=sql_identifier.SqlIdentifier("DB"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                image_repo_name=sql_identifier.SqlIdentifier("TEST_IMAGE_REPO"),
+                output_table_database_name=sql_identifier.SqlIdentifier("DB"),
+                output_table_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
+                cpu_requests="1",
+                memory_requests="6Gi",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("TEST_EAI")],
+                statement_params=mock.ANY,
+            )
+
 
 if __name__ == "__main__":
     absltest.main()

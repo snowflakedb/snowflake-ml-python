@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 from unittest import mock
 
 import numpy as np
@@ -56,7 +56,7 @@ class RocAucScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"average": ["weighted"]}},
     )
-    def test_average_binary(self, params: Dict[str, Any]) -> None:
+    def test_average_binary(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for average in params["average"]:
@@ -81,7 +81,7 @@ class RocAucScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_average_multiclass(self, params: Dict[str, Any]) -> None:
+    def test_average_multiclass(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for idx, average in enumerate(params["average"]):
@@ -112,7 +112,7 @@ class RocAucScoreTest(parameterized.TestCase):
             }
         },
     )
-    def test_sample_weight(self, params: Dict[str, Any]) -> None:
+    def test_sample_weight(self, params: dict[str, Any]) -> None:
         for values in params["values"]:
             data = values["data"]
             y_true = values["y_true"]
@@ -139,7 +139,7 @@ class RocAucScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"max_fpr": [None, 0.1, 0.5, 1]}},
     )
-    def test_max_fpr(self, params: Dict[str, Any]) -> None:
+    def test_max_fpr(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _BINARY_DATA, _SF_SCHEMA)
 
         for max_fpr in params["max_fpr"]:
@@ -159,7 +159,7 @@ class RocAucScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"multi_class": ["ovr", "ovo"]}},
     )
-    def test_multi_class(self, params: Dict[str, Any]) -> None:
+    def test_multi_class(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for multi_class in params["multi_class"]:
@@ -179,7 +179,7 @@ class RocAucScoreTest(parameterized.TestCase):
     @parameterized.parameters(  # type: ignore[misc]
         {"params": {"labels": [None, [0, 1, 2]]}},
     )
-    def test_labels(self, params: Dict[str, Any]) -> None:
+    def test_labels(self, params: dict[str, Any]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _MULTICLASS_DATA, _SF_SCHEMA)
 
         for labels in params["labels"]:

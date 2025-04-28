@@ -1,5 +1,4 @@
 import json
-from typing import List
 
 from absl.testing import absltest
 
@@ -7,7 +6,7 @@ from snowflake.cortex._sse_client import SSEClient
 from snowflake.cortex.complete_test import FakeResponse
 
 
-def _streaming_messages(response_data: bytes, content_type: str = "text/event-stream", data: bytes = b"") -> List[str]:
+def _streaming_messages(response_data: bytes, content_type: str = "text/event-stream", data: bytes = b"") -> list[str]:
     client = SSEClient(FakeResponse(response_data, {"Content-Type": content_type}, data=data))
     out = []
     for event in client.events():

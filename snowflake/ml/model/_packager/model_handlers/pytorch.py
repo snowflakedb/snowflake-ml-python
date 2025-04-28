@@ -1,6 +1,6 @@
 import os
 import sys
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import cloudpickle
 import pandas as pd
@@ -38,7 +38,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
     HANDLER_TYPE = "pytorch"
     HANDLER_VERSION = "2025-03-01"
     _MIN_SNOWPARK_ML_VERSION = "1.8.0"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {
         "2023-12-01": pytorch_migrator_2023_12_01.PyTorchHandlerMigrator20231201
     }
 
@@ -151,7 +151,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         model_meta.env.include_if_absent(
             [model_env.ModelDependency(requirement="pytorch", pip_name="torch")], check_local_version=True
         )
-        model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
+        model_meta.env.cuda_version = kwargs.get("cuda_version", handlers_utils.get_default_cuda_version())
 
     @classmethod
     def load_model(
@@ -188,7 +188,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         def _create_custom_model(
             raw_model: "torch.nn.Module",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             multiple_inputs = cast(
                 model_meta_schema.PyTorchModelBlobOptions, model_meta.models[model_meta.name].options
             )["multiple_inputs"]

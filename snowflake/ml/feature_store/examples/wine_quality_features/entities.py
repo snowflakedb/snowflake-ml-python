@@ -1,5 +1,3 @@
-from typing import List
-
 from snowflake.ml.feature_store import Entity
 
 wine_id = Entity(
@@ -10,5 +8,5 @@ wine_id = Entity(
 
 
 # This will be invoked by example_helper.py. Do not change function name.
-def get_all_entities() -> List[Entity]:
+def get_all_entities() -> list[Entity]:
     return [wine_id]

@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -25,7 +25,7 @@ def check_sp_df_res(
 ) -> None:
     res_pd_df = snowpark_handler.SnowparkDataFrameHandler.convert_to_df(res_sp_df)
 
-    def totuple(a: Union[npt.ArrayLike, Tuple[object], object]) -> Union[Tuple[object], object]:
+    def totuple(a: Union[npt.ArrayLike, tuple[object], object]) -> Union[tuple[object], object]:
         try:
             return tuple(totuple(i) for i in a)  # type: ignore[union-attr]
         except TypeError:
@@ -38,7 +38,7 @@ def check_sp_df_res(
             elif isinstance(df[col][0], np.ndarray):
                 df[col] = df[col].apply(totuple)
 
-    kwargs: Dict[str, Any] = {
+    kwargs: dict[str, Any] = {
         "check_dtype": check_dtype,
         "check_index_type": check_index_type,
         "check_column_type": check_column_type,
@@ -72,7 +72,7 @@ def check_sp_df_res(
     )
 
 
-def convert2D_json_to_3D(array: npt.NDArray[Any]) -> List[List[List[Any]]]:
+def convert2D_json_to_3D(array: npt.NDArray[Any]) -> list[list[list[Any]]]:
     final_array = []
     for i in range(array.shape[0]):
         tmp = []

@@ -1,6 +1,6 @@
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Optional
 from warnings import warn
 
 from snowflake.ml._internal import telemetry
@@ -28,7 +28,7 @@ class _FeatureStoreRole(Enum):
 class _Privilege:
     object_type: str
     object_name: str
-    privileges: List[str]
+    privileges: list[str]
     scope: Optional[str] = None
     optional: bool = False
 
@@ -41,7 +41,7 @@ class _SessionInfo:
 
 
 # Lists of permissions as tuples of (OBJECT_TYPE, [PRIVILEGES, ...])
-_PRE_INIT_PRIVILEGES: Dict[_FeatureStoreRole, List[_Privilege]] = {
+_PRE_INIT_PRIVILEGES: dict[_FeatureStoreRole, list[_Privilege]] = {
     _FeatureStoreRole.PRODUCER: [
         _Privilege("DATABASE", "{database}", ["USAGE"]),
         _Privilege("SCHEMA", "{database}.{schema}", ["USAGE"]),
@@ -78,7 +78,7 @@ _PRE_INIT_PRIVILEGES: Dict[_FeatureStoreRole, List[_Privilege]] = {
     _FeatureStoreRole.NONE: [],
 }
 
-_POST_INIT_PRIVILEGES: Dict[_FeatureStoreRole, List[_Privilege]] = {
+_POST_INIT_PRIVILEGES: dict[_FeatureStoreRole, list[_Privilege]] = {
     _FeatureStoreRole.PRODUCER: [
         _Privilege("TAG", f"{{database}}.{{schema}}.{_FEATURE_VIEW_METADATA_TAG}", ["APPLY"]),
         _Privilege("TAG", f"{{database}}.{{schema}}.{_FEATURE_STORE_OBJECT_TAG}", ["APPLY"]),
@@ -89,7 +89,7 @@ _POST_INIT_PRIVILEGES: Dict[_FeatureStoreRole, List[_Privilege]] = {
 
 
 def _grant_privileges(
-    session: Session, role_name: str, privileges: List[_Privilege], session_info: _SessionInfo
+    session: Session, role_name: str, privileges: list[_Privilege], session_info: _SessionInfo
 ) -> None:
     session_info_dict = asdict(session_info)
     for p in privileges:
@@ -129,7 +129,7 @@ def _grant_privileges(
 def _configure_pre_init_privileges(
     session: Session,
     session_info: _SessionInfo,
-    roles_to_create: Dict[_FeatureStoreRole, str],
+    roles_to_create: dict[_FeatureStoreRole, str],
 ) -> None:
     """
     Configure Feature Store role privileges. Must be run with ACCOUNTADMIN
@@ -172,7 +172,7 @@ def _configure_pre_init_privileges(
 def _configure_post_init_privileges(
     session: Session,
     session_info: _SessionInfo,
-    roles_to_create: Dict[_FeatureStoreRole, str],
+    roles_to_create: dict[_FeatureStoreRole, str],
 ) -> None:
     for role_type, role in roles_to_create.items():
         _grant_privileges(session, role, _POST_INIT_PRIVILEGES[role_type], session_info)

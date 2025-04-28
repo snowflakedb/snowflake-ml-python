@@ -1,16 +1,7 @@
+import logging
 import pathlib
 import textwrap
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Literal,
-    Optional,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
 from uuid import uuid4
 
 import yaml
@@ -23,13 +14,14 @@ from snowflake.ml.jobs._utils import payload_utils, spec_utils
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
+logger = logging.getLogger(__name__)
+
 _PROJECT = "MLJob"
 JOB_ID_PREFIX = "MLJOB_"
 
 T = TypeVar("T")
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["limit", "scope"])
 def list_jobs(
     limit: int = 10,
@@ -69,7 +61,6 @@ def list_jobs(
     return df
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob[Any]:
     """Retrieve a job service from the backend."""
@@ -93,7 +84,6 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
         raise
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Session] = None) -> None:
     """Delete a job service from the backend. Status and logs will be lost."""
@@ -106,19 +96,18 @@ def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Sessio
     session.sql("DROP SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def submit_file(
     file_path: str,
     compute_pool: str,
     *,
     stage_name: str,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
@@ -159,7 +148,6 @@ def submit_file(
     )
 
 
-@snowpark._internal.utils.private_preview(version="1.7.4")
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def submit_directory(
     dir_path: str,
@@ -167,12 +155,12 @@ def submit_directory(
     *,
     entrypoint: str,
     stage_name: str,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
@@ -222,12 +210,12 @@ def _submit_job(
     *,
     stage_name: str,
     entrypoint: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
@@ -242,12 +230,12 @@ def _submit_job(
     *,
     stage_name: str,
     entrypoint: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
@@ -263,6 +251,8 @@ def _submit_job(
         # TODO: Log lengths of args, env_vars, and spec_overrides values
         "pip_requirements",
         "external_access_integrations",
+        "num_instances",
+        "enable_metrics",
     ],
 )
 def _submit_job(
@@ -271,12 +261,12 @@ def _submit_job(
     *,
     stage_name: str,
     entrypoint: Optional[str] = None,
-    args: Optional[List[str]] = None,
-    env_vars: Optional[Dict[str, str]] = None,
-    pip_requirements: Optional[List[str]] = None,
-    external_access_integrations: Optional[List[str]] = None,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
-    spec_overrides: Optional[Dict[str, Any]] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
     session: Optional[snowpark.Session] = None,
@@ -305,6 +295,12 @@ def _submit_job(
     Raises:
         RuntimeError: If required Snowflake features are not enabled.
     """
+    # Display warning about PrPr parameters
+    if num_instances is not None:
+        logger.warning(
+            "_submit_job() parameter 'num_instances' is in private preview since 1.8.2. Do not use it in production.",
+        )
+
     session = session or get_active_session()
     job_id = f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
     stage_name = "@" + stage_name.lstrip("@").rstrip("/")

@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Dict
 
 
 class CreationOption(Enum):
@@ -13,7 +12,7 @@ class CreationMode:
         self.if_not_exists = if_not_exists
         self.or_replace = or_replace
 
-    def get_ddl_phrases(self) -> Dict[CreationOption, str]:
+    def get_ddl_phrases(self) -> dict[CreationOption, str]:
         if_not_exists_sql = " IF NOT EXISTS" if self.if_not_exists else ""
         or_replace_sql = " OR REPLACE" if self.or_replace else ""
         return {

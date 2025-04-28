@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import inflection
 import numpy as np
 import pandas as pd
@@ -31,7 +29,7 @@ class SnowparkHandlersTest(common_test_base.CommonTestBase):
         )
         self.dependencies = LinearRegression()._get_dependencies()
 
-    def _get_test_dataset(self) -> Tuple[pd.DataFrame, List[str], List[str]]:
+    def _get_test_dataset(self) -> tuple[pd.DataFrame, list[str], list[str]]:
         """Constructs input dataset to be used in the integration test.
 
         Args:

@@ -2,7 +2,7 @@
 import inspect
 from abc import abstractmethod
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Union, overload
+from typing import Any, Iterable, Mapping, Optional, Union, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -28,9 +28,9 @@ SKLEARN_SUPERVISED_ESTIMATORS = ["regressor", "classifier"]
 SKLEARN_SINGLE_OUTPUT_ESTIMATORS = ["DensityEstimator", "clusterer", "outlier_detector"]
 
 
-def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> List[str]:
+def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> list[str]:
     """Convert cols to a list."""
-    col_list: List[str] = []
+    col_list: list[str] = []
     if cols is None:
         return col_list
     elif type(cols) is list:
@@ -55,10 +55,10 @@ class Base:
             passthrough_cols: List columns not to be used or modified by the estimator/transformers.
                 These columns will be passed through all the estimator/transformer operations without any modifications.
         """
-        self.input_cols: List[str] = []
-        self.output_cols: List[str] = []
-        self.label_cols: List[str] = []
-        self.passthrough_cols: List[str] = []
+        self.input_cols: list[str] = []
+        self.output_cols: list[str] = []
+        self.label_cols: list[str] = []
+        self.passthrough_cols: list[str] = []
 
     def _create_unfitted_sklearn_object(self) -> Any:
         raise NotImplementedError()
@@ -66,7 +66,7 @@ class Base:
     def _create_sklearn_object(self) -> Any:
         raise NotImplementedError()
 
-    def get_input_cols(self) -> List[str]:
+    def get_input_cols(self) -> list[str]:
         """
         Input columns getter.
 
@@ -88,7 +88,7 @@ class Base:
         self.input_cols = _process_cols(input_cols)
         return self
 
-    def get_output_cols(self) -> List[str]:
+    def get_output_cols(self) -> list[str]:
         """
         Output columns getter.
 
@@ -110,7 +110,7 @@ class Base:
         self.output_cols = _process_cols(output_cols)
         return self
 
-    def get_label_cols(self) -> List[str]:
+    def get_label_cols(self) -> list[str]:
         """
         Label column getter.
 
@@ -132,7 +132,7 @@ class Base:
         self.label_cols = _process_cols(label_cols)
         return self
 
-    def get_passthrough_cols(self) -> List[str]:
+    def get_passthrough_cols(self) -> list[str]:
         """
         Passthrough columns getter.
 
@@ -215,7 +215,7 @@ class Base:
             )
 
     @classmethod
-    def _get_param_names(cls) -> List[str]:
+    def _get_param_names(cls) -> list[str]:
         """Get parameter names for the transformer"""
         # fetch the constructor or the original constructor before
         # deprecation wrapping if any
@@ -244,7 +244,7 @@ class Base:
         # Extract and sort argument names excluding 'self'
         return sorted(p.name for p in parameters)
 
-    def get_params(self, deep: bool = True) -> Dict[str, Any]:
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
         """
         Get the snowflake-ml parameters for this transformer.
 
@@ -255,7 +255,7 @@ class Base:
         Returns:
             Parameter names mapped to their values.
         """
-        out: Dict[str, Any] = dict()
+        out: dict[str, Any] = dict()
         for key in self._get_param_names():
             if hasattr(self, key):
                 value = getattr(self, key)
@@ -320,11 +320,11 @@ class Base:
         sklearn_initial_keywords: Optional[Union[str, Iterable[str]]] = None,
         sklearn_unused_keywords: Optional[Union[str, Iterable[str]]] = None,
         snowml_only_keywords: Optional[Union[str, Iterable[str]]] = None,
-        sklearn_added_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-        sklearn_added_kwarg_value_to_version_dict: Optional[Dict[str, Dict[str, str]]] = None,
-        sklearn_deprecated_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-        sklearn_removed_keyword_to_version_dict: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        sklearn_added_keyword_to_version_dict: Optional[dict[str, str]] = None,
+        sklearn_added_kwarg_value_to_version_dict: Optional[dict[str, dict[str, str]]] = None,
+        sklearn_deprecated_keyword_to_version_dict: Optional[dict[str, str]] = None,
+        sklearn_removed_keyword_to_version_dict: Optional[dict[str, str]] = None,
+    ) -> dict[str, Any]:
         """
         Get sklearn keyword arguments.
 
@@ -350,7 +350,7 @@ class Base:
         """
         default_sklearn_args = _utils.get_default_args(default_sklearn_obj.__class__.__init__)
         given_args = self.get_params()
-        sklearn_args: Dict[str, Any] = _utils.get_filtered_valid_sklearn_args(
+        sklearn_args: dict[str, Any] = _utils.get_filtered_valid_sklearn_args(
             args=given_args,
             default_sklearn_args=default_sklearn_args,
             sklearn_initial_keywords=sklearn_initial_keywords,
@@ -368,8 +368,8 @@ class BaseEstimator(Base):
     def __init__(
         self,
         *,
-        file_names: Optional[List[str]] = None,
-        custom_states: Optional[List[str]] = None,
+        file_names: Optional[list[str]] = None,
+        custom_states: Optional[list[str]] = None,
         sample_weight_col: Optional[str] = None,
     ) -> None:
         """
@@ -418,7 +418,7 @@ class BaseEstimator(Base):
         self.sample_weight_col = sample_weight_col
         return self
 
-    def _get_dependencies(self) -> List[str]:
+    def _get_dependencies(self) -> list[str]:
         """
         Return the list of conda dependencies required to work with the object.
 
@@ -458,8 +458,8 @@ class BaseEstimator(Base):
         return dataset[self.input_cols]
 
     def _compute(
-        self, dataset: snowpark.DataFrame, cols: List[str], states: List[str]
-    ) -> Dict[str, Dict[str, Union[int, float, str]]]:
+        self, dataset: snowpark.DataFrame, cols: list[str], states: list[str]
+    ) -> dict[str, dict[str, Union[int, float, str]]]:
         """
         Compute required states of the columns.
 
@@ -474,7 +474,7 @@ class BaseEstimator(Base):
             A dict of {column_name: {state: value}} of each column.
         """
 
-        def _compute_on_partition(df: snowpark.DataFrame, cols_subset: List[str]) -> snowpark.DataFrame:
+        def _compute_on_partition(df: snowpark.DataFrame, cols_subset: list[str]) -> snowpark.DataFrame:
             """Returns a DataFrame with the desired computation on the specified column subset."""
             exprs = []
             sql_prefix = "SQL>>>"
@@ -499,7 +499,7 @@ class BaseEstimator(Base):
             statement_params=telemetry.get_statement_params(PROJECT, SUBPROJECT, self.__class__.__name__),
         )
 
-        computed_dict: Dict[str, Dict[str, Union[int, float, str]]] = {}
+        computed_dict: dict[str, dict[str, Union[int, float, str]]] = {}
         for idx, val in enumerate(_results[0]):
             col_name = cols[idx // len(states)]
             if col_name not in computed_dict:
@@ -516,8 +516,8 @@ class BaseTransformer(BaseEstimator):
         self,
         *,
         drop_input_cols: Optional[bool] = False,
-        file_names: Optional[List[str]] = None,
-        custom_states: Optional[List[str]] = None,
+        file_names: Optional[list[str]] = None,
+        custom_states: Optional[list[str]] = None,
         sample_weight_col: Optional[str] = None,
     ) -> None:
         """Base class for all transformers."""
@@ -551,7 +551,7 @@ class BaseTransformer(BaseEstimator):
                 ),
             )
 
-    def _infer_input_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> List[str]:
+    def _infer_input_cols(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> list[str]:
         """
         Infer input_cols from the dataset. Input column are all columns in the input dataset that are not
         designated as label, passthrough, or sample weight columns.
@@ -569,7 +569,7 @@ class BaseTransformer(BaseEstimator):
         ]
         return cols
 
-    def _infer_output_cols(self) -> List[str]:
+    def _infer_output_cols(self) -> list[str]:
         """Infer output column names from based on the estimator.
 
         Returns:
@@ -624,7 +624,7 @@ class BaseTransformer(BaseEstimator):
             cols = self._infer_output_cols()
             self.set_output_cols(output_cols=cols)
 
-    def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[List[str]] = None) -> List[str]:
+    def _get_output_column_names(self, output_cols_prefix: str, output_cols: Optional[list[str]] = None) -> list[str]:
         """Returns the list of output columns for predict_proba(), decision_function(), etc.. functions.
         Returns a list with output_cols_prefix as the only element if the estimator is not a classifier.
 

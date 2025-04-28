@@ -4,7 +4,7 @@ import os
 import posixpath
 import tempfile
 from itertools import chain
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Optional, Union
 
 import cloudpickle as cp
 import numpy as np
@@ -63,7 +63,7 @@ def has_callable_attr(obj: object, attr: str) -> bool:
     return callable(getattr(obj, attr, None))
 
 
-def _get_column_indices(all_columns: List[str], target_columns: List[str]) -> List[int]:
+def _get_column_indices(all_columns: list[str], target_columns: list[str]) -> list[int]:
     """
     Extract the indices of the target_columns from all_columns.
 
@@ -96,7 +96,7 @@ def _get_column_indices(all_columns: List[str], target_columns: List[str]) -> Li
 
 
 class Pipeline(base.BaseTransformer):
-    def __init__(self, steps: List[Tuple[str, Any]]) -> None:
+    def __init__(self, steps: list[tuple[str, Any]]) -> None:
         """
         Pipeline of transforms.
 
@@ -119,14 +119,14 @@ class Pipeline(base.BaseTransformer):
         # to only work with list of steps ending with an estimator or a dummy estimator like SKLearn?
         self._is_final_step_estimator = Pipeline._is_estimator(steps[-1][1])
         self._is_fitted = False
-        self._feature_names_in: List[np.ndarray[Any, np.dtype[Any]]] = []
-        self._n_features_in: List[int] = []
-        self._transformers_to_input_indices: Dict[str, List[int]] = {}
+        self._feature_names_in: list[np.ndarray[Any, np.dtype[Any]]] = []
+        self._n_features_in: list[int] = []
+        self._transformers_to_input_indices: dict[str, list[int]] = {}
         self._modifies_label_or_sample_weight = True
 
-        self._model_signature_dict: Optional[Dict[str, ModelSignature]] = None
+        self._model_signature_dict: Optional[dict[str, ModelSignature]] = None
 
-        deps: Set[str] = {f"pandas=={pd.__version__}", f"scikit-learn=={skversion}"}
+        deps: set[str] = {f"pandas=={pd.__version__}", f"scikit-learn=={skversion}"}
         for _, obj in steps:
             if isinstance(obj, base.BaseTransformer):
                 deps = deps | set(obj._get_dependencies())
@@ -146,10 +146,10 @@ class Pipeline(base.BaseTransformer):
     def _is_transformer(obj: object) -> bool:
         return has_callable_attr(obj, "fit") and has_callable_attr(obj, "transform")
 
-    def _get_transformers(self) -> List[Tuple[str, Any]]:
+    def _get_transformers(self) -> list[tuple[str, Any]]:
         return self.steps[:-1] if self._is_final_step_estimator else self.steps
 
-    def _get_estimator(self) -> Optional[Tuple[str, Any]]:
+    def _get_estimator(self) -> Optional[tuple[str, Any]]:
         return self.steps[-1] if self._is_final_step_estimator else None
 
     def _validate_steps(self) -> None:
@@ -215,7 +215,7 @@ class Pipeline(base.BaseTransformer):
         processed_cols = set(chain.from_iterable([trans.get_input_cols() for (_, trans) in self._get_transformers()]))
         return len(target_cols & processed_cols) > 0
 
-    def _get_sanitized_list_of_columns(self, columns: List[str]) -> List[str]:
+    def _get_sanitized_list_of_columns(self, columns: list[str]) -> list[str]:
         """
         Removes the label and sample_weight columns from the input list of columns and returns the results for the
         purpous of computing column indices for SKLearn ColumnTransformer objects.
@@ -237,7 +237,7 @@ class Pipeline(base.BaseTransformer):
 
         return [c for c in columns if c not in target_cols]
 
-    def _append_step_feature_consumption_info(self, step_name: str, all_cols: List[str], input_cols: List[str]) -> None:
+    def _append_step_feature_consumption_info(self, step_name: str, all_cols: list[str], input_cols: list[str]) -> None:
         if self._modifies_label_or_sample_weight:
             all_cols = self._get_sanitized_list_of_columns(all_cols)
             self._feature_names_in.append(np.asarray(all_cols, dtype=object))
@@ -269,7 +269,7 @@ class Pipeline(base.BaseTransformer):
 
         return transformed_dataset
 
-    def _upload_model_to_stage(self, stage_name: str, estimator: object, session: Session) -> Tuple[str, str]:
+    def _upload_model_to_stage(self, stage_name: str, estimator: object, session: Session) -> tuple[str, str]:
         """
         Util method to pickle and upload the model to a temp Snowflake stage.
 
@@ -331,10 +331,10 @@ class Pipeline(base.BaseTransformer):
 
             def pipeline_within_one_sproc(
                 session: Session,
-                sql_queries: List[str],
+                sql_queries: list[str],
                 stage_estimator_file_name: str,
                 stage_result_file_name: str,
-                sproc_statement_params: Dict[str, str],
+                sproc_statement_params: dict[str, str],
             ) -> str:
                 import os
 
@@ -774,7 +774,7 @@ class Pipeline(base.BaseTransformer):
 
         return ct
 
-    def _get_label_cols(self) -> List[str]:
+    def _get_label_cols(self) -> list[str]:
         """Util function to get the label columns from the pipeline.
         The label column is only present in the estimator
 
@@ -885,7 +885,7 @@ class Pipeline(base.BaseTransformer):
 
         return pipeline.Pipeline(steps=sksteps)
 
-    def _get_dependencies(self) -> List[str]:
+    def _get_dependencies(self) -> list[str]:
         return self._deps
 
     def _generate_model_signatures(self, dataset: Union[snowpark.DataFrame, pd.DataFrame]) -> None:
@@ -919,7 +919,7 @@ class Pipeline(base.BaseTransformer):
                 )
 
     @property
-    def model_signatures(self) -> Dict[str, ModelSignature]:
+    def model_signatures(self) -> dict[str, ModelSignature]:
         if self._model_signature_dict is None:
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ATTRIBUTE,

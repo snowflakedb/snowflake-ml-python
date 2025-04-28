@@ -1,8 +1,8 @@
-from typing import Any, Dict
+from typing import Any
 
 from packaging import requirements, version
 
-from snowflake.ml._internal import env as snowml_env
+from snowflake.ml import version as snowml_version
 from snowflake.ml.model._packager.model_meta_migrator import base_migrator
 
 
@@ -11,7 +11,7 @@ class MetaMigrator_v1(base_migrator.BaseModelMetaMigrator):
     target_version = "2023-12-01"
 
     @staticmethod
-    def upgrade(original_meta_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def upgrade(original_meta_dict: dict[str, Any]) -> dict[str, Any]:
         loaded_python_version = version.parse(original_meta_dict["python_version"])
         if original_meta_dict.get("local_ml_library_version", None):
             loaded_lib_version = str(version.parse(original_meta_dict["local_ml_library_version"]))
@@ -24,7 +24,7 @@ class MetaMigrator_v1(base_migrator.BaseModelMetaMigrator):
                 None,
             )
             if lib_spec_str is None:
-                loaded_lib_version = snowml_env.VERSION
+                loaded_lib_version = snowml_version.VERSION
             loaded_lib_version = list(requirements.Requirement(str(lib_spec_str)).specifier)[0].version
 
         return dict(

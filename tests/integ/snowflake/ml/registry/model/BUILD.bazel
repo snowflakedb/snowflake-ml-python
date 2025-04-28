@@ -1,6 +1,7 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = [
+    "//model_container_services_deployment/image_build_sidecar:__subpackages__",
     "//tests/integ/snowflake/ml:__subpackages__",
     "//tests/perf:__subpackages__",
 ])
@@ -261,5 +262,14 @@ py_test(
     srcs = ["registry_artifact_repository_test.py"],
     deps = [
         ":registry_model_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_target_platforms_test",
+    srcs = ["registry_target_platforms_test.py"],
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/_internal/utils:snowflake_env",
     ],
 )

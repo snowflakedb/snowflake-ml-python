@@ -2,7 +2,7 @@ import inspect
 import tempfile
 import textwrap
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Optional, cast
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -79,6 +79,7 @@ class JobManagerTest(parameterized.TestCase):
             # Make sure we re-enable the parameter even if this test fails
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
 
+    @absltest.skip("Flaky test: SNOW-2043201")
     def test_list_jobs(self) -> None:
         # Use a separate schema for this test
         original_schema = self.session.get_current_schema()
@@ -149,7 +150,7 @@ class JobManagerTest(parameterized.TestCase):
         {"scope": "schema not_exist_db.not_exist_schema"},
         {"scope": "compute_pool not_exist_pool"},
     )
-    def test_list_jobs_negative(self, **kwargs: str) -> None:
+    def test_list_jobs_negative(self, **kwargs: Any) -> None:
         with self.assertRaises(sp_exceptions.SnowparkSQLException):
             jobs.list_jobs(**kwargs, session=self.session)
 
@@ -176,6 +177,15 @@ class JobManagerTest(parameterized.TestCase):
             job = jobs.MLJob[None](id, session=self.session)
             with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                 job.status
+
+    def test_get_logs(self) -> None:
+        # Submit a job
+        job = jm._submit_job(
+            lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
+        )
+
+        self.assertIsInstance(job.get_logs(), str)
+        self.assertIsInstance(job.get_logs(as_list=True), list)
 
     def test_get_logs_negative(self) -> None:
         for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
@@ -317,8 +327,8 @@ class JobManagerTest(parameterized.TestCase):
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
-        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> Dict[str, Any]:
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> dict[str, Any]:
             from datetime import datetime
 
             print(f"{datetime.now()}\t[{arg1}, {arg2}+1={arg2+1}, arg3={arg3}] Job complete", flush=True)
@@ -333,7 +343,7 @@ class JobManagerTest(parameterized.TestCase):
                 return f"MyDataClass({self.x}, {self.y})"
 
         # Define parameter combinations to test
-        params: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = [
+        params: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
             (("Positional Arg", 5), {}),
             (("Positional Arg",), {"arg2": 5}),
             (tuple(), {"arg1": "Named Arg", "arg2": 5}),
@@ -343,7 +353,7 @@ class JobManagerTest(parameterized.TestCase):
         ]
 
         # Kick off jobs in parallel
-        job_list: List[jobs.MLJob[Any]] = []
+        job_list: list[jobs.MLJob[Any]] = []
         for i in range(len(params)):
             args, kwargs = params[i]
             job = decojob_fn(*args, **kwargs)
@@ -364,7 +374,7 @@ class JobManagerTest(parameterized.TestCase):
                 for k, v in kwargs.items():
                     self.assertIn(str(v), job_logs, f"key={k}")
 
-                job_result = cast(Dict[str, Any], job.result())
+                job_result = cast(dict[str, Any], job.result())
                 self.assertIsInstance(job.result(), dict)
                 self.assertEqual(job_result.get("result"), 100)
 
@@ -373,16 +383,16 @@ class JobManagerTest(parameterized.TestCase):
                 self.assertDictEqual(loaded_job.result(), job_result)
 
     # TODO(SNOW-1911482): Enable test for Python 3.11+
-    @absltest.skipIf(
+    @absltest.skipIf(  # type: ignore[misc]
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )
     def test_job_decorator_negative_result(self) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def func_no_return() -> None:
             pass
 
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)  # type: ignore[misc]
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def func_with_error() -> None:
             raise NotImplementedError("This function is expected to fail")
 

@@ -1,6 +1,6 @@
 import copy
 from abc import abstractmethod
-from typing import Any, Dict, Protocol, final
+from typing import Any, Protocol, final
 
 from snowflake.ml._internal import migrator_utils
 
@@ -11,13 +11,13 @@ class _BaseModelMetaMigratorProtocol(Protocol):
 
     @staticmethod
     @abstractmethod
-    def upgrade(original_meta_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def upgrade(original_meta_dict: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError
 
 
 class BaseModelMetaMigrator(_BaseModelMetaMigratorProtocol):
     @final
-    def try_upgrade(self, original_meta_dict: Dict[str, Any]) -> Dict[str, Any]:
+    def try_upgrade(self, original_meta_dict: dict[str, Any]) -> dict[str, Any]:
         loaded_meta_version = original_meta_dict.get("version", None)
         if not loaded_meta_version or str(loaded_meta_version) != self.source_version:
             raise NotImplementedError(

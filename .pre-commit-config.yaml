@@ -6,7 +6,7 @@ repos:
     hooks:
       - id: pyupgrade
         args:
-          - --py38-plus
+          - --py39-plus
           - --keep-runtime-typing
   - repo: https://github.com/PyCQA/isort  # config: .isort.cfg
     rev: 5.12.0

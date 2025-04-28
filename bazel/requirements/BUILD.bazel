@@ -95,6 +95,20 @@ _GENERATED_REQUIREMENTS_FILES = {
             }
             for name, extras in OPTIONAL_DEPENDENCY_GROUPS.items()
         },
+        {
+            "snowml_inference_alternative_requirements": {
+                "cmd": "--mode version_requirements --format python",
+                "generated": "_snowml_inference_alternative_requirements.py",
+                "target": "//snowflake/ml/model/_packager/model_runtime:_snowml_inference_alternative_requirements.py",
+            },
+        },
+        {
+            "snowml_requirements_test_util": {
+                "cmd": "--mode version_requirements --format python",
+                "generated": "_snowml_requirements.py",
+                "target": "//tests/integ/snowflake/ml/test_utils:_snowml_requirements.py",
+            },
+        },
     ]
     for k, v in d.items()
 }
@@ -112,7 +126,7 @@ _GENERATED_REQUIREMENTS_FILES = {
     if name != "conda_meta"
 ]
 
-# Generate ci/conda-recipe/meta.yaml
+# Generate ci/conda_recipe/meta.yaml
 generate_requirement_file_yaml(
     name = "conda_meta",
     cmd = _GENERATED_REQUIREMENTS_FILES["conda_meta"]["cmd"],

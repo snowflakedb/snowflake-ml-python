@@ -1,4 +1,3 @@
-from typing import List
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
@@ -78,7 +77,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         self._session.sql(f"CREATE DATABASE IF NOT EXISTS {database}").collect()
 
         if schema.startswith('"') and schema.endswith('"'):
-            schema = f'{schema[:-1]}_{ uuid4().hex.upper()}"'
+            schema = f'{schema[:-1]}_{uuid4().hex.upper()}"'
         else:
             schema = f"{schema}_{uuid4().hex.upper()}"
 
@@ -163,10 +162,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   1. FeatureStore
     #   2. delete_feature_store
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
-    def test_feature_store_names(self, equi_names: List[str], diff_names: List[str]) -> None:
+    def test_feature_store_names(self, equi_names: list[str], diff_names: list[str]) -> None:
         per_run_id = uuid4().hex.upper()
 
-        def generate_unique_name(names: List[str]) -> List[str]:
+        def generate_unique_name(names: list[str]) -> list[str]:
             result = []
             for name in names:
                 if name.startswith('"') and name.endswith('"'):
@@ -218,7 +217,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   4. list_entities
     #   5. delete_entity
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
-    def test_entity_names(self, equi_names: List[str], diff_names: List[str]) -> None:
+    def test_entity_names(self, equi_names: list[str], diff_names: list[str]) -> None:
         current_schema = create_random_schema(self._session, "TEST_ENTITY_NAMES")
         fs = FeatureStore(
             self._session,
@@ -264,7 +263,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   4. FeatureView.join_keys
     #   5. FeatureView.timestamp_col
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
-    def test_join_keys_and_ts_col(self, equi_names: List[str], diff_names: List[str]) -> None:
+    def test_join_keys_and_ts_col(self, equi_names: list[str], diff_names: list[str]) -> None:
         current_schema = create_random_schema(self._session, "TEST_JOIN_KEYS_AND_TS_COL")
         fs = FeatureStore(
             self._session,
@@ -322,8 +321,8 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     )  # type: ignore[misc]
     def test_feature_view_names(
         self,
-        equi_full_names: List[str],
-        diff_full_names: List[str],
+        equi_full_names: list[str],
+        diff_full_names: list[str],
     ) -> None:
         current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_NAMES")
         fs = FeatureStore(
@@ -386,7 +385,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             fs.get_feature_view(name, "LATEST")
 
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
-    def test_find_objects(self, equi_names: List[str], diff_names: List[str]) -> None:
+    def test_find_objects(self, equi_names: list[str], diff_names: list[str]) -> None:
         current_schema = create_random_schema(self._session, "TEST_FIND_OBJECTS")
         fs = FeatureStore(
             self._session,

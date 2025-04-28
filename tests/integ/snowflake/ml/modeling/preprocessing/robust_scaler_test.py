@@ -4,7 +4,6 @@ import os
 import pickle
 import sys
 import tempfile
-from typing import List, Tuple
 
 import cloudpickle
 import joblib
@@ -36,7 +35,7 @@ class RobustScalerTest(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        self._to_be_deleted_files: List[str] = []
+        self._to_be_deleted_files: list[str] = []
 
     def tearDown(self) -> None:
         self._session.close()
@@ -135,7 +134,7 @@ class RobustScalerTest(parameterized.TestCase):
         self,
         with_centering: bool,
         with_scaling: bool,
-        quantile_range: Tuple[float, float],
+        quantile_range: tuple[float, float],
         unit_variance: bool,
         expect_exception: bool = False,
     ) -> None:

@@ -3,13 +3,14 @@ import tempfile
 import uuid
 import warnings
 from types import ModuleType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 from urllib import parse
 
 from absl import logging
 from packaging import requirements
 
 from snowflake import snowpark
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_source
@@ -43,7 +44,7 @@ class ModelComposer:
         session: Session,
         stage_path: str,
         *,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
         save_location: Optional[str] = None,
     ) -> None:
         self.session = session
@@ -122,17 +123,18 @@ class ModelComposer:
         *,
         name: str,
         model: model_types.SupportedModelType,
-        signatures: Optional[Dict[str, model_signature.ModelSignature]] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        metadata: Optional[Dict[str, str]] = None,
-        conda_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
-        artifact_repository_map: Optional[Dict[str, str]] = None,
-        target_platforms: Optional[List[model_types.TargetPlatform]] = None,
+        metadata: Optional[dict[str, str]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        artifact_repository_map: Optional[dict[str, str]] = None,
+        resource_constraint: Optional[dict[str, str]] = None,
+        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
-        user_files: Optional[Dict[str, List[str]]] = None,
-        ext_modules: Optional[List[ModuleType]] = None,
-        code_paths: Optional[List[str]] = None,
+        user_files: Optional[dict[str, list[str]]] = None,
+        ext_modules: Optional[list[ModuleType]] = None,
+        code_paths: Optional[list[str]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
@@ -166,14 +168,14 @@ class ModelComposer:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
                 self.session,
-                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_env.VERSION}")],
+                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
                 python_version=python_version or snowml_env.PYTHON_VERSION,
                 statement_params=self._statement_params,
             ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
 
             if len(snowml_matched_versions) < 1 and options.get("embed_local_ml_library", False) is False:
                 logging.info(
-                    f"Local snowflake-ml-python library has version {snowml_env.VERSION},"
+                    f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
                     " which is not available in the Snowflake server, embedding local ML library automatically."
                 )
                 options["embed_local_ml_library"] = True
@@ -187,6 +189,7 @@ class ModelComposer:
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
+            resource_constraint=resource_constraint,
             target_platforms=target_platforms,
             python_version=python_version,
             ext_modules=ext_modules,
@@ -226,7 +229,7 @@ class ModelComposer:
 
     def _get_data_sources(
         self, model: model_types.SupportedModelType, sample_input_data: Optional[model_types.SupportedDataType] = None
-    ) -> Optional[List[data_source.DataSource]]:
+    ) -> Optional[list[data_source.DataSource]]:
         data_sources = lineage_utils.get_data_sources(model)
         if not data_sources and sample_input_data is not None:
             data_sources = lineage_utils.get_data_sources(sample_input_data)

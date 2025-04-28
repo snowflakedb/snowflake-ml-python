@@ -1,6 +1,6 @@
 import collections
 import json
-from typing import List, Optional
+from typing import Optional
 
 import pandas as pd
 from pandas import arrays as pandas_arrays
@@ -9,7 +9,7 @@ from pandas.core.arrays import sparse as pandas_sparse
 from snowflake.snowpark import DataFrame
 
 
-def _pandas_to_sparse_pandas(pandas_df: pd.DataFrame, sparse_cols: List[str]) -> Optional[pd.DataFrame]:
+def _pandas_to_sparse_pandas(pandas_df: pd.DataFrame, sparse_cols: list[str]) -> Optional[pd.DataFrame]:
     """Convert the pandas df into pandas df with multiple SparseArray columns."""
     num_rows = pandas_df.shape[0]
     if num_rows == 0:
@@ -52,8 +52,9 @@ def _pandas_to_sparse_pandas(pandas_df: pd.DataFrame, sparse_cols: List[str]) ->
     return pandas_df
 
 
-def to_pandas_with_sparse(df: DataFrame, sparse_cols: List[str]) -> pd.DataFrame:
-    """Load a Snowpark df with sparse columns represented in JSON strings into pandas df with multiple SparseArray columns.
+def to_pandas_with_sparse(df: DataFrame, sparse_cols: list[str]) -> pd.DataFrame:
+    """Load a Snowpark df with sparse columns represented in JSON strings into pandas df with multiple SparseArray
+        columns.
 
        For example, for below input:
        ----------------------------------------------

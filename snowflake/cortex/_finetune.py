@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
 from snowflake.cortex._util import (
@@ -53,7 +53,7 @@ class FinetuneStatus:
     created_on: Optional[int] = None
     """Creation timestamp of the Fine-tuning job in milliseconds."""
 
-    error: Optional[Dict[str, Any]] = None
+    error: Optional[dict[str, Any]] = None
     """Error message propagated from the job."""
 
     finished_on: Optional[int] = None
@@ -62,7 +62,7 @@ class FinetuneStatus:
     progress: Optional[float] = None
     """Progress made as a fraction of total [0.0,1.0]."""
 
-    training_result: Optional[List[Dict[str, Any]]] = None
+    training_result: Optional[list[dict[str, Any]]] = None
     """Detailed metrics report for a completed training."""
 
     trained_tokens: Optional[int] = None
@@ -135,7 +135,7 @@ class FinetuneJob:
         """
         result_string = _finetune_impl(operation="DESCRIBE", session=self._session, function_args=[self.status.id])
 
-        result = FinetuneStatus(**cast(Dict[str, Any], _try_load_json(result_string)))
+        result = FinetuneStatus(**cast(dict[str, Any], _try_load_json(result_string)))
         return result
 
 
@@ -167,7 +167,7 @@ class Finetune:
         base_model: str,
         training_data: Union[str, snowpark.DataFrame],
         validation_data: Optional[Union[str, snowpark.DataFrame]] = None,
-        options: Optional[Dict[str, Any]] = None,
+        options: Optional[dict[str, Any]] = None,
     ) -> FinetuneJob:
         """Create a new fine-tuning runs.
 
@@ -240,7 +240,7 @@ class Finetune:
         project=CORTEX_FUNCTIONS_TELEMETRY_PROJECT,
         subproject=CORTEX_FINETUNE_TELEMETRY_SUBPROJECT,
     )
-    def list_jobs(self) -> List["FinetuneJob"]:
+    def list_jobs(self) -> list["FinetuneJob"]:
         """Show current and past fine-tuning runs.
 
         Returns:
@@ -253,7 +253,7 @@ class Finetune:
         return [FinetuneJob(session=self._session, status=FinetuneStatus(**run_status)) for run_status in result]
 
 
-def _try_load_json(json_string: str) -> Union[Dict[Any, Any], List[Any]]:
+def _try_load_json(json_string: str) -> Union[dict[Any, Any], list[Any]]:
     try:
         result = json.loads(str(json_string))
     except json.JSONDecodeError as e:
@@ -269,5 +269,5 @@ def _try_load_json(json_string: str) -> Union[Dict[Any, Any], List[Any]]:
     return result
 
 
-def _finetune_impl(operation: str, session: Optional[snowpark.Session], function_args: List[Any]) -> str:
+def _finetune_impl(operation: str, session: Optional[snowpark.Session], function_args: list[Any]) -> str:
     return call_sql_function_literals(_CORTEX_FINETUNE_SYSTEM_FUNCTION_NAME, session, operation, *function_args)

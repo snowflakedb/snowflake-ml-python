@@ -4,7 +4,7 @@ import os
 import pathlib
 import tempfile
 import warnings
-from typing import Any, Dict, List, Literal, Optional, TypedDict, Union, cast, overload
+from typing import Any, Literal, Optional, TypedDict, Union, cast, overload
 
 import yaml
 
@@ -104,7 +104,7 @@ class ModelOperator:
         *,
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> str:
         stage_name = sql_identifier.SqlIdentifier(
             snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
@@ -137,7 +137,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> ModelAction:
         if self.validate_existence(
             database_name=database_name,
@@ -169,7 +169,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         model_action = self.get_model_action_from_model_name_and_version(
             database_name=database_name,
@@ -205,7 +205,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
         use_live_commit: Optional[bool] = False,
     ) -> None:
 
@@ -263,7 +263,7 @@ class ModelOperator:
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
         model_exists: bool,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         if model_exists:
             return self._model_version_client.add_version_from_model_version(
@@ -296,8 +296,8 @@ class ModelOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[row.Row]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
         if model_name:
             return self._model_client.show_versions(
                 database_name=database_name,
@@ -320,8 +320,8 @@ class ModelOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[sql_identifier.SqlIdentifier]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[sql_identifier.SqlIdentifier]:
         res = self.show_models_or_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -341,7 +341,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> bool:
         if version_name:
             res = self._model_client.show_versions(
@@ -369,7 +369,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> str:
         if version_name:
             res = self._model_client.show_versions(
@@ -398,7 +398,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         if version_name:
             self._model_version_client.set_comment(
@@ -426,7 +426,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._model_version_client.set_alias(
             alias_name=alias_name,
@@ -444,7 +444,7 @@ class ModelOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._model_version_client.unset_alias(
             database_name=database_name,
@@ -461,7 +461,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         if not self.validate_existence(
             database_name=database_name,
@@ -485,7 +485,7 @@ class ModelOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> sql_identifier.SqlIdentifier:
         res = self._model_client.show_models(
             database_name=database_name,
@@ -504,7 +504,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         alias_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> Optional[sql_identifier.SqlIdentifier]:
         res = self._model_client.show_versions(
             database_name=database_name,
@@ -528,7 +528,7 @@ class ModelOperator:
         tag_database_name: Optional[sql_identifier.SqlIdentifier],
         tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> Optional[str]:
         r = self._tag_client.get_tag_value(
             database_name=database_name,
@@ -550,15 +550,15 @@ class ModelOperator:
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, str]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, str]:
         tags_info = self._tag_client.get_tag_list(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             statement_params=statement_params,
         )
-        res: Dict[str, str] = {
+        res: dict[str, str] = {
             identifier.get_schema_level_object_identifier(
                 sql_identifier.SqlIdentifier(r.TAG_DATABASE, case_sensitive=True),
                 sql_identifier.SqlIdentifier(r.TAG_SCHEMA, case_sensitive=True),
@@ -578,7 +578,7 @@ class ModelOperator:
         tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
         tag_value: str,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._tag_client.set_tag_on_model(
             database_name=database_name,
@@ -600,7 +600,7 @@ class ModelOperator:
         tag_database_name: Optional[sql_identifier.SqlIdentifier],
         tag_schema_name: Optional[sql_identifier.SqlIdentifier],
         tag_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._tag_client.unset_tag_on_model(
             database_name=database_name,
@@ -619,8 +619,8 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[ServiceInfo]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[ServiceInfo]:
         res = self._model_client.show_versions(
             database_name=database_name,
             schema_name=schema_name,
@@ -682,7 +682,7 @@ class ModelOperator:
         service_database_name: Optional[sql_identifier.SqlIdentifier],
         service_schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         services = self.show_services(
             database_name=database_name,
@@ -724,7 +724,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> model_manifest_schema.ModelManifestDict:
         with tempfile.TemporaryDirectory() as tmpdir:
             self._model_version_client.get_file(
@@ -741,9 +741,9 @@ class ModelOperator:
 
     @staticmethod
     def _match_model_spec_with_sql_functions(
-        sql_functions_names: List[sql_identifier.SqlIdentifier], target_methods: List[str]
-    ) -> Dict[sql_identifier.SqlIdentifier, str]:
-        res: Dict[sql_identifier.SqlIdentifier, str] = {}
+        sql_functions_names: list[sql_identifier.SqlIdentifier], target_methods: list[str]
+    ) -> dict[sql_identifier.SqlIdentifier, str]:
+        res: dict[sql_identifier.SqlIdentifier, str] = {}
 
         for target_method in target_methods:
             # Here we need to find the SQL function corresponding to the Python function.
@@ -766,7 +766,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> model_meta_schema.ModelMetadataDict:
         raw_model_spec_res = self._model_client.show_versions(
             database_name=database_name,
@@ -787,7 +787,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> type_hints.Task:
         model_version = self._model_client.show_versions(
             database_name=database_name,
@@ -809,8 +809,8 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
-    ) -> List[model_manifest_schema.ModelFunctionInfo]:
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[model_manifest_schema.ModelFunctionInfo]:
         model_spec = self._fetch_model_spec(
             database_name=database_name,
             schema_name=schema_name,
@@ -907,7 +907,7 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
         partition_column: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, str]] = None,
+        statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
@@ -923,7 +923,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
-        statement_params: Optional[Dict[str, str]] = None,
+        statement_params: Optional[dict[str, str]] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -941,7 +941,7 @@ class ModelOperator:
         service_name: Optional[sql_identifier.SqlIdentifier] = None,
         strict_input_validation: bool = False,
         partition_column: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, str]] = None,
+        statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
@@ -1059,7 +1059,7 @@ class ModelOperator:
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: Optional[sql_identifier.SqlIdentifier] = None,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         if version_name:
             self._model_version_client.drop_version(
@@ -1086,7 +1086,7 @@ class ModelOperator:
         new_model_db: Optional[sql_identifier.SqlIdentifier],
         new_model_schema: Optional[sql_identifier.SqlIdentifier],
         new_model_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._model_client.rename(
             database_name=database_name,
@@ -1121,7 +1121,7 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         target_path: pathlib.Path,
         mode: Literal["full", "model", "minimal"] = "model",
-        statement_params: Optional[Dict[str, Any]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         for remote_rel_path, is_dir in self.MODEL_FILE_DOWNLOAD_PATTERN[mode].items():
             list_file_res = self._model_version_client.list_file(

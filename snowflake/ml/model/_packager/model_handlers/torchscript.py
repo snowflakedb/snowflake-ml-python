@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -36,7 +36,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
     HANDLER_TYPE = "torchscript"
     HANDLER_VERSION = "2025-03-01"
     _MIN_SNOWPARK_ML_VERSION = "1.8.0"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {
         "2023-12-01": torchscript_migrator_2023_12_01.TorchScriptHandlerMigrator20231201
     }
 
@@ -141,7 +141,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         model_meta.env.include_if_absent(
             [model_env.ModelDependency(requirement="pytorch", pip_name="torch")], check_local_version=True
         )
-        model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
+        model_meta.env.cuda_version = kwargs.get("cuda_version", handlers_utils.get_default_cuda_version())
 
     @classmethod
     def load_model(
@@ -181,7 +181,7 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         def _create_custom_model(
             raw_model: "torch.jit.ScriptModule",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             def fn_factory(
                 raw_model: "torch.jit.ScriptModule",
                 signature: model_signature.ModelSignature,

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 from snowflake.ml.model._client.model import model_version_impl
 
@@ -14,20 +14,20 @@ class ModelMonitorSourceConfig:
     timestamp_column: str
     """Name of column in the source containing timestamp."""
 
-    id_columns: List[str]
+    id_columns: list[str]
     """List of columns in the source containing unique identifiers."""
 
-    prediction_score_columns: Optional[List[str]] = None
+    prediction_score_columns: Optional[list[str]] = None
     """List of columns in the source containing prediction scores.
     Can be regression scores for regression models and probability scores for classification models."""
 
-    prediction_class_columns: Optional[List[str]] = None
+    prediction_class_columns: Optional[list[str]] = None
     """List of columns in the source containing prediction classes for classification models."""
 
-    actual_score_columns: Optional[List[str]] = None
+    actual_score_columns: Optional[list[str]] = None
     """List of columns in the source containing actual scores."""
 
-    actual_class_columns: Optional[List[str]] = None
+    actual_class_columns: Optional[list[str]] = None
     """List of columns in the source containing actual classes for classification models."""
 
     baseline: Optional[str] = None

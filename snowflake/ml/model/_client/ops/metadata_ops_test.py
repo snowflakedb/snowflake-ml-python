@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, cast
+from typing import Any, cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -52,7 +52,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_get_metadata_dict_2(self) -> None:
-        m_meta: Dict[str, Any] = {}
+        m_meta: dict[str, Any] = {}
         m_list_res = [
             Row(
                 create_on="06/01",
@@ -145,7 +145,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_1(self) -> None:
-        m_meta: Dict[str, Any] = {}
+        m_meta: dict[str, Any] = {}
         with mock.patch.object(
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
@@ -169,7 +169,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_2(self) -> None:
-        m_meta: Dict[str, Any] = {"metrics": {"a": 1}}
+        m_meta: dict[str, Any] = {"metrics": {"a": 1}}
         with mock.patch.object(
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
@@ -193,7 +193,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_3(self) -> None:
-        m_meta: Dict[str, Any] = {"snowpark_ml_schema_version": 1}
+        m_meta: dict[str, Any] = {"snowpark_ml_schema_version": 1}
         with mock.patch.object(
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
@@ -214,7 +214,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_4(self) -> None:
-        m_meta: Dict[str, Any] = {"snowpark_ml_schema_version": "2023-12-01"}
+        m_meta: dict[str, Any] = {"snowpark_ml_schema_version": "2023-12-01"}
         with mock.patch.object(
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
@@ -235,7 +235,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_5(self) -> None:
-        m_meta: Dict[str, Any] = {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION}
+        m_meta: dict[str, Any] = {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION}
         with mock.patch.object(
             self.m_ops, "_get_current_metadata_dict", return_value=m_meta
         ) as mock_get_current_metadata_dict:
@@ -259,7 +259,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_6(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
             "metrics": 1,
         }
@@ -283,7 +283,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_7(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
             "metrics": {"a": 1},
         }
@@ -312,7 +312,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_load_8(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
             "metrics": {"a": 1},
             "metrics_2": 2,
@@ -342,7 +342,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_1(self) -> None:
-        m_meta: Dict[str, Any] = {}
+        m_meta: dict[str, Any] = {}
         with mock.patch.object(self.m_ops, "_get_current_metadata_dict", return_value=m_meta), mock.patch.object(
             self.m_ops._model_version_client, "set_metadata"
         ) as mock_set_metadata:
@@ -364,7 +364,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_2(self) -> None:
-        m_meta: Dict[str, Any] = {"metrics": 1}
+        m_meta: dict[str, Any] = {"metrics": 1}
         with mock.patch.object(self.m_ops, "_get_current_metadata_dict", return_value=m_meta), mock.patch.object(
             self.m_ops._model_version_client, "set_metadata"
         ) as mock_set_metadata:
@@ -386,7 +386,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_3(self) -> None:
-        m_meta: Dict[str, Any] = {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION}
+        m_meta: dict[str, Any] = {"snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION}
         with mock.patch.object(self.m_ops, "_get_current_metadata_dict", return_value=m_meta), mock.patch.object(
             self.m_ops._model_version_client, "set_metadata"
         ) as mock_set_metadata:
@@ -408,7 +408,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_4(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
         }
         with mock.patch.object(self.m_ops, "_get_current_metadata_dict", return_value=m_meta), mock.patch.object(
@@ -432,7 +432,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_5(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
             "metrics_2": {},
         }
@@ -461,7 +461,7 @@ class metadataOpsTest(absltest.TestCase):
             )
 
     def test_save_6(self) -> None:
-        m_meta: Dict[str, Any] = {
+        m_meta: dict[str, Any] = {
             "snowpark_ml_schema_version": metadata_ops.MODEL_VERSION_METADATA_SCHEMA_VERSION,
             "metrics": {"a": 1},
         }

@@ -1,5 +1,3 @@
-from typing import List, Tuple
-
 import inflection
 import pandas as pd
 from absl.testing import absltest
@@ -12,7 +10,7 @@ from snowflake.ml.modeling.model_selection import (  # type: ignore[attr-defined
 )
 
 
-def _load_iris_data() -> Tuple[pd.DataFrame, List[str], List[str]]:
+def _load_iris_data() -> tuple[pd.DataFrame, list[str], list[str]]:
     input_df_pandas = load_iris(as_frame=True).frame
     input_df_pandas.columns = [f'"{inflection.parameterize(c, "_")}"' for c in input_df_pandas.columns]
     input_df_pandas['"index"'] = input_df_pandas.reset_index().index

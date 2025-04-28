@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-from typing import Dict, Iterable, List, Optional, Union
+from typing import Iterable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -88,10 +88,10 @@ class MaxAbsScaler(base.BaseTransformer):
             max_abs_: dict {column_name: value} or None
                 Per feature maximum absolute value.
         """
-        self.max_abs_: Dict[str, float] = {}
-        self.scale_: Dict[str, float] = {}
+        self.max_abs_: dict[str, float] = {}
+        self.scale_: dict[str, float] = {}
 
-        self.custom_states: List[str] = [
+        self.custom_states: list[str] = [
             "SQL>>>max(abs({col_name}))",
         ]
 

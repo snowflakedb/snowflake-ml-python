@@ -1,6 +1,6 @@
 import configparser
 import os
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from absl import logging
 from cryptography.hazmat import backends
@@ -76,7 +76,7 @@ def _load_pem_to_der(private_key_path: str) -> bytes:
     )
 
 
-def _connection_properties_from_env() -> Dict[str, str]:
+def _connection_properties_from_env() -> dict[str, str]:
     """Returns a dict with all possible login related env variables."""
     sf_conn_prop = {
         # Mandatory fields
@@ -104,7 +104,7 @@ def _connection_properties_from_env() -> Dict[str, str]:
     return sf_conn_prop
 
 
-def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -> Dict[str, str]:
+def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -> dict[str, str]:
     """Loads the dictionary from snowsql config file."""
     snowsql_config_file = login_file if login_file else os.path.expanduser(_DEFAULT_CONNECTION_FILE)
     if not os.path.exists(snowsql_config_file):
@@ -133,7 +133,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
 
 
 @snowpark._internal.utils.private_preview(version="0.2.0")
-def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> Dict[str, Union[str, bytes]]:
+def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> dict[str, Union[str, bytes]]:
     """Returns a dict that can be used directly into snowflake python connector or Snowpark session config.
 
     NOTE: Token/Auth information is sideloaded in all cases above, if provided in following order:
@@ -164,7 +164,7 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
     Raises:
         Exception: if none of config file and environment variable are present.
     """
-    conn_prop: Dict[str, Union[str, bytes]] = {}
+    conn_prop: dict[str, Union[str, bytes]] = {}
     login_file = login_file or os.path.expanduser(_DEFAULT_CONNECTION_FILE)
     # If login file exists, use this exclusively.
     if os.path.exists(login_file):

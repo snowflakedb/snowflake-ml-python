@@ -1,4 +1,4 @@
-from typing import Any, List, Optional, Type
+from typing import Any, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -25,21 +25,21 @@ class DatasetReader(data_connector.DataConnector):
 
         self._session: snowpark.Session = snowpark_session
         self._fs: snowfs.SnowFileSystem = ingestor_utils.get_dataset_filesystem(self._session)
-        self._files: Optional[List[str]] = None
+        self._files: Optional[list[str]] = None
 
     @classmethod
     def from_dataframe(
-        cls, df: snowpark.DataFrame, ingestor_class: Optional[Type[data_ingestor.DataIngestor]] = None, **kwargs: Any
+        cls, df: snowpark.DataFrame, ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None, **kwargs: Any
     ) -> "DatasetReader":
         # Block superclass constructor from Snowpark DataFrames
         raise RuntimeError("Creating DatasetReader from DataFrames not supported")
 
-    def _list_files(self) -> List[str]:
+    def _list_files(self) -> list[str]:
         """Private helper function that lists all files in this DatasetVersion and caches the results."""
         if self._files:
             return self._files
 
-        files: List[str] = []
+        files: list[str] = []
         for source in self.data_sources:
             assert isinstance(source, data_source.DatasetInfo)
             files.extend(ingestor_utils.get_dataset_files(self._session, source, filesystem=self._fs))
@@ -49,7 +49,7 @@ class DatasetReader(data_connector.DataConnector):
         return self._files
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
-    def files(self) -> List[str]:
+    def files(self) -> list[str]:
         """Get the list of remote file paths for the current DatasetVersion.
 
         The file paths follows the snow protocol.
@@ -92,7 +92,7 @@ class DatasetReader(data_connector.DataConnector):
                 For example, an OBJECT column may be scanned back as a STRING column.
         """
         file_path_pattern = ".*data_.*[.]parquet"
-        dfs: List[snowpark.DataFrame] = []
+        dfs: list[snowpark.DataFrame] = []
         for source in self.data_sources:
             assert isinstance(source, data_source.DatasetInfo) and source.url is not None
             stage_reader = self._session.read.option("pattern", file_path_pattern)

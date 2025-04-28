@@ -1,4 +1,5 @@
 import argparse
+import copy
 import importlib.util
 import json
 import os
@@ -7,7 +8,7 @@ import sys
 import traceback
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import cloudpickle
 
@@ -27,7 +28,7 @@ except ImportError:
     from dataclasses import dataclass
 
     @dataclass(frozen=True)
-    class ExecutionResult:
+    class ExecutionResult:  # type: ignore[no-redef]
         result: Optional[Any] = None
         exception: Optional[BaseException] = None
 
@@ -35,7 +36,7 @@ except ImportError:
         def success(self) -> bool:
             return self.exception is None
 
-        def to_dict(self) -> Dict[str, Any]:
+        def to_dict(self) -> dict[str, Any]:
             """Return the serializable dictionary."""
             if isinstance(self.exception, BaseException):
                 exc_type = type(self.exception)
@@ -136,7 +137,9 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         while tb and tb.tb_frame.f_code.co_filename in skip_files:
             # Skip any frames preceding user script execution
             tb = tb.tb_next
-        result_obj = ExecutionResult(exception=e.with_traceback(tb))
+        cleaned_ex = copy.copy(e)  # Need to create a mutable copy of exception to set __traceback__
+        cleaned_ex = cleaned_ex.with_traceback(tb)
+        result_obj = ExecutionResult(exception=cleaned_ex)
         raise
     finally:
         result_dict = result_obj.to_dict()

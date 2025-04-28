@@ -1,7 +1,7 @@
 import inspect
 import logging
 import os
-from typing import TYPE_CHECKING, Callable, Dict, Optional, Type, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _validate_sentence_transformers_signatures(sigs: Dict[str, model_signature.ModelSignature]) -> None:
+def _validate_sentence_transformers_signatures(sigs: dict[str, model_signature.ModelSignature]) -> None:
     if list(sigs.keys()) != ["encode"]:
         raise ValueError("target_methods can only be ['encode']")
 
@@ -48,7 +48,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     HANDLER_TYPE = "sentence_transformers"
     HANDLER_VERSION = "2024-03-15"
     _MIN_SNOWPARK_ML_VERSION = "1.3.1"
-    _HANDLER_MIGRATOR_PLANS: Dict[str, Type[base_migrator.BaseModelHandlerMigrator]] = {}
+    _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
     DEFAULT_TARGET_METHODS = ["encode"]
@@ -166,7 +166,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             ],
             check_local_version=True,
         )
-        model_meta.env.cuda_version = kwargs.get("cuda_version", model_env.DEFAULT_CUDA_VERSION)
+        model_meta.env.cuda_version = kwargs.get("cuda_version", handlers_utils.get_default_cuda_version())
 
     @staticmethod
     def _get_device_config(**kwargs: Unpack[model_types.SentenceTransformersLoadOptions]) -> Optional[str]:
@@ -224,7 +224,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         def _create_custom_model(
             raw_model: "sentence_transformers.SentenceTransformer",
             model_meta: model_meta_api.ModelMetadata,
-        ) -> Type[custom_model.CustomModel]:
+        ) -> type[custom_model.CustomModel]:
             batch_size = cast(
                 model_meta_schema.SentenceTransformersModelBlobOptions, model_meta.models[model_meta.name].options
             ).get("batch_size", None)

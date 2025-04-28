@@ -2,7 +2,7 @@ import inspect
 import json
 import math
 import warnings
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Any, Iterable, Optional, Union
 
 import cloudpickle
 import numpy as np
@@ -32,8 +32,8 @@ _SUBPROJECT = "Metrics"
 def accuracy_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     normalize: bool = True,
     sample_weight_col_name: Optional[str] = None,
 ) -> float:
@@ -221,7 +221,7 @@ def confusion_matrix(
     return cm
 
 
-def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_params: Dict[str, Any]) -> str:
+def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_params: dict[str, Any]) -> str:
     """Registers confusion matrix computation UDTF in Snowflake and returns the name of the UDTF.
 
     Args:
@@ -247,7 +247,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
             # Number of labels.
             self._n_label = 0
 
-        def process(self, input_row: List[float], n_label: int) -> None:
+        def process(self, input_row: list[float], n_label: int) -> None:
             """Computes confusion matrix.
 
             Args:
@@ -270,7 +270,7 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
                 self.update_confusion_matrix()
                 self._cur_count = 0
 
-        def end_partition(self) -> Iterable[Tuple[bytes, str]]:
+        def end_partition(self) -> Iterable[tuple[bytes, str]]:
             # 3. Compute sum and dot_prod for the remaining rows in the batch.
             if self._cur_count > 0:
                 self.update_confusion_matrix()
@@ -313,8 +313,8 @@ def _register_confusion_matrix_computer(*, session: snowpark.Session, statement_
 def f1_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     labels: Optional[npt.ArrayLike] = None,
     pos_label: Union[str, int] = 1,
     average: Optional[str] = "binary",
@@ -406,8 +406,8 @@ def f1_score(
 def fbeta_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     beta: float,
     labels: Optional[npt.ArrayLike] = None,
     pos_label: Union[str, int] = 1,
@@ -501,8 +501,8 @@ def fbeta_score(
 def log_loss(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     eps: Union[float, str] = "auto",
     normalize: bool = True,
     sample_weight_col_name: Optional[str] = None,
@@ -625,7 +625,7 @@ def log_loss(
 def _register_log_loss_computer(
     *,
     session: snowpark.Session,
-    statement_params: Dict[str, Any],
+    statement_params: dict[str, Any],
     labels: Optional[npt.ArrayLike] = None,
 ) -> str:
     """Registers log loss computation UDTF in Snowflake and returns the name of the UDTF.
@@ -644,16 +644,16 @@ def _register_log_loss_computer(
     class LogLossComputer:
         def __init__(self) -> None:
             self._labels = labels
-            self._y_true: List[List[int]] = []
-            self._y_pred: List[List[float]] = []
-            self._sample_weight: List[float] = []
+            self._y_true: list[list[int]] = []
+            self._y_pred: list[list[float]] = []
+            self._sample_weight: list[float] = []
 
-        def process(self, y_true: List[int], y_pred: List[float], sample_weight: float) -> None:
+        def process(self, y_true: list[int], y_pred: list[float], sample_weight: float) -> None:
             self._y_true.append(y_true)
             self._y_pred.append(y_pred)
             self._sample_weight.append(sample_weight)
 
-        def end_partition(self) -> Iterable[Tuple[float]]:
+        def end_partition(self) -> Iterable[tuple[float]]:
             res = metrics.log_loss(
                 self._y_true,
                 self._y_pred,
@@ -685,18 +685,18 @@ def _register_log_loss_computer(
 def precision_recall_fscore_support(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     beta: float = 1.0,
     labels: Optional[npt.ArrayLike] = None,
     pos_label: Union[str, int] = 1,
     average: Optional[str] = None,
-    warn_for: Union[Tuple[str, ...], Set[str]] = ("precision", "recall", "f-score"),
+    warn_for: Union[tuple[str, ...], set[str]] = ("precision", "recall", "f-score"),
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
 ) -> Union[
-    Tuple[float, float, float, None],
-    Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
+    tuple[float, float, float, None],
+    tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
 ]:
     """
     Compute precision, recall, F-measure and support for each class.
@@ -854,8 +854,8 @@ def precision_recall_fscore_support(
         result_object = result.deserialize(session, precision_recall_fscore_support_anon_sproc(session, **kwargs))
 
         res: Union[
-            Tuple[float, float, float, None],
-            Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
+            tuple[float, float, float, None],
+            tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
         ] = result_object[:4]
         warning = result_object[-1]
         if warning:
@@ -1039,18 +1039,18 @@ def _register_multilabel_confusion_matrix_computer(
         def __init__(self) -> None:
             self._labels = labels
             self._samplewise = samplewise
-            self._y_true: List[List[int]] = []
-            self._y_pred: List[List[int]] = []
-            self._sample_weight: List[float] = []
+            self._y_true: list[list[int]] = []
+            self._y_pred: list[list[int]] = []
+            self._sample_weight: list[float] = []
 
-        def process(self, y_true: List[int], y_pred: List[int], sample_weight: float) -> None:
+        def process(self, y_true: list[int], y_pred: list[int], sample_weight: float) -> None:
             self._y_true.append(y_true)
             self._y_pred.append(y_pred)
             self._sample_weight.append(sample_weight)
 
         def end_partition(
             self,
-        ) -> Iterable[Tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]]:
+        ) -> Iterable[tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]]:
             MCM = metrics.multilabel_confusion_matrix(
                 self._y_true,
                 self._y_pred,
@@ -1093,8 +1093,8 @@ def _register_multilabel_confusion_matrix_computer(
 def _binary_precision_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     pos_label: Union[str, int] = 1,
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
@@ -1166,8 +1166,8 @@ def _binary_precision_score(
 def precision_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     labels: Optional[npt.ArrayLike] = None,
     pos_label: Union[str, int] = 1,
     average: Optional[str] = "binary",
@@ -1264,8 +1264,8 @@ def precision_score(
 def recall_score(
     *,
     df: snowpark.DataFrame,
-    y_true_col_names: Union[str, List[str]],
-    y_pred_col_names: Union[str, List[str]],
+    y_true_col_names: Union[str, list[str]],
+    y_pred_col_names: Union[str, list[str]],
     labels: Optional[npt.ArrayLike] = None,
     pos_label: Union[str, int] = 1,
     average: Optional[str] = "binary",
@@ -1376,9 +1376,9 @@ def _sum_array_col(df: snowpark.DataFrame, col_name: str) -> snowpark.DataFrame:
 
 
 def _check_binary_labels(
-    labels: List[Any],
+    labels: list[Any],
     pos_label: Union[str, int] = 1,
-) -> List[Any]:
+) -> list[Any]:
     """Validation associated with binary average labels.
 
     Args:
@@ -1411,7 +1411,7 @@ def _prf_divide(
     metric: str,
     modifier: str,
     average: Optional[str] = None,
-    warn_for: Union[Tuple[str, ...], Set[str]] = ("precision", "recall", "f-score"),
+    warn_for: Union[tuple[str, ...], set[str]] = ("precision", "recall", "f-score"),
     zero_division: Union[str, int] = "warn",
 ) -> npt.NDArray[np.float_]:
     """Performs division and handles divide-by-zero.

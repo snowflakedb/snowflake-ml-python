@@ -6,7 +6,7 @@ import pathlib
 import tempfile
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -126,7 +126,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             service_schema_name=schema_name_id,
             service_name=service_name_id,
             image_build_compute_pool_name=build_compute_pool,
-            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+            inference_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
             image_repo_database_name=database_name_id,
             image_repo_schema_name=schema_name_id,
             image_repo_name=image_repo_name,
@@ -194,17 +194,17 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
         log_thread.join()
 
-        res = cast(str, cast(List[row.Row], async_job.result())[0][0])
+        res = cast(str, cast(list[row.Row], async_job.result())[0][0])
         logging.info(f"Inference service {service_name} deployment complete: {res}")
 
     def _test_registry_model_deployment(
         self,
         model: model_types.SupportedModelType,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         service_name: Optional[str] = None,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
-        additional_dependencies: Optional[List[str]] = None,
-        pip_requirements: Optional[List[str]] = None,
+        additional_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
@@ -250,7 +250,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     def _deploy_model_service(
         self,
         mv: ModelVersion,
-        prediction_assert_fns: Dict[str, Tuple[Any, Callable[[Any], Any]]],
+        prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         service_name: Optional[str] = None,
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
