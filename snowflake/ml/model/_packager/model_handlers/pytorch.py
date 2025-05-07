@@ -82,6 +82,7 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         enable_explainability = kwargs.get("enable_explainability", False)
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for PyTorch model.")
+        multiple_inputs = kwargs.get("multiple_inputs", False)
 
         import torch
 
@@ -93,8 +94,6 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
-
-            multiple_inputs = kwargs.get("multiple_inputs", False)
 
             def get_prediction(
                 target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"

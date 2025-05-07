@@ -112,7 +112,7 @@ merge_gate)
     affected_targets_file="${working_dir}/affected_targets"
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
-    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/slow.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/exclude_from_merge_gate.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
     ;;
 continuous_run)
     query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'

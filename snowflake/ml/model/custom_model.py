@@ -4,6 +4,7 @@ from typing import Any, Callable, Coroutine, Generator, Optional, Union
 
 import anyio
 import pandas as pd
+from typing_extensions import deprecated
 
 from snowflake.ml.model import type_hints as model_types
 
@@ -226,12 +227,12 @@ class CustomModel:
                 else:
                     raise TypeError("A non-method inference API function is not supported.")
 
-    def _get_partitioned_infer_methods(self) -> list[str]:
-        """Returns all methods in CLS with `partitioned_inference_api` as the outermost decorator."""
+    def _get_partitioned_methods(self) -> list[str]:
+        """Returns all methods in CLS with `partitioned_api` as the outermost decorator."""
         rv = []
         for cls_method_str in dir(self):
             cls_method = getattr(self, cls_method_str)
-            if getattr(cls_method, "_is_partitioned_inference_api", False):
+            if getattr(cls_method, "_is_partitioned_api", False):
                 if inspect.ismethod(cls_method):
                     rv.append(cls_method_str)
                 else:
@@ -282,9 +283,21 @@ def inference_api(
     return func
 
 
+def partitioned_api(
+    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
+) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func.__dict__["_is_inference_api"] = True
+    func.__dict__["_is_partitioned_api"] = True
+    return func
+
+
+@deprecated(
+    "snowflake.ml.custom_model.partitioned_inference_api is deprecated and will be removed in a future release."
+    " Use snowflake.ml.custom_model.partitioned_api instead."
+)
 def partitioned_inference_api(
     func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
 ) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
-    func.__dict__["_is_partitioned_inference_api"] = True
+    func.__dict__["_is_partitioned_api"] = True
     return func

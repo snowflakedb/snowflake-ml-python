@@ -72,7 +72,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 predictions_df = target_method(model, sample_input_data)
             return predictions_df
 
-        for func_name in model._get_partitioned_infer_methods():
+        for func_name in model._get_partitioned_methods():
             function_properties = model_meta.function_properties.get(func_name, {})
             function_properties[model_meta_schema.FunctionProperties.PARTITIONED.value] = True
             model_meta.function_properties[func_name] = function_properties

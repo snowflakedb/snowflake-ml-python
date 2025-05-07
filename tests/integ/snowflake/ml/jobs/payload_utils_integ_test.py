@@ -1,3 +1,4 @@
+import os
 import pathlib
 from typing import Any, Callable, Optional, Union
 from uuid import uuid4
@@ -77,28 +78,27 @@ class PayloadUtilsTests(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         # Payload == entrypoint
-        (TestAsset("src/main.py"), TestAsset("src/main.py"), "main.py", 1),
-        (TestAsset("src/main.py"), None, "main.py", 1),
+        (TestAsset("src/main.py"), TestAsset("src/main.py"), "main.py"),
+        (TestAsset("src/main.py"), None, "main.py"),
         # Entrypoint as relative path inside payload directory
-        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "main.py", 5),
-        (TestAsset("src"), TestAsset("subdir/sub_main.py", resolve_path=False), "subdir/sub_main.py", 5),
-        (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "sub_main.py", 1),
+        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "main.py"),
+        (TestAsset("src"), TestAsset("subdir/sub_main.py", resolve_path=False), "subdir/sub_main.py"),
+        (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "sub_main.py"),
         # Entrypoint as absolute path
-        (TestAsset("src"), TestAsset("src/main.py"), "main.py", 5),
-        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "subdir/sub_main.py", 5),
-        (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "sub_main.py", 1),
+        (TestAsset("src"), TestAsset("src/main.py"), "main.py"),
+        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "subdir/sub_main.py"),
+        (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "sub_main.py"),
         # Function as payload
-        (function_with_pos_arg, pathlib.Path("function_payload.py"), "function_payload.py", 1),
-        (function_with_pos_arg, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
-        (function_with_pos_arg_free_vars, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
-        (function_with_pos_arg_modules, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
+        (function_with_pos_arg, pathlib.Path("function_payload.py"), "function_payload.py"),
+        (function_with_pos_arg, None, str(constants.DEFAULT_ENTRYPOINT_PATH)),
+        (function_with_pos_arg_free_vars, None, str(constants.DEFAULT_ENTRYPOINT_PATH)),
+        (function_with_pos_arg_modules, None, str(constants.DEFAULT_ENTRYPOINT_PATH)),
     )
     def test_upload_payload(
         self,
         source: Union[TestAsset, Callable[..., Any]],
         entrypoint: Optional[Union[TestAsset, pathlib.Path]],
         expected_entrypoint: str,
-        expected_file_count: int,
     ) -> None:
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
 
@@ -108,8 +108,15 @@ class PayloadUtilsTests(parameterized.TestCase):
         )
         uploaded_payload = payload.upload(self.session, stage_path)
 
-        system_files_count = 6  # startup.sh and 5 files in scripts/ directory
-        expected_file_count = expected_file_count + system_files_count
+        expected_file_count = 1
+        if isinstance(payload.source, pathlib.Path) and payload.source.is_dir():
+            expected_file_count = sum(len(filenames) for _, _, filenames in os.walk(payload.source))
+
+        # Add framework injected files
+        framework_scripts_path = pathlib.Path(payload_utils.__file__).parent.joinpath("scripts")
+        expected_file_count += 1 + sum(len(filenames) for _, _, filenames in os.walk(framework_scripts_path))
+        if callable(source):
+            expected_file_count += 1  # requirements.txt file for callable payload
 
         actual_entrypoint = next(
             item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)

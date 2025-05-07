@@ -222,11 +222,13 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                     )
 
         if enable_explainability:
-            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
         model_meta.env.include_if_absent(
-            [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")],
+            [
+                model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn"),
+            ],
             check_local_version=True,
         )
 

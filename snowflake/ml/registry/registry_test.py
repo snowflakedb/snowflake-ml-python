@@ -21,9 +21,7 @@ class RegistryNameTest(absltest.TestCase):
 
     def test_location(self) -> None:
         c_session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             r = registry.Registry(c_session, database_name="TEMP", schema_name="TEST")
             self.assertEqual(r.location, "TEMP.TEST")
             r = registry.Registry(c_session, database_name="TEMP", schema_name="test")
@@ -90,9 +88,7 @@ class RegistryTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = registry.Registry(self.c_session, database_name="TEMP", schema_name="TEST")
 
     def test_get_model(self) -> None:
@@ -328,9 +324,7 @@ class MonitorRegistryTest(absltest.TestCase):
         )
 
         session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = registry.Registry(
                 session,
                 database_name=self.test_db_name,
@@ -340,9 +334,7 @@ class MonitorRegistryTest(absltest.TestCase):
 
     def test_registry_monitoring_disabled_properly(self) -> None:
         session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             m_r = registry.Registry(
                 session,
                 database_name=self.test_db_name,

@@ -9,6 +9,7 @@ from pathlib import Path, PurePath
 from typing import Any, Callable, Optional, Union, cast, get_args, get_origin
 
 import cloudpickle as cp
+from packaging import version
 
 from snowflake import snowpark
 from snowflake.ml.jobs._utils import constants, types
@@ -97,11 +98,18 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
         head_info=$(python3 get_instance_ip.py "$SNOWFLAKE_SERVICE_NAME" --head)
         if [ $? -eq 0 ]; then
             # Parse the output using read
-            read head_index head_ip <<< "$head_info"
+            read head_index head_ip head_status<<< "$head_info"
 
             # Use the parsed variables
             echo "Head Instance Index: $head_index"
             echo "Head Instance IP: $head_ip"
+            echo "Head Instance Status: $head_status"
+
+            # If the head status is not "READY" or "PENDING", exit early
+            if [ "$head_status" != "READY" ] && [ "$head_status" != "PENDING" ]; then
+                echo "Head instance status is not READY or PENDING. Exiting."
+                exit 0
+            fi
 
         else
             echo "Error: Failed to get head instance information."
@@ -278,17 +286,19 @@ class JobPayload:
         stage_path = PurePath(stage_path) if isinstance(stage_path, str) else stage_path
         source = resolve_source(self.source)
         entrypoint = resolve_entrypoint(source, self.entrypoint)
+        pip_requirements = self.pip_requirements or []
 
         # Create stage if necessary
         stage_name = stage_path.parts[0].lstrip("@")
         # Explicitly check if stage exists first since we may not have CREATE STAGE privilege
         try:
-            session.sql(f"describe stage {stage_name}").collect()
+            session.sql("describe stage identifier(?)", params=[stage_name]).collect()
         except sp_exceptions.SnowparkSQLException:
             session.sql(
-                f"create stage if not exists {stage_name}"
+                "create stage if not exists identifier(?)"
                 " encryption = ( type = 'SNOWFLAKE_SSE' )"
-                " comment = 'Created by snowflake.ml.jobs Python API'"
+                " comment = 'Created by snowflake.ml.jobs Python API'",
+                params=[stage_name],
             ).collect()
 
         # Upload payload to stage
@@ -301,6 +311,8 @@ class JobPayload:
                 overwrite=True,
             )
             source = Path(entrypoint.file_path.parent)
+            if not any(r.startswith("cloudpickle") for r in pip_requirements):
+                pip_requirements.append(f"cloudpickle~={version.parse(cp.__version__).major}.0")
         elif source.is_dir():
             # Manually traverse the directory and upload each file, since Snowflake PUT
             # can't handle directories. Reduce the number of PUT operations by using
@@ -325,10 +337,10 @@ class JobPayload:
 
         # Upload requirements
         # TODO: Check if payload includes both a requirements.txt file and pip_requirements
-        if self.pip_requirements:
+        if pip_requirements:
             # Upload requirements.txt to stage
             session.file.put_stream(
-                io.BytesIO("\n".join(self.pip_requirements).encode()),
+                io.BytesIO("\n".join(pip_requirements).encode()),
                 stage_location=stage_path.joinpath("requirements.txt").as_posix(),
                 auto_compress=False,
                 overwrite=True,
@@ -495,13 +507,6 @@ def generate_python_code(func: Callable[..., Any], source_code_display: bool = F
     # https://github.com/snowflakedb/snowpark-python/blob/main/src/snowflake/snowpark/_internal/udf_utils.py
     source_code_comment = _generate_source_code_comment(func) if source_code_display else ""
 
-    func_code = f"""
-{source_code_comment}
-
-import pickle
-{_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
-"""
-
     arg_dict_name = "kwargs"
     if getattr(func, constants.IS_MLJOB_REMOTE_ATTR, None):
         param_code = f"{arg_dict_name} = {{}}"
@@ -509,25 +514,29 @@ import pickle
         param_code = _generate_param_handler_code(signature, arg_dict_name)
 
     return f"""
-### Version guard to check compatibility across Python versions ###
-import os
 import sys
-import warnings
+import pickle
 
-if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor != {sys.version_info.minor}:
-    warnings.warn(
-        "Python version mismatch: job was created using"
-        " python{sys.version_info.major}.{sys.version_info.minor}"
-        f" but runtime environment uses python{{sys.version_info.major}}.{{sys.version_info.minor}}."
-        " Compatibility across Python versions is not guaranteed and may result in unexpected behavior."
-        " This will be fixed in a future release; for now, please use Python version"
-        f" {{sys.version_info.major}}.{{sys.version_info.minor}}.",
-        RuntimeWarning,
-        stacklevel=0,
-    )
-### End version guard ###
-
-{func_code.strip()}
+try:
+    {textwrap.indent(source_code_comment, '    ')}
+    {_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
+except (TypeError, pickle.PickleError):
+    if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor != {sys.version_info.minor}:
+        raise RuntimeError(
+            "Failed to deserialize function due to Python version mismatch."
+            f" Runtime environment is Python {{sys.version_info.major}}.{{sys.version_info.minor}}"
+            " but function was serialized using Python {sys.version_info.major}.{sys.version_info.minor}."
+        ) from None
+    raise
+except AttributeError as e:
+    if 'cloudpickle' in str(e):
+        import cloudpickle as cp
+        raise RuntimeError(
+            "Failed to deserialize function due to cloudpickle version mismatch."
+            f" Runtime environment uses cloudpickle=={{cp.__version__}}"
+            " but job was serialized using cloudpickle=={cp.__version__}."
+        ) from e
+    raise
 
 if __name__ == '__main__':
 {textwrap.indent(param_code, '    ')}

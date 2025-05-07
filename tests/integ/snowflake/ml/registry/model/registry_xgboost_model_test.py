@@ -553,7 +553,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    @absltest.skip("SNOW-1752904")
     def test_xgb_model_with_native_categorical_dtype_columns(
         self,
         registry_test_fn: str,
@@ -591,7 +590,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
 
         def check_predict_fn(res) -> None:
             pd.testing.assert_frame_equal(
-                res.to_frame(),
+                res,
                 pd.DataFrame(xgb_model.predict(d_matrix_input), columns=res.columns),
                 check_dtype=False,
             )
@@ -609,13 +608,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
             # signatures=expected_signatures,
         )
-
-        # TODO(SNOW-1752904):
-        # The inference fails with message
-        # ValueError: DataFrame.dtypes for data must be int, float, bool or category.
-        # When categorical type is supplied, The experimental DMatrix parameter`enable_categorical`
-        # must be set to `True`.  Invalid columns: color: |S1, size: |S1
-        #  in function PREDICT with handler predict.infer
 
 
 if __name__ == "__main__":

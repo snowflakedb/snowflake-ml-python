@@ -63,6 +63,7 @@ class MLFlowModelBlobOptions(BaseModelBlobOptions):
 
 class XgboostModelBlobOptions(BaseModelBlobOptions):
     xgb_estimator_type: Required[str]
+    enable_categorical: NotRequired[bool]
 
 
 class PyTorchModelBlobOptions(BaseModelBlobOptions):

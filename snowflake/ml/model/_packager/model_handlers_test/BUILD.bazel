@@ -28,7 +28,6 @@ py_test(
     srcs = ["catboost_test.py"],
     optional_dependencies = [
         "catboost",
-        "shap",
     ],
     deps = [
         "//snowflake/ml/model:model_signature",
@@ -76,7 +75,6 @@ py_test(
 py_test(
     name = "sklearn_test",
     srcs = ["sklearn_test.py"],
-    optional_dependencies = ["shap"],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -88,7 +86,9 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
-    optional_dependencies = ["shap"],
+    optional_dependencies = [
+        "xgboost",
+    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -138,7 +138,7 @@ py_test(
     name = "xgboost_test",
     srcs = ["xgboost_test.py"],
     optional_dependencies = [
-        "shap",
+        "xgboost",
     ],
     deps = [
         "//snowflake/ml/model:model_signature",
@@ -152,7 +152,6 @@ py_test(
     srcs = ["lightgbm_test.py"],
     optional_dependencies = [
         "lightgbm",
-        "shap",
     ],
     deps = [
         "//snowflake/ml/model:model_signature",

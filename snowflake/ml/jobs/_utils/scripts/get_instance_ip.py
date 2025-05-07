@@ -42,7 +42,7 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str]]:
 
     session = session_utils.get_session()
     df = session.sql(f"show service instances in service {service_name}")
-    result = df.select('"instance_id"', '"ip_address"', '"start_time"').collect()
+    result = df.select('"instance_id"', '"ip_address"', '"start_time"', '"status"').collect()
 
     if not result:
         return None
@@ -57,7 +57,7 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str]]:
     ip_address = head_instance["ip_address"]
     try:
         socket.inet_aton(ip_address)  # Validate IPv4 address
-        return (head_instance["instance_id"], ip_address)
+        return (head_instance["instance_id"], ip_address, head_instance["status"])
     except OSError:
         logger.error(f"Error: Invalid IP address format: {ip_address}")
         return None

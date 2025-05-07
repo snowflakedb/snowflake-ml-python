@@ -1,37 +1,37 @@
 import inspect
+import itertools
+import re
 import tempfile
 import textwrap
 import time
 from typing import Any, Callable, Optional, cast
 from unittest import mock
+from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake.ml import jobs
 from snowflake.ml._internal import env
-from snowflake.ml._internal.utils import snowflake_env
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import manager as jm
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import exceptions as sp_exceptions
+from snowflake.snowpark import Row, exceptions as sp_exceptions
+from snowflake.snowpark.exceptions import SnowparkSQLException
+from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
-_TEST_COMPUTE_POOL = "E2E_TEST_POOL"
-_TEST_SCHEMA = "ML_JOB_TEST_SCHEMA"
-_SUPPORTED_CLOUDS = {
-    snowflake_env.SnowflakeCloudType.AWS,
-    snowflake_env.SnowflakeCloudType.AZURE,
-}
-INVALID_JOB_IDS = [
+INVALID_IDENTIFIERS = [
     "has'quote",
     "quote', 0, 'main'); drop table foo; select system$get_service_logs('job_id'",
 ]
 
 
 @absltest.skipIf(
-    (region := test_env_utils.get_current_snowflake_region()) is None or region["cloud"] not in _SUPPORTED_CLOUDS,
+    (region := test_env_utils.get_current_snowflake_region()) is None
+    or region["cloud"] not in test_constants._SUPPORTED_CLOUDS,
     "Test only for SPCS supported clouds",
 )
 class JobManagerTest(parameterized.TestCase):
@@ -40,16 +40,18 @@ class JobManagerTest(parameterized.TestCase):
         super().setUpClass()
         cls.session = test_env_utils.get_available_session()
         cls.dbm = db_manager.DBManager(cls.session)
-        cls.dbm.cleanup_schemas(prefix=_TEST_SCHEMA, expire_days=1)
+        cls.dbm.cleanup_schemas(prefix=test_constants._TEST_SCHEMA, expire_days=1)
         cls.db = cls.session.get_current_database()
-        cls.schema = cls.dbm.create_random_schema(prefix=_TEST_SCHEMA)
+        cls.schema = cls.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
             cls.compute_pool = cls.dbm.create_compute_pool(
-                _TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=5
+                test_constants._TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=5
             )
         except sp_exceptions.SnowparkSQLException:
-            if not cls.dbm.show_compute_pools(_TEST_COMPUTE_POOL).count() > 0:
-                raise cls.failureException(f"Compute pool {_TEST_COMPUTE_POOL} not available and could not be created")
+            if not cls.dbm.show_compute_pools(test_constants._TEST_COMPUTE_POOL).count() > 0:
+                raise cls.failureException(
+                    f"Compute pool {test_constants._TEST_COMPUTE_POOL} not available and could not be created"
+                )
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -79,11 +81,10 @@ class JobManagerTest(parameterized.TestCase):
             # Make sure we re-enable the parameter even if this test fails
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
 
-    @absltest.skip("Flaky test: SNOW-2043201")
     def test_list_jobs(self) -> None:
         # Use a separate schema for this test
         original_schema = self.session.get_current_schema()
-        temp_schema = self.dbm.create_random_schema(prefix=_TEST_SCHEMA)
+        temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
             # Should be empty initially
             self.assertEmpty(jobs.list_jobs(session=self.session).collect())
@@ -96,15 +97,17 @@ class JobManagerTest(parameterized.TestCase):
             # Validate list jobs output
             jobs_df = jobs.list_jobs(session=self.session)
             self.assertEqual(1, jobs_df.count())
-            self.assertSequenceEqual(['"id"', '"owner"', '"status"', '"created_on"', '"compute_pool"'], jobs_df.columns)
             self.assertSequenceEqual(
-                ["id", "owner", "status", "created_on", "compute_pool"], list(jobs_df.to_pandas().columns)
+                ['"name"', '"owner"', '"status"', '"created_on"', '"compute_pool"'], jobs_df.columns
             )
-            self.assertEqual(job.id, jobs_df.collect()[0]["id"])
+            self.assertSequenceEqual(
+                ["name", "owner", "status", "created_on", "compute_pool"], list(jobs_df.to_pandas().columns)
+            )
+            self.assertEqual(job.name, jobs_df.collect()[0]["name"])
 
             # Loading job ID shouldn't generate any additional jobs in backend
             loaded_job = jobs.get_job(job.id, session=self.session)
-            loaded_job.wait()
+            loaded_job.status  # Trigger status check
             self.assertEqual(1, jobs.list_jobs(session=self.session).count())
 
             # Test different scopes
@@ -154,29 +157,115 @@ class JobManagerTest(parameterized.TestCase):
         with self.assertRaises(sp_exceptions.SnowparkSQLException):
             jobs.list_jobs(**kwargs, session=self.session)
 
+    def test_get_head_node_negative(self):
+        mock_session = MagicMock()
+        mock_session.sql.return_value.collect.return_value = [
+            Row(instance_id=1),
+            Row(instance_id=2),
+        ]
+        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
+            mock_get_num_instances.return_value = 3
+            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Failed to retrieve job logs. "
+                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
+            ):
+                job.get_logs()
+
+    def test_get_instance_negative(self):
+        def sql_side_effect(query_str, params):
+            mock_result = MagicMock()
+
+            if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):
+                mock_result.collect.return_value = [
+                    Row(instance_id=None),
+                ]
+            elif query_str.startswith("SHOW SERVICE INSTANCES"):
+                mock_result.collect.return_value = [Row(start_time=None, instance_id=None)]
+            else:
+                raise ValueError(f"Unexpected SQL: {query_str}")
+
+            return mock_result
+
+        mock_session = MagicMock()
+        mock_session.sql.side_effect = sql_side_effect
+        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
+            mock_get_num_instances.return_value = 1
+            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Failed to retrieve job logs. "
+                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
+            ):
+                job.get_logs()
+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )
+    def test_get_job_positive(self):
+        # Submit a job
+        job = jm._submit_job(
+            lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
+        )
+
+        test_cases = [
+            job.name,
+            f"{self.schema}.{job.name}",
+            f"{self.db}.{self.schema}.{job.name}",
+        ]
+        for id in test_cases:
+            with self.subTest(f"id={id}"):
+                load_job = jobs.get_job(id, session=self.session)
+                self.assertIsNotNone(load_job)
+                job_db, job_schema, _ = identifier.parse_schema_level_object_identifier(load_job.id)
+                self.assertEqual(job_db, identifier.resolve_identifier(self.db))
+                self.assertEqual(job_schema, identifier.resolve_identifier(self.schema))
+
     def test_get_job_negative(self) -> None:
         # Invalid job ID (not a valid identifier)
-        for id in INVALID_JOB_IDS:
+        for id in INVALID_IDENTIFIERS:
             with self.assertRaisesRegex(ValueError, "Invalid job ID", msg=f"id={id}"):
                 jobs.get_job(id, session=self.session)
 
-        # Non-existent job ID
-        with self.assertRaisesRegex(ValueError, "does not exist"):
-            jobs.get_job("nonexistent_job_id", session=self.session)
+        nonexistent_job_ids = [
+            f"{self.db}.non_existent_schema.nonexistent_job_id",
+            f"{self.db}.{self.schema}.nonexistent_job_id",
+            "nonexistent_job_id",
+        ]
+        for id in nonexistent_job_ids:
+            with self.subTest(f"id={id}"):
+                with self.assertRaisesRegex(ValueError, "does not exist"):
+                    jobs.get_job(id, session=self.session)
 
     def test_delete_job_negative(self) -> None:
-        for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob[None](id, session=self.session)
-            with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                jobs.delete_job(job.id, session=self.session)
-            with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                jobs.delete_job(job, session=self.session)
+        nonexistent_job_ids = [
+            f"{self.db}.non_existent_schema.nonexistent_job_id",
+            f"{self.db}.{self.schema}.nonexistent_job_id",
+            "nonexistent_job_id",
+            *INVALID_IDENTIFIERS,
+        ]
+        for id in nonexistent_job_ids:
+            with self.subTest(f"id={id}"):
+                job = jobs.MLJob[None](id, session=self.session)
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                    jobs.delete_job(job.id, session=self.session)
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                    jobs.delete_job(job, session=self.session)
 
     def test_get_status_negative(self) -> None:
-        for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob[None](id, session=self.session)
-            with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                job.status
+        nonexistent_job_ids = [
+            f"{self.db}.non_existent_schema.nonexistent_job_id",
+            f"{self.db}.{self.schema}.nonexistent_job_id",
+            "nonexistent_job_id",
+            *INVALID_IDENTIFIERS,
+        ]
+        for id in nonexistent_job_ids:
+            with self.subTest(f"id={id}"):
+                job = jobs.MLJob[None](id, session=self.session)
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                    job.status
 
     def test_get_logs(self) -> None:
         # Submit a job
@@ -188,10 +277,27 @@ class JobManagerTest(parameterized.TestCase):
         self.assertIsInstance(job.get_logs(as_list=True), list)
 
     def test_get_logs_negative(self) -> None:
-        for id in INVALID_JOB_IDS + ["nonexistent_job_id"]:
-            job = jobs.MLJob[None](id, session=self.session)
-            with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                job.get_logs()
+        nonexistent_job_ids = [
+            f"{self.db}.non_existent_schema.nonexistent_job_id",
+            f"{self.db}.{self.schema}.nonexistent_job_id",
+            "nonexistent_job_id",
+            *INVALID_IDENTIFIERS,
+        ]
+        for id in nonexistent_job_ids:
+            with self.subTest(f"id={id}"):
+                job = jobs.MLJob[None](id, session=self.session)
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                    job.get_logs()
+
+        mock_session = MagicMock()
+        mock_session.sql.side_effect = sp_exceptions.SnowparkSQLException("Waiting to start, Container Status: PENDING")
+        job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
+        with self.assertRaises(sp_exceptions.SnowparkSQLException):
+            self.assertEqual(
+                job.get_logs(instance_id=0),
+                "Warning: Waiting for container to start. Logs will be shown when available.",
+                job.get_logs(),
+            )
 
     def test_job_wait(self) -> None:
         # Status check adds some latency
@@ -327,7 +433,7 @@ class JobManagerTest(parameterized.TestCase):
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        @jobs.remote(self.compute_pool, stage_name="@payload_stage/subdir", session=self.session)
         def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> dict[str, Any]:
             from datetime import datetime
 
@@ -449,7 +555,7 @@ class JobManagerTest(parameterized.TestCase):
             # Print success message which will be checked in the test
             print("Runtime API test success")
 
-        job = self._submit_func_as_file(runtime_func)
+        job = self._submit_func_as_file(runtime_func, num_instances=1)
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
         self.assertIn("Runtime API test success", job_logs)
 
@@ -496,6 +602,16 @@ class JobManagerTest(parameterized.TestCase):
             session=self.session,
         )
 
+        # Create a job with a requirement that conflicts with runtime env
+        job_dep_conflict = jobs.submit_file(
+            TestAsset("src/check_numpy.py").path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            pip_requirements=["numpy==1.23"],
+            external_access_integrations=pypi_eais,
+            session=self.session,
+        )
+
         # Job with bad requirement should fail due to installation error
         self.assertEqual(job_bad_requirement.wait(), "FAILED")
         self.assertIn("No matching distribution found for nonexistent_package", job_bad_requirement.get_logs())
@@ -505,10 +621,31 @@ class JobManagerTest(parameterized.TestCase):
         self.assertIn("No matching distribution found for tabulate", job_no_eai.get_logs())
 
         # Job with valid requirements and EAI should succeed
-        self.assertEqual(job.wait(), "DONE")
-        job_logs = job.get_logs()
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
         self.assertIn("Successfully installed tabulate", job_logs)
         self.assertIn("[foo] Job complete", job_logs)
+
+        # Job with conflicting requirement should prefer the user specified package
+        self.assertEqual(job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs())
+        self.assertRegex(job_dep_conflict_logs, r"you have numpy 1\.23\.\d+ which is incompatible")
+        self.assertIn("Numpy version: 1.23", job_dep_conflict_logs)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        "cloudpickle~=2.0",
+        "cloudpickle~=3.0",
+    )
+    def test_job_cached_packages(self, package: str) -> None:
+        """Test that cached packages are available without requiring network access."""
+
+        def dummy_func():
+            print("Dummy function executed successfully")
+
+        job = self._submit_func_as_file(dummy_func, pip_requirements=[package])
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertTrue(
+            package in job_logs or "Successfully installed" in job_logs,
+            "Didn't find expected package log:" + job_logs,
+        )
 
     @parameterized.parameters(  # type: ignore[misc]
         {
@@ -551,7 +688,7 @@ class JobManagerTest(parameterized.TestCase):
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
 
-    def _submit_func_as_file(self, func: Callable[[], None]) -> jobs.MLJob[None]:
+    def _submit_func_as_file(self, func: Callable[[], None], **kwargs: Any) -> jobs.MLJob[None]:
         func_source = inspect.getsource(func)
         payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
         with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
@@ -562,8 +699,87 @@ class JobManagerTest(parameterized.TestCase):
                 self.compute_pool,
                 stage_name="payload_stage",
                 session=self.session,
+                **kwargs,
             )
             return job
+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )
+    def test_submit_job_fully_qualified_name(self):
+        temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
+        self.dbm.use_schema(self.schema)  # Stay on default schema
+
+        test_cases = [
+            (None, None),
+            (None, self.schema),
+            (None, temp_schema),
+            (self.db, self.schema),
+            (self.db, temp_schema),
+        ]
+        try:
+            for database, schema in test_cases:
+                with self.subTest(database=database, schema=schema):
+                    job = jm._submit_job(
+                        lambda: print("hello world"),
+                        self.compute_pool,
+                        stage_name="payload_stage",
+                        database=database,
+                        schema=schema,
+                        session=self.session,
+                    )
+                    job_database, job_schema, job_name = identifier.parse_schema_level_object_identifier(job.id)
+
+                    # job_database/job_schema should not be wrapped in quotes unless absolutely necessary
+                    self.assertEqual(job_database, identifier.resolve_identifier(self.db))
+                    self.assertEqual(job_schema, identifier.resolve_identifier(schema or self.schema))
+
+                    if schema == temp_schema:
+                        with self.assertRaisesRegex(ValueError, "does not exist"):
+                            jobs.get_job(job_name, session=self.session)
+                    else:
+                        self.assertIsNotNone(jobs.get_job(job_name, session=self.session))
+        finally:
+            self.dbm.drop_schema(temp_schema, if_exists=True)
+
+    def test_submit_job_negative(self):
+        test_cases = [
+            ("not_valid_database", self.schema, SnowparkSQLException, "does not exist"),
+            (self.db, "not_valid_schema", SnowparkSQLException, "does not exist"),
+            (self.db, None, ValueError, "Schema must be specified if database is specified."),
+        ]
+        for database, schema, expected_exception, expected_regex in test_cases:
+            with self.subTest(database=database, schema=schema):
+                with self.assertRaisesRegex(expected_exception, expected_regex):
+                    _ = jm._submit_job(
+                        lambda: print("hello world"),
+                        self.compute_pool,
+                        stage_name="payload_stage",
+                        database=database,
+                        schema=schema,
+                        session=self.session,
+                    )
+
+        kwargs = {
+            "compute_pool": self.compute_pool,
+            "stage_name": "payload_stage",
+            "query_warehouse": self.session.get_current_warehouse(),
+            "database": self.db,
+            "schema": self.schema,
+        }
+        for k, v in itertools.product(kwargs.keys(), INVALID_IDENTIFIERS):
+            with self.subTest(f"{k}={v}"):
+                invalid_kwargs = kwargs.copy()
+                invalid_kwargs[k] = v
+                with self.assertRaisesRegex(
+                    (ValueError, sp_exceptions.SnowparkSQLException), re.compile(re.escape(v), re.IGNORECASE)
+                ):
+                    _ = jm._submit_job(
+                        lambda: print("hello world"),
+                        **invalid_kwargs,
+                        session=self.session,
+                    )
 
 
 if __name__ == "__main__":

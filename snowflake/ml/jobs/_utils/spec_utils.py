@@ -11,7 +11,7 @@ from snowflake.ml.jobs._utils import constants, types
 def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.ComputeResources:
     """Extract resource information for the specified compute pool"""
     # Get the instance family
-    rows = session.sql(f"show compute pools like '{compute_pool}'").collect()
+    rows = session.sql("show compute pools like ?", params=[compute_pool]).collect()
     if not rows:
         raise ValueError(f"Compute pool '{compute_pool}' not found")
     instance_family: str = rows[0]["instance_family"]
