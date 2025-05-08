@@ -12,7 +12,7 @@ SF_IDENTIFIER_RE = re.compile(_SF_IDENTIFIER)
 _SF_SCHEMA_LEVEL_OBJECT = (
     rf"(?:(?:(?P<db>{_SF_IDENTIFIER})\.)?(?P<schema>{_SF_IDENTIFIER})\.)?(?P<object>{_SF_IDENTIFIER})"
 )
-_SF_STAGE_PATH = rf"{_SF_SCHEMA_LEVEL_OBJECT}(?P<path>.*)"
+_SF_STAGE_PATH = rf"@?{_SF_SCHEMA_LEVEL_OBJECT}(?P<path>/.*)?"
 _SF_SCHEMA_LEVEL_OBJECT_RE = re.compile(_SF_SCHEMA_LEVEL_OBJECT)
 _SF_STAGE_PATH_RE = re.compile(_SF_STAGE_PATH)
 
@@ -197,7 +197,7 @@ def parse_snowflake_stage_path(
         res.group("db"),
         res.group("schema"),
         res.group("object"),
-        res.group("path"),
+        res.group("path") or "",
     )
 
 

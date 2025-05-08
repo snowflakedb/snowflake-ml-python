@@ -81,8 +81,16 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
     ) -> "xgboost.DMatrix":
         import xgboost as xgb
 
+        enable_categorical = False
+        for col, d_type in df.dtypes.items():
+            if pd.api.extensions.ExtensionDtype.is_dtype(d_type):
+                continue
+            if not np.issubdtype(d_type, np.number):
+                df[col] = df[col].astype("category")
+                enable_categorical = True
+
         if not features:
-            return xgb.DMatrix(df)
+            return xgb.DMatrix(df, enable_categorical=enable_categorical)
         else:
             feature_names = []
             feature_types = []
@@ -95,4 +103,9 @@ class XGBoostDMatrixHandler(base_handler.BaseDataHandler["xgboost.DMatrix"]):
                 assert isinstance(feature, core.FeatureSpec), "Invalid feature kind."
                 feature_names.append(feature.name)
                 feature_types.append(feature._dtype._numpy_type)
-            return xgb.DMatrix(df, feature_names=feature_names, feature_types=feature_types)
+            return xgb.DMatrix(
+                df,
+                feature_names=feature_names,
+                feature_types=feature_types,
+                enable_categorical=enable_categorical,
+            )

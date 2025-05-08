@@ -65,7 +65,8 @@ def create_model_metadata(
         ext_modules: List of names of modules that need to be pickled with the model. Defaults to None.
         conda_dependencies: List of conda requirements for running the model. Defaults to None.
         pip_requirements: List of pip Python packages requirements for running the model. Defaults to None.
-        artifact_repository_map: A dict mapping from package channel to artifact repository name.
+        artifact_repository_map: A dict mapping from package channel to artifact repository name (e.g.
+            {'pip': 'snowflake.snowpark.pypi_shared_repository'}).
         resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
         target_platforms: List of target platforms to run the model.
         python_version: A string of python version where model is run. Used for user override. If specified as None,

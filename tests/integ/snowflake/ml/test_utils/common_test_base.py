@@ -133,10 +133,13 @@ class CommonTestBase(parameterized.TestCase):
                         except ModuleNotFoundError:
                             pass
                         packages = additional_packages or []
+                        offending_list = ["snowflake-connector-python", "pyarrow"]
+                        if any([p.startswith("scikit-learn") for p in packages]):
+                            offending_list.append("scikit-learn")
                         for req_str in _snowml_requirements.REQUIREMENTS:
                             req = requirements.Requirement(req_str)
                             # Remove "_" not in req once Snowpark 1.11.0 available, it is a workaround for their bug.
-                            if any(offending in req.name for offending in ["snowflake-connector-python", "pyarrow"]):
+                            if any(offending in req.name for offending in offending_list):
                                 continue
                             # != and ~= are not supported by Snowpark
                             req.specifier = specifiers.SpecifierSet(

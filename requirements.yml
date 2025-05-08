@@ -90,7 +90,7 @@
     - catboost
 - name: cloudpickle
   dev_version: 2.2.1
-  version_requirements: '>=2.0.0,<3'
+  version_requirements: '>=2.0.0'
 - name: cryptography
   dev_version: 39.0.1
   version_requirements: ''
@@ -132,8 +132,6 @@
 - name: shap
   dev_version: 0.46.0
   version_requirements: '>=0.46.0,<1'
-  requirements_extra_tags:
-    - shap
 - name: mlflow
   dev_version: 2.16.2
   version_requirements: '>=2.16.0, <3'
@@ -216,7 +214,7 @@
   version_requirements: '>=2024.6.1,<2026'
 - name: scikit-learn
   dev_version: 1.5.1
-  version_requirements: '>=1.4,<1.6'
+  version_requirements: <1.6
   tags:
     - build_essential
 - name: scipy
@@ -234,8 +232,8 @@
     - transformers
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.12.0
-  version_requirements: '>=3.12.0,<4'
+  dev_version: 3.14.0
+  version_requirements: '>=3.14.0,<4'
 - name: snowflake.core
   dev_version: 1.0.2
   version_requirements: '>=1.0.2,<2'
@@ -298,6 +296,8 @@
   version_requirements: '>=1.7.3,<3'
   tags:
     - build_essential
+  requirements_extra_tags:
+    - xgboost
 - name: werkzeug
   dev_version: 2.2.2
 - name: cachetools
@@ -306,6 +306,16 @@
 - name: pytimeparse
   dev_version: 1.1.8
   version_requirements: '>=1.1.8,<2'
+- name: altair
+  dev_version: 5.5.0
+  version_requirements: '>=5,<6'
+  requirements_extra_tags:
+    - altair
+- name: streamlit
+  dev_version: 1.44.1
+  version_requirements: '>=1.44.0,<2'
+  requirements_extra_tags:
+    - streamlit
 
 # Below are pip only external packages
 - name_pypi: --extra-index-url https://pypi.org/simple

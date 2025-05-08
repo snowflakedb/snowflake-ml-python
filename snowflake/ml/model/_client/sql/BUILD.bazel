@@ -109,7 +109,6 @@ py_library(
     srcs = ["service.py"],
     deps = [
         ":_base",
-        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",

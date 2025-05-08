@@ -59,7 +59,7 @@ class SimpleJSONEncoder(json.JSONEncoder):
         try:
             return super().default(obj)
         except TypeError:
-            return str(obj)
+            return f"Unserializable object: {repr(obj)}"
 
 
 def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = None) -> Any:

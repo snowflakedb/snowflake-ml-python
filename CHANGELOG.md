@@ -1,5 +1,30 @@
 # Release History
 
+## 1.8.4
+
+### Bug Fixes
+
+- Registry: Default `enable_explainability` to True when the model can be deployed to Warehouse.
+- Registry: Add `custom_model.partitioned_api` decorator and deprecate `partitioned_inference_api`.
+- Registry: Fixed a bug when logging pytroch and tensorflow models that caused
+  `UnboundLocalError: local variable 'multiple_inputs' referenced before assignment`.
+
+### Breaking change
+
+- ML Job: Updated property `id` to be fully qualified name; Introduced new property `name` to represent the ML Job name
+- ML Job: Modified `list_jobs()` to return ML Job `name` instead of `id`
+- Registry: Error in `log_model` if `enable_explainability` is True and model is only deployed to
+   Snowpark Container Services, instead of just user warning.
+
+### New Features
+
+- ML Job: Extend `@remote` function decorator, `submit_file()` and `submit_directory()` to accept `database` and
+  `schema` parameters
+- ML Job: Support querying by fully qualified name in `get_job()`
+- Explainability: Added visualization functions to `snowflake.ml.monitoring` to plot explanations in notebooks.
+- Explainability: Support explain for categorical transforms for sklearn pipeline
+- Support categorical type for `xgboost.DMatrix` inputs.
+
 ## 1.8.3
 
 ### Bug Fixes
@@ -13,6 +38,7 @@
   as a list of strings
 - Registry: Support `ModelVersion.run_job` to run inference with a single-node Snowpark Container Services job.
 - DataConnector: Removed PrPr decorators
+- Registry: Default the target platform to warehouse when logging a partitioned model.
 
 ## 1.8.2
 

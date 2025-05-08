@@ -6,7 +6,6 @@ from unittest import mock
 from absl.testing import absltest
 
 from snowflake import snowpark
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier, string_matcher
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -131,7 +130,7 @@ class ServiceSQLTest(absltest.TestCase):
 
         self.m_session.add_mock_sql(
             """SELECT *,
-                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                TEMP."test".SERVICE!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
@@ -144,8 +143,6 @@ class ServiceSQLTest(absltest.TestCase):
 
         with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
         ):
             service_sql.ServiceSQLClient(
                 c_session,
@@ -191,8 +188,6 @@ class ServiceSQLTest(absltest.TestCase):
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
         ) as mock_random_name_for_temp_object, mock.patch.object(
             snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
         ):
             service_sql.ServiceSQLClient(
                 c_session,
@@ -222,18 +217,14 @@ class ServiceSQLTest(absltest.TestCase):
         self.m_session.add_mock_sql(
             """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                TEMP."test".SERVICE_PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                TEMP."test".SERVICE!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
         )
         m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
         c_session = cast(Session, self.m_session)
         m_df.add_query("queries", "query_1")
-        with mock.patch.object(
-            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
             service_sql.ServiceSQLClient(
                 c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),

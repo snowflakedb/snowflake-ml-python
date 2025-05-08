@@ -24,6 +24,7 @@ py_library(
         "//snowflake/ml/model/_client/ops:model_ops",
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
     ],
 )
 

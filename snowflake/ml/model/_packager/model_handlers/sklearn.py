@@ -1,6 +1,6 @@
 import os
 import warnings
-from typing import TYPE_CHECKING, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -38,6 +38,35 @@ def _unpack_container_runtime_pipeline(model: "sklearn.pipeline.Pipeline") -> "s
     return model
 
 
+def _apply_transforms_up_to_last_step(
+    model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
+    data: model_types.SupportedDataType,
+    input_feature_names: Optional[list[str]] = None,
+) -> pd.DataFrame:
+    """Apply all transformations in the sklearn pipeline model up to the last step."""
+    transformed_data = data
+    output_features_names = input_feature_names
+
+    if type_utils.LazyType("sklearn.pipeline.Pipeline").isinstance(model):
+        for step_name, step in model.steps[:-1]:  # type: ignore[attr-defined]
+            if not hasattr(step, "transform"):
+                raise ValueError(f"Step '{step_name}' does not have a 'transform' method.")
+            transformed_data = step.transform(transformed_data)
+            if output_features_names is None:
+                continue
+            elif hasattr(step, "get_feature_names_out"):
+                output_features_names = step.get_feature_names_out(output_features_names)
+            else:
+                raise ValueError(
+                    f"Step '{step_name}' in the pipeline does not have a 'get_feature_names_out' method. "
+                    "Feature names cannot be propagated."
+                )
+    if type_utils.LazyType("scipy.sparse.csr_matrix").isinstance(transformed_data):
+        # Convert to dense array if it's a sparse matrix
+        transformed_data = transformed_data.toarray()  # type: ignore[attr-defined]
+    return pd.DataFrame(transformed_data, columns=output_features_names)
+
+
 @final
 class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"]]):
     """Handler for scikit-learn based model.
@@ -58,7 +87,9 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         "decision_function",
         "score_samples",
     ]
-    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba", "predict_log_proba"]
+
+    # Prioritize predict_proba as it gives multi-class probabilities
+    EXPLAIN_TARGET_METHODS = ["predict_proba", "predict", "predict_log_proba"]
 
     @classmethod
     def can_handle(
@@ -160,17 +191,38 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         stacklevel=1,
                     )
                     enable_explainability = False
-                elif model_meta.task == model_types.Task.UNKNOWN or explain_target_method is None:
+                elif model_meta.task == model_types.Task.UNKNOWN:
+                    enable_explainability = False
+                elif explain_target_method is None:
                     enable_explainability = False
                 else:
                     enable_explainability = True
             if enable_explainability:
-                model_meta = handlers_utils.add_explain_method_signature(
-                    model_meta=model_meta,
-                    explain_method="explain",
-                    target_method=explain_target_method,
-                    output_return_type=model_task_and_output_type.output_type,
+                explain_target_method = str(explain_target_method)  # mypy complains if we don't cast to str here
+
+                input_signature = handlers_utils.get_input_signature(model_meta, explain_target_method)
+                transformed_background_data = _apply_transforms_up_to_last_step(
+                    model=model,
+                    data=background_data,
+                    input_feature_names=[spec.name for spec in input_signature],
                 )
+
+                try:
+                    model_meta = handlers_utils.add_inferred_explain_method_signature(
+                        model_meta=model_meta,
+                        explain_method="explain",
+                        target_method=explain_target_method,
+                        background_data=background_data,
+                        explain_fn=cls._build_explain_fn(model, background_data, input_signature),
+                        output_feature_names=transformed_background_data.columns,
+                    )
+                except ValueError:
+                    if kwargs.get("enable_explainability", None):
+                        # user explicitly enabled explainability, so we should raise the error
+                        raise ValueError(
+                            "Explainability for this model is not supported. Please set `enable_explainability=False`"
+                        )
+
                 handlers_utils.save_background_data(
                     model_blobs_dir_path,
                     cls.EXPLAIN_ARTIFACTS_DIR,
@@ -222,11 +274,13 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                     )
 
         if enable_explainability:
-            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap", pip_name="shap")])
+            model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
 
         model_meta.env.include_if_absent(
-            [model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn")],
+            [
+                model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn"),
+            ],
             check_local_version=True,
         )
 
@@ -286,37 +340,8 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
 
                 @custom_model.inference_api
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    import shap
-
-                    try:
-                        explainer = shap.Explainer(raw_model, background_data)
-                        df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer(X).values)
-                    except TypeError:
-                        try:
-                            dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in signature.inputs}
-
-                            if isinstance(X, pd.DataFrame):
-                                X = X.astype(dtype_map, copy=False)
-                            if hasattr(raw_model, "predict_proba"):
-                                if isinstance(X, np.ndarray):
-                                    explanations = shap.Explainer(
-                                        raw_model.predict_proba, background_data.values  # type: ignore[union-attr]
-                                    )(X).values
-                                else:
-                                    explanations = shap.Explainer(raw_model.predict_proba, background_data)(X).values
-                            elif hasattr(raw_model, "predict"):
-                                if isinstance(X, np.ndarray):
-                                    explanations = shap.Explainer(
-                                        raw_model.predict, background_data.values  # type: ignore[union-attr]
-                                    )(X).values
-                                else:
-                                    explanations = shap.Explainer(raw_model.predict, background_data)(X).values
-                            else:
-                                raise ValueError("Missing any supported target method to explain.")
-                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explanations)
-                        except TypeError as e:
-                            raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
-                    return model_signature_utils.rename_pandas_df(df, signature.outputs)
+                    fn = cls._build_explain_fn(raw_model, background_data, signature.inputs)
+                    return model_signature_utils.rename_pandas_df(fn(X), signature.outputs)
 
                 if target_method == "explain":
                     return explain_fn
@@ -339,3 +364,37 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         skl_model = _SKLModel(custom_model.ModelContext())
 
         return skl_model
+
+    @classmethod
+    def _build_explain_fn(
+        cls,
+        model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
+        background_data: model_types.SupportedDataType,
+        input_specs: Sequence[model_signature.BaseFeatureSpec],
+    ) -> Callable[[model_types.SupportedDataType], pd.DataFrame]:
+        import shap
+        import sklearn.pipeline
+
+        transformed_bg_data = _apply_transforms_up_to_last_step(model, background_data)
+
+        def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:
+            transformed_data = _apply_transforms_up_to_last_step(model, data)
+            predictor = model[-1] if isinstance(model, sklearn.pipeline.Pipeline) else model
+            try:
+                explainer = shap.Explainer(predictor, transformed_bg_data)
+                return handlers_utils.convert_explanations_to_2D_df(model, explainer(transformed_data).values)
+            except TypeError:
+                if isinstance(data, pd.DataFrame):
+                    dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in input_specs}
+                    transformed_data = _apply_transforms_up_to_last_step(model, data.astype(dtype_map))
+                for explain_target_method in cls.EXPLAIN_TARGET_METHODS:
+                    if not hasattr(predictor, explain_target_method):
+                        continue
+                    explain_target_method_fn = getattr(predictor, explain_target_method)
+                    explanations = shap.Explainer(explain_target_method_fn, transformed_bg_data.values)(
+                        transformed_data.to_numpy()
+                    ).values
+                    return handlers_utils.convert_explanations_to_2D_df(model, explanations)
+                raise ValueError("Missing any supported target method to explain.")
+
+        return explain_fn

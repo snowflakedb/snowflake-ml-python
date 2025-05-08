@@ -1,7 +1,7 @@
 import logging
 import pathlib
 import textwrap
-from typing import Any, Callable, Literal, Optional, TypeVar, Union, overload
+from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast, overload
 from uuid import uuid4
 
 import yaml
@@ -52,7 +52,7 @@ def list_jobs(
         query += f" LIMIT {limit}"
     df = session.sql(query)
     df = df.select(
-        df['"name"'].alias('"id"'),
+        df['"name"'],
         df['"owner"'],
         df['"status"'],
         df['"created_on"'],
@@ -65,16 +65,16 @@ def list_jobs(
 def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob[Any]:
     """Retrieve a job service from the backend."""
     session = session or get_active_session()
-
     try:
-        # Validate job_id
-        job_id = identifier.resolve_identifier(job_id)
+        database, schema, job_name = identifier.parse_schema_level_object_identifier(job_id)
+        database = identifier.resolve_identifier(cast(str, database or session.get_current_database()))
+        schema = identifier.resolve_identifier(cast(str, schema or session.get_current_schema()))
     except ValueError as e:
         raise ValueError(f"Invalid job ID: {job_id}") from e
 
+    job_id = f"{database}.{schema}.{job_name}"
     try:
         # Validate that job exists by doing a status check
-        # FIXME: Retrieve return path
         job = jb.MLJob[Any](job_id, session=session)
         _ = job.status
         return job
@@ -110,6 +110,8 @@ def submit_file(
     spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob[None]:
     """
@@ -127,6 +129,8 @@ def submit_file(
         spec_overrides: Custom service specification overrides to apply.
         num_instances: The number of instances to use for the job. If none specified, single node job is created.
         enable_metrics: Whether to enable metrics publishing for the job.
+        database: The database to use.
+        schema: The schema to use.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -144,6 +148,8 @@ def submit_file(
         spec_overrides=spec_overrides,
         num_instances=num_instances,
         enable_metrics=enable_metrics,
+        database=database,
+        schema=schema,
         session=session,
     )
 
@@ -163,6 +169,8 @@ def submit_directory(
     spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob[None]:
     """
@@ -181,6 +189,8 @@ def submit_directory(
         spec_overrides: Custom service specification overrides to apply.
         num_instances: The number of instances to use for the job. If none specified, single node job is created.
         enable_metrics: Whether to enable metrics publishing for the job.
+        database: The database to use.
+        schema: The schema to use.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -199,6 +209,8 @@ def submit_directory(
         spec_overrides=spec_overrides,
         num_instances=num_instances,
         enable_metrics=enable_metrics,
+        database=database,
+        schema=schema,
         session=session,
     )
 
@@ -218,6 +230,8 @@ def _submit_job(
     spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob[None]:
     ...
@@ -238,6 +252,8 @@ def _submit_job(
     spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob[T]:
     ...
@@ -269,6 +285,8 @@ def _submit_job(
     spec_overrides: Optional[dict[str, Any]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> jb.MLJob[T]:
     """
@@ -287,6 +305,8 @@ def _submit_job(
         spec_overrides: Custom service specification overrides to apply.
         num_instances: The number of instances to use for the job. If none specified, single node job is created.
         enable_metrics: Whether to enable metrics publishing for the job.
+        database: The database to use.
+        schema: The schema to use.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -294,17 +314,28 @@ def _submit_job(
 
     Raises:
         RuntimeError: If required Snowflake features are not enabled.
+        ValueError: If database or schema value(s) are invalid
     """
     # Display warning about PrPr parameters
     if num_instances is not None:
         logger.warning(
             "_submit_job() parameter 'num_instances' is in private preview since 1.8.2. Do not use it in production.",
         )
+    if database and not schema:
+        raise ValueError("Schema must be specified if database is specified.")
 
     session = session or get_active_session()
-    job_id = f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
-    stage_name = "@" + stage_name.lstrip("@").rstrip("/")
-    stage_path = pathlib.PurePosixPath(f"{stage_name}/{job_id}")
+
+    # Validate database and schema identifiers on client side since
+    # SQL parser for EXECUTE JOB SERVICE seems to struggle with this
+    database = identifier.resolve_identifier(cast(str, database or session.get_current_database()))
+    schema = identifier.resolve_identifier(cast(str, schema or session.get_current_schema()))
+
+    job_name = f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
+    job_id = f"{database}.{schema}.{job_name}"
+    stage_path_parts = identifier.parse_snowflake_stage_path(stage_name.lstrip("@"))
+    stage_name = f"@{'.'.join(filter(None, stage_path_parts[:3]))}"
+    stage_path = pathlib.PurePosixPath(f"{stage_name}{stage_path_parts[-1].rstrip('/')}/{job_name}")
 
     # Upload payload
     uploaded_payload = payload_utils.JobPayload(
@@ -331,31 +362,34 @@ def _submit_job(
 
     # Generate SQL command for job submission
     query_template = textwrap.dedent(
-        f"""\
+        """\
         EXECUTE JOB SERVICE
-        IN COMPUTE POOL {compute_pool}
+        IN COMPUTE POOL IDENTIFIER(?)
         FROM SPECIFICATION $$
-        {{}}
+        {}
         $$
-        NAME = {job_id}
+        NAME = IDENTIFIER(?)
         ASYNC = TRUE
         """
     )
+    params: list[Any] = [compute_pool, job_id]
     query = query_template.format(yaml.dump(spec)).splitlines()
     if external_access_integrations:
         external_access_integration_list = ",".join(f"{e}" for e in external_access_integrations)
         query.append(f"EXTERNAL_ACCESS_INTEGRATIONS = ({external_access_integration_list})")
     query_warehouse = query_warehouse or session.get_current_warehouse()
     if query_warehouse:
-        query.append(f"QUERY_WAREHOUSE = {query_warehouse}")
+        query.append("QUERY_WAREHOUSE = IDENTIFIER(?)")
+        params.append(query_warehouse)
     if num_instances:
-        query.append(f"REPLICAS = {num_instances}")
+        query.append("REPLICAS = ?")
+        params.append(num_instances)
 
     # Submit job
     query_text = "\n".join(line for line in query if line)
 
     try:
-        _ = session.sql(query_text).collect()
+        _ = session.sql(query_text, params=params).collect()
     except SnowparkSQLException as e:
         if "invalid property 'ASYNC'" in e.message:
             raise RuntimeError(

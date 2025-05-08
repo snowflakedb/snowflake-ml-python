@@ -45,6 +45,58 @@ class UtilTest(absltest.TestCase):
                 explain_sig.outputs,
             )
 
+    def test_add_inferred_explain_method_signature(self) -> None:
+        predict_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="feature1"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="feature2"),
+            ],
+            outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output1")],
+        )
+        meta = model_meta.ModelMetadata(
+            name="name", env=model_env.ModelEnv(), model_type="custom", signatures={"predict": predict_sig}
+        )
+
+        def explain_fn(data: type_hints.SupportedDataType) -> pd.DataFrame:
+            return pd.DataFrame(
+                {
+                    "a": [0.3, 0.5],
+                    "b": [0.3, 0.5],
+                    "c": [0.3, 0.5],
+                    "d": ["some_string", "some_string"],  # multiclass explanations are formatted as string
+                }
+            )
+
+        new_meta = handlers_utils.add_inferred_explain_method_signature(
+            model_meta=meta,
+            explain_method="explain",
+            target_method="predict",
+            background_data=pd.DataFrame(
+                {
+                    "feature1": ["a", "b", "c"],
+                    "feature2": [10.0, 20.0, 30.0],
+                }
+            ),
+            explain_fn=explain_fn,
+            output_feature_names=["feature1_a", "feature1_b", "feature1_c", "feature2"],
+        )
+
+        self.assertIn("explain", new_meta.signatures)
+        explain_sig = new_meta.signatures["explain"]
+        self.assertEqual(explain_sig.inputs, predict_sig.inputs)
+
+        for double_feature in ["feature1_a", "feature1_b", "feature1_c"]:
+            self.assertIn(
+                model_signature.FeatureSpec(
+                    dtype=model_signature.DataType.DOUBLE, name=f"{double_feature}_explanation"
+                ),
+                explain_sig.outputs,
+            )
+        self.assertIn(
+            model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="feature2_explanation"),
+            explain_sig.outputs,
+        )
+
     def test_convert_explanations_to_2D_df_multi_value_string_labels(self) -> None:
         model = mock.MagicMock()
         model.classes_ = ["2", "3", "4"]

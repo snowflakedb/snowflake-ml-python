@@ -4,6 +4,8 @@ from snowflake import snowpark
 from snowflake.ml.jobs import decorators
 
 COMPUTE_POOL = "test_compute_pool"
+DATABASE = "MOCK_DB"
+SCHEMA = "MOCK_schema"
 
 
 class JobDecoratorTests(absltest.TestCase):
@@ -11,6 +13,8 @@ class JobDecoratorTests(absltest.TestCase):
     def setUpClass(cls) -> None:
         cls.compute_pool = COMPUTE_POOL
         cls.session = absltest.mock.MagicMock(spec=snowpark.Session)
+        cls.session.get_current_database.return_value = DATABASE
+        cls.session.get_current_schema.return_value = SCHEMA
 
     def test_job_decorator_unsupported_arg_type(self) -> None:
         @decorators.remote(self.compute_pool, stage_name="payload_stage", session=self.session)

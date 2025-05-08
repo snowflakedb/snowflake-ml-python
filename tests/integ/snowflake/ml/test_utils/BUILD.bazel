@@ -55,7 +55,6 @@ py_library(
         "//snowflake/ml/modeling/pipeline",
         "//snowflake/ml/modeling/preprocessing:min_max_scaler",
         "//snowflake/ml/modeling/preprocessing:one_hot_encoder",
-        "//snowflake/ml/modeling/xgboost:xgb_classifier",
     ],
 )
 

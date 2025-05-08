@@ -138,6 +138,13 @@ class ModelInterfaceTest(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         {"disable_explainability": True, "target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},
+        {
+            "disable_explainability": False,
+            "target_platforms": [
+                model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+                model_types.TargetPlatform.WAREHOUSE,
+            ],
+        },
         {"disable_explainability": False, "target_platforms": []},
         {
             "disable_explainability": True,
@@ -184,17 +191,22 @@ class ModelInterfaceTest(parameterized.TestCase):
                 mock_save.assert_called_once()
                 _, called_kwargs = mock_save.call_args
                 self.assertIn("options", called_kwargs)
-                if disable_explainability:
+                if (
+                    disable_explainability
+                ):  # set to false if the model is not runnable in WH or the target platforms is only SPCS
                     self.assertEqual(
                         called_kwargs["options"], called_kwargs["options"] | {"enable_explainability": False}
                     )
                 else:
+                    # else options should be empty since user did not pass anything
+                    # and explainability does not need to be explicitly disabled
                     self.assertNotIn("enable_explainability", called_kwargs["options"])
 
         if disable_explainability:
-            with self.assertWarnsRegex(
-                UserWarning,
-                "The model can be deployed to Snowpark Container Services only if `enable_explainability=False`.",
+            with self.assertRaisesRegex(
+                ValueError,
+                "`enable_explainability` cannot be set to True when the model is not runnable in WH "
+                "or the target platforms include SPCS.",
             ):
                 with mock.patch.object(m.packager, "save", return_value=mock_pk.meta):
                     with mock.patch.object(m.manifest, "save"):

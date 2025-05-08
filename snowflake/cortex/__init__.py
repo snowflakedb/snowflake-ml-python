@@ -1,5 +1,10 @@
 from snowflake.cortex._classify_text import ClassifyText, classify_text
-from snowflake.cortex._complete import Complete, CompleteOptions, complete
+from snowflake.cortex._complete import (
+    Complete,
+    CompleteOptions,
+    ConversationMessage,
+    complete,
+)
 from snowflake.cortex._embed_text_768 import EmbedText768, embed_text_768
 from snowflake.cortex._embed_text_1024 import EmbedText1024, embed_text_1024
 from snowflake.cortex._extract_answer import ExtractAnswer, extract_answer
@@ -14,6 +19,7 @@ __all__ = [
     "Complete",
     "complete",
     "CompleteOptions",
+    "ConversationMessage",
     "EmbedText768",
     "embed_text_768",
     "EmbedText1024",

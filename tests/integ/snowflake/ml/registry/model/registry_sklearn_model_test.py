@@ -18,7 +18,6 @@ from sklearn import (
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
-from snowflake.snowpark import exceptions as snowpark_exceptions
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
@@ -247,13 +246,25 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
 
         name = "model_test_skl_unsupported_explain"
         version = f"ver_{self._run_id}"
+
+        with self.assertRaisesRegex(
+            ValueError, "Explainability for this model is not supported. Please set `enable_explainability=False`"
+        ):
+            self.registry.log_model(
+                model=model,
+                model_name=name,
+                version_name=version,
+                sample_input_data=iris_X_df,
+                conda_dependencies=conda_dependencies,
+                options={"enable_explainability": True},
+            )
+
         mv = self.registry.log_model(
             model=model,
             model_name=name,
             version_name=version,
             sample_input_data=iris_X_df,
             conda_dependencies=conda_dependencies,
-            options={"enable_explainability": True},
         )
 
         res = mv.run(iris_X[-10:], function_name="predict")
@@ -268,9 +279,6 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             np.hstack([np.array(res[col].to_list()) for col in cast(pd.DataFrame, res)]),
             np.hstack(model.predict_proba(iris_X[-10:])),
         )
-
-        with self.assertRaises(snowpark_exceptions.SnowparkSQLException):
-            mv.run(iris_X_df, function_name="explain")
 
         self.registry.delete_model(model_name=name)
 
