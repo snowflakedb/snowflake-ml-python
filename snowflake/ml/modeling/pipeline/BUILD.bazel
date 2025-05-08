@@ -41,7 +41,10 @@ py_package(
 py_test(
     name = "pipeline_test",
     srcs = ["pipeline_test.py"],
-    optional_dependencies = ["lightgbm"],
+    optional_dependencies = [
+        "lightgbm",
+        "xgboost",
+    ],
     deps = [
         ":pipeline",
         "//snowflake/ml/modeling/lightgbm:lgbm_classifier",

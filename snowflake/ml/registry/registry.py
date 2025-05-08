@@ -148,11 +148,11 @@ class Registry:
                 dependencies must be retrieved from Snowflake Anaconda Channel.
             artifact_repository_map: Specifies a mapping of package channels or platforms to custom artifact
                 repositories. Defaults to None. Currently, the mapping applies only to warehouse execution.
-                Note : This feature is currently in Private Preview; please contact your Snowflake account team
-                to enable it.
+                Note : This feature is currently in Public Preview.
                 Format: {channel_name: artifact_repository_name}, where:
-                   - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
-                   - artifact_repository_name: The name or URL of the repository to fetch packages from.
+                   - channel_name: Currently must be 'pip'.
+                   - artifact_repository_name: The identifier of the artifact repository to fetch packages from, e.g.
+                     `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
                 {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
@@ -288,14 +288,15 @@ class Registry:
                 dependencies must be retrieved from Snowflake Anaconda Channel.
             artifact_repository_map: Specifies a mapping of package channels or platforms to custom artifact
                 repositories. Defaults to None. Currently, the mapping applies only to warehouse execution.
-                Note : This feature is currently in Private Preview; please contact your Snowflake account team to
-                enable it.
+                Note : This feature is currently in Public Preview.
                 Format: {channel_name: artifact_repository_name}, where:
-                   - channel_name: The name of the Conda package channel (e.g., 'condaforge') or 'pip' for pip packages.
-                   - artifact_repository_name: The name or URL of the repository to fetch packages from.
+                   - channel_name: Currently must be 'pip'.
+                   - artifact_repository_name: The identifier of the artifact repository to fetch packages from, e.g.
+                     `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
-                {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
+                ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]. Defaults to None. When None, the target platforms will be
+                both.
             python_version: Python version in which the model is run. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
                 sample_input_data would be used to infer the signatures for those models that cannot automatically

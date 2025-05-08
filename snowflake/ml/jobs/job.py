@@ -1,12 +1,15 @@
 import time
+from functools import cached_property
 from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overload
 
 import yaml
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs._utils import constants, interop_utils, types
-from snowflake.snowpark import context as sp_context
+from snowflake.snowpark import Row, context as sp_context
+from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _PROJECT = "MLJob"
 TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "INTERNAL_ERROR"}
@@ -27,6 +30,14 @@ class MLJob(Generic[T]):
 
         self._status: types.JOB_STATUS = "PENDING"
         self._result: Optional[interop_utils.ExecutionResult] = None
+
+    @cached_property
+    def name(self) -> str:
+        return identifier.parse_schema_level_object_identifier(self.id)[-1]
+
+    @cached_property
+    def num_instances(self) -> int:
+        return _get_num_instances(self._session, self.id)
 
     @property
     def id(self) -> str:
@@ -67,7 +78,7 @@ class MLJob(Generic[T]):
         """Get the job's result file location."""
         result_path = self._container_spec["env"].get(constants.RESULT_PATH_ENV_VAR)
         if result_path is None:
-            raise RuntimeError(f"Job {self.id} doesn't have a result path configured")
+            raise RuntimeError(f"Job {self.name} doesn't have a result path configured")
         return f"{self._stage_path}/{result_path}"
 
     @overload
@@ -128,7 +139,7 @@ class MLJob(Generic[T]):
         start_time = time.monotonic()
         while self.status not in TERMINAL_JOB_STATUSES:
             if timeout >= 0 and (elapsed := time.monotonic() - start_time) >= timeout:
-                raise TimeoutError(f"Job {self.id} did not complete within {elapsed} seconds")
+                raise TimeoutError(f"Job {self.name} did not complete within {elapsed} seconds")
             time.sleep(delay)
             delay = min(delay * 2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
         return self.status
@@ -154,11 +165,11 @@ class MLJob(Generic[T]):
             try:
                 self._result = interop_utils.fetch_result(self._session, self._result_path)
             except Exception as e:
-                raise RuntimeError(f"Failed to retrieve result for job (id={self.id})") from e
+                raise RuntimeError(f"Failed to retrieve result for job (id={self.name})") from e
 
         if self._result.success:
             return cast(T, self._result.result)
-        raise RuntimeError(f"Job execution failed (id={self.id})") from self._result.exception
+        raise RuntimeError(f"Job execution failed (id={self.name})") from self._result.exception
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "instance_id"])
@@ -172,14 +183,14 @@ def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[in
                 return cast(types.JOB_STATUS, row["status"])
         raise ValueError(f"Instance {instance_id} not found in job {job_id}")
     else:
-        (row,) = session.sql("DESCRIBE SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+        row = _get_service_info(session, job_id)
         return cast(types.JOB_STATUS, row["status"])
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_service_spec(session: snowpark.Session, job_id: str) -> dict[str, Any]:
     """Retrieve job execution service spec."""
-    (row,) = session.sql("DESCRIBE SERVICE IDENTIFIER(?)", params=[job_id]).collect()
+    row = _get_service_info(session, job_id)
     return cast(dict[str, Any], yaml.safe_load(row["spec"]))
 
 
@@ -196,10 +207,21 @@ def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_
 
     Returns:
         The job's execution logs.
+
+    Raises:
+        SnowparkSQLException: if the container is pending
+        RuntimeError: if failed to get head instance_id
+
     """
     # If instance_id is not specified, try to get the head instance ID
     if instance_id is None:
-        instance_id = _get_head_instance_id(session, job_id)
+        try:
+            instance_id = _get_head_instance_id(session, job_id)
+        except RuntimeError:
+            raise RuntimeError(
+                "Failed to retrieve job logs. "
+                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead."
+            )
 
     # Assemble params: [job_id, instance_id, container_name, (optional) limit]
     params: list[Any] = [
@@ -210,10 +232,15 @@ def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_
     if limit > 0:
         params.append(limit)
 
-    (row,) = session.sql(
-        f"SELECT SYSTEM$GET_SERVICE_LOGS(?, ?, ?{f', ?' if limit > 0 else ''})",
-        params=params,
-    ).collect()
+    try:
+        (row,) = session.sql(
+            f"SELECT SYSTEM$GET_SERVICE_LOGS(?, ?, ?{f', ?' if limit > 0 else ''})",
+            params=params,
+        ).collect()
+    except SnowparkSQLException as e:
+        if "Container Status: PENDING" in e.message:
+            return "Warning: Waiting for container to start. Logs will be shown when available."
+        raise
     return str(row[0])
 
 
@@ -223,18 +250,27 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
     Retrieve the head instance ID of a job.
 
     Args:
-        session: The Snowpark session to use.
-        job_id: The job ID.
+        session (Session): The Snowpark session to use.
+        job_id (str): The job ID.
 
     Returns:
-        The head instance ID of the job. Returns None if the head instance has not started yet.
+        Optional[int]: The head instance ID of the job, or None if the head instance has not started yet.
+
+    Raises:
+        RuntimeError: If the instances died or if some instances disappeared.
     """
     rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
     if not rows:
         return None
+    if _get_num_instances(session, job_id) > len(rows):
+        raise RuntimeError("Couldn’t retrieve head instance due to missing instances.")
 
     # Sort by start_time first, then by instance_id
-    sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
+    try:
+        sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
+    except TypeError:
+        raise RuntimeError("Job instance information unavailable.")
+
     head_instance = sorted_instances[0]
     if not head_instance["start_time"]:
         # If head instance hasn't started yet, return None
@@ -243,3 +279,14 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
         return int(head_instance["instance_id"])
     except (ValueError, TypeError):
         return 0
+
+
+def _get_service_info(session: snowpark.Session, job_id: str) -> Row:
+    (row,) = session.sql("DESCRIBE SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+    return row
+
+
+@telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
+def _get_num_instances(session: snowpark.Session, job_id: str) -> int:
+    row = _get_service_info(session, job_id)
+    return int(row["target_instances"]) if row["target_instances"] else 0

@@ -99,7 +99,7 @@ if [[ $mode = "merge_gate" ]]; then
 
     # -- Begin of Query Rules Heredoc --
     cat >"${unaffected_test_rule_file}" <<EndOfMessage
-    let affected_targets = set($(<"${affected_targets_file}")) - set($(<"ci/targets/slow.txt")) - set($(<"ci/targets/quarantine/${SF_ENV}.txt")) in
+    let affected_targets = set($(<"${affected_targets_file}")) - set($(<"ci/targets/exclude_from_merge_gate.txt")) - set($(<"ci/targets/quarantine/${SF_ENV}.txt")) in
         let unaffected_targets = //tests/... - deps(\$affected_targets) - rdeps(//tests/..., \$affected_targets) in
             labels(srcs, \$unaffected_targets)
 EndOfMessage

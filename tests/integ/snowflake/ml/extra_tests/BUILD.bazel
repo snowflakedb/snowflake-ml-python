@@ -14,6 +14,7 @@ py_test(
 py_test(
     name = "batch_inference_with_nan_data_test",
     srcs = ["batch_inference_with_nan_data_test.py"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
         "//snowflake/ml/utils:connection_params",
@@ -32,6 +33,7 @@ py_test(
 py_test(
     name = "grid_search_test",
     srcs = ["grid_search_test.py"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/linear_model:logistic_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
@@ -56,6 +58,7 @@ py_test(
     name = "grid_search_on_pipeline_test",
     srcs = ["grid_search_on_pipeline_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/compose:column_transformer",
         "//snowflake/ml/modeling/linear_model:logistic_regression",
@@ -83,6 +86,7 @@ py_test(
     timeout = "long",
     srcs = ["pipeline_with_ohe_and_xgbr_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["xgboost"],
     shard_count = 4,
     deps = [
         "//snowflake/ml/modeling/compose:column_transformer",
@@ -100,6 +104,7 @@ py_test(
 py_test(
     name = "randomized_search_test",
     srcs = ["randomized_search_test.py"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/model_selection:randomized_search_cv",
@@ -129,6 +134,7 @@ py_test(
     name = "quoted_identifier_test",
     timeout = "long",
     srcs = ["quoted_identifier_test.py"],
+    optional_dependencies = ["xgboost"],
     shard_count = 4,
     deps = [
         "//snowflake/ml/_internal:env_utils",
@@ -160,6 +166,7 @@ py_test(
     name = "xgboost_external_memory_training_test",
     srcs = ["xgboost_external_memory_training_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/metrics:classification",
         "//snowflake/ml/modeling/xgboost:xgb_classifier",
@@ -170,6 +177,7 @@ py_test(
 py_test(
     name = "multi_label_column_name_test",
     srcs = ["multi_label_column_name_test.py"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/ensemble:random_forest_classifier",
         "//snowflake/ml/modeling/metrics:classification",
@@ -182,6 +190,7 @@ py_test(
     name = "sample_weight_col_test",
     srcs = ["sample_weight_col_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    optional_dependencies = ["xgboost"],
     deps = [
         "//snowflake/ml/modeling/framework",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",

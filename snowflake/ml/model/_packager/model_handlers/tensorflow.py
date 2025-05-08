@@ -88,6 +88,7 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         import tensorflow
 
         assert isinstance(model, tensorflow.Module)
+        multiple_inputs = kwargs.get("multiple_inputs", False)
 
         is_keras_model = type_utils.LazyType("keras.Model").isinstance(model)
         is_tf_keras_model = type_utils.LazyType("tf_keras.Model").isinstance(model)
@@ -111,8 +112,6 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=default_target_methods,
             )
-
-            multiple_inputs = kwargs.get("multiple_inputs", False)
 
             if is_keras_model and len(target_methods) > 1:
                 raise ValueError("Keras model can only have one target method.")
@@ -198,7 +197,6 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         model_blobs_dir_path: str,
         **kwargs: Unpack[model_types.TensorflowLoadOptions],
     ) -> "tensorflow.Module":
-        os.environ["TF_USE_LEGACY_KERAS"] = "1"
         import tensorflow
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -209,7 +207,12 @@ class TensorFlowHandler(_base.BaseModelHandler["tensorflow.Module"]):
         load_path = os.path.join(model_blob_path, model_blob_filename)
         save_format = model_blob_options.get("save_format", "keras_tf")
         if save_format == "keras_tf":
-            m = tensorflow.keras.models.load_model(load_path)
+            if version.parse(tensorflow.keras.__version__) >= version.parse("3.0.0"):
+                import tf_keras
+
+                m = tf_keras.models.load_model(load_path)
+            else:
+                m = tensorflow.keras.models.load_model(load_path)
         else:
             m = tensorflow.saved_model.load(load_path)
 

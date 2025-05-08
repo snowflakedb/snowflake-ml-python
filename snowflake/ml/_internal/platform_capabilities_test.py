@@ -23,80 +23,28 @@ class PlatformCapabilitiesTest(absltest.TestCase):
         """Helper to add expected sql calls."""
         self._session.add_mock_sql(query=query, result=result)
 
-    def test_nested_function_enabled_int(self) -> None:
-        """Test is_nested_function_enabled method."""
+    def test_enabled_inline_deployment_spec_bool(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": 1 }')]
-            ),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES='{ "ENABLE_INLINE_DEPLOYMENT_SPEC": true }')]),
         )
 
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertTrue(pc.is_nested_function_enabled())
+        self.assertTrue(pc.is_inlined_deployment_spec_enabled())
 
-    def test_nested_function_disabled_int(self) -> None:
-        """Test is_nested_function_enabled method."""
+    def test_disabled_inline_deployment_spec_bool(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": 0 }')]
-            ),
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES='{ "ENABLE_INLINE_DEPLOYMENT_SPEC": false }')]),
         )
 
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertFalse(pc.is_nested_function_enabled())
-
-    def test_nested_function_enabled_str(self) -> None:
-        """Test is_nested_function_enabled method."""
-        self._add_session_mock_sql(
-            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": "true" }')]
-            ),
-        )
-
-        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertTrue(pc.is_nested_function_enabled())
-
-    def test_nested_function_disabled_str(self) -> None:
-        """Test is_nested_function_enabled method."""
-        self._add_session_mock_sql(
-            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": "false" }')]
-            ),
-        )
-
-        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertFalse(pc.is_nested_function_enabled())
-
-    def test_nested_function_enabled_bool(self) -> None:
-        """Test is_nested_function_enabled method."""
-        self._add_session_mock_sql(
-            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": true }')]
-            ),
-        )
-
-        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertTrue(pc.is_nested_function_enabled())
-
-    def test_nested_function_disabled_bool(self) -> None:
-        """Test is_nested_function_enabled method."""
-        self._add_session_mock_sql(
-            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES='{ "SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": false }')]
-            ),
-        )
-
-        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertFalse(pc.is_nested_function_enabled())
+        self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
     def test_is_inlined_deployment_spec_enabled_false(self) -> None:
-        """Test is_nested_function_enabled method."""
+        """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
             result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
@@ -105,8 +53,8 @@ class PlatformCapabilitiesTest(absltest.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
-    def test_is_inlined_deployment_spec_enabled_true(self) -> None:
-        """Test is_nested_function_enabled method."""
+    def test_enabled_inline_deployment_spec_true(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
             result=mock_data_frame.MockDataFrame(
@@ -117,17 +65,45 @@ class PlatformCapabilitiesTest(absltest.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_inlined_deployment_spec_enabled())
 
+    def test_enabled_inline_deployment_spec_str(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [snowpark.Row(FEATURES='{ "ENABLE_INLINE_DEPLOYMENT_SPEC": "false" }')]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_inlined_deployment_spec_enabled())
+
+    def test_enabled_inline_deployment_spec_int(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES='{ "ENABLE_INLINE_DEPLOYMENT_SPEC": 1 }')]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_inlined_deployment_spec_enabled())
+
+    def test_disabled_inline_deployment_spec_int(self) -> None:
+        """Test is_inlined_deployment_spec_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES='{ "ENABLE_INLINE_DEPLOYMENT_SPEC": 0 }')]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_inlined_deployment_spec_enabled())
+
     def test_mocking(self) -> None:
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": True}):
             pc = platform_capabilities.PlatformCapabilities.get_instance()
-            self.assertTrue(pc.is_nested_function_enabled())
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": False}
-        ):
+            self.assertTrue(pc.is_inlined_deployment_spec_enabled())
+        with platform_capabilities.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": False}):
             pc = platform_capabilities.PlatformCapabilities.get_instance()
-            self.assertFalse(pc.is_nested_function_enabled())
+            self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
 
 if __name__ == "__main__":

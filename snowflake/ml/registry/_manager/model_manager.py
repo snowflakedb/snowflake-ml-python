@@ -12,6 +12,7 @@ from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 
@@ -212,8 +213,24 @@ class ModelManager:
             # Convert any string target platforms to TargetPlatform objects
             platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
         else:
+            # Default the target platform to warehouse if not specified and any table function exists
+            if options and (
+                options.get("function_type") == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+                or (
+                    any(
+                        opt.get("function_type") == "TABLE_FUNCTION"
+                        for opt in options.get("method_options", {}).values()
+                    )
+                )
+            ):
+                logger.info(
+                    "Logging a partitioned model with a table function without specifying `target_platforms`. "
+                    'Default to `target_platforms=["WAREHOUSE"]`.'
+                )
+                platforms = [model_types.TargetPlatform.WAREHOUSE]
+
             # Default the target platform to SPCS if not specified when running in ML runtime
-            if env.IN_ML_RUNTIME:
+            if not platforms and env.IN_ML_RUNTIME:
                 logger.info(
                     "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
                     'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'

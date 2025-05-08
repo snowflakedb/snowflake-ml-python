@@ -22,7 +22,7 @@ class DemoModel(custom_model.CustomModel):
 
 
 class PartitionedDemoModel(custom_model.CustomModel):
-    @custom_model.partitioned_inference_api
+    @custom_model.partitioned_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"output": input["c1"]})
 

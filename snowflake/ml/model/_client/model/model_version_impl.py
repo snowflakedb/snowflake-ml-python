@@ -920,7 +920,7 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def run_job(
+    def _run_job(
         self,
         X: Union[pd.DataFrame, "dataframe.DataFrame"],
         *,

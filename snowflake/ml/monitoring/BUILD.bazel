@@ -39,6 +39,16 @@ py_library(
     ],
 )
 
+py_library(
+    name = "explain_visualize",
+    srcs = [
+        "explain_visualize.py",
+    ],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
 py_test(
     name = "model_monitor_test",
     srcs = [
@@ -54,6 +64,7 @@ py_package(
     name = "monitoring_pkg",
     packages = ["snowflake.ml"],
     deps = [
+        ":explain_visualize",
         ":model_monitor",
         ":model_monitor_version",
         ":shap_lib",

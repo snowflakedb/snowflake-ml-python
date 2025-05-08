@@ -18,12 +18,12 @@ class PlatformCapabilities:
     Example usage:
     ```
     pc = PlatformCapabilities.get_instance(session)
-    if pc.is_nested_function_enabled():
-        # Nested functions are enabled.
-        print("Nested functions are enabled.")
+    if pc.is_inlined_deployment_spec_enabled():
+        # Inline deployment spec is enabled.
+        print("Inline deployment spec is enabled.")
     else:
-        # Nested functions are disabled.
-        print("Nested functions are disabled or not supported.")
+        # Inline deployment spec is disabled.
+        print("Inline deployment spec is disabled or not supported.")
     ```
     """
 
@@ -50,9 +50,11 @@ class PlatformCapabilities:
 
     # For contextmanager, we need to have return type Iterator[Never]. However, Never type is introduced only in
     # Python 3.11. So, we are ignoring the type for this method.
+    _dummy_features: dict[str, Any] = {"dummy": "dummy"}
+
     @classmethod  # type: ignore[arg-type]
     @contextmanager
-    def mock_features(cls, features: dict[str, Any]) -> None:  # type: ignore[misc]
+    def mock_features(cls, features: dict[str, Any] = _dummy_features) -> None:  # type: ignore[misc]
         logging.debug(f"Setting mock features: {features}")
         cls.set_mock_features(features)
         try:
@@ -60,9 +62,6 @@ class PlatformCapabilities:
         finally:
             logging.debug(f"Clearing mock features: {features}")
             cls.clear_mock_features()
-
-    def is_nested_function_enabled(self) -> bool:
-        return self._get_bool_feature("SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS", False)
 
     def is_inlined_deployment_spec_enabled(self) -> bool:
         return self._get_bool_feature("ENABLE_INLINE_DEPLOYMENT_SPEC", False)

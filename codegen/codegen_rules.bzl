@@ -122,6 +122,12 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
         output_path = TEST_OUTPUT_PATH,
     )
 
+    optional_dependencies = None
+    if module == "xgboost":
+        optional_dependencies = ["xgboost"]
+    if module == "lightgbm":
+        optional_dependencies = ["lightgbm"]
+
     for e in estimator_info_list:
         py_genrule(
             name = "generate_test_{}".format(e.normalized_class_name),
@@ -142,6 +148,6 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             timeout = "long",
             legacy_create_init = 0,
             shard_count = 5,
-            optional_dependencies = ["lightgbm"] if module == "lightgbm" else None,
+            optional_dependencies = optional_dependencies,
             tags = ["autogen"],
         )

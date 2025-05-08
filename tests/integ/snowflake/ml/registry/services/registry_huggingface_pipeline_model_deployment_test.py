@@ -26,8 +26,9 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         self.cache_dir.cleanup()
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["transformers"]],
+        pip_requirements=[None, ["transformers", "torch==2.6.0"]],
     )
+    # TODO: Remove torch dependency when the version is available in go/conda
     def test_text_generation(
         self,
         pip_requirements: Optional[list[str]],

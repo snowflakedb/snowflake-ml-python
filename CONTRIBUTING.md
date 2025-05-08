@@ -337,10 +337,11 @@ corresponding optional dependencies installed to run the tests or binaries. Here
 1. Tags in the same group should not have conflicting packages.
 1. Ideally, avoid too many groups and keep test numbers balanced across groups.
 
-If you add a new group, please run the, following command to update the bazelrc file.
+If you add a new group, please run the, following commands to update the bazelrc file.
 
 ```sh
 bazel run --config=pre_build //:sync_bazelrc
+bazel run --config=pre_build //ci/internal:sync_internal_requirements && bazel run --config=pre_build //bazel/requirements:sync_requirements
 ```
 
 ### Checking Package Latest Versions
@@ -353,7 +354,7 @@ Python packages from both PyPI and Snowflake Conda repositories against your cur
 Run the script in dry-run mode to safely check latest versions without modifying files:
 
 ```bash
-bazel run //bazel/requirements:update_version_requirements -- requirements.yml --dry-run
+bazel run --config=core //bazel/requirements:update_version_requirements -- requirements.yml --dry-run
 ```
 
 This will scan `requirements.yml` and show the latest version of packages and the suggest changes:

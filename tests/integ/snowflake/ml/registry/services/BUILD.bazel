@@ -29,6 +29,7 @@ py_test(
     name = "registry_xgboost_model_deployment_pip_test",
     timeout = "eternal",
     srcs = ["registry_xgboost_model_deployment_pip_test.py"],
+    optional_dependencies = ["xgboost"],
     shard_count = 2,
     deps = [
         ":registry_model_deployment_test_base",
@@ -93,6 +94,7 @@ py_test(
     name = "registry_custom_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],
+    optional_dependencies = ["xgboost"],
     shard_count = 1,
     deps = [
         ":registry_model_deployment_test_base",
@@ -103,6 +105,7 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
+    optional_dependencies = ["xgboost"],
     shard_count = 3,
     deps = [
         ":registry_model_deployment_test_base",

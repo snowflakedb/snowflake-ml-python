@@ -38,9 +38,7 @@ class ModelManagerTest(parameterized.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = model_manager.ModelManager(
                 self.c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -62,9 +60,7 @@ class ModelManagerTest(parameterized.TestCase):
         )
         with mock.patch.object(
             self.m_r._model_ops, "validate_existence", return_value=True
-        ) as mock_validate_existence, platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
-        ):
+        ) as mock_validate_existence, platform_capabilities.PlatformCapabilities.mock_features():
             m = self.m_r.get_model("MODEL")
             self.assertEqual(m, m_model)
             mock_validate_existence.assert_called_with(
@@ -88,9 +84,7 @@ class ModelManagerTest(parameterized.TestCase):
             )
 
     def test_get_model_3(self) -> None:
-        with platform_capabilities.PlatformCapabilities.mock_features(
-            {"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}
-        ):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             m_model = model_impl.Model._ref(
                 ModelOperator(
                     self.c_session,
@@ -890,6 +884,64 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
+                task=type_hints.Task.UNKNOWN,
+            )
+
+    @parameterized.product(  # type: ignore[misc]
+        is_live_commit_enabled=[True, False],
+        options=[
+            type_hints.BaseModelSaveOption(function_type="TABLE_FUNCTION"),
+            type_hints.BaseModelSaveOption(
+                method_options={
+                    "predict": type_hints.ModelMethodSaveOptions(function_type="FUNCTION"),
+                    "predict_proba": type_hints.ModelMethodSaveOptions(function_type="TABLE_FUNCTION"),
+                }
+            ),
+        ],
+    )
+    def test_log_model_table_function(
+        self, is_live_commit_enabled: bool, options: type_hints.BaseModelSaveOption
+    ) -> None:
+        m_model = mock.MagicMock()
+        m_sample_input_data = mock.MagicMock()
+        m_model_metadata = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+
+        with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"), mock.patch.object(
+            self.m_r._model_ops, "validate_existence", return_value=False
+        ), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ), mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {"ENABLE_BUNDLE_MODULE_CHECKOUT": is_live_commit_enabled}
+        ):
+            self.m_r.log_model(
+                model=m_model,
+                model_name="MODEL",
+                sample_input_data=m_sample_input_data,
+                options=options,
+                statement_params=self.base_statement_params,
+            )
+            mock_save.assert_called_once_with(
+                name="MODEL",
+                model=m_model,
+                signatures=None,
+                sample_input_data=m_sample_input_data,
+                conda_dependencies=None,
+                pip_requirements=None,
+                artifact_repository_map=None,
+                resource_constraint=None,
+                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                python_version=None,
+                user_files=None,
+                code_paths=None,
+                ext_modules=None,
+                options=options,
                 task=type_hints.Task.UNKNOWN,
             )
 

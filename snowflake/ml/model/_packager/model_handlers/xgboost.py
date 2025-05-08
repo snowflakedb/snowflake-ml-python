@@ -144,7 +144,12 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
-            options=model_meta_schema.XgboostModelBlobOptions({"xgb_estimator_type": model.__class__.__name__}),
+            options=model_meta_schema.XgboostModelBlobOptions(
+                {
+                    "xgb_estimator_type": model.__class__.__name__,
+                    "enable_categorical": getattr(model, "enable_categorical", False),
+                }
+            ),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -152,11 +157,6 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         model_meta.env.include_if_absent(
             [
                 model_env.ModelDependency(requirement="scikit-learn", pip_name="scikit-learn"),
-            ],
-            check_local_version=True,
-        )
-        model_meta.env.include_if_absent(
-            [
                 model_env.ModelDependency(requirement="xgboost", pip_name="xgboost"),
             ],
             check_local_version=True,
@@ -190,6 +190,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             raise ValueError("Type of XGB estimator is illegal.")
         m = getattr(xgboost, xgb_estimator_type)()
         m.load_model(os.path.join(model_blob_path, model_blob_filename))
+        m.enable_categorical = model_blob_options.get("enable_categorical", False)
 
         if kwargs.get("use_gpu", False):
             assert type(kwargs.get("use_gpu", False)) == bool
@@ -225,8 +226,16 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    enable_categorical = False
+                    for col, d_type in X.dtypes.items():
+                        if pd.api.extensions.ExtensionDtype.is_dtype(d_type):
+                            continue
+                        if not np.issubdtype(d_type, np.number):
+                            # categorical columns are converted to numpy's str dtype
+                            X[col] = X[col].astype("category")
+                            enable_categorical = True
                     if isinstance(raw_model, xgboost.Booster):
-                        X = xgboost.DMatrix(X)
+                        X = xgboost.DMatrix(X, enable_categorical=enable_categorical)
 
                     res = getattr(raw_model, target_method)(X)
 

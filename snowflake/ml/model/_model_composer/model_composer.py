@@ -142,28 +142,51 @@ class ModelComposer:
         conda_dep_dict = env_utils.validate_conda_dependency_string_list(
             conda_dependencies if conda_dependencies else []
         )
-        is_warehouse_runnable = (
-            not conda_dep_dict
-            or all(
-                chan == env_utils.DEFAULT_CHANNEL_NAME or chan == env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
-                for chan in conda_dep_dict
-            )
-        ) and (not pip_requirements)
-        disable_explainability = (
-            target_platforms and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
-        ) or (not is_warehouse_runnable)
 
-        if disable_explainability and options and options.get("enable_explainability", False):
-            warnings.warn(
-                ("The model can be deployed to Snowpark Container Services only if `enable_explainability=False`."),
-                category=UserWarning,
-                stacklevel=2,
+        enable_explainability = None
+
+        if options:
+            enable_explainability = options.get("enable_explainability", None)
+
+        # skip everything if user said False explicitly
+        if enable_explainability is None or enable_explainability is True:
+            is_warehouse_runnable = (
+                not conda_dep_dict
+                or all(
+                    chan == env_utils.DEFAULT_CHANNEL_NAME or chan == env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+                    for chan in conda_dep_dict
+                )
+            ) and (not pip_requirements)
+
+            only_spcs = (
+                target_platforms
+                and len(target_platforms) == 1
+                and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
             )
+            if only_spcs or (not is_warehouse_runnable):
+                # if only SPCS and user asked for explainability we fail
+                if enable_explainability is True:
+                    raise ValueError(
+                        "`enable_explainability` cannot be set to True when the model is not runnable in WH "
+                        "or the target platforms include SPCS."
+                    )
+                elif not options:  # explicitly set flag to false in these cases if not specified
+                    options = model_types.BaseModelSaveOption()
+                    options["enable_explainability"] = False
+            elif (
+                target_platforms
+                and len(target_platforms) > 1
+                and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
+            ):  # if both then only available for WH
+                if enable_explainability is True:
+                    warnings.warn(
+                        ("Explain function will only be available for model deployed to warehouse."),
+                        category=UserWarning,
+                        stacklevel=2,
+                    )
 
         if not options:
             options = model_types.BaseModelSaveOption()
-            if disable_explainability:
-                options["enable_explainability"] = False
 
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(

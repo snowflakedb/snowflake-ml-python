@@ -8,7 +8,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
-from snowflake.ml._internal import file_utils, platform_capabilities as pc
+from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import service_ops
@@ -39,7 +39,7 @@ class ServiceOpsTest(parameterized.TestCase):
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_statement_params = {"test": "1"}
         self.c_session = cast(Session, self.m_session)
-        with pc.PlatformCapabilities.mock_features({"SPCS_MODEL_ENABLE_EMBEDDED_SERVICE_FUNCTIONS": True}):
+        with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_ops = service_ops.ServiceOperator(
                 self.c_session,
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -61,6 +61,15 @@ class ServiceOpsTest(parameterized.TestCase):
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_model_spec",
+        ) as mock_add_model_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_service_spec",
+        ) as mock_add_service_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_image_build_spec",
+        ) as mock_add_image_build_spec, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -102,19 +111,17 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
                 statement_params=self.m_statement_params,
             )
-            mock_save.assert_called_once_with(
+            mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+            mock_add_service_spec.assert_called_once_with(
                 service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=True,
                 max_instances=1,
                 cpu="1",
@@ -122,9 +129,16 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+            )
+            mock_add_image_build_spec.assert_called_once_with(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
+            mock_save.assert_called_once()
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
                 local_path=self.m_ops._model_deployment_spec.workspace_path,
@@ -156,6 +170,15 @@ class ServiceOpsTest(parameterized.TestCase):
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_model_spec",
+        ) as mock_add_model_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_service_spec",
+        ) as mock_add_service_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_image_build_spec",
+        ) as mock_add_image_build_spec, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -197,19 +220,18 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
                 statement_params=self.m_statement_params,
             )
-            mock_save.assert_called_once_with(
+            mock_save.assert_called_once()
+            mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+            mock_add_service_spec.assert_called_once_with(
                 service_database_name=sql_identifier.SqlIdentifier("DB"),
                 service_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=True,
                 max_instances=1,
                 cpu="1",
@@ -217,7 +239,13 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+            )
+            mock_add_image_build_spec.assert_called_once_with(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 force_rebuild=True,
+                image_repo_database_name=sql_identifier.SqlIdentifier("DB"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
             mock_upload_directory_to_stage.assert_called_once_with(
@@ -251,6 +279,15 @@ class ServiceOpsTest(parameterized.TestCase):
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_model_spec",
+        ) as mock_add_model_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_service_spec",
+        ) as mock_add_service_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_image_build_spec",
+        ) as mock_add_image_build_spec, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -292,19 +329,17 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
                 statement_params=self.m_statement_params,
             )
-            mock_save.assert_called_once_with(
+            mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+            mock_add_service_spec.assert_called_once_with(
                 service_database_name=sql_identifier.SqlIdentifier("TEMP"),
                 service_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("TEMP"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 ingress_enabled=True,
                 max_instances=1,
                 cpu="1",
@@ -312,9 +347,16 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+            )
+            mock_add_image_build_spec.assert_called_once_with(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                image_repo_database_name=sql_identifier.SqlIdentifier("TEMP"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
+            mock_save.assert_called_once()
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
                 local_path=self.m_ops._model_deployment_spec.workspace_path,
@@ -466,6 +508,15 @@ class ServiceOpsTest(parameterized.TestCase):
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_model_spec",
+        ) as mock_add_model_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_job_spec",
+        ) as mock_add_job_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_image_build_spec",
+        ) as mock_add_image_build_spec, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -510,26 +561,23 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_ABCDEF0123"),
                 statement_params=self.m_statement_params,
             )
-            mock_save.assert_called_once_with(
+            mock_save.assert_called_once()
+            mock_add_model_spec.assert_called_once_with(
                 database_name=database_name[1],
                 schema_name=schema_name[1],
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
+            )
+            mock_add_job_spec.assert_called_once_with(
                 job_database_name=job_database_name[1],
                 job_schema_name=job_schema_name[1],
                 job_name=sql_identifier.SqlIdentifier("JOB"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
-                image_repo_database_name=image_repo_database_name[1],
-                image_repo_schema_name=image_repo_schema_name[1],
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
                 cpu="1",
                 memory="6GiB",
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                force_rebuild=True,
-                external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
                 warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
                 target_method="predict",
                 input_table_database_name=job_database_name[1],
@@ -538,6 +586,14 @@ class ServiceOpsTest(parameterized.TestCase):
                 output_table_database_name=output_table_database_name[1],
                 output_table_schema_name=output_table_schema_name[1],
                 output_table_name=sql_identifier.SqlIdentifier("OUTPUT_TABLE"),
+            )
+            mock_add_image_build_spec.assert_called_once_with(
+                image_repo_database_name=image_repo_database_name[1],
+                image_repo_schema_name=image_repo_schema_name[1],
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                force_rebuild=True,
+                external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
             )
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
