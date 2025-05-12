@@ -41,13 +41,38 @@ class Job(BaseModel):
     output_table_name: str
 
 
+class LogModelArgs(BaseModel):
+    pip_requirements: Optional[list[str]] = None
+    conda_dependencies: Optional[list[str]] = None
+    target_platforms: Optional[list[str]] = None
+    comment: Optional[str] = None
+    warehouse: Optional[str] = None
+
+
+class HuggingFaceModel(BaseModel):
+    hf_model_name: str
+    task: Optional[str] = None
+    tokenizer: Optional[str] = None
+    hf_token: Optional[str] = None
+    trust_remote_code: Optional[bool] = False
+    revision: Optional[str] = None
+    hf_model_kwargs: Optional[str] = "{}"
+
+
+class ModelLogging(BaseModel):
+    log_model_args: Optional[LogModelArgs] = None
+    hf_model: Optional[HuggingFaceModel] = None
+
+
 class ModelServiceDeploymentSpec(BaseModel):
     models: list[Model]
     image_build: ImageBuild
     service: Service
+    model_loggings: Optional[list[ModelLogging]] = None
 
 
 class ModelJobDeploymentSpec(BaseModel):
     models: list[Model]
     image_build: ImageBuild
     job: Job
+    model_loggings: Optional[list[ModelLogging]] = None

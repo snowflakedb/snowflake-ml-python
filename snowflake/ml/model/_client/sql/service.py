@@ -4,7 +4,6 @@ import textwrap
 from typing import Any, Optional, Union
 
 from snowflake import snowpark
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import (
     identifier,
     query_result_checker,
@@ -133,18 +132,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
             input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
             args_sql = f"object_construct_keep_null({input_args_sql})"
 
-        if platform_capabilities.PlatformCapabilities.get_instance().is_nested_function_enabled():
-            fully_qualified_service_name = self.fully_qualified_object_name(
-                actual_database_name, actual_schema_name, service_name
-            )
-            fully_qualified_function_name = f"{fully_qualified_service_name}!{method_name.identifier()}"
-        else:
-            function_name = identifier.concat_names([service_name.identifier(), "_", method_name.identifier()])
-            fully_qualified_function_name = identifier.get_schema_level_object_identifier(
-                actual_database_name.identifier(),
-                actual_schema_name.identifier(),
-                function_name,
-            )
+        fully_qualified_service_name = self.fully_qualified_object_name(
+            actual_database_name, actual_schema_name, service_name
+        )
+        fully_qualified_function_name = f"{fully_qualified_service_name}!{method_name.identifier()}"
 
         sql = textwrap.dedent(
             f"""{with_sql}

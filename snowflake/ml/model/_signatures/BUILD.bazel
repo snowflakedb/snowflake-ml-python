@@ -206,6 +206,7 @@ py_library(
 py_test(
     name = "dmatrix_test",
     srcs = ["dmatrix_test.py"],
+    optional_dependencies = ["xgboost"],
     deps = [
         ":core",
         ":dmatrix_handler",

@@ -125,19 +125,25 @@ class ServiceOperator:
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
         else:
             stage_path = None
-        spec_yaml_str_or_path = self._model_deployment_spec.save(
+        self._model_deployment_spec.add_model_spec(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
-            service_database_name=service_database_name,
-            service_schema_name=service_schema_name,
-            service_name=service_name,
+        )
+        self._model_deployment_spec.add_image_build_spec(
             image_build_compute_pool_name=image_build_compute_pool_name,
-            inference_compute_pool_name=service_compute_pool_name,
             image_repo_database_name=image_repo_database_name,
             image_repo_schema_name=image_repo_schema_name,
             image_repo_name=image_repo_name,
+            force_rebuild=force_rebuild,
+            external_access_integrations=build_external_access_integrations,
+        )
+        self._model_deployment_spec.add_service_spec(
+            service_database_name=service_database_name,
+            service_schema_name=service_schema_name,
+            service_name=service_name,
+            inference_compute_pool_name=service_compute_pool_name,
             ingress_enabled=ingress_enabled,
             max_instances=max_instances,
             cpu=cpu_requests,
@@ -145,9 +151,8 @@ class ServiceOperator:
             gpu=gpu_requests,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
-            force_rebuild=force_rebuild,
-            external_access_integrations=build_external_access_integrations,
         )
+        spec_yaml_str_or_path = self._model_deployment_spec.save()
         if self._workspace:
             assert stage_path is not None
             file_utils.upload_directory_to_stage(
@@ -534,26 +539,22 @@ class ServiceOperator:
 
         try:
             # save the spec
-            spec_yaml_str_or_path = self._model_deployment_spec.save(
+            self._model_deployment_spec.add_model_spec(
                 database_name=database_name,
                 schema_name=schema_name,
                 model_name=model_name,
                 version_name=version_name,
+            )
+            self._model_deployment_spec.add_job_spec(
                 job_database_name=job_database_name,
                 job_schema_name=job_schema_name,
                 job_name=job_name,
-                image_build_compute_pool_name=compute_pool_name,
                 inference_compute_pool_name=compute_pool_name,
-                image_repo_database_name=image_repo_database_name,
-                image_repo_schema_name=image_repo_schema_name,
-                image_repo_name=image_repo_name,
                 cpu=cpu_requests,
                 memory=memory_requests,
                 gpu=gpu_requests,
                 num_workers=num_workers,
                 max_batch_rows=max_batch_rows,
-                force_rebuild=force_rebuild,
-                external_access_integrations=build_external_access_integrations,
                 warehouse=warehouse_name,
                 target_method=target_method,
                 input_table_database_name=input_table_database_name,
@@ -563,6 +564,17 @@ class ServiceOperator:
                 output_table_schema_name=output_table_schema_name,
                 output_table_name=output_table_name,
             )
+
+            self._model_deployment_spec.add_image_build_spec(
+                image_build_compute_pool_name=compute_pool_name,
+                image_repo_database_name=image_repo_database_name,
+                image_repo_schema_name=image_repo_schema_name,
+                image_repo_name=image_repo_name,
+                force_rebuild=force_rebuild,
+                external_access_integrations=build_external_access_integrations,
+            )
+
+            spec_yaml_str_or_path = self._model_deployment_spec.save()
             if self._workspace:
                 assert stage_path is not None
                 file_utils.upload_directory_to_stage(

@@ -30,8 +30,9 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self.cache_dir.cleanup()
 
     @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers"]],
+        pip_requirements=[None, ["sentence-transformers", "torch==2.6.0"]],
     )
+    # TODO: Remove torch dependency when the version is available in go/conda
     def test_sentence_transformers(
         self,
         pip_requirements: Optional[list[str]],

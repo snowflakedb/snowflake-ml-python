@@ -109,6 +109,35 @@ def get_input_signature(
     return input_sig
 
 
+def add_inferred_explain_method_signature(
+    model_meta: model_meta.ModelMetadata,
+    explain_method: str,
+    target_method: str,
+    background_data: model_types.SupportedDataType,
+    explain_fn: Callable[[model_types.SupportedLocalDataType], model_types.SupportedLocalDataType],
+    output_feature_names: Optional[Sequence[str]] = None,
+) -> model_meta.ModelMetadata:
+    inputs = get_input_signature(model_meta, target_method)
+    if output_feature_names is None:  # If not provided, assume output feature names are the same as input feature names
+        output_feature_names = [spec.name for spec in inputs]
+
+    if model_meta.model_type == "snowml":
+        suffixed_output_names = [identifier.concat_names([name, "_explanation"]) for name in output_feature_names]
+    else:
+        suffixed_output_names = [f"{name}_explanation" for name in output_feature_names]
+
+    truncated_background_data = get_truncated_sample_data(background_data, 5)
+    sig = model_signature.infer_signature(
+        input_data=truncated_background_data,
+        output_data=explain_fn(truncated_background_data),
+        input_feature_names=[spec.name for spec in inputs],
+        output_feature_names=suffixed_output_names,
+    )
+
+    model_meta.signatures[explain_method] = sig
+    return model_meta
+
+
 def add_explain_method_signature(
     model_meta: model_meta.ModelMetadata,
     explain_method: str,
@@ -236,8 +265,9 @@ def validate_model_task(passed_model_task: model_types.Task, inferred_model_task
 def get_explain_target_method(
     model_metadata: model_meta.ModelMetadata, target_methods_list: list[str]
 ) -> Optional[str]:
-    for method in model_metadata.signatures.keys():
-        if method in target_methods_list:
+    """Returns the first target method that is found in the model metadata signatures."""
+    for method in target_methods_list:
+        if method in model_metadata.signatures.keys():
             return method
     return None
 

@@ -989,7 +989,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.m_mv._functions = m_methods
 
         with self.assertRaisesRegex(ValueError, "There is no method with name PREDICT available in the model"):
-            self.m_mv.run_job(
+            self.m_mv._run_job(
                 X=m_df,
                 job_name="TEST_JOB",
                 compute_pool="TEST_COMPUTE_POOL",
@@ -1006,7 +1006,7 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
         with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
-            self.m_mv.run_job(
+            self.m_mv._run_job(
                 X=m_df,
                 job_name="TEST_JOB",
                 compute_pool="TEST_COMPUTE_POOL",
@@ -1026,7 +1026,7 @@ class ModelVersionImplTest(absltest.TestCase):
         ) as mock_invoke_job_method, mock.patch.object(
             self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
         ):
-            self.m_mv.run_job(
+            self.m_mv._run_job(
                 X=m_df,
                 job_name="TEST_JOB",
                 compute_pool="TEST_COMPUTE_POOL",
@@ -1076,7 +1076,7 @@ class ModelVersionImplTest(absltest.TestCase):
             self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
         ):
             # fully qualified names
-            self.m_mv.run_job(
+            self.m_mv._run_job(
                 X=m_df,
                 job_name="DB.SCHEMA.TEST_JOB",
                 compute_pool="TEST_COMPUTE_POOL",

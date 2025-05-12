@@ -9,6 +9,30 @@ py_library(
     data = glob(["test_files/**"]),
 )
 
+py_library(
+    name = "modeling_job_test_base",
+    testonly = True,
+    srcs = ["modeling_job_test_base.py"],
+    deps = [
+        ":reflection_utils",
+        ":test_constants",
+        ":test_file_helper",
+    ],
+)
+
+py_library(
+    name = "test_constants",
+    testonly = True,
+    srcs = ["test_constants.py"],
+)
+
+py_library(
+    name = "reflection_utils",
+    testonly = True,
+    srcs = ["reflection_utils.py"],
+    data = glob(["test_files/model_scripts/*"]),
+)
+
 py_test(
     name = "payload_utils_integ_test",
     srcs = ["payload_utils_integ_test.py"],
@@ -36,8 +60,69 @@ py_test(
     srcs = ["jobs_integ_test.py"],
     shard_count = 2,
     deps = [
+        ":test_constants",
         ":test_file_helper",
         "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "classical_models_integ_test",
+    timeout = "long",
+    srcs = ["classical_models_integ_test.py"],
+    optional_dependencies = [
+        "xgboost",
+        "lightgbm",
+    ],
+    deps = [
+        ":modeling_job_test_base",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "pytorch_integ_test",
+    timeout = "long",
+    srcs = ["pytorch_integ_test.py"],
+    optional_dependencies = [
+        "torch",
+        "keras",
+    ],
+    deps = [
+        ":modeling_job_test_base",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "tensorflow_integ_test",
+    timeout = "long",
+    srcs = ["tensorflow_integ_test.py"],
+    optional_dependencies = [
+        "keras",
+    ],
+    deps = [
+        ":modeling_job_test_base",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "sf_interaction_integ_test",
+    timeout = "long",
+    srcs = ["sf_interaction_integ_test.py"],
+    deps = [
+        ":test_constants",
+        "//snowflake/ml/jobs",
+        "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

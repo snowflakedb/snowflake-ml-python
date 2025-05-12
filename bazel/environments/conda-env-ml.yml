@@ -8,6 +8,7 @@ channels:
 dependencies:
   - absl-py==1.4.0
   - aiohttp==3.8.3
+  - altair==5.5.0
   - anyio==3.5.0
   - boto3==1.34.69
   - cachetools==5.3.3
@@ -50,12 +51,13 @@ dependencies:
   - scikit-learn==1.5.1
   - scipy==1.10.1
   - shap==0.46.0
-  - snowflake-connector-python==3.12.0
+  - snowflake-connector-python==3.14.0
   - snowflake-snowpark-python==1.28.0
   - snowflake.core==1.0.2
   - sphinx==5.0.2
   - sqlparse==0.4.4
   - starlette==0.27.0
+  - streamlit==1.44.1
   - toml==0.10.2
   - types-PyYAML==6.0.12.12
   - types-protobuf==4.23.0.1

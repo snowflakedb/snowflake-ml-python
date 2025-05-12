@@ -29,7 +29,7 @@ def get_self_ip() -> Optional[str]:
         return None
 
 
-def get_first_instance(service_name: str) -> Optional[tuple[str, str]]:
+def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
     """Get the first instance of a batch job based on start time and instance ID.
 
     Args:
@@ -42,7 +42,7 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str]]:
 
     session = session_utils.get_session()
     df = session.sql(f"show service instances in service {service_name}")
-    result = df.select('"instance_id"', '"ip_address"', '"start_time"').collect()
+    result = df.select('"instance_id"', '"ip_address"', '"start_time"', '"status"').collect()
 
     if not result:
         return None
@@ -57,7 +57,7 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str]]:
     ip_address = head_instance["ip_address"]
     try:
         socket.inet_aton(ip_address)  # Validate IPv4 address
-        return (head_instance["instance_id"], ip_address)
+        return (head_instance["instance_id"], ip_address, head_instance["status"])
     except OSError:
         logger.error(f"Error: Invalid IP address format: {ip_address}")
         return None
@@ -110,7 +110,7 @@ def main():
             head_info = get_first_instance(args.service_name)
             if head_info:
                 # Print to stdout to allow capture but don't use logger
-                sys.stdout.write(f"{head_info[0]} {head_info[1]}\n")
+                sys.stdout.write(" ".join(head_info) + "\n")
                 sys.exit(0)
             time.sleep(args.retry_interval)
         # If we get here, we've timed out

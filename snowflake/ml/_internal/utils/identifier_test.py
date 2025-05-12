@@ -1,11 +1,12 @@
-from absl.testing import absltest
+from typing import Any
+
+from absl.testing import absltest, parameterized
 
 import snowflake.ml._internal.utils.identifier as identifier
 
-SCHEMA_LEVEL_OBJECT_TEST_CASES = [
+SCHEMA_LEVEL_IDENTIFIER_TEST_CASES = [
     ("foo", False, None, None, "foo", ""),
     ("foo/", False, None, None, "foo", "/"),
-    ("foo-bar", False, None, None, "foo", "-bar"),
     ('"foo"', False, None, None, '"foo"', ""),
     ('"foo"/', False, None, None, '"foo"', "/"),
     ("foo/bar", False, None, None, "foo", "/bar"),
@@ -25,7 +26,6 @@ SCHEMA_LEVEL_OBJECT_TEST_CASES = [
     ("_testdb.testschema._foo/", False, "_testdb", "testschema", "_foo", "/"),
     ('testdb$."test""s""chema"._f1oo', True, "testdb$", '"test""s""chema"', "_f1oo", ""),
     ("test1db.test$schema.foo1/nytrain/", False, "test1db", "test$schema", "foo1", "/nytrain/"),
-    ("test_db.test_schema.foo.nytrain.1.txt", False, "test_db", "test_schema", "foo", ".nytrain.1.txt"),
     ('test_d$b."test.schema".foo$_o/nytrain/', False, "test_d$b", '"test.schema"', "foo$_o", "/nytrain/"),
     (
         '"идентификатор"."test schema"."f.o_o1"',
@@ -37,8 +37,17 @@ SCHEMA_LEVEL_OBJECT_TEST_CASES = [
     ),
 ]
 
+SCHEMA_LEVEL_OBJECT_TEST_CASES = SCHEMA_LEVEL_IDENTIFIER_TEST_CASES + [
+    ("foo-bar", False, None, None, "foo", "-bar"),
+    ("test_db.test_schema.foo.nytrain.1.txt", False, "test_db", "test_schema", "foo", ".nytrain.1.txt"),
+]
 
-class SnowflakeIdentifierTest(absltest.TestCase):
+STAGE_PATH_TEST_CASES = SCHEMA_LEVEL_IDENTIFIER_TEST_CASES + [
+    (f"@{tc[0]}", *tc[1:]) for tc in SCHEMA_LEVEL_IDENTIFIER_TEST_CASES
+]
+
+
+class SnowflakeIdentifierTest(parameterized.TestCase):
     def test_is_quote_valid(self) -> None:
         self.assertTrue(identifier._is_quoted('"foo"'))
         self.assertTrue(identifier._is_quoted('"""foo"""'))
@@ -108,37 +117,32 @@ class SnowflakeIdentifierTest(absltest.TestCase):
         self.assertEqual('"demo__task1"', identifier.concat_names(['"demo__"', "task1"]))
         self.assertEqual('"demo__task1"', identifier.concat_names(["demo__", '"task1"']))
 
-    def test_parse_snowflake_stage_path(self) -> None:
+    @parameterized.parameters(STAGE_PATH_TEST_CASES)  # type: ignore[misc]
+    def test_parse_snowflake_stage_path(self, *test_case: Any) -> None:
         """Test if the schema level identifiers could be successfully parsed"""
+        self.assertTupleEqual(
+            tuple(test_case[2:]),
+            identifier.parse_snowflake_stage_path(test_case[0]),
+        )
 
-        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
-            with self.subTest():
-                self.assertTupleEqual(
-                    tuple(test_case[2:]),
-                    identifier.parse_snowflake_stage_path(test_case[0]),
-                )
+    @parameterized.parameters(SCHEMA_LEVEL_OBJECT_TEST_CASES)  # type: ignore[misc]
+    def test_parse_schema_level_object_identifier(self, *test_case: Any) -> None:
+        if test_case[5] != "":
+            with self.assertRaises(ValueError):
+                identifier.parse_schema_level_object_identifier(test_case[0])
+        else:
+            self.assertTupleEqual(
+                tuple(test_case[2:5]),
+                identifier.parse_schema_level_object_identifier(test_case[0]),
+            )
 
-    def test_parse_schema_level_object_identifier(self) -> None:
-        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
-            with self.subTest():
-                if test_case[5] != "":
-                    with self.assertRaises(ValueError):
-                        identifier.parse_schema_level_object_identifier(test_case[0])
-                else:
-                    self.assertTupleEqual(
-                        tuple(test_case[2:5]),
-                        identifier.parse_schema_level_object_identifier(test_case[0]),
-                    )
+    @parameterized.parameters(SCHEMA_LEVEL_OBJECT_TEST_CASES)  # type: ignore[misc]
+    def test_get_schema_level_object_identifier(self, *test_case: Any) -> None:
+        self.assertEqual(test_case[0], identifier.get_schema_level_object_identifier(*test_case[2:]))
 
-    def test_get_schema_level_object_identifier(self) -> None:
-        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
-            with self.subTest():
-                self.assertEqual(test_case[0], identifier.get_schema_level_object_identifier(*test_case[2:]))
-
-    def test_is_fully_qualified_name(self) -> None:
-        for test_case in SCHEMA_LEVEL_OBJECT_TEST_CASES:
-            with self.subTest():
-                self.assertEqual(test_case[1], identifier.is_fully_qualified_name(test_case[0]))
+    @parameterized.parameters(SCHEMA_LEVEL_OBJECT_TEST_CASES)  # type: ignore[misc]
+    def test_is_fully_qualified_name(self, *test_case: Any) -> None:
+        self.assertEqual(test_case[1], identifier.is_fully_qualified_name(test_case[0]))
 
     def test_resolve_identifier(self) -> None:
         self.assertEqual("FOO", identifier.resolve_identifier("FOO"))

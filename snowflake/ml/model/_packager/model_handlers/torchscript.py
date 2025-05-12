@@ -76,6 +76,8 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for Torch Script model.")
 
+        multiple_inputs = kwargs.get("multiple_inputs", False)
+
         import torch
 
         assert isinstance(model, torch.jit.ScriptModule)
@@ -86,8 +88,6 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
-
-            multiple_inputs = kwargs.get("multiple_inputs", False)
 
             def get_prediction(
                 target_method_name: str, sample_input_data: "model_types.SupportedLocalDataType"

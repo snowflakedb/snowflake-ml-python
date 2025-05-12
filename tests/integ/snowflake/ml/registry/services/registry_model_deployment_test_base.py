@@ -117,29 +117,38 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             database_name=database_name_id, schema_name=schema_name_id, stage_name=stage_name
         )
 
-        deploy_spec = mv._service_ops._model_deployment_spec.save(
+        mv._service_ops._model_deployment_spec.add_model_spec(
             database_name=mv._model_ops._model_version_client._database_name,
             schema_name=mv._model_ops._model_version_client._schema_name,
             model_name=mv._model_name,
             version_name=mv._version_name,
-            service_database_name=database_name_id,
-            service_schema_name=schema_name_id,
-            service_name=service_name_id,
-            image_build_compute_pool_name=build_compute_pool,
-            inference_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+        )
+
+        mv._service_ops._model_deployment_spec.add_image_build_spec(
             image_repo_database_name=database_name_id,
             image_repo_schema_name=schema_name_id,
             image_repo_name=image_repo_name,
-            ingress_enabled=True,
-            max_instances=max_instances,
-            num_workers=num_workers,
-            max_batch_rows=max_batch_rows,
-            cpu=cpu_requests,
-            memory=memory_requests,
-            gpu=gpu_requests,
+            image_build_compute_pool_name=build_compute_pool,
             force_rebuild=force_rebuild,
             external_access_integrations=None,
         )
+
+        mv._service_ops._model_deployment_spec.add_service_spec(
+            service_name=service_name_id,
+            inference_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+            service_database_name=database_name_id,
+            service_schema_name=schema_name_id,
+            ingress_enabled=True,
+            max_instances=max_instances,
+            num_workers=num_workers,
+            cpu=cpu_requests,
+            memory=memory_requests,
+            gpu=gpu_requests,
+            max_batch_rows=max_batch_rows,
+        )
+
+        deploy_spec = mv._service_ops._model_deployment_spec.save()
+
         inline_deploy_spec_enabled = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
         if mv._service_ops._model_deployment_spec.workspace_path:
             with pathlib.Path(deploy_spec).open("r", encoding="utf-8") as f:

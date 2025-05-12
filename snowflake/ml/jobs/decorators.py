@@ -26,6 +26,8 @@ def remote(
     env_vars: Optional[dict[str, str]] = None,
     num_instances: Optional[int] = None,
     enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob[_ReturnValue]]]:
     """
@@ -40,6 +42,8 @@ def remote(
         env_vars: Environment variables to set in container
         num_instances: The number of nodes in the job. If none specified, create a single node job.
         enable_metrics: Whether to enable metrics publishing for the job.
+        database: The database to use for the job.
+        schema: The schema to use for the job.
         session: The Snowpark session to use. If none specified, uses active session.
 
     Returns:
@@ -67,6 +71,8 @@ def remote(
                 env_vars=env_vars,
                 num_instances=num_instances,
                 enable_metrics=enable_metrics,
+                database=database,
+                schema=schema,
                 session=session,
             )
             assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"

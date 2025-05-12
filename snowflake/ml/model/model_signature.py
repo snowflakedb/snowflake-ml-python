@@ -71,9 +71,9 @@ def _truncate_data(
             warnings.warn(
                 formatting.unwrap(
                     f"""
-                    The sample input has {row_count} rows, thus a truncation happened before inferring signature.
-                    This might cause inaccurate signature inference.
-                    If that happens, consider specifying signature manually.
+                    The sample input has {row_count} rows. Using the first 100 rows to define the inputs and outputs
+                    of the model and the data types of each. Use `signatures` parameter to specify model inputs and
+                    outputs manually if the automatic inference is not correct.
                     """
                 ),
                 category=UserWarning,
