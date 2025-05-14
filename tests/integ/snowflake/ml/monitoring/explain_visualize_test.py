@@ -118,6 +118,13 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
             ["feature_value", "shap_value"],
         )
 
+    def test_plot_influence_sensitivity_streamlit(self) -> None:
+        with self.assertRaisesWithLiteralMatch(
+            RuntimeError,
+            "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks.",
+        ):
+            plot_influence_sensitivity(self.shap_df, self.feat_df)
+
     def test_plot_violin(self) -> None:
         for test_shap_df, test_feat_df in [
             (self.shap_df, self.feat_df),

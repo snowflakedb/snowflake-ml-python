@@ -47,6 +47,13 @@ JOB_POLL_MAX_DELAY_SECONDS = 1
 IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"
 RESULT_PATH_DEFAULT_VALUE = "mljob_result.pkl"
 
+# Log start and end messages
+LOG_START_MSG = "--------------------------------\nML job started\n--------------------------------"
+LOG_END_MSG = "--------------------------------\nML job finished\n--------------------------------"
+
+# Default setting for verbose logging in get_log function
+DEFAULT_VERBOSE_LOG = False
+
 # Compute pool resource information
 # TODO: Query Snowflake for resource information instead of relying on this hardcoded
 #       table from https://docs.snowflake.com/en/sql-reference/sql/create-compute-pool

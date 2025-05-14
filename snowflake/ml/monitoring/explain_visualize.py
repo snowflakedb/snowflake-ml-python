@@ -1,4 +1,4 @@
-from typing import Union, cast, overload
+from typing import Any, Union, cast, overload
 
 import altair as alt
 import numpy as np
@@ -170,21 +170,67 @@ def plot_force(
 
 
 def plot_influence_sensitivity(
-    feature_values: pd.Series, shap_values: pd.Series, figsize: tuple[float, float] = (600, 400)
-) -> alt.Chart:
+    feature_values: type_hints.SupportedDataType,
+    shap_values: type_hints.SupportedDataType,
+    figsize: tuple[float, float] = (600, 400),
+) -> Any:
     """
-    Create a SHAP dependence scatter plot for a specific feature.
+    Create a SHAP dependence scatter plot for a specific feature. If a DataFrame is provided, a select box
+    will be displayed to select the feature. This is only supported in Snowflake notebooks.
+    If Streamlit is not available and a DataFrame is passed in, an ImportError will be raised.
 
     Args:
-        feature_values: pandas Series containing the feature values for a specific feature
-        shap_values: pandas Series containing the SHAP values for the same feature
+        feature_values: pandas Series or 2D array containing the feature values for a specific feature
+        shap_values: pandas Series or 2D array containing the SHAP values for the same feature
         figsize: tuple of (width, height) for the plot
 
     Returns:
         Altair chart object
 
+    Raises:
+        ValueError: If the types of feature_values and shap_values are not the same
+
     """
 
+    use_streamlit = False
+    feature_values_df = _convert_to_pandas_df(feature_values)
+    shap_values_df = _convert_to_pandas_df(shap_values)
+
+    if len(shap_values_df.shape) > 1:
+        feature_values, shap_values, st = _prepare_feature_values_for_streamlit(feature_values_df, shap_values_df)
+        use_streamlit = True
+    elif feature_values_df.shape[0] != shap_values_df.shape[0]:
+        raise ValueError("Feature values and SHAP values must have the same number of rows.")
+
+    scatter = _create_scatter_plot(feature_values, shap_values, figsize)
+    return st.altair_chart(scatter) if use_streamlit else scatter
+
+
+def _prepare_feature_values_for_streamlit(
+    feature_values_df: pd.DataFrame, shap_values: pd.DataFrame
+) -> tuple[pd.Series, pd.Series, Any]:
+    try:
+        from IPython import get_ipython
+        from snowbook.executor.python_transformer import IPythonProxy
+
+        assert isinstance(
+            get_ipython(), IPythonProxy
+        ), "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks."
+    except ImportError:
+        raise RuntimeError(
+            "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks."
+        )
+
+    import streamlit as st
+
+    feature_columns = feature_values_df.columns
+    chosen_ft: str = st.selectbox("Feature:", feature_columns)
+    feature_values = feature_values_df[chosen_ft]
+    shap_values = shap_values.iloc[:, feature_columns.get_loc(chosen_ft)]
+    return feature_values, shap_values, st
+
+
+def _create_scatter_plot(feature_values: pd.Series, shap_values: pd.Series, figsize: tuple[float, float]) -> alt.Chart:
     unique_vals = np.sort(np.unique(feature_values.values))
     max_points_per_unique_value = float(np.max(np.bincount(np.searchsorted(unique_vals, feature_values.values))))
     points_per_value = len(feature_values.values) / len(unique_vals)

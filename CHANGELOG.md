@@ -1,6 +1,17 @@
 # Release History
 
-## 1.8.4
+## 1.8.5
+
+### Bug Fixes
+
+### Breaking change
+
+### New Features
+
+- Registry: No longer checks if the snowflake-ml-python version is available in the Snowflake Conda channel when logging
+  an SPCS-only model.
+
+## 1.8.4 (2025-05-12)
 
 ### Bug Fixes
 

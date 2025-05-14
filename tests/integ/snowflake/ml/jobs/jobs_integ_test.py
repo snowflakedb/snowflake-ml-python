@@ -6,7 +6,6 @@ import textwrap
 import time
 from typing import Any, Callable, Optional, cast
 from unittest import mock
-from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest, parameterized
 from packaging import version
@@ -17,7 +16,7 @@ from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import manager as jm
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import Row, exceptions as sp_exceptions
+from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
@@ -157,49 +156,6 @@ class JobManagerTest(parameterized.TestCase):
         with self.assertRaises(sp_exceptions.SnowparkSQLException):
             jobs.list_jobs(**kwargs, session=self.session)
 
-    def test_get_head_node_negative(self):
-        mock_session = MagicMock()
-        mock_session.sql.return_value.collect.return_value = [
-            Row(instance_id=1),
-            Row(instance_id=2),
-        ]
-        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
-            mock_get_num_instances.return_value = 3
-            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Failed to retrieve job logs. "
-                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
-            ):
-                job.get_logs()
-
-    def test_get_instance_negative(self):
-        def sql_side_effect(query_str, params):
-            mock_result = MagicMock()
-
-            if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):
-                mock_result.collect.return_value = [
-                    Row(instance_id=None),
-                ]
-            elif query_str.startswith("SHOW SERVICE INSTANCES"):
-                mock_result.collect.return_value = [Row(start_time=None, instance_id=None)]
-            else:
-                raise ValueError(f"Unexpected SQL: {query_str}")
-
-            return mock_result
-
-        mock_session = MagicMock()
-        mock_session.sql.side_effect = sql_side_effect
-        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
-            mock_get_num_instances.return_value = 1
-            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Failed to retrieve job logs. "
-                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
-            ):
-                job.get_logs()
-
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
@@ -272,32 +228,21 @@ class JobManagerTest(parameterized.TestCase):
         job = jm._submit_job(
             lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
         )
-
+        job.wait()
         self.assertIsInstance(job.get_logs(), str)
         self.assertIsInstance(job.get_logs(as_list=True), list)
 
-    def test_get_logs_negative(self) -> None:
-        nonexistent_job_ids = [
-            f"{self.db}.non_existent_schema.nonexistent_job_id",
-            f"{self.db}.{self.schema}.nonexistent_job_id",
-            "nonexistent_job_id",
-            *INVALID_IDENTIFIERS,
-        ]
-        for id in nonexistent_job_ids:
-            with self.subTest(f"id={id}"):
-                job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                    job.get_logs()
+        # Validate full job logs
+        self.assertIn("hello world", job.get_logs(verbose=True))
+        self.assertIn("ray", job.get_logs(verbose=True))
+        self.assertIn(constants.LOG_START_MSG, job.get_logs(verbose=True))
+        self.assertIn(constants.LOG_END_MSG, job.get_logs(verbose=True))
 
-        mock_session = MagicMock()
-        mock_session.sql.side_effect = sp_exceptions.SnowparkSQLException("Waiting to start, Container Status: PENDING")
-        job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-        with self.assertRaises(sp_exceptions.SnowparkSQLException):
-            self.assertEqual(
-                job.get_logs(instance_id=0),
-                "Warning: Waiting for container to start. Logs will be shown when available.",
-                job.get_logs(),
-            )
+        # Check job for non-verbose mode
+        self.assertIn("hello world", job.get_logs(verbose=False))
+        self.assertNotIn("ray", job.get_logs(verbose=False))
+        self.assertNotIn(constants.LOG_START_MSG, job.get_logs(verbose=False))
+        self.assertNotIn(constants.LOG_END_MSG, job.get_logs(verbose=False))
 
     def test_job_wait(self) -> None:
         # Status check adds some latency
@@ -629,19 +574,23 @@ class JobManagerTest(parameterized.TestCase):
 
         # Job with bad requirement should fail due to installation error
         self.assertEqual(job_bad_requirement.wait(), "FAILED")
-        self.assertIn("No matching distribution found for nonexistent_package", job_bad_requirement.get_logs())
+        self.assertIn(
+            "No matching distribution found for nonexistent_package", job_bad_requirement.get_logs(verbose=True)
+        )
 
         # Job with no EAI should fail due to network access error
         self.assertEqual(job_no_eai.wait(), "FAILED")
-        self.assertIn("No matching distribution found for tabulate", job_no_eai.get_logs())
+        self.assertIn("No matching distribution found for tabulate", job_no_eai.get_logs(verbose=True))
 
         # Job with valid requirements and EAI should succeed
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn("Successfully installed tabulate", job_logs)
         self.assertIn("[foo] Job complete", job_logs)
 
         # Job with conflicting requirement should prefer the user specified package
-        self.assertEqual(job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs())
+        self.assertEqual(
+            job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs(verbose=True)
+        )
         self.assertRegex(job_dep_conflict_logs, r"you have numpy 1\.23\.\d+ which is incompatible")
         self.assertIn("Numpy version: 1.23", job_dep_conflict_logs)
 
@@ -656,7 +605,7 @@ class JobManagerTest(parameterized.TestCase):
             print("Dummy function executed successfully")
 
         job = self._submit_func_as_file(dummy_func, pip_requirements=[package])
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertTrue(
             package in job_logs or "Successfully installed" in job_logs,
             "Didn't find expected package log:" + job_logs,
