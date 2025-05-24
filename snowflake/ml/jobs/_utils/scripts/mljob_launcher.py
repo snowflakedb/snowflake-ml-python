@@ -2,24 +2,34 @@ import argparse
 import copy
 import importlib.util
 import json
+import logging
 import os
 import runpy
 import sys
+import time
 import traceback
 import warnings
 from pathlib import Path
 from typing import Any, Optional
 
 import cloudpickle
+from constants import LOG_END_MSG, LOG_START_MSG
 
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
 # Fallbacks in case of SnowML version mismatch
 RESULT_PATH_ENV_VAR = getattr(constants, "RESULT_PATH_ENV_VAR", "MLRS_RESULT_PATH")
-
 JOB_RESULT_PATH = os.environ.get(RESULT_PATH_ENV_VAR, "mljob_result.pkl")
+
+# Constants for the wait_for_min_instances function
+CHECK_INTERVAL = 10  # seconds
+TIMEOUT = 720  # seconds
 
 
 try:
@@ -62,6 +72,66 @@ class SimpleJSONEncoder(json.JSONEncoder):
             return f"Unserializable object: {repr(obj)}"
 
 
+def get_active_node_count() -> int:
+    """
+    Count the number of active nodes in the Ray cluster.
+
+    Returns:
+        int: Total count of active nodes
+    """
+    import ray
+
+    if not ray.is_initialized():
+        ray.init(address="auto", ignore_reinit_error=True, log_to_driver=False)
+    try:
+        nodes = [node for node in ray.nodes() if node.get("Alive")]
+        total_active = len(nodes)
+
+        logger.info(f"Active nodes: {total_active}")
+        return total_active
+    except Exception as e:
+        logger.warning(f"Error getting active node count: {e}")
+        return 0
+
+
+def wait_for_min_instances(min_instances: int) -> None:
+    """
+    Wait until the specified minimum number of instances are available in the Ray cluster.
+
+    Args:
+        min_instances: Minimum number of instances required
+
+    Raises:
+        TimeoutError: If failed to connect to Ray or if minimum instances are not available within timeout
+    """
+    if min_instances <= 1:
+        logger.debug("Minimum instances is 1 or less, no need to wait for additional instances")
+        return
+
+    start_time = time.time()
+    timeout = os.getenv("JOB_MIN_INSTANCES_TIMEOUT", TIMEOUT)
+    check_interval = os.getenv("JOB_MIN_INSTANCES_CHECK_INTERVAL", CHECK_INTERVAL)
+    logger.debug(f"Waiting for at least {min_instances} instances to be ready (timeout: {timeout}s)")
+
+    while time.time() - start_time < timeout:
+        total_nodes = get_active_node_count()
+
+        if total_nodes >= min_instances:
+            elapsed = time.time() - start_time
+            logger.info(f"Minimum instance requirement met: {total_nodes} instances available after {elapsed:.1f}s")
+            return
+
+        logger.debug(
+            f"Waiting for instances: {total_nodes}/{min_instances} available "
+            f"(elapsed: {time.time() - start_time:.1f}s)"
+        )
+        time.sleep(check_interval)
+
+    raise TimeoutError(
+        f"Timed out after {timeout}s waiting for {min_instances} instances, only {get_active_node_count()} available"
+    )
+
+
 def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = None) -> Any:
     """
     Execute a Python script and return its result.
@@ -86,6 +156,7 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
     session = Session.builder.configs(SnowflakeLoginOptions()).create()  # noqa: F841
 
     try:
+
         if main_func:
             # Use importlib for scripts with a main function defined
             module_name = Path(script_path).stem
@@ -126,9 +197,21 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
     Raises:
         Exception: Re-raises any exception caught during script execution.
     """
-    # Run the script with the specified arguments
     try:
+        # Wait for minimum required instances if specified
+        min_instances_str = os.environ.get("JOB_MIN_INSTANCES", 1)
+        if min_instances_str and int(min_instances_str) > 1:
+            wait_for_min_instances(int(min_instances_str))
+
+        # Log start marker for user script execution
+        print(LOG_START_MSG)  # noqa: T201
+
+        # Run the script with the specified arguments
         result = run_script(script_path, *script_args, main_func=script_main_func)
+
+        # Log end marker for user script execution
+        print(LOG_END_MSG)  # noqa: T201
+
         result_obj = ExecutionResult(result=result)
         return result_obj
     except Exception as e:

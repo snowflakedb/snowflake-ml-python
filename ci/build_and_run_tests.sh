@@ -39,7 +39,6 @@ BAZEL="bazel"
 ENV="pip"
 WITH_SNOWPARK=false
 WITH_SPCS_IMAGE=false
-INCLUDE_AUTOGEN_TESTS=false
 MODE="continuous_run"
 PYTHON_VERSION=3.9
 PYTHON_ENABLE_SCRIPT="bin/activate"
@@ -65,9 +64,6 @@ while (($#)); do
         ;;
     --with-snowpark)
         WITH_SNOWPARK=true
-        ;;
-    --include-autogen-tests)
-        INCLUDE_AUTOGEN_TESTS=true
         ;;
     --mode)
         shift
@@ -200,19 +196,13 @@ pushd ${SNOWML_DIR}
 VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.py| cut -d'"' -f2)
 echo "Extracted Package Version from code: ${VERSION}"
 
-if [ "${INCLUDE_AUTOGEN_TESTS}" = true ]; then
-    echo "Generating and copying autogen tests."
-    #
-    # Generate and copy auto-gen tests.
-    "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
+# Generate and copy auto-gen tests.
+"${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
 
-    # Rsync cannot work well with path that has drive letter in Windows,
-    # Thus, rsync has to use relative path instead of absolute ones.
+# Rsync cannot work well with path that has drive letter in Windows,
+# Thus, rsync has to use relative path instead of absolute ones.
 
-    rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
-else
-    echo "Excluding autogen tests."
-fi
+rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
 
 # Read environments from optional_dependency_groups.bzl
 groups=()
@@ -377,10 +367,18 @@ for i in "${!groups[@]}"; do
         "${_MICROMAMBA_BIN}" clean --all --force-pkgs-dirs -y
 
         # Create testing env
-        "${_MICROMAMBA_BIN}" create -y -p ./testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python
+        "${_MICROMAMBA_BIN}" create -y -p ./testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python==${VERSION}
         if [[ "${group}" != "core" ]]; then
+            sed -i "/^channels:/a\  - ${WORKSPACE}/conda-bld" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
+            sed -i "/^dependencies:/a\  - snowflake-ml-python==${VERSION}" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
+            echo "== Printing content of conda-optional-dependency-${group}.yml =="
+            cat "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
             "${_MICROMAMBA_BIN}" env update -p ./testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
         fi
+        sed -i "/^channels:/a\  - ${WORKSPACE}/conda-bld" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
+        sed -i "/^dependencies:/a\  - snowflake-ml-python==${VERSION}" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
+        echo "== Printing content of conda-env-build-test.yml =="
+        cat "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
         "${_MICROMAMBA_BIN}" env update -p ./testenv -f "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-env-build-test.yml"
         "${_MICROMAMBA_BIN}" list -p ./testenv
 

@@ -1,3 +1,5 @@
+import logging
+import os
 import time
 from functools import cached_property
 from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overload
@@ -15,6 +17,8 @@ _PROJECT = "MLJob"
 TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "INTERNAL_ERROR"}
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 
 class MLJob(Generic[T]):
@@ -36,8 +40,15 @@ class MLJob(Generic[T]):
         return identifier.parse_schema_level_object_identifier(self.id)[-1]
 
     @cached_property
-    def num_instances(self) -> int:
-        return _get_num_instances(self._session, self.id)
+    def target_instances(self) -> int:
+        return _get_target_instances(self._session, self.id)
+
+    @cached_property
+    def min_instances(self) -> int:
+        try:
+            return int(self._container_spec["env"].get(constants.MIN_INSTANCES_ENV_VAR, 1))
+        except TypeError:
+            return 1
 
     @property
     def id(self) -> str:
@@ -51,6 +62,12 @@ class MLJob(Generic[T]):
             # Query backend for job status if not in terminal state
             self._status = _get_status(self._session, self.id)
         return self._status
+
+    @cached_property
+    def _compute_pool(self) -> str:
+        """Get the job's compute pool name."""
+        row = _get_service_info(self._session, self.id)
+        return cast(str, row["compute_pool"])
 
     @property
     def _service_spec(self) -> dict[str, Any]:
@@ -82,15 +99,34 @@ class MLJob(Generic[T]):
         return f"{self._stage_path}/{result_path}"
 
     @overload
-    def get_logs(self, limit: int = -1, instance_id: Optional[int] = None, *, as_list: Literal[True]) -> list[str]:
+    def get_logs(
+        self,
+        limit: int = -1,
+        instance_id: Optional[int] = None,
+        *,
+        as_list: Literal[True],
+        verbose: bool = constants.DEFAULT_VERBOSE_LOG,
+    ) -> list[str]:
         ...
 
     @overload
-    def get_logs(self, limit: int = -1, instance_id: Optional[int] = None, *, as_list: Literal[False] = False) -> str:
+    def get_logs(
+        self,
+        limit: int = -1,
+        instance_id: Optional[int] = None,
+        *,
+        as_list: Literal[False] = False,
+        verbose: bool = constants.DEFAULT_VERBOSE_LOG,
+    ) -> str:
         ...
 
     def get_logs(
-        self, limit: int = -1, instance_id: Optional[int] = None, *, as_list: bool = False
+        self,
+        limit: int = -1,
+        instance_id: Optional[int] = None,
+        *,
+        as_list: bool = False,
+        verbose: bool = constants.DEFAULT_VERBOSE_LOG,
     ) -> Union[str, list[str]]:
         """
         Return the job's execution logs.
@@ -100,17 +136,20 @@ class MLJob(Generic[T]):
             instance_id: Optional instance ID to get logs from a specific instance.
                          If not provided, returns logs from the head node.
             as_list: If True, returns logs as a list of lines. Otherwise, returns logs as a single string.
+            verbose: Whether to return the full log or just the user log.
 
         Returns:
             The job's execution logs.
         """
-        logs = _get_logs(self._session, self.id, limit, instance_id)
+        logs = _get_logs(self._session, self.id, limit, instance_id, verbose)
         assert isinstance(logs, str)  # mypy
         if as_list:
             return logs.splitlines()
         return logs
 
-    def show_logs(self, limit: int = -1, instance_id: Optional[int] = None) -> None:
+    def show_logs(
+        self, limit: int = -1, instance_id: Optional[int] = None, verbose: bool = constants.DEFAULT_VERBOSE_LOG
+    ) -> None:
         """
         Display the job's execution logs.
 
@@ -118,8 +157,9 @@ class MLJob(Generic[T]):
             limit: The maximum number of lines to display. Negative values are treated as no limit.
             instance_id: Optional instance ID to get logs from a specific instance.
                          If not provided, displays logs from the head node.
+            verbose: Whether to return the full log or just the user log.
         """
-        print(self.get_logs(limit, instance_id, as_list=False))  # noqa: T201: we need to print here.
+        print(self.get_logs(limit, instance_id, as_list=False, verbose=verbose))  # noqa: T201: we need to print here.
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
     def wait(self, timeout: float = -1) -> types.JOB_STATUS:
@@ -137,7 +177,16 @@ class MLJob(Generic[T]):
         """
         delay = constants.JOB_POLL_INITIAL_DELAY_SECONDS  # Start with 100ms delay
         start_time = time.monotonic()
-        while self.status not in TERMINAL_JOB_STATUSES:
+        warning_shown = False
+        while (status := self.status) not in TERMINAL_JOB_STATUSES:
+            if status == "PENDING" and not warning_shown:
+                pool_info = _get_compute_pool_info(self._session, self._compute_pool)
+                if (pool_info.max_nodes - pool_info.active_nodes) < self.min_instances:
+                    logger.warning(
+                        f"Compute pool busy ({pool_info.active_nodes}/{pool_info.max_nodes} nodes in use)."
+                        " Job execution may be delayed."
+                    )
+                    warning_shown = True
             if timeout >= 0 and (elapsed := time.monotonic() - start_time) >= timeout:
                 raise TimeoutError(f"Job {self.name} did not complete within {elapsed} seconds")
             time.sleep(delay)
@@ -195,7 +244,9 @@ def _get_service_spec(session: snowpark.Session, job_id: str) -> dict[str, Any]:
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "limit", "instance_id"])
-def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_id: Optional[int] = None) -> str:
+def _get_logs(
+    session: snowpark.Session, job_id: str, limit: int = -1, instance_id: Optional[int] = None, verbose: bool = True
+) -> str:
     """
     Retrieve the job's execution logs.
 
@@ -204,24 +255,20 @@ def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_
         limit: The maximum number of lines to return. Negative values are treated as no limit.
         session: The Snowpark session to use. If none specified, uses active session.
         instance_id: Optional instance ID to get logs from a specific instance.
+        verbose: Whether to return the full log or just the portion between START and END messages.
 
     Returns:
         The job's execution logs.
 
     Raises:
-        SnowparkSQLException: if the container is pending
         RuntimeError: if failed to get head instance_id
-
     """
     # If instance_id is not specified, try to get the head instance ID
     if instance_id is None:
         try:
             instance_id = _get_head_instance_id(session, job_id)
         except RuntimeError:
-            raise RuntimeError(
-                "Failed to retrieve job logs. "
-                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead."
-            )
+            instance_id = None
 
     # Assemble params: [job_id, instance_id, container_name, (optional) limit]
     params: list[Any] = [
@@ -231,7 +278,6 @@ def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_
     ]
     if limit > 0:
         params.append(limit)
-
     try:
         (row,) = session.sql(
             f"SELECT SYSTEM$GET_SERVICE_LOGS(?, ?, ?{f', ?' if limit > 0 else ''})",
@@ -239,9 +285,43 @@ def _get_logs(session: snowpark.Session, job_id: str, limit: int = -1, instance_
         ).collect()
     except SnowparkSQLException as e:
         if "Container Status: PENDING" in e.message:
-            return "Warning: Waiting for container to start. Logs will be shown when available."
-        raise
-    return str(row[0])
+            logger.warning("Waiting for container to start. Logs will be shown when available.")
+            return ""
+        else:
+            # event table accepts job name, not fully qualified name
+            # cast is to resolve the type check error
+            db, schema, name = identifier.parse_schema_level_object_identifier(job_id)
+            db = cast(str, db or session.get_current_database())
+            schema = cast(str, schema or session.get_current_schema())
+            logs = _get_service_log_from_event_table(
+                session, db, schema, name, limit, instance_id if instance_id else None
+            )
+            if len(logs) == 0:
+                raise RuntimeError(
+                    "No logs were found. Please verify that the database, schema, and job ID are correct."
+                )
+            return os.linesep.join(row[0] for row in logs)
+
+    full_log = str(row[0])
+
+    # If verbose is True, return the complete log
+    if verbose:
+        return full_log
+
+    # Otherwise, extract only the portion between LOG_START_MSG and LOG_END_MSG
+    start_idx = full_log.find(constants.LOG_START_MSG)
+    if start_idx != -1:
+        start_idx += len(constants.LOG_START_MSG)
+    else:
+        # If start message not found, start from the beginning
+        start_idx = 0
+
+    end_idx = full_log.find(constants.LOG_END_MSG, start_idx)
+    if end_idx == -1:
+        # If end message not found, return everything after start
+        end_idx = len(full_log)
+
+    return full_log[start_idx:end_idx].strip()
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
@@ -256,13 +336,18 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
     Returns:
         Optional[int]: The head instance ID of the job, or None if the head instance has not started yet.
 
-    Raises:
+     Raises:
         RuntimeError: If the instances died or if some instances disappeared.
+
     """
-    rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+    try:
+        rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+    except SnowparkSQLException:
+        # service may be deleted
+        raise RuntimeError("Couldn’t retrieve instances")
     if not rows:
         return None
-    if _get_num_instances(session, job_id) > len(rows):
+    if _get_target_instances(session, job_id) > len(rows):
         raise RuntimeError("Couldn’t retrieve head instance due to missing instances.")
 
     # Sort by start_time first, then by instance_id
@@ -270,7 +355,6 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
         sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
     except TypeError:
         raise RuntimeError("Job instance information unavailable.")
-
     head_instance = sorted_instances[0]
     if not head_instance["start_time"]:
         # If head instance hasn't started yet, return None
@@ -281,12 +365,61 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
         return 0
 
 
+def _get_service_log_from_event_table(
+    session: snowpark.Session, database: str, schema: str, name: str, limit: int, instance_id: Optional[int]
+) -> list[Row]:
+    params: list[Any] = [
+        database,
+        schema,
+        name,
+    ]
+    query = [
+        "SELECT VALUE FROM snowflake.telemetry.events_view",
+        'WHERE RESOURCE_ATTRIBUTES:"snow.database.name" = ?',
+        'AND RESOURCE_ATTRIBUTES:"snow.schema.name" = ?',
+        'AND RESOURCE_ATTRIBUTES:"snow.service.name" = ?',
+    ]
+
+    if instance_id:
+        query.append('AND RESOURCE_ATTRIBUTES:"snow.service.container.instance" = ?')
+        params.append(instance_id)
+
+    query.append("AND RECORD_TYPE = 'LOG'")
+    # sort by TIMESTAMP; although OBSERVED_TIMESTAMP is for log, it is NONE currently when record_type is log
+    query.append("ORDER BY TIMESTAMP")
+
+    if limit > 0:
+        query.append("LIMIT ?")
+        params.append(limit)
+
+    rows = session.sql(
+        "\n".join(line for line in query if line),
+        params=params,
+    ).collect()
+    return rows
+
+
 def _get_service_info(session: snowpark.Session, job_id: str) -> Row:
     (row,) = session.sql("DESCRIBE SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
     return row
 
 
+def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Row:
+    """
+    Check if the compute pool has enough available instances.
+
+    Args:
+        session (Session): The Snowpark session to use.
+        compute_pool (str): The name of the compute pool.
+
+    Returns:
+        Row: The compute pool information.
+    """
+    (pool_info,) = session.sql("SHOW COMPUTE POOLS LIKE ?", params=(compute_pool,)).collect()
+    return pool_info
+
+
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
-def _get_num_instances(session: snowpark.Session, job_id: str) -> int:
+def _get_target_instances(session: snowpark.Session, job_id: str) -> int:
     row = _get_service_info(session, job_id)
     return int(row["target_instances"]) if row["target_instances"] else 0

@@ -17,7 +17,6 @@ py_test(
     srcs = [
         "disable_distributed_hpo_test.py",
     ],
-    optional_dependencies = ["xgboost"],
     deps = [
         ":disable_distributed_hpo",
         "//snowflake/ml/modeling/_internal:model_trainer_builder",

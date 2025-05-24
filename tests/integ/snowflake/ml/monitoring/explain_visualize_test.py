@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.monitoring.explain_visualize import (
     plot_force,
     plot_influence_sensitivity,
@@ -76,9 +77,20 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
             list(plot_data.columns),
         )
 
+    def _unpack_and_check_plot_columns(self, plot: alt.LayerChart, expected_columns: list[str]) -> None:
+        assert plot is not None
+        plot_dict = plot.to_dict()
+        columns = list(list(plot_dict["datasets"].values())[0][0].keys()).sort()
+        self.assertEqual(
+            columns,
+            expected_columns,
+        )
+
     def test_plot_force(self) -> None:
         plot: alt.LayerChart = plot_force(self.shap_df.iloc[0], self.feat_df.iloc[0])
-        self._assert_plot_columns(
+
+        # Necessary to unpack because the graph type is Undefined
+        self._unpack_and_check_plot_columns(
             plot,
             [
                 "start",
@@ -89,15 +101,27 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
                 "feature_value",
                 "feature_annotated",
                 "bar_direction",
-            ],
+                "feature",
+            ].sort(),
         )
+
+    def test_plot_force_invalid_contribution_threshold(self) -> None:
+        def validate_traceback(ex: Exception) -> bool:
+            self.assertEqual(ex.error_code, error_codes.INVALID_ARGUMENT)
+            self.assertIn("contribution_threshold must be between 0 and 1.", str(ex.original_exception))
+            return True
+
+        with self.assertRaisesWithPredicateMatch(exceptions.SnowflakeMLException, validate_traceback):
+            alt.LayerChart = plot_force(self.shap_df.iloc[0], self.feat_df.iloc[0], contribution_threshold=3)
 
     def test_plot_force_snowpark(self) -> None:
         shap_row = self.shap_df_snowpark.collect()[0]
         feat_row = self.feat_df_snowpark.collect()[0]
 
         plot: alt.LayerChart = plot_force(shap_row, feat_row)
-        self._assert_plot_columns(
+
+        # Necessary to unpack because the graph type is Undefined
+        self._unpack_and_check_plot_columns(
             plot,
             [
                 "start",
@@ -108,7 +132,8 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
                 "feature_value",
                 "feature_annotated",
                 "bar_direction",
-            ],
+                "feature",
+            ].sort(),
         )
 
     def test_plot_influence_sensitivity(self) -> None:
@@ -117,6 +142,13 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
             plot,
             ["feature_value", "shap_value"],
         )
+
+    def test_plot_influence_sensitivity_streamlit(self) -> None:
+        with self.assertRaisesWithLiteralMatch(
+            RuntimeError,
+            "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks.",
+        ):
+            plot_influence_sensitivity(self.shap_df, self.feat_df)
 
     def test_plot_violin(self) -> None:
         for test_shap_df, test_feat_df in [

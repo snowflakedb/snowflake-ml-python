@@ -6,7 +6,6 @@ import textwrap
 import time
 from typing import Any, Callable, Optional, cast
 from unittest import mock
-from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest, parameterized
 from packaging import version
@@ -14,10 +13,9 @@ from packaging import version
 from snowflake.ml import jobs
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
-from snowflake.ml.jobs import manager as jm
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import Row, exceptions as sp_exceptions
+from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
@@ -27,6 +25,10 @@ INVALID_IDENTIFIERS = [
     "has'quote",
     "quote', 0, 'main'); drop table foo; select system$get_service_logs('job_id'",
 ]
+
+
+def dummy_function() -> None:
+    print("hello world")
 
 
 @absltest.skipIf(
@@ -59,6 +61,26 @@ class JobManagerTest(parameterized.TestCase):
         cls.session.close()
         super().tearDownClass()
 
+    def _submit_func_as_file(self, func: Callable[[], None], **kwargs: Any) -> jobs.MLJob[None]:
+        # Insert default kwargs
+        default_kwargs = dict(
+            compute_pool=self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        kwargs = {**default_kwargs, **kwargs}
+
+        func_source = inspect.getsource(func)
+        payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
+        with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
+            temp_file.write(payload_str.encode("utf-8"))
+            temp_file.flush()
+            job: jobs.MLJob[None] = jobs.submit_file(
+                temp_file.name,
+                **kwargs,
+            )
+            return job
+
     def test_async_job_parameter(self) -> None:
         try:
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
@@ -68,14 +90,10 @@ class JobManagerTest(parameterized.TestCase):
         try:
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = FALSE").collect()
             with self.assertRaisesRegex(RuntimeError, "ENABLE_SNOWSERVICES_ASYNC_JOBS"):
-                jm._submit_job(
-                    lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-                )
+                self._submit_func_as_file(dummy_function)
 
             self.session.sql("ALTER SESSION SET ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE").collect()
-            job = jm._submit_job(
-                lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-            )
+            job = self._submit_func_as_file(dummy_function)
             self.assertIsNotNone(job)
         finally:
             # Make sure we re-enable the parameter even if this test fails
@@ -90,9 +108,7 @@ class JobManagerTest(parameterized.TestCase):
             self.assertEmpty(jobs.list_jobs(session=self.session).collect())
 
             # Submit a job
-            job = jm._submit_job(
-                lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-            )
+            job = self._submit_func_as_file(dummy_function)
 
             # Validate list jobs output
             jobs_df = jobs.list_jobs(session=self.session)
@@ -125,9 +141,7 @@ class JobManagerTest(parameterized.TestCase):
                     self.assertGreater(jobs.list_jobs(scope=scope, session=self.session).count(), 0)
 
             # Submit a second job to test different limits
-            job2 = jm._submit_job(
-                lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-            )
+            job2 = self._submit_func_as_file(dummy_function)
             limits = [1, 2, 5, 10]
             for limit in limits:
                 with self.subTest(f"limit={limit}"):
@@ -157,58 +171,9 @@ class JobManagerTest(parameterized.TestCase):
         with self.assertRaises(sp_exceptions.SnowparkSQLException):
             jobs.list_jobs(**kwargs, session=self.session)
 
-    def test_get_head_node_negative(self):
-        mock_session = MagicMock()
-        mock_session.sql.return_value.collect.return_value = [
-            Row(instance_id=1),
-            Row(instance_id=2),
-        ]
-        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
-            mock_get_num_instances.return_value = 3
-            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Failed to retrieve job logs. "
-                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
-            ):
-                job.get_logs()
-
-    def test_get_instance_negative(self):
-        def sql_side_effect(query_str, params):
-            mock_result = MagicMock()
-
-            if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):
-                mock_result.collect.return_value = [
-                    Row(instance_id=None),
-                ]
-            elif query_str.startswith("SHOW SERVICE INSTANCES"):
-                mock_result.collect.return_value = [Row(start_time=None, instance_id=None)]
-            else:
-                raise ValueError(f"Unexpected SQL: {query_str}")
-
-            return mock_result
-
-        mock_session = MagicMock()
-        mock_session.sql.side_effect = sql_side_effect
-        with patch("snowflake.ml.jobs.job._get_num_instances") as mock_get_num_instances:
-            mock_get_num_instances.return_value = 1
-            job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Failed to retrieve job logs. "
-                "Logs may be inaccessible due to job expiration and can be retrieved from Event Table instead.",
-            ):
-                job.get_logs()
-
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_get_job_positive(self):
         # Submit a job
-        job = jm._submit_job(
-            lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-        )
+        job = self._submit_func_as_file(dummy_function)
 
         test_cases = [
             job.name,
@@ -269,35 +234,22 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_get_logs(self) -> None:
         # Submit a job
-        job = jm._submit_job(
-            lambda: print("hello world"), self.compute_pool, stage_name="payload_stage", session=self.session
-        )
-
+        job = self._submit_func_as_file(dummy_function)
+        job.wait()
         self.assertIsInstance(job.get_logs(), str)
         self.assertIsInstance(job.get_logs(as_list=True), list)
 
-    def test_get_logs_negative(self) -> None:
-        nonexistent_job_ids = [
-            f"{self.db}.non_existent_schema.nonexistent_job_id",
-            f"{self.db}.{self.schema}.nonexistent_job_id",
-            "nonexistent_job_id",
-            *INVALID_IDENTIFIERS,
-        ]
-        for id in nonexistent_job_ids:
-            with self.subTest(f"id={id}"):
-                job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
-                    job.get_logs()
+        # Validate full job logs
+        self.assertIn("hello world", job.get_logs(verbose=True))
+        self.assertIn("ray", job.get_logs(verbose=True))
+        self.assertIn(constants.LOG_START_MSG, job.get_logs(verbose=True))
+        self.assertIn(constants.LOG_END_MSG, job.get_logs(verbose=True))
 
-        mock_session = MagicMock()
-        mock_session.sql.side_effect = sp_exceptions.SnowparkSQLException("Waiting to start, Container Status: PENDING")
-        job = jobs.MLJob[None](f"{self.db}.{self.schema}.test_id", session=mock_session)
-        with self.assertRaises(sp_exceptions.SnowparkSQLException):
-            self.assertEqual(
-                job.get_logs(instance_id=0),
-                "Warning: Waiting for container to start. Logs will be shown when available.",
-                job.get_logs(),
-            )
+        # Check job for non-verbose mode
+        self.assertIn("hello world", job.get_logs(verbose=False))
+        self.assertNotIn("ray", job.get_logs(verbose=False))
+        self.assertNotIn(constants.LOG_START_MSG, job.get_logs(verbose=False))
+        self.assertNotIn(constants.LOG_END_MSG, job.get_logs(verbose=False))
 
     def test_job_wait(self) -> None:
         # Status check adds some latency
@@ -534,13 +486,10 @@ class JobManagerTest(parameterized.TestCase):
         # Submit this function via file to avoid pickling issues
         # TODO: Test this via job decorator as well
         def runtime_func() -> None:
-            import ray
+            from common_utils import common_util as mlrs_util
 
             from snowflake.ml.data.data_connector import DataConnector
             from snowflake.snowpark.context import get_active_session
-
-            # Will throw a ConnectionError if Ray is not initialized
-            ray.init(address="auto")
 
             # Validate simple data ingestion
             session = get_active_session()
@@ -552,29 +501,43 @@ class JobManagerTest(parameterized.TestCase):
             assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
             assert len(dc.to_pandas()) == num_rows, len(dc.to_pandas())
 
+            # Validate mlruntimes utils
+            assert mlrs_util.get_num_ray_nodes() > 0
+
             # Print success message which will be checked in the test
             print("Runtime API test success")
 
-        job = self._submit_func_as_file(runtime_func, num_instances=1)
+        job = self._submit_func_as_file(runtime_func)
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
         self.assertIn("Runtime API test success", job_logs)
 
         # TODO: Add test for DataConnector serialization/deserialization
 
     def test_multinode_job_basic(self) -> None:
-        def hello_world() -> None:
-            print("Hello world")
-
-        job_from_file = self._submit_func_as_file(hello_world, num_instances=2)
-        job_from_func = jobs.remote(
-            self.compute_pool, stage_name="payload_stage", num_instances=2, session=self.session
-        )(hello_world)()
+        job_from_file = self._submit_func_as_file(dummy_function, target_instances=2)
 
         self.assertEqual(job_from_file.wait(), "DONE", file_job_logs := job_from_file.get_logs())
-        self.assertIn("Hello world", file_job_logs)
+        self.assertIn("hello world", file_job_logs)
 
-        self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs())
-        self.assertIn("Hello world", file_job_logs)
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", target_instances=2, session=self.session)
+        def dummy_remote() -> None:
+            print("hello world")
+
+        # TODO(SNOW-1911482): Enable test for Python 3.11+
+        if version.Version(env.PYTHON_VERSION) < version.Version("3.11"):
+            job_from_func = dummy_remote()
+            self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs())
+            self.assertIn("hello world", file_job_logs)
+
+    def test_multinode_job_wait_for_min_instances(self) -> None:
+        def get_cluster_size() -> None:
+            from common_utils import common_util as mlrs_util
+
+            print("num_nodes:", mlrs_util.get_num_ray_nodes())
+
+        job = self._submit_func_as_file(get_cluster_size, target_instances=2, min_instances=2)
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        self.assertEqual(re.match(r"num_nodes: (\d+)", job.get_logs(verbose=False)).group(1), "2")
 
     def test_job_with_pip_requirements(self) -> None:
         rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'PYPI%'").collect()
@@ -629,19 +592,23 @@ class JobManagerTest(parameterized.TestCase):
 
         # Job with bad requirement should fail due to installation error
         self.assertEqual(job_bad_requirement.wait(), "FAILED")
-        self.assertIn("No matching distribution found for nonexistent_package", job_bad_requirement.get_logs())
+        self.assertIn(
+            "No matching distribution found for nonexistent_package", job_bad_requirement.get_logs(verbose=True)
+        )
 
         # Job with no EAI should fail due to network access error
         self.assertEqual(job_no_eai.wait(), "FAILED")
-        self.assertIn("No matching distribution found for tabulate", job_no_eai.get_logs())
+        self.assertIn("No matching distribution found for tabulate", job_no_eai.get_logs(verbose=True))
 
         # Job with valid requirements and EAI should succeed
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn("Successfully installed tabulate", job_logs)
         self.assertIn("[foo] Job complete", job_logs)
 
         # Job with conflicting requirement should prefer the user specified package
-        self.assertEqual(job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs())
+        self.assertEqual(
+            job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs(verbose=True)
+        )
         self.assertRegex(job_dep_conflict_logs, r"you have numpy 1\.23\.\d+ which is incompatible")
         self.assertIn("Numpy version: 1.23", job_dep_conflict_logs)
 
@@ -652,11 +619,8 @@ class JobManagerTest(parameterized.TestCase):
     def test_job_cached_packages(self, package: str) -> None:
         """Test that cached packages are available without requiring network access."""
 
-        def dummy_func():
-            print("Dummy function executed successfully")
-
-        job = self._submit_func_as_file(dummy_func, pip_requirements=[package])
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        job = self._submit_func_as_file(dummy_function, pip_requirements=[package])
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertTrue(
             package in job_logs or "Successfully installed" in job_logs,
             "Didn't find expected package log:" + job_logs,
@@ -703,25 +667,6 @@ class JobManagerTest(parameterized.TestCase):
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
 
-    def _submit_func_as_file(self, func: Callable[[], None], **kwargs: Any) -> jobs.MLJob[None]:
-        func_source = inspect.getsource(func)
-        payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
-        with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
-            temp_file.write(payload_str.encode("utf-8"))
-            temp_file.flush()
-            job: jobs.MLJob[None] = jobs.submit_file(
-                temp_file.name,
-                self.compute_pool,
-                stage_name="payload_stage",
-                session=self.session,
-                **kwargs,
-            )
-            return job
-
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_submit_job_fully_qualified_name(self):
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
         self.dbm.use_schema(self.schema)  # Stay on default schema
@@ -736,13 +681,10 @@ class JobManagerTest(parameterized.TestCase):
         try:
             for database, schema in test_cases:
                 with self.subTest(database=database, schema=schema):
-                    job = jm._submit_job(
-                        lambda: print("hello world"),
-                        self.compute_pool,
-                        stage_name="payload_stage",
+                    job = self._submit_func_as_file(
+                        dummy_function,
                         database=database,
                         schema=schema,
-                        session=self.session,
                     )
                     job_database, job_schema, job_name = identifier.parse_schema_level_object_identifier(job.id)
 
@@ -767,13 +709,10 @@ class JobManagerTest(parameterized.TestCase):
         for database, schema, expected_exception, expected_regex in test_cases:
             with self.subTest(database=database, schema=schema):
                 with self.assertRaisesRegex(expected_exception, expected_regex):
-                    _ = jm._submit_job(
-                        lambda: print("hello world"),
-                        self.compute_pool,
-                        stage_name="payload_stage",
+                    _ = self._submit_func_as_file(
+                        dummy_function,
                         database=database,
                         schema=schema,
-                        session=self.session,
                     )
 
         kwargs = {
@@ -790,10 +729,9 @@ class JobManagerTest(parameterized.TestCase):
                 with self.assertRaisesRegex(
                     (ValueError, sp_exceptions.SnowparkSQLException), re.compile(re.escape(v), re.IGNORECASE)
                 ):
-                    _ = jm._submit_job(
-                        lambda: print("hello world"),
+                    _ = self._submit_func_as_file(
+                        dummy_function,
                         **invalid_kwargs,
-                        session=self.session,
                     )
 
 

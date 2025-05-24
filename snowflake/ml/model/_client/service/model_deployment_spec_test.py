@@ -2,13 +2,13 @@ import pathlib
 import tempfile
 
 import yaml
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.service import model_deployment_spec
 
 
-class ModelDeploymentSpecTest(absltest.TestCase):
+class ModelDeploymentSpecTest(parameterized.TestCase):
     def test_minimal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
@@ -21,7 +21,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
                 image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
-                external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
             mds.add_service_spec(
                 service_name=sql_identifier.SqlIdentifier("service"),
@@ -42,7 +41,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                             "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
                             "image_repo": "DB.SCHEMA.IMAGE_REPO",
                             "force_rebuild": False,
-                            "external_access_integrations": ["EXTERNAL_ACCESS_INTEGRATION"],
                         },
                         "service": {
                             "name": "DB.SCHEMA.SERVICE",
@@ -64,7 +62,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
         mds.add_image_build_spec(
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
             image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
-            external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
         )
         mds.add_service_spec(
             service_name=sql_identifier.SqlIdentifier("service"),
@@ -84,7 +81,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                     "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
                     "image_repo": "DB.SCHEMA.IMAGE_REPO",
                     "force_rebuild": False,
-                    "external_access_integrations": ["EXTERNAL_ACCESS_INTEGRATION"],
                 },
                 "service": {
                     "name": "DB.SCHEMA.SERVICE",
@@ -109,9 +105,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                     "image_build_compute_pool", case_sensitive=True
                 ),
                 image_repo_name=sql_identifier.SqlIdentifier("image_repo", case_sensitive=True),
-                external_access_integrations=[
-                    sql_identifier.SqlIdentifier("external_access_integration", case_sensitive=True)
-                ],
             )
             mds.add_service_spec(
                 service_name=sql_identifier.SqlIdentifier("service", case_sensitive=True),
@@ -133,7 +126,6 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                             "compute_pool": '"image_build_compute_pool"',
                             "image_repo": '"db"."schema"."image_repo"',
                             "force_rebuild": False,
-                            "external_access_integrations": ['"external_access_integration"'],
                         },
                         "service": {
                             "name": '"db"."schema"."service"',
@@ -144,7 +136,21 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                     },
                 )
 
-    def test_full(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "force_rebuild": True,
+            "ingress_enabled": True,
+        },
+        {
+            "force_rebuild": False,
+            "ingress_enabled": False,
+        },
+    )
+    def test_full(
+        self,
+        force_rebuild: bool,
+        ingress_enabled: bool,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -158,7 +164,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 image_repo_database_name=sql_identifier.SqlIdentifier("image_repo_db"),
                 image_repo_schema_name=sql_identifier.SqlIdentifier("image_repo_schema"),
                 image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
-                force_rebuild=True,
+                force_rebuild=force_rebuild,
                 external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
             mds.add_service_spec(
@@ -166,7 +172,7 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 service_schema_name=sql_identifier.SqlIdentifier("service_schema"),
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
-                ingress_enabled=True,
+                ingress_enabled=ingress_enabled,
                 max_instances=10,
                 cpu="1",
                 memory="1GiB",
@@ -187,13 +193,13 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                         "image_build": {
                             "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
                             "image_repo": "IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
-                            "force_rebuild": True,
+                            "force_rebuild": force_rebuild,
                             "external_access_integrations": ["EXTERNAL_ACCESS_INTEGRATION"],
                         },
                         "service": {
                             "name": "SERVICE_DB.SERVICE_SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
-                            "ingress_enabled": True,
+                            "ingress_enabled": ingress_enabled,
                             "max_instances": 10,
                             "cpu": "1",
                             "memory": "1GiB",
@@ -509,6 +515,19 @@ class ModelDeploymentSpecTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
             )
+
+    def test_clear_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            self.assertLen(mds._models, 1)
+            mds.clear()
+            self.assertLen(mds._models, 0)
 
 
 if __name__ == "__main__":

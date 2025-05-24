@@ -249,7 +249,7 @@ class DataConnector:
 
 # Switch to use Runtime's Data Ingester if running in ML runtime
 # Fail silently if the data ingester is not found
-if env.IN_ML_RUNTIME and os.getenv(env.USE_OPTIMIZED_DATA_INGESTOR):
+if env.IN_ML_RUNTIME and os.getenv(env.USE_OPTIMIZED_DATA_INGESTOR, "").lower() in ("true", "1"):
     try:
         from runtime_external_entities import get_ingester_class
 

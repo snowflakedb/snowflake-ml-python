@@ -154,8 +154,8 @@
   tags:
     - build_essential
 - name: pandas
-  dev_version: 1.5.3
-  version_requirements: '>=1.0.0,<3'
+  dev_version: 2.1.4
+  version_requirements: '>=2.1.4,<3'
 - name: protobuf
   dev_version: 4.25.3
 - name: psutil
@@ -232,8 +232,8 @@
     - transformers
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.14.0
-  version_requirements: '>=3.14.0,<4'
+  dev_version: 3.15.0
+  version_requirements: '>=3.15.0,<4'
 - name: snowflake.core
   dev_version: 1.0.2
   version_requirements: '>=1.0.2,<2'
@@ -296,8 +296,6 @@
   version_requirements: '>=1.7.3,<3'
   tags:
     - build_essential
-  requirements_extra_tags:
-    - xgboost
 - name: werkzeug
   dev_version: 2.2.2
 - name: cachetools
@@ -313,7 +311,7 @@
     - altair
 - name: streamlit
   dev_version: 1.44.1
-  version_requirements: '>=1.44.0,<2'
+  version_requirements: '>=1.30.0,<2'
   requirements_extra_tags:
     - streamlit
 

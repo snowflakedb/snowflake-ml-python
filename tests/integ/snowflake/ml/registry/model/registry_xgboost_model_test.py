@@ -498,8 +498,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     _check_predict_fn,
                 ),
             },
-            # TODO(SNOW-1677301): Add support for explainability for categorical columns
-            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -546,8 +544,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     check_predict_fn,
                 ),
             },
-            # TODO(SNOW-1677301): Add support for explainability for categorical columns
-            options={"enable_explainability": False},
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -604,9 +600,6 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     check_predict_fn,
                 ),
             },
-            # TODO(SNOW-1677301): Add support for explainability for categorical columns
-            options={"enable_explainability": False},
-            # signatures=expected_signatures,
         )
 
 

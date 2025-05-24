@@ -4,6 +4,7 @@ import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
+from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -40,7 +41,7 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
                 ),
             },
             options=(
-                {"cuda_version": "11.8", "enable_explainability": False}
+                {"cuda_version": model_env.DEFAULT_CUDA_VERSION, "enable_explainability": False}
                 if gpu_requests
                 else {"enable_explainability": False}
             ),

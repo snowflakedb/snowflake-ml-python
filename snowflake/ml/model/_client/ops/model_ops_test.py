@@ -471,7 +471,7 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client,
             "get_service_status",
-            side_effect=[(service_sql.ServiceStatus.PENDING, None), (service_sql.ServiceStatus.READY, None)],
+            side_effect=[(service_sql.ServiceStatus.PENDING, None), (service_sql.ServiceStatus.RUNNING, None)],
         ) as mock_get_service_status, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
         ) as mock_show_endpoints:
@@ -486,7 +486,7 @@ class ModelOpsTest(absltest.TestCase):
                 res,
                 [
                     {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
-                    {"name": "d.e.f", "status": "READY", "inference_endpoint": "foo.snowflakecomputing.app"},
+                    {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
                 ],
             )
             mock_show_versions.assert_called_once_with(

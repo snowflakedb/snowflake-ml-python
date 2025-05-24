@@ -80,7 +80,7 @@ def fetch_result(session: snowpark.Session, result_path: str) -> ExecutionResult
         # TODO: Check if file exists
         with session.file.get_stream(result_path) as result_stream:
             return ExecutionResult.from_dict(pickle.load(result_stream))
-    except (sp_exceptions.SnowparkSQLException, TypeError, pickle.UnpicklingError):
+    except (sp_exceptions.SnowparkSQLException, pickle.UnpicklingError, TypeError, ImportError):
         # Fall back to JSON result if loading pickled result fails for any reason
         result_json_path = os.path.splitext(result_path)[0] + ".json"
         with session.file.get_stream(result_json_path) as result_stream:

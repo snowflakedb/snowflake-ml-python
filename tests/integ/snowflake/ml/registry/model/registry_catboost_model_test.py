@@ -407,8 +407,6 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
                     _check_predict_fn,
                 ),
             },
-            # TODO(SNOW-1677301): Add support for explainability for categorical columns
-            options={"enable_explainability": False},
         )
 
 

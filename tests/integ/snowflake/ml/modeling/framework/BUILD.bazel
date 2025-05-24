@@ -5,7 +5,6 @@ package(default_visibility = ["//visibility:public"])
 py_test(
     name = "base_test",
     srcs = ["base_test.py"],
-    optional_dependencies = ["xgboost"],
     deps = [
         ":utils",
         "//snowflake/ml/_internal/exceptions:modeling_error_messages",

@@ -268,21 +268,13 @@ class ServiceSQLTest(absltest.TestCase):
 
     def test_get_service_status_include_message(self) -> None:
         m_statement_params = {"test": "1"}
-        m_service_status = service_sql.ServiceStatus("READY")
+        m_service_status = service_sql.ServiceStatus("RUNNING")
         m_message = "test message"
-        m_res = (m_service_status, m_message)
-        status_res = (
-            f'[{{"status":"{m_service_status.value}","message":"{m_message}",'
-            '"containerName":"model-inference","instanceId":"0","serviceName":"MYSERVICE",'
-            '"image":"image_url","restartCount":0,"startTime":""}]'
-        )
-        row = Row("SYSTEM$GET_SERVICE_STATUS")
-        m_df = mock_data_frame.MockDataFrame(
-            collect_result=[row(status_res)], collect_statement_params=m_statement_params
-        )
-
+        Outcome = Row("service_status", "message")
+        row = Outcome(m_service_status, m_message)
+        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
+            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -297,25 +289,17 @@ class ServiceSQLTest(absltest.TestCase):
             include_message=True,
             statement_params=m_statement_params,
         )
-        self.assertEqual(res, m_res)
+        self.assertEqual(res, (m_service_status, m_message))
 
     def test_get_service_status_exclude_message(self) -> None:
         m_statement_params = {"test": "1"}
-        m_service_status = service_sql.ServiceStatus("READY")
+        m_service_status = service_sql.ServiceStatus("RUNNING")
         m_message = "test message"
-        m_res = (m_service_status, None)
-        status_res = (
-            f'[{{"status":"{m_service_status.value}","message":"{m_message}",'
-            '"containerName":"model-inference","instanceId":"0","serviceName":"MYSERVICE",'
-            '"image":"image_url","restartCount":0,"startTime":""}]'
-        )
-        row = Row("SYSTEM$GET_SERVICE_STATUS")
-        m_df = mock_data_frame.MockDataFrame(
-            collect_result=[row(status_res)], collect_statement_params=m_statement_params
-        )
-
+        Outcome = Row("service_status", "message")
+        row = Outcome(m_service_status, m_message)
+        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
+            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
@@ -330,23 +314,18 @@ class ServiceSQLTest(absltest.TestCase):
             include_message=False,
             statement_params=m_statement_params,
         )
-        self.assertEqual(res, m_res)
+        self.assertEqual(res, (m_service_status, None))
 
     def test_get_service_status_no_status(self) -> None:
         m_statement_params = {"test": "1"}
         m_message = "test message"
         m_res = (service_sql.ServiceStatus.UNKNOWN, None)
-        status_res = (
-            f'[{{"status":"","message":"{m_message}","containerName":"model-inference","instanceId":"0",'
-            '"serviceName":"MYSERVICE","image":"image_url","restartCount":0,"startTime":""}]'
-        )
-        row = Row("SYSTEM$GET_SERVICE_STATUS")
-        m_df = mock_data_frame.MockDataFrame(
-            collect_result=[row(status_res)], collect_statement_params=m_statement_params
-        )
+        Outcome = Row("service_status", "message")
+        row = Outcome("", m_message)
+        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$GET_SERVICE_STATUS('TEMP."test".MYSERVICE')""",
+            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
             copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)

@@ -46,6 +46,14 @@ py_test(
     ],
 )
 
+py_test(
+    name = "jobs_test",
+    srcs = ["jobs_test.py"],
+    deps = [
+        "//snowflake/ml/jobs",
+    ],
+)
+
 py_library(
     name = "jobs",
     srcs = [

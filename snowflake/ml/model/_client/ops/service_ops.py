@@ -125,6 +125,7 @@ class ServiceOperator:
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
         else:
             stage_path = None
+        self._model_deployment_spec.clear()
         self._model_deployment_spec.add_model_spec(
             database_name=database_name,
             schema_name=schema_name,
@@ -168,7 +169,7 @@ class ServiceOperator:
             schema_name=service_schema_name,
             service_name=service_name,
             service_status_list_if_exists=[
-                service_sql.ServiceStatus.READY,
+                service_sql.ServiceStatus.RUNNING,
                 service_sql.ServiceStatus.SUSPENDING,
                 service_sql.ServiceStatus.SUSPENDED,
             ],
@@ -331,7 +332,7 @@ class ServiceOperator:
                     include_message=True,
                     statement_params=statement_params,
                 )
-                if (service_status != service_sql.ServiceStatus.READY) or (
+                if (service_status != service_sql.ServiceStatus.RUNNING) or (
                     service_status != service_log_meta.service_status
                 ):
                     service_log_meta.service_status = service_status
@@ -428,7 +429,7 @@ class ServiceOperator:
         if service_status_list_if_exists is None:
             service_status_list_if_exists = [
                 service_sql.ServiceStatus.PENDING,
-                service_sql.ServiceStatus.READY,
+                service_sql.ServiceStatus.RUNNING,
                 service_sql.ServiceStatus.SUSPENDING,
                 service_sql.ServiceStatus.SUSPENDED,
                 service_sql.ServiceStatus.DONE,
@@ -538,6 +539,7 @@ class ServiceOperator:
         )
 
         try:
+            self._model_deployment_spec.clear()
             # save the spec
             self._model_deployment_spec.add_model_spec(
                 database_name=database_name,
