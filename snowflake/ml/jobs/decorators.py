@@ -24,7 +24,8 @@ def remote(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     env_vars: Optional[dict[str, str]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -40,7 +41,9 @@ def remote(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         env_vars: Environment variables to set in container
-        num_instances: The number of nodes in the job. If none specified, create a single node job.
+        target_instances: The number of nodes in the job. If none specified, create a single node job.
+        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
+            If set, the job will not start until the minimum number of nodes is available.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use for the job.
         schema: The schema to use for the job.
@@ -69,7 +72,8 @@ def remote(
                 external_access_integrations=external_access_integrations,
                 query_warehouse=query_warehouse,
                 env_vars=env_vars,
-                num_instances=num_instances,
+                target_instances=target_instances,
+                min_instances=min_instances,
                 enable_metrics=enable_metrics,
                 database=database,
                 schema=schema,

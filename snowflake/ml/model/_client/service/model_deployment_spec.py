@@ -29,6 +29,17 @@ class ModelDeploymentSpec:
         self.database: Optional[sql_identifier.SqlIdentifier] = None
         self.schema: Optional[sql_identifier.SqlIdentifier] = None
 
+    def clear(self) -> None:
+        """Reset the deployment spec to its initial state."""
+        self._models = []
+        self._image_build = None
+        self._service = None
+        self._job = None
+        self._model_loggings = None
+        self._inference_spec = {}
+        self.database = None
+        self.schema = None
+
     def add_model_spec(
         self,
         database_name: sql_identifier.SqlIdentifier,

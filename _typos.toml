@@ -5,6 +5,7 @@ extend-ignore-identifiers-re = [
 
 [default.extend-identifiers]
 LiteralNDArrayType = "LiteralNDArrayType"
+NDFrame = "NDFrame"
 
 [default.extend-words]
 MAPE = "MAPE"

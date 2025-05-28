@@ -216,7 +216,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         explain_fn=cls._build_explain_fn(model, background_data, input_signature),
                         output_feature_names=transformed_background_data.columns,
                     )
-                except ValueError:
+                except Exception:
                     if kwargs.get("enable_explainability", None):
                         # user explicitly enabled explainability, so we should raise the error
                         raise ValueError(

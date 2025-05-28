@@ -6,7 +6,6 @@ py_test(
     name = "grid_search_integ_test",
     timeout = "long",
     srcs = ["grid_search_integ_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 5,
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
@@ -24,7 +23,6 @@ py_test(
     name = "randomized_search_integ_test",
     timeout = "long",
     srcs = ["randomized_search_integ_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 3,
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
@@ -40,7 +38,6 @@ py_test(
 py_test(
     name = "search_single_node_test",
     srcs = ["search_single_node_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 4,
     deps = [
         "//snowflake/ml/modeling/_internal:estimator_utils",
@@ -55,7 +52,6 @@ py_test(
     name = "check_output_hpo_integ_test",
     timeout = "long",
     srcs = ["check_output_hpo_integ_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 5,
     deps = [
         "//snowflake/ml/modeling/linear_model:linear_regression",

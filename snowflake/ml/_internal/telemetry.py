@@ -4,6 +4,7 @@ import enum
 import functools
 import inspect
 import operator
+import os
 import sys
 import time
 import traceback
@@ -13,7 +14,7 @@ from typing import Any, Callable, Iterable, Mapping, Optional, TypeVar, Union, c
 from typing_extensions import ParamSpec
 
 from snowflake import connector
-from snowflake.connector import telemetry as connector_telemetry, time_util
+from snowflake.connector import connect, telemetry as connector_telemetry, time_util
 from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env
 from snowflake.ml._internal.exceptions import (
@@ -35,6 +36,37 @@ _CONNECTION_TYPES = {
 
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
+
+
+def _get_login_token() -> Union[str, bytes]:
+    with open("/snowflake/session/token") as f:
+        return f.read()
+
+
+def _get_snowflake_connection() -> Optional[connector.SnowflakeConnection]:
+    conn = None
+    if os.getenv("SNOWFLAKE_HOST") is not None and os.getenv("SNOWFLAKE_ACCOUNT") is not None:
+        try:
+            conn = connect(
+                host=os.getenv("SNOWFLAKE_HOST"),
+                account=os.getenv("SNOWFLAKE_ACCOUNT"),
+                token=_get_login_token(),
+                authenticator="oauth",
+            )
+        except Exception:
+            # Failed to get a new SnowflakeConnection in SPCS. Fall back to using the active session.
+            # This will work in some cases once SPCS enables multiple authentication modes, and users select any auth.
+            pass
+
+    if conn is None:
+        try:
+            active_session = next(iter(session._get_active_sessions()))
+            conn = active_session._conn._conn if active_session.telemetry_enabled else None
+        except snowpark_exceptions.SnowparkSessionException:
+            # Failed to get an active session. No connection available.
+            pass
+
+    return conn
 
 
 @enum.unique
@@ -378,10 +410,14 @@ def send_custom_usage(
     data: Optional[dict[str, Any]] = None,
     **kwargs: Any,
 ) -> None:
-    active_session = next(iter(session._get_active_sessions()))
-    assert active_session, "Missing active session object"
+    conn = _get_snowflake_connection()
+    if conn is None:
+        raise ValueError(
+            """Snowflake connection is required to send custom telemetry. This means there
+            must be at least one active session, or that telemetry is being sent from within an SPCS service."""
+        )
 
-    client = _SourceTelemetryClient(conn=active_session._conn._conn, project=project, subproject=subproject)
+    client = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject)
     common_metrics = client._create_basic_telemetry_data(telemetry_type=telemetry_type)
     data = {**common_metrics, TelemetryField.KEY_DATA.value: data, **kwargs}
     client._send(msg=data)
@@ -501,7 +537,6 @@ def send_api_usage_telemetry(
                 return update_stmt_params_if_snowpark_df(result, statement_params)
 
             # prioritize `conn_attr_name` over the active session
-            telemetry_enabled = True
             if conn_attr_name:
                 # raise AttributeError if conn attribute does not exist in `self`
                 conn = operator.attrgetter(conn_attr_name)(args[0])
@@ -509,16 +544,10 @@ def send_api_usage_telemetry(
                     raise TypeError(
                         f"Expected a conn object of type {' or '.join(_CONNECTION_TYPES.keys())} but got {type(conn)}"
                     )
-            # get an active session
             else:
-                try:
-                    active_session = next(iter(session._get_active_sessions()))
-                    conn = active_session._conn._conn
-                    telemetry_enabled = active_session.telemetry_enabled
-                except snowpark_exceptions.SnowparkSessionException:
-                    conn = None
+                conn = _get_snowflake_connection()
 
-            if conn is None or not telemetry_enabled:
+            if conn is None:
                 # Telemetry not enabled, just execute without our additional telemetry logic
                 try:
                     return ctx.run(execute_func_with_statement_params)

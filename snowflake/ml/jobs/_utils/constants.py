@@ -5,6 +5,7 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 DEFAULT_CONTAINER_NAME = "main"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
 RESULT_PATH_ENV_VAR = "MLRS_RESULT_PATH"
+MIN_INSTANCES_ENV_VAR = "MLRS_MIN_INSTANCES"
 MEMORY_VOLUME_NAME = "dshm"
 STAGE_VOLUME_NAME = "stage-volume"
 STAGE_VOLUME_MOUNT_PATH = "/mnt/app"
@@ -37,6 +38,7 @@ RAY_PORTS = {
 # Node health check configuration
 # TODO(SNOW-1937020): Revisit the health check configuration
 ML_RUNTIME_HEALTH_CHECK_PORT = "5001"
+ENABLE_HEALTH_CHECKS_ENV_VAR = "ENABLE_HEALTH_CHECKS"
 ENABLE_HEALTH_CHECKS = "false"
 
 # Job status polling constants
@@ -46,6 +48,13 @@ JOB_POLL_MAX_DELAY_SECONDS = 1
 # Magic attributes
 IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"
 RESULT_PATH_DEFAULT_VALUE = "mljob_result.pkl"
+
+# Log start and end messages
+LOG_START_MSG = "--------------------------------\nML job started\n--------------------------------"
+LOG_END_MSG = "--------------------------------\nML job finished\n--------------------------------"
+
+# Default setting for verbose logging in get_log function
+DEFAULT_VERBOSE_LOG = False
 
 # Compute pool resource information
 # TODO: Query Snowflake for resource information instead of relying on this hardcoded

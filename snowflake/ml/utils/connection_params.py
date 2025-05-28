@@ -113,6 +113,10 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
 
     config = configparser.ConfigParser(inline_comment_prefixes="#")
 
+    snowflake_connection_name = os.getenv("SNOWFLAKE_CONNECTION_NAME")
+    if snowflake_connection_name is not None:
+        connection_name = snowflake_connection_name
+
     if connection_name:
         if not connection_name.startswith("connections."):
             connection_name = "connections." + connection_name
@@ -153,9 +157,11 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
       Ideally one should have a snowsql config file. Read more here:
       https://docs.snowflake.com/en/user-guide/snowsql-start.html#configuring-default-connection-settings
 
+      If snowsql config file does not exist, it tries auth from env variables.
+
     Args:
-        connection_name: Name of the connection to look for inside the config file. If `connection_name` is NOT given,
-            it tries auth from env variables.
+        connection_name: Name of the connection to look for inside the config file. If environment variable
+            SNOWFLAKE_CONNECTION_NAME is provided, it will override the input connection_name.
         login_file: If provided, this is used as config file instead of default one (_DEFAULT_CONNECTION_FILE).
 
     Returns:

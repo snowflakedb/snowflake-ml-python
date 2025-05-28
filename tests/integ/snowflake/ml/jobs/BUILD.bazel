@@ -73,7 +73,6 @@ py_test(
     timeout = "long",
     srcs = ["classical_models_integ_test.py"],
     optional_dependencies = [
-        "xgboost",
         "lightgbm",
     ],
     deps = [

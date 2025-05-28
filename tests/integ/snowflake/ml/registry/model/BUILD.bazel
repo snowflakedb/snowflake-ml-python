@@ -31,7 +31,6 @@ py_test(
     name = "additional_import_test",
     srcs = ["additional_import_test.py"],
     data = [":ext_module"],
-    optional_dependencies = ["xgboost"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -90,9 +89,6 @@ py_test(
     name = "registry_xgboost_model_test",
     timeout = "long",
     srcs = ["registry_xgboost_model_test.py"],
-    optional_dependencies = [
-        "xgboost",
-    ],
     shard_count = 4,
     deps = [
         ":registry_model_test_base",
@@ -118,7 +114,6 @@ py_test(
     name = "registry_custom_model_test",
     timeout = "long",
     srcs = ["registry_custom_model_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 4,
     deps = [
         ":registry_model_test_base",
@@ -131,9 +126,7 @@ py_test(
     name = "registry_pytorch_model_test",
     timeout = "long",
     srcs = ["registry_pytorch_model_test.py"],
-    optional_dependencies = [
-        "torch",
-    ],
+    optional_dependencies = ["torch"],
     shard_count = 4,
     deps = [
         ":registry_model_test_base",
@@ -167,7 +160,6 @@ py_test(
     timeout = "long",
     srcs = ["registry_modeling_model_test.py"],
     optional_dependencies = [
-        "xgboost",
         "lightgbm",
     ],
     shard_count = 4,
@@ -266,7 +258,6 @@ py_test(
 py_test(
     name = "registry_artifact_repository_test",
     srcs = ["registry_artifact_repository_test.py"],
-    optional_dependencies = ["xgboost"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -275,7 +266,6 @@ py_test(
 py_test(
     name = "registry_target_platforms_test",
     srcs = ["registry_target_platforms_test.py"],
-    optional_dependencies = ["xgboost"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal/utils:snowflake_env",

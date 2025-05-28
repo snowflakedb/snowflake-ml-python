@@ -100,6 +100,11 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
             # Parse the output using read
             read head_index head_ip head_status<<< "$head_info"
 
+            if [ "$SNOWFLAKE_JOB_INDEX" -ne "$head_index" ]; then
+                NODE_TYPE="worker"
+                echo "{constants.LOG_START_MSG}"
+            fi
+
             # Use the parsed variables
             echo "Head Instance Index: $head_index"
             echo "Head Instance IP: $head_ip"
@@ -117,9 +122,7 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
             exit 1
         fi
 
-        if [ "$SNOWFLAKE_JOB_INDEX" -ne "$head_index" ]; then
-            NODE_TYPE="worker"
-        fi
+
     fi
 
     # Common parameters for both head and worker nodes
@@ -168,6 +171,10 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
         # Start Ray on a worker node - run in background
         ray start "${{common_params[@]}}" "${{worker_params[@]}}" -v --block &
 
+        echo "Worker node started on address $eth0Ip. See more logs in the head node."
+
+        echo "{constants.LOG_END_MSG}"
+
         # Start the worker shutdown listener in the background
         echo "Starting worker shutdown listener..."
         python worker_shutdown_listener.py
@@ -189,15 +196,16 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
         # Start Ray on the head node
         ray start "${{common_params[@]}}" "${{head_params[@]}}" -v
+
         ##### End Ray configuration #####
 
         # TODO: Monitor MLRS and handle process crashes
         python -m web.ml_runtime_grpc_server &
 
         # TODO: Launch worker service(s) using SQL if Ray and MLRS successfully started
+        echo Running command: python "$@"
 
         # Run user's Python entrypoint
-        echo Running command: python "$@"
         python "$@"
 
         # After the user's job completes, signal workers to shut down

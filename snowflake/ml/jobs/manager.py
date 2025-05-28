@@ -108,7 +108,8 @@ def submit_file(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -127,7 +128,8 @@ def submit_file(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
-        num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        target_instances: The number of instances to use for the job. If none specified, single node job is created.
+        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -146,7 +148,8 @@ def submit_file(
         external_access_integrations=external_access_integrations,
         query_warehouse=query_warehouse,
         spec_overrides=spec_overrides,
-        num_instances=num_instances,
+        target_instances=target_instances,
+        min_instances=min_instances,
         enable_metrics=enable_metrics,
         database=database,
         schema=schema,
@@ -167,7 +170,8 @@ def submit_directory(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -187,7 +191,8 @@ def submit_directory(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
-        num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        target_instances: The number of instances to use for the job. If none specified, single node job is created.
+        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -207,7 +212,8 @@ def submit_directory(
         external_access_integrations=external_access_integrations,
         query_warehouse=query_warehouse,
         spec_overrides=spec_overrides,
-        num_instances=num_instances,
+        target_instances=target_instances,
+        min_instances=min_instances,
         enable_metrics=enable_metrics,
         database=database,
         schema=schema,
@@ -228,7 +234,8 @@ def _submit_job(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -250,7 +257,8 @@ def _submit_job(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -267,7 +275,7 @@ def _submit_job(
         # TODO: Log lengths of args, env_vars, and spec_overrides values
         "pip_requirements",
         "external_access_integrations",
-        "num_instances",
+        "target_instances",
         "enable_metrics",
     ],
 )
@@ -283,7 +291,8 @@ def _submit_job(
     external_access_integrations: Optional[list[str]] = None,
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -303,7 +312,8 @@ def _submit_job(
         external_access_integrations: A list of external access integrations.
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
-        num_instances: The number of instances to use for the job. If none specified, single node job is created.
+        target_instances: The number of instances to use for the job. If none specified, single node job is created.
+        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -316,13 +326,12 @@ def _submit_job(
         RuntimeError: If required Snowflake features are not enabled.
         ValueError: If database or schema value(s) are invalid
     """
-    # Display warning about PrPr parameters
-    if num_instances is not None:
-        logger.warning(
-            "_submit_job() parameter 'num_instances' is in private preview since 1.8.2. Do not use it in production.",
-        )
     if database and not schema:
         raise ValueError("Schema must be specified if database is specified.")
+    if target_instances < 1 or min_instances < 1:
+        raise ValueError("target_instances and min_instances must be greater than 0.")
+    if min_instances > target_instances:
+        raise ValueError("min_instances must be less than or equal to target_instances.")
 
     session = session or get_active_session()
 
@@ -350,7 +359,8 @@ def _submit_job(
         compute_pool=compute_pool,
         payload=uploaded_payload,
         args=args,
-        num_instances=num_instances,
+        target_instances=target_instances,
+        min_instances=min_instances,
         enable_metrics=enable_metrics,
     )
     spec_overrides = spec_utils.generate_spec_overrides(
@@ -381,9 +391,9 @@ def _submit_job(
     if query_warehouse:
         query.append("QUERY_WAREHOUSE = IDENTIFIER(?)")
         params.append(query_warehouse)
-    if num_instances:
+    if target_instances > 1:
         query.append("REPLICAS = ?")
-        params.append(num_instances)
+        params.append(target_instances)
 
     # Submit job
     query_text = "\n".join(line for line in query if line)

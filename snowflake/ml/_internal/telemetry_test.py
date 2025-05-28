@@ -767,6 +767,23 @@ class TelemetryTest(parameterized.TestCase):
         expected_dict.update(expected_params or {})
         self.assertEqual(statement_params, statement_params | expected_dict)
 
+    @mock.patch.dict("os.environ", {"SNOWFLAKE_HOST": "test-host", "SNOWFLAKE_ACCOUNT": "test-account"})
+    @mock.patch("snowflake.ml._internal.telemetry._get_login_token")
+    def test_get_snowflake_connection(self, mock_get_login_token: mock.MagicMock) -> None:
+        mock_get_login_token.return_value = "test-token"
+
+        mock_conn = mock.MagicMock(spec=connector.SnowflakeConnection)
+        with mock.patch("snowflake.ml._internal.telemetry.connect", return_value=mock_conn) as mock_connect:
+            from snowflake.ml._internal import telemetry
+
+            conn = telemetry._get_snowflake_connection()
+
+            mock_connect.assert_called_once_with(
+                host="test-host", account="test-account", token="test-token", authenticator="oauth"
+            )
+
+            self.assertEqual(conn, mock_conn)
+
 
 if __name__ == "__main__":
     absltest.main()

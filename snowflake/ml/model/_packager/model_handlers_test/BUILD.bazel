@@ -86,9 +86,6 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
-    optional_dependencies = [
-        "xgboost",
-    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",
@@ -137,9 +134,6 @@ py_test(
 py_test(
     name = "xgboost_test",
     srcs = ["xgboost_test.py"],
-    optional_dependencies = [
-        "xgboost",
-    ],
     deps = [
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_packager:model_packager",

@@ -85,7 +85,8 @@ def generate_service_spec(
     compute_pool: str,
     payload: types.UploadedPayload,
     args: Optional[list[str]] = None,
-    num_instances: Optional[int] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
     enable_metrics: bool = False,
 ) -> dict[str, Any]:
     """
@@ -96,13 +97,13 @@ def generate_service_spec(
         compute_pool: Compute pool for job execution
         payload: Uploaded job payload
         args: Arguments to pass to entrypoint script
-        num_instances: Number of instances for multi-node job
+        target_instances: Number of instances for multi-node job
         enable_metrics: Enable platform metrics for the job
+        min_instances: Minimum number of instances required to start the job
 
     Returns:
         Job service specification
     """
-    is_multi_node = num_instances is not None and num_instances > 1
     image_spec = _get_image_spec(session, compute_pool)
 
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
@@ -180,10 +181,11 @@ def generate_service_spec(
     }
     endpoints = []
 
-    if is_multi_node:
+    if target_instances > 1:
         # Update environment variables for multi-node job
         env_vars.update(constants.RAY_PORTS)
-        env_vars["ENABLE_HEALTH_CHECKS"] = constants.ENABLE_HEALTH_CHECKS
+        env_vars[constants.ENABLE_HEALTH_CHECKS_ENV_VAR] = constants.ENABLE_HEALTH_CHECKS
+        env_vars[constants.MIN_INSTANCES_ENV_VAR] = str(min_instances)
 
         # Define Ray endpoints for intra-service instance communication
         ray_endpoints = [

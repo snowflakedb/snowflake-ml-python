@@ -1,4 +1,4 @@
-from typing import cast
+from typing import Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -338,10 +338,12 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
 
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+        enable_explainability=[True, False, None],
     )
     def test_skl_model_with_categorical_dtype_columns(
         self,
         registry_test_fn: str,
+        enable_explainability: Optional[bool],
     ) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
@@ -378,21 +380,39 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             ),
         }
 
+        def _check_explain(res: pd.DataFrame) -> None:
+            expected_explanations = shap.Explainer(pipeline[-1], preprocessor.transform(df[input_features]))(
+                preprocessor.transform(df[input_features])
+            ).values
+            actual_explain_df = handlers_utils.convert_explanations_to_2D_df(pipeline, expected_explanations)
+            rename_columns = {
+                old_col_name: new_col_name for old_col_name, new_col_name in zip(actual_explain_df.columns, res.columns)
+            }
+            actual_explain_df.rename(columns=rename_columns, inplace=True)
+            pd.testing.assert_frame_equal(
+                res,
+                actual_explain_df,
+                check_dtype=False,
+            )
+
+        prediction_assert_fns = {
+            "predict": (
+                df[input_features],
+                lambda res: pd.testing.assert_series_equal(
+                    res["output_feature_0"],
+                    pd.Series(pipeline.predict(df[input_features]), name="output_feature_0"),
+                    check_dtype=False,
+                ),
+            ),
+        }
+        if enable_explainability:
+            prediction_assert_fns["explain"] = (df[input_features], _check_explain)
+
         getattr(self, registry_test_fn)(
             model=pipeline,
             sample_input_data=df[input_features],
-            prediction_assert_fns={
-                "predict": (
-                    df[input_features],
-                    lambda res: pd.testing.assert_series_equal(
-                        res["output_feature_0"],
-                        pd.Series(pipeline.predict(df[input_features]), name="output_feature_0"),
-                        check_dtype=False,
-                    ),
-                ),
-            },
-            # TODO(SNOW-1677301): Add support for explainability for categorical columns
-            options={"enable_explainability": False},
+            prediction_assert_fns=prediction_assert_fns,
+            options={"enable_explainability": enable_explainability},
             signatures=expected_signatures,
         )
 
@@ -435,8 +455,37 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                     _check_score_samples,
                 ),
             },
-            options={"enable_explainability": False},
             signatures=expected_signatures,
+        )
+
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+        enable_explainability=[False, None],  # Explainability not yet supported
+    )
+    def test_scaler_random_forest_pipeline(self, registry_test_fn: str, enable_explainability: Optional[bool]) -> None:
+        X, y = datasets.load_iris(return_X_y=True)
+        pipeline = SK_pipeline.Pipeline(
+            [
+                ("scaler", preprocessing.StandardScaler()),
+                ("classifier", ensemble.RandomForestClassifier(random_state=42)),
+            ]
+        )
+        pipeline.fit(X, y)
+
+        getattr(self, registry_test_fn)(
+            model=pipeline,
+            sample_input_data=X,
+            prediction_assert_fns={
+                "predict": (
+                    X,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(pipeline.predict(X), columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            options={"enable_explainability": enable_explainability},
         )
 
 

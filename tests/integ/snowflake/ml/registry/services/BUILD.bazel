@@ -16,6 +16,7 @@ py_library(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/registry",
         "//snowflake/ml/utils:authentication",
         "//snowflake/ml/utils:connection_params",
@@ -29,7 +30,6 @@ py_test(
     name = "registry_xgboost_model_deployment_pip_test",
     timeout = "eternal",
     srcs = ["registry_xgboost_model_deployment_pip_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 2,
     deps = [
         ":registry_model_deployment_test_base",
@@ -94,7 +94,6 @@ py_test(
     name = "registry_custom_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 1,
     deps = [
         ":registry_model_deployment_test_base",
@@ -105,7 +104,6 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
-    optional_dependencies = ["xgboost"],
     shard_count = 3,
     deps = [
         ":registry_model_deployment_test_base",

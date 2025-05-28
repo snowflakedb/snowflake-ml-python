@@ -5,7 +5,7 @@ import numpy as np
 from absl.testing import absltest, parameterized
 
 from snowflake.ml import jobs
-from snowflake.ml.utils import sql_client
+from snowflake.ml.utils import sql_client  # type: ignore[attr-defined]
 from snowflake.snowpark import exceptions as sp_exceptions
 from tests.integ.snowflake.ml.jobs import (
     reflection_utils,

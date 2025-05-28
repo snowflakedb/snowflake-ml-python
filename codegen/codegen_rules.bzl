@@ -123,8 +123,6 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
     )
 
     optional_dependencies = None
-    if module == "xgboost":
-        optional_dependencies = ["xgboost"]
     if module == "lightgbm":
         optional_dependencies = ["lightgbm"]
 

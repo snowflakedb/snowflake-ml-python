@@ -1,6 +1,26 @@
 # Release History
 
-## 1.8.4
+## 1.8.5
+
+### Bug Fixes
+
+- Registry: Fixed a bug when listing and deleting container services.
+- Registry: Fixed explainability issue with scikit-learn pipelines, skipping explain function creation.
+- Explainability: bump minimum streamlit version down to 1.30
+- Modeling: Make XGBoost a required dependency (xgboost is not a required dependency in snowflake-ml-python 1.8.4).
+
+### Breaking change
+
+- ML Job: Rename argument `num_instances` to `target_instances` in job submission APIs and
+  change type from `Optional[int]` to `int`
+
+### New Features
+
+- Registry: No longer checks if the snowflake-ml-python version is available in the Snowflake Conda channel when logging
+  an SPCS-only model.
+- ML Job: Add `min_instances` argument to the job decorator to allow waiting for workers to be ready.
+
+## 1.8.4 (2025-05-12)
 
 ### Bug Fixes
 

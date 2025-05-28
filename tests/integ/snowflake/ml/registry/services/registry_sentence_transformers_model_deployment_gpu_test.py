@@ -6,6 +6,7 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -68,7 +69,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
                     ),
                 ),
             },
-            options={"cuda_version": "11.8"},
+            options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             pip_requirements=pip_requirements,
         )

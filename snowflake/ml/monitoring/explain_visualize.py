@@ -1,4 +1,4 @@
-from typing import Union, cast, overload
+from typing import Any, Union, cast, overload
 
 import altair as alt
 import numpy as np
@@ -6,8 +6,14 @@ import pandas as pd
 
 import snowflake.snowpark.dataframe as sp_df
 from snowflake import snowpark
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._signatures import snowpark_handler
+
+DEFAULT_FIGSIZE = (1400, 500)
+DEFAULT_VIOLIN_FIGSIZE = (1400, 100)
+MAX_ANNOTATION_LENGTH = 20
+MIN_DISTANCE = 10  # Increase minimum distance between labels for more spreading in plot_force
 
 
 @overload
@@ -15,7 +21,7 @@ def plot_force(
     shap_row: snowpark.Row,
     features_row: snowpark.Row,
     base_value: float = 0.0,
-    figsize: tuple[float, float] = (600, 200),
+    figsize: tuple[float, float] = DEFAULT_FIGSIZE,
     contribution_threshold: float = 0.05,
 ) -> alt.LayerChart:
     ...
@@ -26,7 +32,7 @@ def plot_force(
     shap_row: pd.Series,
     features_row: pd.Series,
     base_value: float = 0.0,
-    figsize: tuple[float, float] = (600, 200),
+    figsize: tuple[float, float] = DEFAULT_FIGSIZE,
     contribution_threshold: float = 0.05,
 ) -> alt.LayerChart:
     ...
@@ -36,7 +42,7 @@ def plot_force(
     shap_row: Union[pd.Series, snowpark.Row],
     features_row: Union[pd.Series, snowpark.Row],
     base_value: float = 0.0,
-    figsize: tuple[float, float] = (600, 200),
+    figsize: tuple[float, float] = DEFAULT_FIGSIZE,
     contribution_threshold: float = 0.05,
 ) -> alt.LayerChart:
     """
@@ -53,7 +59,17 @@ def plot_force(
 
     Returns:
         Altair chart object
+
+    Raises:
+        SnowflakeMLException: If the contribution threshold is not between 0 and 1,
+            or if no features with significant contributions are found.
     """
+    if not (0 < contribution_threshold and contribution_threshold < 1):
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError("contribution_threshold must be between 0 and 1."),
+        )
+
     if isinstance(shap_row, snowpark.Row):
         shap_row = pd.Series(shap_row.as_dict())
     if isinstance(features_row, snowpark.Row):
@@ -67,7 +83,7 @@ def plot_force(
             {
                 "feature": feature,
                 "feature_value": features_row.iloc[index],
-                "feature_annotated": f"{feature}: {features_row.iloc[index]}",
+                "feature_annotated": f"{feature}: {features_row.iloc[index]}"[:MAX_ANNOTATION_LENGTH],
                 "influence_value": shap_row.iloc[index],
                 "bar_direction": positive_label if shap_row.iloc[index] >= 0 else negative_label,
             }
@@ -95,11 +111,11 @@ def plot_force(
 
         if row_influence_value >= 0:
             start = current_position_pos - spacing
-            end = current_position_pos - row_influence_value
+            end = current_position_pos - row_influence_value - spacing
             current_position_pos = end
         else:
             start = current_position_neg + spacing
-            end = current_position_neg + abs(row_influence_value)
+            end = current_position_neg + abs(row_influence_value) + spacing
             current_position_neg = end
 
         positions.append(
@@ -108,11 +124,21 @@ def plot_force(
                 "end": end,
                 "avg": (start + end) / 2,
                 "influence_value": row_influence_value,
-                "influence_annotated": f"Influence: {row_influence_value}",
                 "feature_value": row["feature_value"],
                 "feature_annotated": row["feature_annotated"],
                 "bar_direction": row["bar_direction"],
+                "bar_y": 0,
+                "feature": row["feature"],
             }
+        )
+
+    if len(positions) == 0:
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "No features with significant contributions found. Try lowering the contribution_threshold,"
+                "and verify the input is non-empty."
+            ),
         )
 
     position_df = pd.DataFrame(positions)
@@ -127,12 +153,13 @@ def plot_force(
         .encode(
             x=alt.X("start:Q", title="Feature Impact"),
             x2=alt.X2("end:Q"),
+            y=alt.Y("bar_y:Q", axis=None),
             color=alt.Color(
                 "bar_direction:N",
                 scale=alt.Scale(domain=[positive_label, negative_label], range=[red_color, blue_color]),
                 legend=alt.Legend(title="Influence Direction"),
             ),
-            tooltip=["influence_value", "feature_value"],
+            tooltip=["feature", "influence_value", "feature_value"],
         )
         .properties(title="Feature Influence (SHAP values)", width=width, height=height)
     ).interactive()
@@ -142,6 +169,7 @@ def plot_force(
         .mark_point(shape="triangle", filled=True, fillOpacity=1)
         .encode(
             x=alt.X("start:Q"),
+            y=alt.Y("bar_y:Q", axis=None),
             angle=alt.Angle("bar_direction:N", scale=alt.Scale(domain=["Positive", "Negative"], range=[90, -90])),
             color=alt.Color(
                 "bar_direction:N", scale=alt.Scale(domain=["Positive", "Negative"], range=["#1f77b4", "#d62728"])
@@ -154,37 +182,147 @@ def plot_force(
     # Add a vertical line at the base value
     zero_line: alt.Chart = alt.Chart(pd.DataFrame({"x": [base_value]})).mark_rule(strokeDash=[3, 3]).encode(x="x:Q")
 
-    # Add text labels on each bar
-    feature_labels = (
-        alt.Chart(position_df)
-        .mark_text(align="center", baseline="line-bottom", dy=30, fontSize=11)
+    # Calculate label positions to avoid overlap and ensure labels are spread apart horizontally
+
+    # Sort by bar center (avg) for label placement
+    sorted_positions = sorted(positions, key=lambda x: x["avg"])
+
+    # Improved label spreading algorithm:
+    # Calculate the minimum and maximum x positions (avg) for the bars
+    min_x = min(pos["avg"] for pos in sorted_positions)
+    max_x = max(pos["avg"] for pos in sorted_positions)
+    n_labels = len(sorted_positions)
+    # Calculate the minimum required distance between labels
+    spread_width = max_x - min_x
+    if n_labels > 1:
+        space_per_label = spread_width / (n_labels - 1)
+        # If space_per_label is less than min_distance, use min_distance instead
+        effective_distance = max(space_per_label, MIN_DISTANCE)
+    else:
+        effective_distance = 0
+
+    # Start from min_x - offset, and assign label_x for each label from left to right
+    offset = -effective_distance  # Start a bit to the left
+    label_positions = []
+    label_lines = []
+    placed_label_xs: list[float] = []
+    for i, pos in enumerate(sorted_positions):
+        if i == 0:
+            label_x = min_x + offset
+        else:
+            label_x = placed_label_xs[-1] + effective_distance
+        placed_label_xs.append(label_x)
+        label_positions.append(
+            {
+                "label_x": label_x,
+                "label_y": 1,  # Place labels below the bars
+                "feature_annotated": pos["feature_annotated"],
+                "feature_value": pos["feature_value"],
+            }
+        )
+        # Draw a diagonal line from the bar to the label
+        label_lines.append(
+            {
+                "x": pos["avg"],
+                "x2": label_x,
+                "y": 0,
+                "y2": 1,
+            }
+        )
+
+    label_positions_df = pd.DataFrame(label_positions)
+    label_lines_df = pd.DataFrame(label_lines)
+
+    # Draw diagonal lines from bar to label
+    label_connectors = (
+        alt.Chart(label_lines_df)
+        .mark_rule(strokeDash=[2, 2], color="grey")
         .encode(
-            x=alt.X("avg:Q"),
-            text=alt.Text("feature_annotated:N"),  # Display with 2 decimal places
-            color=alt.value("grey"),  # Label color for positive values
+            x="x:Q",
+            x2="x2:Q",
+            y=alt.Y("y:Q", axis=None),
+            y2="y2:Q",
+        )
+    )
+
+    # Place labels at adjusted positions
+    feature_labels = (
+        alt.Chart(label_positions_df)
+        .mark_text(align="center", baseline="line-bottom", dy=0, fontSize=11)
+        .encode(
+            x=alt.X("label_x:Q"),
+            y=alt.Y("label_y:Q", axis=None),
+            text=alt.Text("feature_annotated:N"),
+            color=alt.value("grey"),
             tooltip=["feature_value"],
         )
     )
 
-    return cast(alt.LayerChart, bars + feature_labels + zero_line + arrow)
+    return cast(alt.LayerChart, bars + feature_labels + zero_line + arrow + label_connectors)
 
 
 def plot_influence_sensitivity(
-    feature_values: pd.Series, shap_values: pd.Series, figsize: tuple[float, float] = (600, 400)
-) -> alt.Chart:
+    shap_values: type_hints.SupportedDataType,
+    feature_values: type_hints.SupportedDataType,
+    figsize: tuple[float, float] = DEFAULT_FIGSIZE,
+) -> Any:
     """
-    Create a SHAP dependence scatter plot for a specific feature.
+    Create a SHAP dependence scatter plot for a specific feature. If a DataFrame is provided, a select box
+    will be displayed to select the feature. This is only supported in Snowflake notebooks.
+    If Streamlit is not available and a DataFrame is passed in, an ImportError will be raised.
 
     Args:
-        feature_values: pandas Series containing the feature values for a specific feature
-        shap_values: pandas Series containing the SHAP values for the same feature
+        feature_values: pandas Series or 2D array containing the feature values for a specific feature
+        shap_values: pandas Series or 2D array containing the SHAP values for the same feature
         figsize: tuple of (width, height) for the plot
 
     Returns:
         Altair chart object
 
+    Raises:
+        ValueError: If the types of feature_values and shap_values are not the same
+
     """
 
+    use_streamlit = False
+    feature_values_df = _convert_to_pandas_df(feature_values)
+    shap_values_df = _convert_to_pandas_df(shap_values)
+
+    if len(shap_values_df.shape) > 1:
+        feature_values, shap_values, st = _prepare_feature_values_for_streamlit(feature_values_df, shap_values_df)
+        use_streamlit = True
+    elif feature_values_df.shape[0] != shap_values_df.shape[0]:
+        raise ValueError("Feature values and SHAP values must have the same number of rows.")
+
+    scatter = _create_scatter_plot(feature_values, shap_values, figsize)
+    return st.altair_chart(scatter) if use_streamlit else scatter
+
+
+def _prepare_feature_values_for_streamlit(
+    feature_values_df: pd.DataFrame, shap_values: pd.DataFrame
+) -> tuple[pd.Series, pd.Series, Any]:
+    try:
+        from IPython import get_ipython
+        from snowbook.executor.python_transformer import IPythonProxy
+
+        assert isinstance(
+            get_ipython(), IPythonProxy
+        ), "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks."
+    except ImportError:
+        raise RuntimeError(
+            "Influence sensitivity plots for a DataFrame are not supported outside of Snowflake notebooks."
+        )
+
+    import streamlit as st
+
+    feature_columns = feature_values_df.columns
+    chosen_ft: str = st.selectbox("Feature:", feature_columns)
+    feature_values = feature_values_df[chosen_ft]
+    shap_values = shap_values.iloc[:, feature_columns.get_loc(chosen_ft)]
+    return feature_values, shap_values, st
+
+
+def _create_scatter_plot(feature_values: pd.Series, shap_values: pd.Series, figsize: tuple[float, float]) -> alt.Chart:
     unique_vals = np.sort(np.unique(feature_values.values))
     max_points_per_unique_value = float(np.max(np.bincount(np.searchsorted(unique_vals, feature_values.values))))
     points_per_value = len(feature_values.values) / len(unique_vals)
@@ -224,7 +362,7 @@ def plot_influence_sensitivity(
 def plot_violin(
     shap_df: type_hints.SupportedDataType,
     feature_df: type_hints.SupportedDataType,
-    figsize: tuple[float, float] = (600, 200),
+    figsize: tuple[float, float] = DEFAULT_VIOLIN_FIGSIZE,
 ) -> alt.Chart:
     """
     Create a violin plot per feature showing the distribution of SHAP values.

@@ -217,6 +217,15 @@ bazel run --config=pre_build //bazel/requirements:sync_requirements
 
 Then, your code can use the package as if it were "installed" in the Python environment.
 
+### Run Bazel with different Python versions
+
+Set the environment variable `BAZEL_CONDA_PYTHON_VERSION` to run bazel with a different supported python version. For example,
+run a test target with Python 3.10:
+
+```sh
+BAZEL_CONDA_PYTHON_VERSION=3.10 bazel test --config=core //my/test:target
+```
+
 ### Adding a new dependencies
 
 Please provide the following fields when adding a new record:
@@ -455,8 +464,7 @@ with caller's rights, set `test_callers_rights=False`. (Owner's rights store pro
 ### Compatibility Test
 
 To test if your code is compatible with previous version simply, you could work based on `CommonTestBase` in
-`tests/integ/snowflake/ml/test_utils/common_test_base.py`. An example of such test could be found in
-`tests/integ/snowflake/ml/registry/model_registry_compat_test.py`.
+`tests/integ/snowflake/ml/test_utils/common_test_base.py`.
 
 To write a such test, you need to
 

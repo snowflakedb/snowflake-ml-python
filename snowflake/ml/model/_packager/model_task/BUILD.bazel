@@ -17,7 +17,6 @@ py_test(
     optional_dependencies = [
         "catboost",
         "lightgbm",
-        "xgboost",
     ],
     deps = [
         ":model_task_utils",

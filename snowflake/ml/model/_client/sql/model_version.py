@@ -293,7 +293,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             options = {"parallel": 10}
             cursor = self._session._conn._cursor
-            cursor._download(stage_location_url, str(target_path), options)  # type: ignore[union-attr]
+            cursor._download(stage_location_url, str(target_path), options)
             cursor.fetchall()
         else:
             query_result_checker.SqlResultValidator(

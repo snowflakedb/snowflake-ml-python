@@ -7,7 +7,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 import shap
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, linear_model, multioutput
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
@@ -20,8 +20,9 @@ from snowflake.ml.model._packager.model_handlers.sklearn import (
 )
 
 
-class SKLearnHandlerTest(absltest.TestCase):
-    def test_skl_multiple_output_proba_no_explain(self) -> None:
+class SKLearnHandlerTest(parameterized.TestCase):
+    @parameterized.product(enable_explainability=[False, None])  # type: ignore[misc]
+    def test_skl_multiple_output_proba_no_explain(self, enable_explainability: Optional[bool]) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
@@ -79,9 +80,7 @@ class SKLearnHandlerTest(absltest.TestCase):
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
                 options=model_types.SKLModelSaveOptions(
-                    {
-                        "enable_explainability": False,
-                    }
+                    enable_explainability=enable_explainability  # type: ignore[typeddict-item]
                 ),
             )
 
@@ -113,7 +112,8 @@ class SKLearnHandlerTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(model.predict(iris_X_df[-10:]), predict_method(iris_X_df[-10:]).to_numpy())
 
-    def test_skl_unsupported_explain(self) -> None:
+    @parameterized.product(enable_explainability=[False, None])  # type: ignore[misc]
+    def test_skl_unsupported_explain(self, enable_explainability: Optional[bool]) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
@@ -151,7 +151,9 @@ class SKLearnHandlerTest(absltest.TestCase):
                 model=model,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(enable_explainability=False),
+                options=model_types.SKLModelSaveOptions(
+                    enable_explainability=enable_explainability  # type: ignore[typeddict-item]
+                ),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

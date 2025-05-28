@@ -1,4 +1,2 @@
 //tests/integ/snowflake/ml/extra_tests:xgboost_external_memory_training_test
 //tests/integ/snowflake/ml/extra_tests:pipeline_with_ohe_and_xgbr_test
-//tests/integ/snowflake/ml/registry/model:registry_artifact_repository_test
-//tests/integ/snowflake/ml/registry/model:registry_target_platforms_test

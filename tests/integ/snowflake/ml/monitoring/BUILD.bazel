@@ -19,7 +19,10 @@ py_test(
     srcs = [
         "explain_visualize_test.py",
     ],
-    optional_dependencies = ["altair"],
+    optional_dependencies = [
+        "altair",
+        "streamlit",
+    ],
     deps = [
         "//snowflake/ml/monitoring:explain_visualize",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",

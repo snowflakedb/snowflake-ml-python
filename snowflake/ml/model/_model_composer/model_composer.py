@@ -188,7 +188,9 @@ class ModelComposer:
         if not options:
             options = model_types.BaseModelSaveOption()
 
-        if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        if not snowpark_utils.is_in_stored_procedure() and target_platforms != [  # type: ignore[no-untyped-call]
+            model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES  # no information schema check for SPCS-only models
+        ]:
             snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
                 self.session,
                 reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
