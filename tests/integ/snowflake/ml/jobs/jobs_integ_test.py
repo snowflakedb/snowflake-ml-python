@@ -1,11 +1,13 @@
 import inspect
 import itertools
+import pathlib
 import re
 import tempfile
 import textwrap
 import time
 from typing import Any, Callable, Optional, cast
 from unittest import mock
+from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from packaging import version
@@ -214,7 +216,7 @@ class JobManagerTest(parameterized.TestCase):
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
                 job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                with self.assertRaises(ValueError, msg=f"id={id}"):
                     jobs.delete_job(job.id, session=self.session)
                 with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                     jobs.delete_job(job, session=self.session)
@@ -539,6 +541,24 @@ class JobManagerTest(parameterized.TestCase):
         self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         self.assertEqual(re.match(r"num_nodes: (\d+)", job.get_logs(verbose=False)).group(1), "2")
 
+    def test_min_instances_exceeding_max_nodes(self) -> None:
+        compute_pool_info = self.dbm.show_compute_pools(self.compute_pool).collect()
+        self.assertTrue(compute_pool_info, f"Could not find compute pool {self.compute_pool}")
+        max_nodes = int(compute_pool_info[0]["max_nodes"])
+
+        # Calculate a min_instances value that exceeds max_nodes
+        min_instances = max_nodes + 1
+        # Set target_instances to be greater than min_instances to pass the first validation
+        target_instances = min_instances + 1
+
+        # Attempt to submit a job with min_instances exceeding max_nodes
+        with self.assertRaisesRegex(ValueError, "min_instances .* exceeds the max_nodes"):
+            self._submit_func_as_file(
+                dummy_function,
+                min_instances=min_instances,
+                target_instances=target_instances,
+            )
+
     def test_job_with_pip_requirements(self) -> None:
         rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'PYPI%'").collect()
         if not rows:
@@ -733,6 +753,87 @@ class JobManagerTest(parameterized.TestCase):
                         dummy_function,
                         **invalid_kwargs,
                     )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (f"TMP_{uuid4().hex.upper()}", True, "SNOWFLAKE_FULL"),
+        (f"TEST_{uuid4().hex.upper()}", False, "SNOWFLAKE_SSE"),
+    )
+    def test_submit_job_from_stage(
+        self,
+        stage_name: str,
+        temporary: bool,
+        encryption: str,
+    ):
+        """
+        currently there are no commands supporting copy files from or to user stage(@~)
+        only cover these two cases
+        1. temporary stage
+        2. session stage
+
+        """
+        self.session.sql(
+            f"CREATE {'TEMPORARY' if temporary else ''} STAGE {stage_name} ENCRYPTION = (TYPE = {repr(encryption)});"
+        ).collect()
+        upload_files = TestAsset("src")
+        for path in {
+            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+            for p in upload_files.path.resolve().rglob("*")
+            if p.is_file()
+        }:
+            self.session.file.put(
+                str(path),
+                pathlib.Path(stage_name).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
+                overwrite=True,
+                auto_compress=False,
+            )
+
+        test_cases = [
+            (f"@{stage_name}/", f"@{stage_name}/subdir/sub_main.py"),
+            (f"@{stage_name}/subdir", f"@{stage_name}/subdir/sub_main.py"),
+        ]
+        for source, entrypoint in test_cases:
+            with self.subTest(source=source, entrypoint=entrypoint):
+                job = jobs.submit_from_stage(
+                    source=source,
+                    entrypoint=entrypoint,
+                    compute_pool=self.compute_pool,
+                    stage_name="payload_stage",
+                    args=["foo", "--delay", "1"],
+                    session=self.session,
+                )
+
+                self.assertEqual(job.wait(), "DONE", job.get_logs())
+
+    @parameterized.parameters(
+        [
+            {"method": "job_object"},
+            {"method": "job_id"},
+        ]
+    )
+    def test_delete_job_stage_cleanup(self, method: str) -> None:
+        """Test that deleting a job cleans up the stage files."""
+        original_schema = self.session.get_current_schema()
+        temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
+        try:
+            job = self._submit_func_as_file(dummy_function)
+            self.assertEqual(1, jobs.list_jobs(session=self.session).count())
+            stage_path = job._stage_path
+            stage_files = self.session.sql(f"LIST '{stage_path}'").collect()
+            self.assertGreater(len(stage_files), 0, "Stage should contain uploaded job files")
+
+            # Verify we can find expected files (startup.sh, requirements.txt, etc.)
+            file_names = {row["name"].split("/")[-1] for row in stage_files}
+            expected_files = {"startup.sh", "mljob_launcher.py"}
+            for expected_file in expected_files:
+                self.assertIn(expected_file, file_names, f"Expected file {expected_file} not found in stage")
+
+            jobs.delete_job(job.id if method == "job_id" else job, session=self.session)
+            remaining_files = self.session.sql(f"LIST '{stage_path}'").collect()
+            self.assertEqual(len(remaining_files), 0, "Stage files should be cleaned up after job deletion")
+            self.assertEqual(0, jobs.list_jobs(session=self.session).count())
+        finally:
+            self.dbm.drop_schema(temp_schema, if_exists=True)
+            self.session.use_schema(original_schema)
 
 
 if __name__ == "__main__":

@@ -23,14 +23,6 @@ py_library(
     srcs = ["connection_params.py"],
 )
 
-py_test(
-    name = "connection_params_test",
-    srcs = ["connection_params_test.py"],
-    deps = [
-        ":connection_params",
-    ],
-)
-
 py_library(
     name = "sparse",
     srcs = ["sparse.py"],

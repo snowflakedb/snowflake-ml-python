@@ -39,6 +39,7 @@ py_test(
     deps = [
         ":test_file_helper",
         "//snowflake/ml/jobs/_utils:payload_utils",
+        "//snowflake/ml/jobs/_utils:stage_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
@@ -122,6 +123,18 @@ py_test(
         ":test_constants",
         "//snowflake/ml/jobs",
         "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "xgb_distributed_integ_test",
+    timeout = "long",
+    srcs = ["xgb_distributed_integ_test.py"],
+    deps = [
+        ":modeling_job_test_base",
+        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

@@ -6,8 +6,6 @@ from absl import logging
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
-from snowflake import snowpark
-
 _DEFAULT_CONNECTION_FILE = "~/.snowsql/config"
 
 
@@ -136,7 +134,6 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
     return conn_params
 
 
-@snowpark._internal.utils.deprecated(version="1.8.5")
 def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] = None) -> dict[str, Union[str, bytes]]:
     """Returns a dict that can be used directly into snowflake python connector or Snowpark session config.
 

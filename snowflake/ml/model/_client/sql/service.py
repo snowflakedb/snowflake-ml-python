@@ -1,4 +1,5 @@
 import enum
+import logging
 import textwrap
 from typing import Any, Optional, Union
 
@@ -12,6 +13,8 @@ from snowflake.ml.model._client.sql import _base
 from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+logger = logging.getLogger(__name__)
 
 
 # The enum comes from https://docs.snowflake.com/en/sql-reference/sql/show-service-containers-in-service#output
@@ -81,6 +84,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     ) -> tuple[str, snowpark.AsyncJob]:
         assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
         if model_deployment_spec_yaml_str:
+            model_deployment_spec_yaml_str = snowpark_utils.escape_single_quotes(
+                model_deployment_spec_yaml_str
+            )  # type: ignore[no-untyped-call]
+            logger.info(f"Deploying model with spec={model_deployment_spec_yaml_str}")
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('{model_deployment_spec_yaml_str}')"
         else:
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('@{stage_path}/{model_deployment_spec_file_rel_path}')"

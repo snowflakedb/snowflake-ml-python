@@ -5,6 +5,9 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "types",
     srcs = ["types.py"],
+    deps = [
+        ":stage_utils",
+    ],
 )
 
 py_library(
@@ -50,11 +53,20 @@ py_library(
 )
 
 py_library(
+    name = "stage_utils",
+    srcs = ["stage_utils.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_library(
     name = "payload_utils",
     srcs = ["payload_utils.py"],
     deps = [
         ":constants",
         ":payload_scripts",
+        ":stage_utils",
         ":types",
     ],
 )
@@ -67,7 +79,16 @@ py_test(
     ],
     deps = [
         ":payload_utils",
+        ":stage_utils",
         ":test_file_helper",
+    ],
+)
+
+py_test(
+    name = "stage_utils_test",
+    srcs = ["stage_utils_test.py"],
+    deps = [
+        ":stage_utils",
     ],
 )
 
@@ -103,5 +124,6 @@ py_library(
         ":interop_utils",
         ":payload_utils",
         ":spec_utils",
+        ":stage_utils",
     ],
 )

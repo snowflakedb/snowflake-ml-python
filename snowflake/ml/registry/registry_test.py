@@ -19,75 +19,97 @@ class RegistryNameTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
 
+    def test_init_fails_if_database_does_not_exist(self) -> None:
+        c_session = cast(Session, self.m_session)
+        with mock.patch.object(c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = []
+            with self.assertRaises(ValueError) as cm:
+                registry.Registry(c_session, database_name="NOT_A_DB", schema_name="TEST")
+            self.assertEqual("Database NOT_A_DB does not exist.", str(cm.exception))
+
+    def test_init_fails_if_schema_does_not_exist(self) -> None:
+        c_session = cast(Session, self.m_session)
+        with mock.patch.object(c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.side_effect = [[mock.Mock()], []]
+            with self.assertRaises(ValueError) as cm:
+                registry.Registry(c_session, database_name="TEMP", schema_name="NOT_A_SCHEMA")
+            self.assertEqual("Schema NOT_A_SCHEMA does not exist.", str(cm.exception))
+
     def test_location(self) -> None:
         c_session = cast(Session, self.m_session)
-        with platform_capabilities.PlatformCapabilities.mock_features():
-            r = registry.Registry(c_session, database_name="TEMP", schema_name="TEST")
-            self.assertEqual(r.location, "TEMP.TEST")
-            r = registry.Registry(c_session, database_name="TEMP", schema_name="test")
-            self.assertEqual(r.location, "TEMP.TEST")
-            r = registry.Registry(c_session, database_name="TEMP", schema_name='"test"')
-            self.assertEqual(r.location, 'TEMP."test"')
+        with mock.patch.object(c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.side_effect = lambda: [mock.Mock()]
+            with platform_capabilities.PlatformCapabilities.mock_features():
+                r = registry.Registry(c_session, database_name="TEMP", schema_name="TEST")
+                self.assertEqual(r.location, "TEMP.TEST")
+                r = registry.Registry(c_session, database_name="TEMP", schema_name="test")
+                self.assertEqual(r.location, "TEMP.TEST")
+                r = registry.Registry(c_session, database_name="TEMP", schema_name='"test"')
+                self.assertEqual(r.location, 'TEMP."test"')
 
-            with mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True):
-                r = registry.Registry(c_session, database_name="TEMP")
-                self.assertEqual(r.location, "TEMP.PUBLIC")
-                r = registry.Registry(c_session, database_name="temp")
-                self.assertEqual(r.location, "TEMP.PUBLIC")
-                r = registry.Registry(c_session, database_name='"temp"')
-                self.assertEqual(r.location, '"temp".PUBLIC')
+                with mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True):
+                    r = registry.Registry(c_session, database_name="TEMP")
+                    self.assertEqual(r.location, "TEMP.PUBLIC")
+                    r = registry.Registry(c_session, database_name="temp")
+                    self.assertEqual(r.location, "TEMP.PUBLIC")
+                    r = registry.Registry(c_session, database_name='"temp"')
+                    self.assertEqual(r.location, '"temp".PUBLIC')
 
-            with mock.patch.object(c_session, "get_current_schema", return_value=None, create=True):
-                r = registry.Registry(c_session, database_name="TEMP")
-                self.assertEqual(r.location, "TEMP.PUBLIC")
-                r = registry.Registry(c_session, database_name="temp")
-                self.assertEqual(r.location, "TEMP.PUBLIC")
-                r = registry.Registry(c_session, database_name='"temp"')
-                self.assertEqual(r.location, '"temp".PUBLIC')
+                with mock.patch.object(c_session, "get_current_schema", return_value=None, create=True):
+                    r = registry.Registry(c_session, database_name="TEMP")
+                    self.assertEqual(r.location, "TEMP.PUBLIC")
+                    r = registry.Registry(c_session, database_name="temp")
+                    self.assertEqual(r.location, "TEMP.PUBLIC")
+                    r = registry.Registry(c_session, database_name='"temp"')
+                    self.assertEqual(r.location, '"temp".PUBLIC')
 
-            with mock.patch.object(c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True):
-                r = registry.Registry(c_session, schema_name="TEMP")
-                self.assertEqual(r.location, "CURRENT_TEMP.TEMP")
-                r = registry.Registry(c_session, schema_name="temp")
-                self.assertEqual(r.location, "CURRENT_TEMP.TEMP")
-                r = registry.Registry(c_session, schema_name='"temp"')
-                self.assertEqual(r.location, 'CURRENT_TEMP."temp"')
-
-            with mock.patch.object(c_session, "get_current_database", return_value='"current_temp"', create=True):
-                r = registry.Registry(c_session, schema_name="TEMP")
-                self.assertEqual(r.location, '"current_temp".TEMP')
-                r = registry.Registry(c_session, schema_name="temp")
-                self.assertEqual(r.location, '"current_temp".TEMP')
-                r = registry.Registry(c_session, schema_name='"temp"')
-                self.assertEqual(r.location, '"current_temp"."temp"')
-
-            with mock.patch.object(c_session, "get_current_database", return_value=None, create=True):
-                with self.assertRaisesRegex(ValueError, "You need to provide a database to use registry."):
+                with mock.patch.object(c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True):
                     r = registry.Registry(c_session, schema_name="TEMP")
+                    self.assertEqual(r.location, "CURRENT_TEMP.TEMP")
+                    r = registry.Registry(c_session, schema_name="temp")
+                    self.assertEqual(r.location, "CURRENT_TEMP.TEMP")
+                    r = registry.Registry(c_session, schema_name='"temp"')
+                    self.assertEqual(r.location, 'CURRENT_TEMP."temp"')
 
-            with mock.patch.object(
-                c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-            ), mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True):
-                r = registry.Registry(c_session)
-                self.assertEqual(r.location, "CURRENT_TEMP.CURRENT_TEMP")
+                with mock.patch.object(c_session, "get_current_database", return_value='"current_temp"', create=True):
+                    r = registry.Registry(c_session, schema_name="TEMP")
+                    self.assertEqual(r.location, '"current_temp".TEMP')
+                    r = registry.Registry(c_session, schema_name="temp")
+                    self.assertEqual(r.location, '"current_temp".TEMP')
+                    r = registry.Registry(c_session, schema_name='"temp"')
+                    self.assertEqual(r.location, '"current_temp"."temp"')
 
-            with mock.patch.object(
-                c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-            ), mock.patch.object(c_session, "get_current_schema", return_value='"current_temp"', create=True):
-                r = registry.Registry(c_session)
-                self.assertEqual(r.location, 'CURRENT_TEMP."current_temp"')
+                with mock.patch.object(c_session, "get_current_database", return_value=None, create=True):
+                    with self.assertRaisesRegex(ValueError, "You need to provide a database to use registry."):
+                        r = registry.Registry(c_session, schema_name="TEMP")
 
-            with mock.patch.object(
-                c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-            ), mock.patch.object(c_session, "get_current_schema", return_value=None, create=True):
-                r = registry.Registry(c_session)
-                self.assertEqual(r.location, "CURRENT_TEMP.PUBLIC")
+                with mock.patch.object(
+                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
+                ), mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True):
+                    r = registry.Registry(c_session)
+                    self.assertEqual(r.location, "CURRENT_TEMP.CURRENT_TEMP")
+
+                with mock.patch.object(
+                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
+                ), mock.patch.object(c_session, "get_current_schema", return_value='"current_temp"', create=True):
+                    r = registry.Registry(c_session)
+                    self.assertEqual(r.location, 'CURRENT_TEMP."current_temp"')
+
+                with mock.patch.object(
+                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
+                ), mock.patch.object(c_session, "get_current_schema", return_value=None, create=True):
+                    r = registry.Registry(c_session)
+                    self.assertEqual(r.location, "CURRENT_TEMP.PUBLIC")
 
 
 class RegistryTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
+        patcher = mock.patch.object(self.c_session, "sql")
+        self.addCleanup(patcher.stop)
+        self.mock_sql = patcher.start()
+        self.mock_sql.return_value.collect.side_effect = [[mock.Mock()], [mock.Mock()]]
         with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = registry.Registry(self.c_session, database_name="TEMP", schema_name="TEST")
 
@@ -323,6 +345,11 @@ class MonitorRegistryTest(absltest.TestCase):
             actual_score_columns=[self.test_label_score_column_name],
         )
 
+        patcher = mock.patch.object(self.m_session, "sql")
+        self.addCleanup(patcher.stop)
+        self.mock_sql = patcher.start()
+        self.mock_sql.return_value.collect.side_effect = [[mock.Mock()], [mock.Mock()]]
+
         session = cast(Session, self.m_session)
         with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = registry.Registry(
@@ -334,6 +361,10 @@ class MonitorRegistryTest(absltest.TestCase):
 
     def test_registry_monitoring_disabled_properly(self) -> None:
         session = cast(Session, self.m_session)
+        patcher = mock.patch.object(session, "sql")
+        self.addCleanup(patcher.stop)
+        self.mock_sql = patcher.start()
+        self.mock_sql.return_value.collect.side_effect = [[mock.Mock()], [mock.Mock()]]
         with platform_capabilities.PlatformCapabilities.mock_features():
             m_r = registry.Registry(
                 session,

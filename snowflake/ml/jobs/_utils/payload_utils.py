@@ -12,7 +12,7 @@ import cloudpickle as cp
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml.jobs._utils import constants, types
+from snowflake.ml.jobs._utils import constants, stage_utils, types
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 
@@ -217,20 +217,23 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 ).strip()
 
 
-def resolve_source(source: Union[Path, Callable[..., Any]]) -> Union[Path, Callable[..., Any]]:
+def resolve_source(
+    source: Union[Path, stage_utils.StagePath, Callable[..., Any]]
+) -> Union[Path, stage_utils.StagePath, Callable[..., Any]]:
     if callable(source):
         return source
-    elif isinstance(source, Path):
-        # Validate source
-        source = source
+    elif isinstance(source, (Path, stage_utils.StagePath)):
         if not source.exists():
             raise FileNotFoundError(f"{source} does not exist")
         return source.absolute()
     else:
-        raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
+        raise ValueError("Unsupported source type. Source must be a stage, file, directory, or callable.")
 
 
-def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Optional[Path]) -> types.PayloadEntrypoint:
+def resolve_entrypoint(
+    source: Union[Path, stage_utils.StagePath, Callable[..., Any]],
+    entrypoint: Optional[Union[stage_utils.StagePath, Path]],
+) -> types.PayloadEntrypoint:
     if callable(source):
         # Entrypoint is generated for callable payloads
         return types.PayloadEntrypoint(
@@ -245,11 +248,11 @@ def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Opti
             # Infer entrypoint from source
             entrypoint = parent
         else:
-            raise ValueError("entrypoint must be provided when source is a directory")
+            raise ValueError("Entrypoint must be provided when source is a directory")
     elif entrypoint.is_absolute():
         # Absolute path - validate it's a subpath of source dir
         if not entrypoint.is_relative_to(parent):
-            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint})")
+            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint}")
     else:
         # Relative path
         if (abs_entrypoint := entrypoint.absolute()).is_relative_to(parent) and abs_entrypoint.is_file():
@@ -265,6 +268,7 @@ def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Opti
             "Entrypoint not found. Ensure the entrypoint is a valid file and is under"
             f" the source directory (source={parent}, entrypoint={entrypoint})"
         )
+
     if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
         raise ValueError(
             "Unsupported entrypoint type:"
@@ -285,8 +289,9 @@ class JobPayload:
         *,
         pip_requirements: Optional[list[str]] = None,
     ) -> None:
-        self.source = Path(source) if isinstance(source, str) else source
-        self.entrypoint = Path(entrypoint) if isinstance(entrypoint, str) else entrypoint
+        # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
+        self.source = stage_utils.identify_stage_path(source) if isinstance(source, str) else source
+        self.entrypoint = stage_utils.identify_stage_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
 
     def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
@@ -310,7 +315,7 @@ class JobPayload:
             ).collect()
 
         # Upload payload to stage
-        if not isinstance(source, Path):
+        if not isinstance(source, (Path, stage_utils.StagePath)):
             source_code = generate_python_code(source, source_code_display=True)
             _ = session.file.put_stream(
                 io.BytesIO(source_code.encode()),
@@ -321,27 +326,38 @@ class JobPayload:
             source = Path(entrypoint.file_path.parent)
             if not any(r.startswith("cloudpickle") for r in pip_requirements):
                 pip_requirements.append(f"cloudpickle~={version.parse(cp.__version__).major}.0")
-        elif source.is_dir():
-            # Manually traverse the directory and upload each file, since Snowflake PUT
-            # can't handle directories. Reduce the number of PUT operations by using
-            # wildcard patterns to batch upload files with the same extension.
-            for path in {
-                p.parent.joinpath(f"*{p.suffix}") if p.suffix else p for p in source.resolve().rglob("*") if p.is_file()
-            }:
+
+        elif isinstance(source, stage_utils.StagePath):
+            # copy payload to stage
+            if source == entrypoint.file_path:
+                source = source.parent
+            source_path = source.as_posix() + "/"
+            session.sql(f"copy files into {stage_path}/ from {source_path}").collect()
+
+        elif isinstance(source, Path):
+            if source.is_dir():
+                # Manually traverse the directory and upload each file, since Snowflake PUT
+                # can't handle directories. Reduce the number of PUT operations by using
+                # wildcard patterns to batch upload files with the same extension.
+                for path in {
+                    p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+                    for p in source.resolve().rglob("*")
+                    if p.is_file()
+                }:
+                    session.file.put(
+                        str(path),
+                        stage_path.joinpath(path.parent.relative_to(source)).as_posix(),
+                        overwrite=True,
+                        auto_compress=False,
+                    )
+            else:
                 session.file.put(
-                    str(path),
-                    stage_path.joinpath(path.parent.relative_to(source)).as_posix(),
+                    str(source.resolve()),
+                    stage_path.as_posix(),
                     overwrite=True,
                     auto_compress=False,
                 )
-        else:
-            session.file.put(
-                str(source.resolve()),
-                stage_path.as_posix(),
-                overwrite=True,
-                auto_compress=False,
-            )
-            source = source.parent
+                source = source.parent
 
         # Upload requirements
         # TODO: Check if payload includes both a requirements.txt file and pip_requirements

@@ -20,19 +20,11 @@ py_library(
 )
 
 py_library(
-    name = "model_monitor_version",
-    srcs = [
-        "model_monitor_version.py",
-    ],
-)
-
-py_library(
     name = "model_monitor",
     srcs = [
         "model_monitor.py",
     ],
     deps = [
-        ":model_monitor_version",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/monitoring/_client:model_monitor_sql_client",
@@ -66,7 +58,6 @@ py_package(
     deps = [
         ":explain_visualize",
         ":model_monitor",
-        ":model_monitor_version",
         ":shap_lib",
         "//snowflake/ml/monitoring/_manager:model_monitor_manager",
         "//snowflake/ml/monitoring/entities:entities_lib",

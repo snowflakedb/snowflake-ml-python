@@ -15,7 +15,6 @@ py_library(
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/monitoring:model_monitor",
-        "//snowflake/ml/monitoring:model_monitor_version",
         "//snowflake/ml/monitoring/_manager:model_monitor_manager",
         "//snowflake/ml/monitoring/entities:entities_lib",
         "//snowflake/ml/registry/_manager:model_manager",

@@ -7,7 +7,7 @@ from absl.testing import absltest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params
 
 
 class SnowflakeLoginOptionsTest(absltest.TestCase):
