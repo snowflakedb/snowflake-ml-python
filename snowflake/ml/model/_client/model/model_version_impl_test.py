@@ -47,9 +47,10 @@ class ModelVersionImplTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        with mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
+        with (
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+        ):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
                     self.c_session,
@@ -66,9 +67,10 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
     def test_ref(self) -> None:
-        with mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ) as mock_list_methods, pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
+        with (
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods,
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+        ):
             model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
                     self.c_session,
@@ -129,9 +131,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_set_metric_1(self) -> None:
         m_metadata = metadata_ops.ModelVersionMetadataSchema(metrics={"a": 1})
-        with mock.patch.object(
-            self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata
-        ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
+        with (
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load,
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save,
+        ):
             self.m_mv.set_metric("a", 2)
             mock_load.assert_called_once_with(
                 database_name=None,
@@ -151,9 +154,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_set_metric_2(self) -> None:
         m_metadata = metadata_ops.ModelVersionMetadataSchema(metrics={"a": 1})
-        with mock.patch.object(
-            self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata
-        ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
+        with (
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load,
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save,
+        ):
             self.m_mv.set_metric("b", 2)
             mock_load.assert_called_once_with(
                 database_name=None,
@@ -173,9 +177,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_delete_metric_1(self) -> None:
         m_metadata = metadata_ops.ModelVersionMetadataSchema(metrics={"a": 1})
-        with mock.patch.object(
-            self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata
-        ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
+        with (
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load,
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save,
+        ):
             self.m_mv.delete_metric("a")
             mock_load.assert_called_once_with(
                 database_name=None,
@@ -195,9 +200,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_delete_metric_2(self) -> None:
         m_metadata = metadata_ops.ModelVersionMetadataSchema(metrics={"a": 1})
-        with mock.patch.object(
-            self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata
-        ) as mock_load, mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save:
+        with (
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "load", return_value=m_metadata) as mock_load,
+            mock.patch.object(self.m_mv._model_ops._metadata_ops, "save") as mock_save,
+        ):
             with self.assertRaisesRegex(KeyError, "Cannot find metric with name b"):
                 self.m_mv.delete_metric("b")
                 mock_load.assert_called_once_with(
@@ -572,9 +578,10 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv.export(tmpdir)
 
     def test_export_model(self) -> None:
-        with mock.patch.object(
-            self.m_mv._model_ops, "download_files"
-        ) as mock_download_files, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
             self.m_mv.export(tmpdir)
             mock_download_files.assert_called_once_with(
                 database_name=None,
@@ -587,9 +594,10 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
     def test_export_full(self) -> None:
-        with mock.patch.object(
-            self.m_mv._model_ops, "download_files"
-        ) as mock_download_files, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+            tempfile.TemporaryDirectory() as tmpdir,
+        ):
             self.m_mv.export(tmpdir, export_mode=model_version_impl.ExportMode.FULL)
             mock_download_files.assert_called_once_with(
                 database_name=None,
@@ -613,11 +621,15 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.model = m_model
 
         m_options = model_types.SKLModelLoadOptions()
-        with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
-            model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
-        ) as mock_load, mock.patch.object(
-            m_pk_for_validation.meta.env, "validate_with_local_env", return_value=[]
-        ) as mock_validate_with_local_env:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+            mock.patch.object(
+                model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
+            ) as mock_load,
+            mock.patch.object(
+                m_pk_for_validation.meta.env, "validate_with_local_env", return_value=[]
+            ) as mock_validate_with_local_env,
+        ):
             self.assertEqual(self.m_mv.load(options=m_options), m_model)
             mock_download_files.assert_has_calls(
                 [
@@ -661,11 +673,15 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.model = m_model
 
         m_options = model_types.SKLModelLoadOptions()
-        with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
-            model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
-        ) as mock_load, mock.patch.object(
-            m_pk_for_validation.meta.env, "validate_with_local_env", return_value=["error"]
-        ) as mock_validate_with_local_env:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+            mock.patch.object(
+                model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
+            ) as mock_load,
+            mock.patch.object(
+                m_pk_for_validation.meta.env, "validate_with_local_env", return_value=["error"]
+            ) as mock_validate_with_local_env,
+        ):
             with self.assertRaisesRegex(ValueError, "Unable to load this model due to following validation errors"):
                 self.assertEqual(self.m_mv.load(options=m_options), m_model)
             mock_download_files.assert_has_calls(
@@ -695,9 +711,10 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.model = m_model
 
         m_options = model_types.SKLModelLoadOptions()
-        with mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files, mock.patch.object(
-            model_composer.ModelComposer, "load", side_effect=[m_pk]
-        ) as mock_load:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+            mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]) as mock_load,
+        ):
             self.assertEqual(self.m_mv.load(force=True, options=m_options), m_model)
             mock_download_files.assert_has_calls(
                 [
@@ -1021,10 +1038,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=["TEST_EAI"],
             )
 
-        with mock.patch.object(
-            self.m_mv._service_ops, "invoke_job_method", return_value=m_df
-        ) as mock_invoke_job_method, mock.patch.object(
-            self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
+        with (
+            mock.patch.object(self.m_mv._service_ops, "invoke_job_method", return_value=m_df) as mock_invoke_job_method,
+            mock.patch.object(self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"),
         ):
             self.m_mv._run_job(
                 X=m_df,
@@ -1070,10 +1086,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with mock.patch.object(
-            self.m_mv._service_ops, "invoke_job_method", return_value=m_df
-        ) as mock_invoke_job_method, mock.patch.object(
-            self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"
+        with (
+            mock.patch.object(self.m_mv._service_ops, "invoke_job_method", return_value=m_df) as mock_invoke_job_method,
+            mock.patch.object(self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"),
         ):
             # fully qualified names
             self.m_mv._run_job(
@@ -1119,6 +1134,219 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("TEST_EAI")],
                 statement_params=mock.ANY,
             )
+
+    def test_repr_html_happy_path_with_functions_and_metrics(self) -> None:
+        """Test _repr_html_ method with functions and metrics present."""
+        # Mock model signature with _repr_html_ method
+        mock_signature = mock.MagicMock()
+        mock_signature._repr_html_.return_value = "<div>Mock Signature HTML</div>"
+
+        m_functions = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": mock_signature,
+                    "is_partitioned": False,
+                }
+            ),
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict_table"',
+                    "target_method": "predict_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": mock_signature,
+                    "is_partitioned": True,
+                }
+            ),
+        ]
+
+        self.m_mv._functions = m_functions
+
+        # Mock the various methods used in _repr_html_
+        with (
+            mock.patch.object(
+                self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_REGRESSION
+            ) as mock_get_task,
+            mock.patch.object(self.m_mv, "show_functions", return_value=m_functions) as mock_show_functions,
+            mock.patch.object(
+                self.m_mv, "show_metrics", return_value={"accuracy": 0.95, "precision": 0.87, "recall": None}
+            ) as mock_show_metrics,
+            mock.patch.object(
+                type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value="Test model version"
+            ),
+        ):
+            html = self.m_mv._repr_html_()
+
+            # Verify basic structure and content
+            self.assertIn("Model Version Details", html)
+            self.assertIn("MODEL", html)  # model name
+            self.assertIn('"v1"', html)  # version name
+            self.assertIn('TEMP."test".MODEL', html)  # fully qualified name
+            self.assertIn("Test model version", html)  # description
+            self.assertIn("TABULAR_REGRESSION", html)  # task
+
+            # Verify functions section
+            self.assertIn("Functions", html)
+            self.assertIn('"predict"', html)
+            self.assertIn('"predict_table"', html)
+            self.assertIn("FUNCTION", html)
+            self.assertIn("TABLE_FUNCTION", html)
+            self.assertIn("False", html)  # is_partitioned for predict
+            self.assertIn("True", html)  # is_partitioned for predict_table
+            self.assertIn("Mock Signature HTML", html)  # signature HTML
+
+            # Verify metrics section
+            self.assertIn("Metrics", html)
+            self.assertIn("accuracy", html)
+            self.assertIn("0.95", html)
+            self.assertIn("precision", html)
+            self.assertIn("0.87", html)
+            self.assertIn("recall", html)
+            self.assertIn("N/A", html)  # None value displayed as N/A
+
+            # Verify method calls
+            mock_get_task.assert_called_once()
+            mock_show_functions.assert_called_once()
+            mock_show_metrics.assert_called_once()
+
+    def test_repr_html_happy_path_no_functions_no_metrics(self) -> None:
+        """Test _repr_html_ method with no functions and no metrics."""
+        with (
+            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_BINARY_CLASSIFICATION),
+            mock.patch.object(self.m_mv, "show_functions", return_value=[]),
+            mock.patch.object(self.m_mv, "show_metrics", return_value={}),
+            mock.patch.object(type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value=""),
+        ):
+            html = self.m_mv._repr_html_()
+
+            # Verify basic structure
+            self.assertIn("Model Version Details", html)
+            self.assertIn("MODEL", html)
+            self.assertIn('"v1"', html)
+            self.assertIn("TABULAR_BINARY_CLASSIFICATION", html)
+
+            # Verify empty states
+            self.assertIn("No functions available", html)
+            self.assertIn("No metrics available", html)
+
+    def test_repr_html_happy_path_signature_fallback(self) -> None:
+        """Test _repr_html_ method when signature._repr_html_() fails and falls back to string representation."""
+        # Mock signature that raises exception in _repr_html_
+        mock_signature = mock.MagicMock()
+        mock_signature._repr_html_.side_effect = Exception("Signature HTML error")
+        # Mock the string representation by setting configure_mock
+        mock_signature.configure_mock(**{"__str__.return_value": "ModelSignature(inputs=[...], outputs=[...])"})
+
+        m_functions = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": mock_signature,
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+
+        with (
+            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_REGRESSION),
+            mock.patch.object(self.m_mv, "show_functions", return_value=m_functions),
+            mock.patch.object(self.m_mv, "show_metrics", return_value={"f1_score": 0.89}),
+            mock.patch.object(
+                type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value="Fallback test"
+            ),
+        ):
+            html = self.m_mv._repr_html_()
+
+            # Verify fallback to string representation in <pre> tag
+            self.assertIn("<pre style='margin: 5px 0;'>", html)
+            self.assertIn("ModelSignature(inputs=[...], outputs=[...])", html)
+            self.assertIn("f1_score", html)
+            self.assertIn("0.89", html)
+
+    def test_repr_html_happy_path_mixed_metric_values(self) -> None:
+        """Test _repr_html_ method with various metric value types."""
+        with (
+            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_MULTI_CLASSIFICATION),
+            mock.patch.object(self.m_mv, "show_functions", return_value=[]),
+            mock.patch.object(
+                self.m_mv,
+                "show_metrics",
+                return_value={
+                    "string_metric": "excellent",
+                    "int_metric": 42,
+                    "float_metric": 3.14159,
+                    "none_metric": None,
+                    "bool_metric": True,
+                    "list_metric": [1, 2, 3],
+                },
+            ),
+            mock.patch.object(
+                type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value="Mixed metrics test"
+            ),
+        ):
+            html = self.m_mv._repr_html_()
+
+            # Verify all metric types are displayed correctly
+            self.assertIn("string_metric", html)
+            self.assertIn("excellent", html)
+            self.assertIn("int_metric", html)
+            self.assertIn("42", html)
+            self.assertIn("float_metric", html)
+            self.assertIn("3.14159", html)
+            self.assertIn("none_metric", html)
+            self.assertIn("N/A", html)  # None displays as N/A
+            self.assertIn("bool_metric", html)
+            self.assertIn("True", html)
+            self.assertIn("list_metric", html)
+            self.assertIn("[1, 2, 3]", html)
+
+    def test_repr_html_happy_path_function_details(self) -> None:
+        """Test _repr_html_ method with detailed function information."""
+        mock_signature = mock.MagicMock()
+        mock_signature._repr_html_.return_value = "<div class='signature'>Detailed Signature</div>"
+
+        m_functions = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"custom_predict"',
+                    "target_method": "custom_predict_method",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": mock_signature,
+                    "is_partitioned": True,
+                }
+            ),
+        ]
+
+        with (
+            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_RANKING),
+            mock.patch.object(self.m_mv, "show_functions", return_value=m_functions),
+            mock.patch.object(self.m_mv, "show_metrics", return_value={"auc": 0.92}),
+            mock.patch.object(
+                type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value="Custom function test"
+            ),
+        ):
+            html = self.m_mv._repr_html_()
+
+            # Verify function details are displayed correctly
+            self.assertIn('"custom_predict"', html)
+            self.assertIn("custom_predict_method", html)
+            self.assertIn("TABLE_FUNCTION", html)
+            self.assertIn("True", html)  # is_partitioned
+            self.assertIn("Detailed Signature", html)
+
+            # Verify details structure
+            self.assertIn("Target Method:", html)
+            self.assertIn("Function Type:", html)
+            self.assertIn("Partitioned:", html)
+            self.assertIn("Signature:", html)
+
+            # Verify collapsible structure
+            self.assertIn("<details", html)
+            self.assertIn("<summary", html)
 
 
 if __name__ == "__main__":

@@ -325,13 +325,14 @@ class ServiceOperator:
                         )
                         continue
 
-                service_status, message = self._service_client.get_service_status(
+                statuses = self._service_client.get_service_container_statuses(
                     database_name=service_log_meta.service.database_name,
                     schema_name=service_log_meta.service.schema_name,
                     service_name=service_log_meta.service.service_name,
                     include_message=True,
                     statement_params=statement_params,
                 )
+                service_status = statuses[0].service_status
                 if (service_status != service_sql.ServiceStatus.RUNNING) or (
                     service_status != service_log_meta.service_status
                 ):
@@ -341,7 +342,19 @@ class ServiceOperator:
                         f"{service_log_meta.service.display_service_name} is "
                         f"{service_log_meta.service_status.value}."
                     )
-                    module_logger.info(f"Service message: {message}")
+                    for status in statuses:
+                        if status.instance_id is not None:
+                            instance_status, container_status = None, None
+                            if status.instance_status is not None:
+                                instance_status = status.instance_status.value
+                            if status.container_status is not None:
+                                container_status = status.container_status.value
+                            module_logger.info(
+                                f"Instance[{status.instance_id}]: "
+                                f"instance status: {instance_status}, "
+                                f"container status: {container_status}, "
+                                f"message: {status.message}"
+                            )
 
                 new_logs, new_offset = fetch_logs(
                     service_log_meta.service,
@@ -353,13 +366,14 @@ class ServiceOperator:
 
                 # check if model build service is done
                 if not service_log_meta.is_model_build_service_done:
-                    service_status, _ = self._service_client.get_service_status(
+                    statuses = self._service_client.get_service_container_statuses(
                         database_name=model_build_service.database_name,
                         schema_name=model_build_service.schema_name,
                         service_name=model_build_service.service_name,
                         include_message=False,
                         statement_params=statement_params,
                     )
+                    service_status = statuses[0].service_status
 
                     if service_status == service_sql.ServiceStatus.DONE:
                         set_service_log_metadata_to_model_inference(
@@ -436,13 +450,14 @@ class ServiceOperator:
                 service_sql.ServiceStatus.FAILED,
             ]
         try:
-            service_status, _ = self._service_client.get_service_status(
+            statuses = self._service_client.get_service_container_statuses(
                 database_name=database_name,
                 schema_name=schema_name,
                 service_name=service_name,
                 include_message=False,
                 statement_params=statement_params,
             )
+            service_status = statuses[0].service_status
             return any(service_status == status for status in service_status_list_if_exists)
         except exceptions.SnowparkSQLException:
             return False

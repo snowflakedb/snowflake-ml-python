@@ -43,11 +43,14 @@ class ModelImplTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
-            with mock.patch.object(
-                self.m_model._model_ops, "validate_existence", return_value=True
-            ) as mock_validate_existence, mock.patch.object(
-                self.m_model._model_ops, "get_version_by_alias", return_value=None
-            ) as mock_get_version_by_alias:
+            with (
+                mock.patch.object(
+                    self.m_model._model_ops, "validate_existence", return_value=True
+                ) as mock_validate_existence,
+                mock.patch.object(
+                    self.m_model._model_ops, "get_version_by_alias", return_value=None
+                ) as mock_get_version_by_alias,
+            ):
                 mv = self.m_model.version("v1")
                 self.assertEqual(mv, m_mv)
                 mock_validate_existence.assert_called_once_with(
@@ -88,10 +91,11 @@ class ModelImplTest(absltest.TestCase):
                 )
 
     def test_version_not_exist(self) -> None:
-        with mock.patch.object(
-            self.m_model._model_ops, "validate_existence", return_value=False
-        ) as mock_validate_existence, mock.patch.object(
-            self.m_model._model_ops, "get_version_by_alias", return_value=None
+        with (
+            mock.patch.object(
+                self.m_model._model_ops, "validate_existence", return_value=False
+            ) as mock_validate_existence,
+            mock.patch.object(self.m_model._model_ops, "get_version_by_alias", return_value=None),
         ):
             with self.assertRaisesRegex(
                 ValueError, 'Unable to find version or alias with name V1 in model TEMP."test"'
@@ -214,16 +218,15 @@ class ModelImplTest(absltest.TestCase):
             )
 
     def test_default_getter(self) -> None:
-        with mock.patch.object(
-            self.m_model._model_ops,
-            "get_default_version",
-            return_value=sql_identifier.SqlIdentifier("V1", case_sensitive=True),
-        ) as mock_get_default_version, mock.patch.object(
-            self.m_model._model_ops, "validate_existence", return_value=True
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), mock.patch.object(
-            self.m_model._model_ops, "get_version_by_alias", return_value=None
+        with (
+            mock.patch.object(
+                self.m_model._model_ops,
+                "get_default_version",
+                return_value=sql_identifier.SqlIdentifier("V1", case_sensitive=True),
+            ) as mock_get_default_version,
+            mock.patch.object(self.m_model._model_ops, "validate_existence", return_value=True),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(self.m_model._model_ops, "get_version_by_alias", return_value=None),
         ):
             self.assertEqual("V1", self.m_model.default.version_name)
             mock_get_default_version.assert_called_once_with(
@@ -250,12 +253,14 @@ class ModelImplTest(absltest.TestCase):
                 aliases=["LAST"],
             ),
         ]
-        with mock.patch.object(
-            self.m_model._model_ops._model_client,
-            "show_versions",
-            return_value=m_list_res,
-        ), mock.patch.object(self.m_model._model_ops, "validate_existence", return_value=True), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        with (
+            mock.patch.object(
+                self.m_model._model_ops._model_client,
+                "show_versions",
+                return_value=m_list_res,
+            ),
+            mock.patch.object(self.m_model._model_ops, "validate_existence", return_value=True),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
         ):
             self.assertEqual(self.m_model.first().version_name, '"v1"')
             self.assertEqual(self.m_model.last().version_name, '"v2"')
@@ -271,10 +276,9 @@ class ModelImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with mock.patch.object(
-            self.m_model._model_ops, "set_default_version"
-        ) as mock_set_default_version, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        with (
+            mock.patch.object(self.m_model._model_ops, "set_default_version") as mock_set_default_version,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
         ):
             mv = model_version_impl.ModelVersion._ref(
                 self.m_model._model_ops,
@@ -462,6 +466,62 @@ class ModelImplTest(absltest.TestCase):
                 new_model_name=sql_identifier.SqlIdentifier("MODEL2"),
                 statement_params=mock.ANY,
             )
+
+    def test_repr_html(self) -> None:
+        """Test the HTML representation of a model."""
+        mock_version = mock.MagicMock()
+        mock_version.version_name = '"v1"'
+
+        with (
+            mock.patch.object(type(self.m_model), "default", new_callable=mock.PropertyMock, return_value=mock_version),
+            mock.patch.object(
+                type(self.m_model), "comment", new_callable=mock.PropertyMock, return_value="Model Description"
+            ),
+            mock.patch.object(
+                self.m_model,
+                "show_versions",
+                return_value=pd.DataFrame(
+                    [
+                        {
+                            "name": "v1",
+                            "comment": "Version 1",
+                            "created_on": "2024-01-01",
+                            "is_default_version": True,
+                            "model_name": "MODEL",
+                        },
+                        {
+                            "name": "v2",
+                            "comment": "Version 2",
+                            "created_on": "2024-01-02",
+                            "is_default_version": False,
+                            "model_name": "MODEL",
+                        },
+                    ]
+                ),
+            ),
+            mock.patch.object(self.m_model, "show_tags", return_value={"tag1": "value1", "tag2": "value2"}),
+        ):
+            html = self.m_model._repr_html_()
+
+            # Check basic model info
+            self.assertIn("MODEL", html)
+            self.assertIn("Model Description", html)
+            self.assertIn('"v1"', html)
+
+            # Check versions
+            self.assertIn("v1", html)
+            self.assertIn("v2", html)
+            self.assertIn("Version 1", html)
+            self.assertIn("Version 2", html)
+            self.assertIn("2024-01-01", html)
+            self.assertIn("2024-01-02", html)
+            self.assertIn("(Default)", html)
+
+            # Check tags
+            self.assertIn("tag1", html)
+            self.assertIn("value1", html)
+            self.assertIn("tag2", html)
+            self.assertIn("value2", html)
 
 
 if __name__ == "__main__":

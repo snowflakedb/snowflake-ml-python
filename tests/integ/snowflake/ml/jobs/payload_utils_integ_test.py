@@ -10,6 +10,8 @@ from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
 _TEST_SCHEMA = "ML_JOB_TEST_SCHEMA"
 
+_TEST_STAGE = "TEST_STAGE"
+
 
 def function_with_pos_arg(a: str, b: int) -> None:
     print(a, b + 1)
@@ -44,6 +46,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         cls.dbm.cleanup_schemas(prefix=_TEST_SCHEMA, expire_days=1)
         cls.db = cls.session.get_current_database()
         cls.schema = cls.dbm.create_random_schema(prefix=_TEST_SCHEMA)
+        cls.stage = cls.dbm.create_stage(stage_name=_TEST_STAGE, schema_name=cls.schema, db_name=cls.db)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -116,6 +119,61 @@ class PayloadUtilsTests(parameterized.TestCase):
         actual_entrypoint = next(
             item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
         )
+        self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
+        self.assertEqual(self.session.sql(f"LIST {stage_path}").count(), expected_file_count)
+
+    @parameterized.parameters(
+        (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", f"@{_TEST_STAGE}/main.py", "main.py", 1),
+        (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "main.py", 1),
+        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "main.py", 6),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "main.py", 6),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/subdir/sub_main.py", "subdir/sub_main.py", 6),
+        (TestAsset("src"), f"@{_TEST_STAGE}/subdir", f"@{_TEST_STAGE}/subdir/sub_main.py", "sub_main.py", 1),
+    )
+    def test_copy_payload_positive(
+        self,
+        upload_files: TestAsset,
+        source: str,
+        entrypoint: Optional[str],
+        expected_entrypoint: str,
+        expected_file_count: int,
+    ) -> None:
+        stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+        if upload_files.path.is_dir():
+            for path in {
+                p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+                for p in upload_files.path.resolve().rglob("*")
+                if p.is_file()
+            }:
+                self.session.file.put(
+                    str(path),
+                    pathlib.Path(_TEST_STAGE).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
+                    overwrite=True,
+                    auto_compress=False,
+                )
+        else:
+            self.session.file.put(
+                str(upload_files.path.resolve()),
+                f"{_TEST_STAGE}",
+                overwrite=True,
+                auto_compress=False,
+            )
+        payload = payload_utils.JobPayload(
+            source=source,
+            entrypoint=entrypoint,
+        )
+
+        uploaded_payload = payload.upload(self.session, stage_path)
+
+        system_files_count = 6
+        expected_file_count = expected_file_count + system_files_count
+        if callable(source):
+            expected_file_count += 1
+
+        actual_entrypoint = next(
+            item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
+        )
+
         self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
         self.assertEqual(self.session.sql(f"LIST {stage_path}").count(), expected_file_count)
 
