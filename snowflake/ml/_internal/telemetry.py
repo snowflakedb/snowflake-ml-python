@@ -411,16 +411,13 @@ def send_custom_usage(
     **kwargs: Any,
 ) -> None:
     conn = _get_snowflake_connection()
-    if conn is None:
-        raise ValueError(
-            """Snowflake connection is required to send custom telemetry. This means there
-            must be at least one active session, or that telemetry is being sent from within an SPCS service."""
-        )
 
-    client = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject)
-    common_metrics = client._create_basic_telemetry_data(telemetry_type=telemetry_type)
-    data = {**common_metrics, TelemetryField.KEY_DATA.value: data, **kwargs}
-    client._send(msg=data)
+    # Send telemetry if Snowflake connection is available.
+    if conn is not None:
+        client = _SourceTelemetryClient(conn=conn, project=project, subproject=subproject)
+        common_metrics = client._create_basic_telemetry_data(telemetry_type=telemetry_type)
+        data = {**common_metrics, TelemetryField.KEY_DATA.value: data, **kwargs}
+        client._send(msg=data)
 
 
 def send_api_usage_telemetry(

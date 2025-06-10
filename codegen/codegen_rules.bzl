@@ -88,6 +88,7 @@ def autogen_estimators(module, estimator_info_list):
                 "//snowflake/ml/_internal/utils:temp_file_utils",
                 "//snowflake/ml/_internal/utils:query_result_checker",
                 "//snowflake/ml/_internal/utils:identifier",
+                "//snowflake/ml/_internal/utils:connection_params",
                 "//snowflake/ml/model:model_signature",
                 "//snowflake/ml/model/_signatures:utils",
                 "//snowflake/ml/modeling/_internal:estimator_utils",

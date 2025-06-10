@@ -1,4 +1,6 @@
+import dataclasses
 import enum
+import logging
 import textwrap
 from typing import Any, Optional, Union
 
@@ -13,26 +15,59 @@ from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
+logger = logging.getLogger(__name__)
 
-# The enum comes from https://docs.snowflake.com/en/sql-reference/sql/show-service-containers-in-service#output
-# except UNKNOWN
+
 class ServiceStatus(enum.Enum):
-    UNKNOWN = "UNKNOWN"  # status is unknown because we have not received enough data from K8s yet.
-    PENDING = "PENDING"  # resource set is being created, can't be used yet
-    SUSPENDING = "SUSPENDING"  # the service is set to suspended but the resource set is still in deleting state
-    SUSPENDED = "SUSPENDED"  # the service is suspended and the resource set is deleted
-    DELETING = "DELETING"  # resource set is being deleted
-    FAILED = "FAILED"  # resource set has failed and cannot be used anymore
-    DONE = "DONE"  # resource set has finished running
-    INTERNAL_ERROR = "INTERNAL_ERROR"  # there was an internal service error.
+    PENDING = "PENDING"
     RUNNING = "RUNNING"
+    FAILED = "FAILED"
+    DONE = "DONE"
+    SUSPENDING = "SUSPENDING"
+    SUSPENDED = "SUSPENDED"
+    DELETING = "DELETING"
     DELETED = "DELETED"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class InstanceStatus(enum.Enum):
+    PENDING = "PENDING"
+    READY = "READY"
+    FAILED = "FAILED"
+    TERMINATING = "TERMINATING"
+    SUCCEEDED = "SUCCEEDED"
+
+
+class ContainerStatus(enum.Enum):
+    PENDING = "PENDING"
+    READY = "READY"
+    DONE = "DONE"
+    FAILED = "FAILED"
+    UNKNOWN = "UNKNOWN"
+
+
+@dataclasses.dataclass
+class ServiceStatusInfo:
+    """
+    Class containing information about service container status.
+    Reference: https://docs.snowflake.com/en/sql-reference/sql/show-service-containers-in-service
+    """
+
+    service_status: ServiceStatus
+    instance_id: Optional[int] = None
+    instance_status: Optional[InstanceStatus] = None
+    container_status: Optional[ContainerStatus] = None
+    message: Optional[str] = None
 
 
 class ServiceSQLClient(_base._BaseSQLClient):
     MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME = "name"
     MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME = "ingress_url"
     SERVICE_STATUS = "service_status"
+    INSTANCE_ID = "instance_id"
+    INSTANCE_STATUS = "instance_status"
+    CONTAINER_STATUS = "status"
+    MESSAGE = "message"
 
     def build_model_container(
         self,
@@ -81,6 +116,10 @@ class ServiceSQLClient(_base._BaseSQLClient):
     ) -> tuple[str, snowpark.AsyncJob]:
         assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
         if model_deployment_spec_yaml_str:
+            model_deployment_spec_yaml_str = snowpark_utils.escape_single_quotes(
+                model_deployment_spec_yaml_str
+            )  # type: ignore[no-untyped-call]
+            logger.info(f"Deploying model with spec={model_deployment_spec_yaml_str}")
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('{model_deployment_spec_yaml_str}')"
         else:
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('@{stage_path}/{model_deployment_spec_file_rel_path}')"
@@ -192,7 +231,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         )
         return str(rows[0][system_func])
 
-    def get_service_status(
+    def get_service_container_statuses(
         self,
         *,
         database_name: Optional[sql_identifier.SqlIdentifier],
@@ -200,18 +239,27 @@ class ServiceSQLClient(_base._BaseSQLClient):
         service_name: sql_identifier.SqlIdentifier,
         include_message: bool = False,
         statement_params: Optional[dict[str, Any]] = None,
-    ) -> tuple[ServiceStatus, Optional[str]]:
+    ) -> list[ServiceStatusInfo]:
         fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         query = f"SHOW SERVICE CONTAINERS IN SERVICE {fully_qualified_object_name}"
         rows = self._session.sql(query).collect(statement_params=statement_params)
-        if len(rows) == 0:
-            return ServiceStatus.UNKNOWN, None
-        row = rows[0]
-        service_status = row[ServiceSQLClient.SERVICE_STATUS]
-        message = row["message"] if include_message else None
-        if not isinstance(service_status, ServiceStatus):
-            return ServiceStatus.UNKNOWN, message
-        return ServiceStatus(service_status), message
+        statuses = []
+        for r in rows:
+            instance_status, container_status = None, None
+            if r[ServiceSQLClient.INSTANCE_STATUS] is not None:
+                instance_status = InstanceStatus(r[ServiceSQLClient.INSTANCE_STATUS])
+            if r[ServiceSQLClient.CONTAINER_STATUS] is not None:
+                container_status = ContainerStatus(r[ServiceSQLClient.CONTAINER_STATUS])
+            statuses.append(
+                ServiceStatusInfo(
+                    service_status=ServiceStatus(r[ServiceSQLClient.SERVICE_STATUS]),
+                    instance_id=r[ServiceSQLClient.INSTANCE_ID],
+                    instance_status=instance_status,
+                    container_status=container_status,
+                    message=r[ServiceSQLClient.MESSAGE] if include_message else None,
+                )
+            )
+        return statuses
 
     def drop_service(
         self,

@@ -113,10 +113,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         )
         image_repo_name = sql_identifier.SqlIdentifier(self._test_image_repo)
 
-        mv._service_ops._stage_client.create_tmp_stage(
-            database_name=database_name_id, schema_name=schema_name_id, stage_name=stage_name
-        )
-
         mv._service_ops._model_deployment_spec.add_model_spec(
             database_name=mv._model_ops._model_version_client._database_name,
             schema_name=mv._model_ops._model_version_client._schema_name,
@@ -154,7 +150,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             with pathlib.Path(deploy_spec).open("r", encoding="utf-8") as f:
                 deploy_spec_dict = yaml.safe_load(f)
         else:
-            deploy_spec_dict = deploy_spec.to_dict()
+            deploy_spec_dict = yaml.safe_load(deploy_spec)
 
         deploy_spec_dict["image_build"]["builder_image"] = self.BUILDER_IMAGE_PATH
         deploy_spec_dict["image_build"]["base_image"] = image_path
@@ -170,8 +166,10 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             temp_dir = tempfile.TemporaryDirectory()
             workspace_path = pathlib.Path(temp_dir.name)
             deploy_spec_file_rel_path = model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH
-            stage_path = mv._service_ops._stage_client.fully_qualified_object_name(
-                database_name_id, schema_name_id, stage_name
+            stage_path = mv._service_ops._stage_client.create_tmp_stage(
+                database_name=database_name_id,
+                schema_name=schema_name_id,
+                stage_name=stage_name,
             )
             with (workspace_path / deploy_spec_file_rel_path).open("w", encoding="utf-8") as f:
                 yaml.dump(deploy_spec_dict, f)

@@ -16,6 +16,7 @@ py_library(
     srcs = ["core.py"],
     deps = [
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/utils:html_utils",
     ],
 )
 

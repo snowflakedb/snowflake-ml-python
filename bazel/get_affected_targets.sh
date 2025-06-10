@@ -93,7 +93,7 @@ filter_query_rules_file="${working_dir}/filter_query_rules"
 # -- Begin of Query Rules Heredoc --
 cat >"${filter_query_rules_file}" <<EndOfMessage
 let raw_targets = set($(<"${impacted_targets_path}")) in
-    \$raw_targets - kind('source file', \$raw_targets) - filter('//external[:/].*', \$raw_targets)
+    \$raw_targets - kind('source file', \$raw_targets) - filter('//external[:/].*', \$raw_targets) - filter('^//snowflake/ml/_internal:telemetry$', \$raw_targets)
 EndOfMessage
 # -- End of Query Rules Heredoc --
 

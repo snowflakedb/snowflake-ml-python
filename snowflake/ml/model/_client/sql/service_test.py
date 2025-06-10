@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -266,13 +266,28 @@ class ServiceSQLTest(absltest.TestCase):
         )
         self.assertEqual(res, m_res)
 
-    def test_get_service_status_include_message(self) -> None:
+    def test_get_service_container_statuses_include_message(self) -> None:
         m_statement_params = {"test": "1"}
         m_service_status = service_sql.ServiceStatus("RUNNING")
         m_message = "test message"
-        Outcome = Row("service_status", "message")
-        row = Outcome(m_service_status, m_message)
-        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
+        Outcome = Row("service_status", "instance_id", "instance_status", "status", "message")
+        rows = [
+            Outcome(
+                m_service_status,
+                0,
+                service_sql.InstanceStatus("READY"),
+                service_sql.ContainerStatus("READY"),
+                m_message,
+            ),
+            Outcome(
+                m_service_status,
+                1,
+                service_sql.InstanceStatus("TERMINATING"),
+                service_sql.ContainerStatus("UNKNOWN"),
+                m_message,
+            ),
+        ]
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows, collect_statement_params=m_statement_params)
         self.m_session.add_mock_sql(
             """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
             copy.deepcopy(m_df),
@@ -282,22 +297,46 @@ class ServiceSQLTest(absltest.TestCase):
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).get_service_status(
+        ).get_service_container_statuses(
             database_name=None,
             schema_name=None,
             service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             include_message=True,
             statement_params=m_statement_params,
         )
-        self.assertEqual(res, (m_service_status, m_message))
+        m_res = [
+            service_sql.ServiceStatusInfo(
+                service_status=m_service_status,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus("READY"),
+                container_status=service_sql.ContainerStatus("READY"),
+                message=m_message,
+            ),
+            service_sql.ServiceStatusInfo(
+                service_status=m_service_status,
+                instance_id=1,
+                instance_status=service_sql.InstanceStatus("TERMINATING"),
+                container_status=service_sql.ContainerStatus("UNKNOWN"),
+                message=m_message,
+            ),
+        ]
+        self.assertEqual(res, m_res)
 
-    def test_get_service_status_exclude_message(self) -> None:
+    def test_get_service_container_statuses_exclude_message(self) -> None:
         m_statement_params = {"test": "1"}
         m_service_status = service_sql.ServiceStatus("RUNNING")
         m_message = "test message"
-        Outcome = Row("service_status", "message")
-        row = Outcome(m_service_status, m_message)
-        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
+        Outcome = Row("service_status", "instance_id", "instance_status", "status", "message")
+        rows = [
+            Outcome(
+                m_service_status,
+                0,
+                service_sql.InstanceStatus("READY"),
+                service_sql.ContainerStatus("READY"),
+                m_message,
+            ),
+        ]
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows, collect_statement_params=m_statement_params)
         self.m_session.add_mock_sql(
             """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
             copy.deepcopy(m_df),
@@ -307,40 +346,80 @@ class ServiceSQLTest(absltest.TestCase):
             c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
             schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).get_service_status(
+        ).get_service_container_statuses(
             database_name=None,
             schema_name=None,
             service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
             include_message=False,
             statement_params=m_statement_params,
         )
-        self.assertEqual(res, (m_service_status, None))
-
-    def test_get_service_status_no_status(self) -> None:
-        m_statement_params = {"test": "1"}
-        m_message = "test message"
-        m_res = (service_sql.ServiceStatus.UNKNOWN, None)
-        Outcome = Row("service_status", "message")
-        row = Outcome("", m_message)
-        m_df = mock_data_frame.MockDataFrame(collect_result=[row], collect_statement_params=m_statement_params)
-
-        self.m_session.add_mock_sql(
-            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
-            copy.deepcopy(m_df),
-        )
-        c_session = cast(Session, self.m_session)
-        res = service_sql.ServiceSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).get_service_status(
-            database_name=None,
-            schema_name=None,
-            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-            include_message=False,
-            statement_params=m_statement_params,
-        )
+        m_res = [
+            service_sql.ServiceStatusInfo(
+                service_status=m_service_status,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus("READY"),
+                container_status=service_sql.ContainerStatus("READY"),
+                message=None,
+            ),
+        ]
         self.assertEqual(res, m_res)
+
+    def test_get_service_container_statuses_suspended_service(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_service_status = service_sql.ServiceStatus("SUSPENDED")
+        Outcome = Row("service_status", "instance_id", "instance_status", "status", "message")
+        rows = [
+            Outcome(m_service_status, None, None, None, None),
+        ]
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows, collect_statement_params=m_statement_params)
+        self.m_session.add_mock_sql(
+            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).get_service_container_statuses(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            include_message=True,
+            statement_params=m_statement_params,
+        )
+        m_res = [
+            service_sql.ServiceStatusInfo(
+                service_status=m_service_status,
+                instance_id=None,
+                instance_status=None,
+                container_status=None,
+                message=None,
+            )
+        ]
+        self.assertEqual(res, m_res)
+
+    def test_get_service_container_statuses_no_status(self) -> None:
+        m_statement_params = {"test": "1"}
+        rows: list[Any] = []
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows)
+        self.m_session.add_mock_sql(
+            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).get_service_container_statuses(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            include_message=False,
+            statement_params=m_statement_params,
+        )
+        self.assertEqual(res, [])
 
     def test_drop_service(self) -> None:
         m_statement_params = {"test": "1"}

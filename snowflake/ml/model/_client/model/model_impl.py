@@ -426,3 +426,61 @@ class Model:
             schema_name=new_schema or self._model_ops._model_client._schema_name,
         )
         self._model_name = new_model
+
+    def _repr_html_(self) -> str:
+        """Generate an HTML representation of the model.
+
+        Returns:
+            str: HTML string containing formatted model details.
+        """
+        from snowflake.ml.utils import html_utils
+
+        # Get default version
+        default_version = self.default.version_name
+
+        # Get versions info
+        try:
+            versions_df = self.show_versions()
+            versions_html = ""
+
+            for _, row in versions_df.iterrows():
+                versions_html += html_utils.create_version_item(
+                    version_name=row["name"],
+                    created_on=str(row["created_on"]),
+                    comment=str(row.get("comment", "")),
+                    is_default=bool(row["is_default_version"]),
+                )
+        except Exception:
+            versions_html = html_utils.create_error_message("Error retrieving versions")
+
+        # Get tags
+        try:
+            tags = self.show_tags()
+            if not tags:
+                tags_html = html_utils.create_error_message("No tags available")
+            else:
+                tags_html = ""
+                for tag_name, tag_value in tags.items():
+                    tags_html += html_utils.create_tag_item(tag_name, tag_value)
+        except Exception:
+            tags_html = html_utils.create_error_message("Error retrieving tags")
+
+        # Create main content sections
+        main_info = html_utils.create_grid_section(
+            [
+                ("Model Name", self.name),
+                ("Full Name", self.fully_qualified_name),
+                ("Description", self.description),
+                ("Default Version", default_version),
+            ]
+        )
+
+        versions_section = html_utils.create_section_header("Versions") + html_utils.create_content_section(
+            versions_html
+        )
+
+        tags_section = html_utils.create_section_header("Tags") + html_utils.create_content_section(tags_html)
+
+        content = main_info + versions_section + tags_section
+
+        return html_utils.create_base_container("Model Details", content)

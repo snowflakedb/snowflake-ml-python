@@ -14,7 +14,7 @@ from snowflake.snowpark import Row, context as sp_context
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _PROJECT = "MLJob"
-TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "INTERNAL_ERROR"}
+TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "CANCELLED", "INTERNAL_ERROR"}
 
 T = TypeVar("T")
 
@@ -183,14 +183,14 @@ class MLJob(Generic[T]):
                 pool_info = _get_compute_pool_info(self._session, self._compute_pool)
                 if (pool_info.max_nodes - pool_info.active_nodes) < self.min_instances:
                     logger.warning(
-                        f"Compute pool busy ({pool_info.active_nodes}/{pool_info.max_nodes} nodes in use)."
-                        " Job execution may be delayed."
+                        f"Compute pool busy ({pool_info.active_nodes}/{pool_info.max_nodes} nodes in use, "
+                        f"{self.min_instances} nodes required). Job execution may be delayed."
                     )
                     warning_shown = True
             if timeout >= 0 and (elapsed := time.monotonic() - start_time) >= timeout:
                 raise TimeoutError(f"Job {self.name} did not complete within {elapsed} seconds")
             time.sleep(delay)
-            delay = min(delay * 2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
+            delay = min(delay * 1.2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
         return self.status
 
     @snowpark._internal.utils.private_preview(version="1.8.2")
@@ -338,16 +338,23 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
 
      Raises:
         RuntimeError: If the instances died or if some instances disappeared.
-
     """
+
+    target_instances = _get_target_instances(session, job_id)
+
+    if target_instances == 1:
+        return 0
+
     try:
         rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
     except SnowparkSQLException:
         # service may be deleted
         raise RuntimeError("Couldn’t retrieve instances")
+
     if not rows:
         return None
-    if _get_target_instances(session, job_id) > len(rows):
+
+    if target_instances > len(rows):
         raise RuntimeError("Couldn’t retrieve head instance due to missing instances.")
 
     # Sort by start_time first, then by instance_id
@@ -414,12 +421,20 @@ def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Row:
 
     Returns:
         Row: The compute pool information.
+
+    Raises:
+        ValueError: If the compute pool is not found.
     """
-    (pool_info,) = session.sql("SHOW COMPUTE POOLS LIKE ?", params=(compute_pool,)).collect()
-    return pool_info
+    try:
+        (pool_info,) = session.sql("SHOW COMPUTE POOLS LIKE ?", params=(compute_pool,)).collect()
+        return pool_info
+    except ValueError as e:
+        if "not enough values to unpack" in str(e):
+            raise ValueError(f"Compute pool '{compute_pool}' not found")
+        raise
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_target_instances(session: snowpark.Session, job_id: str) -> int:
     row = _get_service_info(session, job_id)
-    return int(row["target_instances"]) if row["target_instances"] else 0
+    return int(row["target_instances"])

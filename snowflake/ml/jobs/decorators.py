@@ -7,7 +7,7 @@ from typing_extensions import ParamSpec
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.jobs import job as jb, manager as jm
-from snowflake.ml.jobs._utils import constants
+from snowflake.ml.jobs._utils import payload_utils
 
 _PROJECT = "MLJob"
 
@@ -25,7 +25,7 @@ def remote(
     query_warehouse: Optional[str] = None,
     env_vars: Optional[dict[str, str]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -42,8 +42,8 @@ def remote(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         env_vars: Environment variables to set in container
         target_instances: The number of nodes in the job. If none specified, create a single node job.
-        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
-            If set, the job will not start until the minimum number of nodes is available.
+        min_instances: The minimum number of nodes required to start the job. If none specified,
+            defaults to target_instances. If set, the job will not start until the minimum number of nodes is available.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use for the job.
         schema: The schema to use for the job.
@@ -62,8 +62,7 @@ def remote(
 
         @functools.wraps(func)
         def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
-            payload = functools.partial(func, *args, **kwargs)
-            setattr(payload, constants.IS_MLJOB_REMOTE_ATTR, True)
+            payload = payload_utils.create_function_payload(func, *args, **kwargs)
             job = jm._submit_job(
                 source=payload,
                 stage_name=stage_name,
@@ -77,7 +76,7 @@ def remote(
                 enable_metrics=enable_metrics,
                 database=database,
                 schema=schema,
-                session=session,
+                session=payload.session or session,
             )
             assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
             return job

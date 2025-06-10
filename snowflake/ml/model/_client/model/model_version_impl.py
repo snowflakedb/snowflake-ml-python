@@ -38,6 +38,96 @@ class ModelVersion(lineage_node.LineageNode):
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
 
+    def _repr_html_(self) -> str:
+        """Generate an HTML representation of the model version.
+
+        Returns:
+            str: HTML string containing formatted model version details.
+        """
+        from snowflake.ml.utils import html_utils
+
+        # Get task
+        try:
+            task = self.get_model_task().value
+        except Exception:
+            task = (
+                html_utils.create_error_message("Not available")
+                .replace('<em style="color: #888; font-style: italic;">', "")
+                .replace("</em>", "")
+            )
+
+        # Get functions info for display
+        try:
+            functions = self.show_functions()
+            if not functions:
+                functions_html = html_utils.create_error_message("No functions available")
+            else:
+                functions_list = []
+                for func in functions:
+                    try:
+                        sig_html = func["signature"]._repr_html_()
+                    except Exception:
+                        # Fallback to simple display if can't display signature
+                        sig_html = f"<pre style='margin: 5px 0;'>{func['signature']}</pre>"
+
+                    function_content = f"""
+                        <div style="margin: 5px 0;">
+                            <strong>Target Method:</strong> {func['target_method']}
+                        </div>
+                        <div style="margin: 5px 0;">
+                            <strong>Function Type:</strong> {func.get('target_method_function_type', 'N/A')}
+                        </div>
+                        <div style="margin: 5px 0;">
+                            <strong>Partitioned:</strong> {func.get('is_partitioned', False)}
+                        </div>
+                        <div style="margin: 10px 0;">
+                            <strong>Signature:</strong>
+                            {sig_html}
+                        </div>
+                    """
+
+                    functions_list.append(
+                        html_utils.create_collapsible_section(
+                            title=func["name"], content=function_content, open_by_default=False
+                        )
+                    )
+                functions_html = "".join(functions_list)
+        except Exception:
+            functions_html = html_utils.create_error_message("Error retrieving functions")
+
+        # Get metrics for display
+        try:
+            metrics = self.show_metrics()
+            if not metrics:
+                metrics_html = html_utils.create_error_message("No metrics available")
+            else:
+                metrics_html = ""
+                for metric_name, value in metrics.items():
+                    metrics_html += html_utils.create_metric_item(metric_name, value)
+        except Exception:
+            metrics_html = html_utils.create_error_message("Error retrieving metrics")
+
+        # Create main content sections
+        main_info = html_utils.create_grid_section(
+            [
+                ("Model Name", self.model_name),
+                ("Version", f'<strong style="color: #28a745;">{self.version_name}</strong>'),
+                ("Full Name", self.fully_qualified_model_name),
+                ("Description", self.description),
+                ("Task", task),
+            ]
+        )
+
+        functions_section = html_utils.create_section_header("Functions") + html_utils.create_content_section(
+            functions_html
+        )
+
+        metrics_section = html_utils.create_section_header("Metrics") + html_utils.create_content_section(metrics_html)
+
+        content = main_info + functions_section + metrics_section
+
+        return html_utils.create_base_container("Model Version Details", content)
+
     @classmethod
     def _ref(
         cls,
