@@ -1,2 +1,4 @@
 //tests/integ/snowflake/ml/extra_tests:xgboost_external_memory_training_test
 //tests/integ/snowflake/ml/extra_tests:pipeline_with_ohe_and_xgbr_test
+//tests/integ/snowflake/ml/lineage:lineage_integ_test
+//tests/integ/snowflake/ml/modeling/manifold:spectral_embedding_test

@@ -2,18 +2,22 @@ from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Literal, Optional, Union
 
+from snowflake.ml.jobs._utils import stage_utils
+
 JOB_STATUS = Literal[
     "PENDING",
     "RUNNING",
     "FAILED",
     "DONE",
+    "CANCELLING",
+    "CANCELLED",
     "INTERNAL_ERROR",
 ]
 
 
 @dataclass(frozen=True)
 class PayloadEntrypoint:
-    file_path: PurePath
+    file_path: Union[PurePath, stage_utils.StagePath]
     main_func: Optional[str]
 
 

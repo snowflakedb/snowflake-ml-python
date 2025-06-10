@@ -272,8 +272,8 @@ def plot_influence_sensitivity(
     If Streamlit is not available and a DataFrame is passed in, an ImportError will be raised.
 
     Args:
-        feature_values: pandas Series or 2D array containing the feature values for a specific feature
-        shap_values: pandas Series or 2D array containing the SHAP values for the same feature
+        shap_values: pandas Series or 2D array containing the SHAP values for a specific feature
+        feature_values: pandas Series or 2D array containing the feature values for the same feature
         figsize: tuple of (width, height) for the plot
 
     Returns:

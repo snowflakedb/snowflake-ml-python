@@ -559,6 +559,30 @@ class ModelSignature:
                 )"""
         )
 
+    def _repr_html_(self) -> str:
+        """Generate an HTML representation of the model signature.
+
+        Returns:
+            str: HTML string containing formatted signature details.
+        """
+        from snowflake.ml.utils import html_utils
+
+        # Create collapsible sections for inputs and outputs
+        inputs_content = html_utils.create_features_html(self.inputs, "Input")
+        outputs_content = html_utils.create_features_html(self.outputs, "Output")
+
+        inputs_section = html_utils.create_collapsible_section("Inputs", inputs_content, open_by_default=True)
+        outputs_section = html_utils.create_collapsible_section("Outputs", outputs_content, open_by_default=True)
+
+        content = f"""
+        <div style="margin-top: 10px;">
+            {inputs_section}
+            {outputs_section}
+        </div>
+        """
+
+        return html_utils.create_base_container("Model Signature", content)
+
     @classmethod
     def from_mlflow_sig(cls, mlflow_sig: "mlflow.models.ModelSignature") -> "ModelSignature":
         return ModelSignature(

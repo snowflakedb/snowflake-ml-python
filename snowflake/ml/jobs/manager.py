@@ -87,13 +87,15 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Session] = None) -> None:
     """Delete a job service from the backend. Status and logs will be lost."""
-    if isinstance(job, jb.MLJob):
-        job_id = job.id
-        session = job._session or session
-    else:
-        job_id = job
-    session = session or get_active_session()
-    session.sql("DROP SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+    job = job if isinstance(job, jb.MLJob) else get_job(job, session=session)
+    session = job._session
+    try:
+        stage_path = job._stage_path
+        session.sql(f"REMOVE {stage_path}/").collect()
+        logger.info(f"Successfully cleaned up stage files for job {job.id} at {stage_path}")
+    except Exception as e:
+        logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
+    session.sql("DROP SERVICE IDENTIFIER(?)", params=(job.id,)).collect()
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -109,7 +111,7 @@ def submit_file(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -129,7 +131,8 @@ def submit_file(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
         target_instances: The number of instances to use for the job. If none specified, single node job is created.
-        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
+        min_instances: The minimum number of nodes required to start the job. If none specified,
+            defaults to target_instances. If set, the job will not start until the minimum number of nodes is available.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -171,7 +174,7 @@ def submit_directory(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -192,7 +195,8 @@ def submit_directory(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
         target_instances: The number of instances to use for the job. If none specified, single node job is created.
-        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
+        min_instances: The minimum number of nodes required to start the job. If none specified,
+            defaults to target_instances. If set, the job will not start until the minimum number of nodes is available.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -203,6 +207,72 @@ def submit_directory(
     """
     return _submit_job(
         source=dir_path,
+        entrypoint=entrypoint,
+        args=args,
+        compute_pool=compute_pool,
+        stage_name=stage_name,
+        env_vars=env_vars,
+        pip_requirements=pip_requirements,
+        external_access_integrations=external_access_integrations,
+        query_warehouse=query_warehouse,
+        spec_overrides=spec_overrides,
+        target_instances=target_instances,
+        min_instances=min_instances,
+        enable_metrics=enable_metrics,
+        database=database,
+        schema=schema,
+        session=session,
+    )
+
+
+@telemetry.send_api_usage_telemetry(project=_PROJECT)
+def submit_from_stage(
+    source: str,
+    compute_pool: str,
+    *,
+    entrypoint: str,
+    stage_name: str,
+    args: Optional[list[str]] = None,
+    env_vars: Optional[dict[str, str]] = None,
+    pip_requirements: Optional[list[str]] = None,
+    external_access_integrations: Optional[list[str]] = None,
+    query_warehouse: Optional[str] = None,
+    spec_overrides: Optional[dict[str, Any]] = None,
+    target_instances: int = 1,
+    min_instances: Optional[int] = None,
+    enable_metrics: bool = False,
+    database: Optional[str] = None,
+    schema: Optional[str] = None,
+    session: Optional[snowpark.Session] = None,
+) -> jb.MLJob[None]:
+    """
+    Submit a directory containing Python script(s) as a job to the compute pool.
+
+    Args:
+        source: a stage path or a stage containing the job payload.
+        compute_pool: The compute pool to use for the job.
+        entrypoint: a stage path containing the entry point script inside the source directory.
+        stage_name: The name of the stage where the job payload will be uploaded.
+        args: A list of arguments to pass to the job.
+        env_vars: Environment variables to set in container
+        pip_requirements: A list of pip requirements for the job.
+        external_access_integrations: A list of external access integrations.
+        query_warehouse: The query warehouse to use. Defaults to session warehouse.
+        spec_overrides: Custom service specification overrides to apply.
+        target_instances: The number of instances to use for the job. If none specified, single node job is created.
+        min_instances: The minimum number of nodes required to start the job. If none specified,
+            defaults to target_instances. If set, the job will not start until the minimum number of nodes is available.
+        enable_metrics: Whether to enable metrics publishing for the job.
+        database: The database to use.
+        schema: The schema to use.
+        session: The Snowpark session to use. If none specified, uses active session.
+
+
+    Returns:
+        An object representing the submitted job.
+    """
+    return _submit_job(
+        source=source,
         entrypoint=entrypoint,
         args=args,
         compute_pool=compute_pool,
@@ -235,7 +305,7 @@ def _submit_job(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -258,7 +328,7 @@ def _submit_job(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -292,7 +362,7 @@ def _submit_job(
     query_warehouse: Optional[str] = None,
     spec_overrides: Optional[dict[str, Any]] = None,
     target_instances: int = 1,
-    min_instances: int = 1,
+    min_instances: Optional[int] = None,
     enable_metrics: bool = False,
     database: Optional[str] = None,
     schema: Optional[str] = None,
@@ -313,7 +383,8 @@ def _submit_job(
         query_warehouse: The query warehouse to use. Defaults to session warehouse.
         spec_overrides: Custom service specification overrides to apply.
         target_instances: The number of instances to use for the job. If none specified, single node job is created.
-        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
+        min_instances: The minimum number of nodes required to start the job. If none specified,
+            defaults to target_instances. If set, the job will not start until the minimum number of nodes is available.
         enable_metrics: Whether to enable metrics publishing for the job.
         database: The database to use.
         schema: The schema to use.
@@ -328,12 +399,24 @@ def _submit_job(
     """
     if database and not schema:
         raise ValueError("Schema must be specified if database is specified.")
-    if target_instances < 1 or min_instances < 1:
-        raise ValueError("target_instances and min_instances must be greater than 0.")
-    if min_instances > target_instances:
-        raise ValueError("min_instances must be less than or equal to target_instances.")
+    if target_instances < 1:
+        raise ValueError("target_instances must be greater than 0.")
+
+    min_instances = target_instances if min_instances is None else min_instances
+    if not (0 < min_instances <= target_instances):
+        raise ValueError("min_instances must be greater than 0 and less than or equal to target_instances.")
 
     session = session or get_active_session()
+
+    if min_instances > 1:
+        # Validate min_instances against compute pool max_nodes
+        pool_info = jb._get_compute_pool_info(session, compute_pool)
+        max_nodes = int(pool_info["max_nodes"])
+        if min_instances > max_nodes:
+            raise ValueError(
+                f"The requested min_instances ({min_instances}) exceeds the max_nodes ({max_nodes}) "
+                f"of compute pool '{compute_pool}'. Reduce min_instances or increase max_nodes."
+            )
 
     # Validate database and schema identifiers on client side since
     # SQL parser for EXECUTE JOB SERVICE seems to struggle with this

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Any, Optional
 from unittest import mock
@@ -5,7 +6,7 @@ from unittest import mock
 import yaml
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import spec_utils, types
+from snowflake.ml.jobs._utils import constants, spec_utils, types
 from snowflake.ml.jobs._utils.test_file_helper import TestAsset
 
 
@@ -361,6 +362,29 @@ class SpecUtilsTests(parameterized.TestCase):
             self.assertIn("metricConfig", spec["spec"]["platformMonitor"])
             self.assertIn("groups", spec["spec"]["platformMonitor"]["metricConfig"])
             self.assertGreater(len(spec["spec"]["platformMonitor"]["metricConfig"]["groups"]), 0)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (
+            "fallback_to_default",
+            {},  # No environment variables
+            constants.DEFAULT_IMAGE_TAG,
+        ),
+        (
+            "from_environment_variable",
+            {constants.RUNTIME_IMAGE_TAG_ENV_VAR: "1.5.5"},
+            "1.5.5",
+        ),
+        (
+            "empty_env_var_fallback",
+            {constants.RUNTIME_IMAGE_TAG_ENV_VAR: ""},
+            constants.DEFAULT_IMAGE_TAG,
+        ),
+    )
+    def test_get_runtime_image_tag(self, name: str, env_vars: dict[str, str], expected: str) -> None:
+        """Test runtime image tag detection from environment variables."""
+        with mock.patch.dict(os.environ, env_vars, clear=True):
+            result = spec_utils._get_runtime_image_tag()
+            self.assertEqual(result, expected)
 
 
 if __name__ == "__main__":

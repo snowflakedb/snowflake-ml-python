@@ -12,9 +12,16 @@ import cloudpickle as cp
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml.jobs._utils import constants, types
+from snowflake.ml.jobs._utils import (
+    constants,
+    function_payload_utils,
+    stage_utils,
+    types,
+)
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
+
+cp.register_pickle_by_value(function_payload_utils)
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
 _SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
@@ -217,20 +224,23 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 ).strip()
 
 
-def resolve_source(source: Union[Path, Callable[..., Any]]) -> Union[Path, Callable[..., Any]]:
+def resolve_source(
+    source: Union[Path, stage_utils.StagePath, Callable[..., Any]]
+) -> Union[Path, stage_utils.StagePath, Callable[..., Any]]:
     if callable(source):
         return source
-    elif isinstance(source, Path):
-        # Validate source
-        source = source
+    elif isinstance(source, (Path, stage_utils.StagePath)):
         if not source.exists():
             raise FileNotFoundError(f"{source} does not exist")
         return source.absolute()
     else:
-        raise ValueError("Unsupported source type. Source must be a file, directory, or callable.")
+        raise ValueError("Unsupported source type. Source must be a stage, file, directory, or callable.")
 
 
-def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Optional[Path]) -> types.PayloadEntrypoint:
+def resolve_entrypoint(
+    source: Union[Path, stage_utils.StagePath, Callable[..., Any]],
+    entrypoint: Optional[Union[stage_utils.StagePath, Path]],
+) -> types.PayloadEntrypoint:
     if callable(source):
         # Entrypoint is generated for callable payloads
         return types.PayloadEntrypoint(
@@ -245,11 +255,11 @@ def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Opti
             # Infer entrypoint from source
             entrypoint = parent
         else:
-            raise ValueError("entrypoint must be provided when source is a directory")
+            raise ValueError("Entrypoint must be provided when source is a directory")
     elif entrypoint.is_absolute():
         # Absolute path - validate it's a subpath of source dir
         if not entrypoint.is_relative_to(parent):
-            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint})")
+            raise ValueError(f"Entrypoint must be a subpath of {parent}, got: {entrypoint}")
     else:
         # Relative path
         if (abs_entrypoint := entrypoint.absolute()).is_relative_to(parent) and abs_entrypoint.is_file():
@@ -265,6 +275,7 @@ def resolve_entrypoint(source: Union[Path, Callable[..., Any]], entrypoint: Opti
             "Entrypoint not found. Ensure the entrypoint is a valid file and is under"
             f" the source directory (source={parent}, entrypoint={entrypoint})"
         )
+
     if entrypoint.suffix not in _SUPPORTED_ENTRYPOINT_EXTENSIONS:
         raise ValueError(
             "Unsupported entrypoint type:"
@@ -285,8 +296,9 @@ class JobPayload:
         *,
         pip_requirements: Optional[list[str]] = None,
     ) -> None:
-        self.source = Path(source) if isinstance(source, str) else source
-        self.entrypoint = Path(entrypoint) if isinstance(entrypoint, str) else entrypoint
+        # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
+        self.source = stage_utils.identify_stage_path(source) if isinstance(source, str) else source
+        self.entrypoint = stage_utils.identify_stage_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
 
     def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
@@ -310,7 +322,7 @@ class JobPayload:
             ).collect()
 
         # Upload payload to stage
-        if not isinstance(source, Path):
+        if not isinstance(source, (Path, stage_utils.StagePath)):
             source_code = generate_python_code(source, source_code_display=True)
             _ = session.file.put_stream(
                 io.BytesIO(source_code.encode()),
@@ -321,27 +333,38 @@ class JobPayload:
             source = Path(entrypoint.file_path.parent)
             if not any(r.startswith("cloudpickle") for r in pip_requirements):
                 pip_requirements.append(f"cloudpickle~={version.parse(cp.__version__).major}.0")
-        elif source.is_dir():
-            # Manually traverse the directory and upload each file, since Snowflake PUT
-            # can't handle directories. Reduce the number of PUT operations by using
-            # wildcard patterns to batch upload files with the same extension.
-            for path in {
-                p.parent.joinpath(f"*{p.suffix}") if p.suffix else p for p in source.resolve().rglob("*") if p.is_file()
-            }:
+
+        elif isinstance(source, stage_utils.StagePath):
+            # copy payload to stage
+            if source == entrypoint.file_path:
+                source = source.parent
+            source_path = source.as_posix() + "/"
+            session.sql(f"copy files into {stage_path}/ from {source_path}").collect()
+
+        elif isinstance(source, Path):
+            if source.is_dir():
+                # Manually traverse the directory and upload each file, since Snowflake PUT
+                # can't handle directories. Reduce the number of PUT operations by using
+                # wildcard patterns to batch upload files with the same extension.
+                for path in {
+                    p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+                    for p in source.resolve().rglob("*")
+                    if p.is_file()
+                }:
+                    session.file.put(
+                        str(path),
+                        stage_path.joinpath(path.parent.relative_to(source)).as_posix(),
+                        overwrite=True,
+                        auto_compress=False,
+                    )
+            else:
                 session.file.put(
-                    str(path),
-                    stage_path.joinpath(path.parent.relative_to(source)).as_posix(),
+                    str(source.resolve()),
+                    stage_path.as_posix(),
                     overwrite=True,
                     auto_compress=False,
                 )
-        else:
-            session.file.put(
-                str(source.resolve()),
-                stage_path.as_posix(),
-                overwrite=True,
-                auto_compress=False,
-            )
-            source = source.parent
+                source = source.parent
 
         # Upload requirements
         # TODO: Check if payload includes both a requirements.txt file and pip_requirements
@@ -502,9 +525,15 @@ def _generate_param_handler_code(signature: inspect.Signature, output_name: str 
     return param_code
 
 
-def generate_python_code(func: Callable[..., Any], source_code_display: bool = False) -> str:
+def generate_python_code(payload: Callable[..., Any], source_code_display: bool = False) -> str:
     """Generate an entrypoint script from a Python function."""
-    signature = inspect.signature(func)
+
+    if isinstance(payload, function_payload_utils.FunctionPayload):
+        function = payload.function
+    else:
+        function = payload
+
+    signature = inspect.signature(function)
     if any(
         p.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
         for p in signature.parameters.values()
@@ -513,21 +542,20 @@ def generate_python_code(func: Callable[..., Any], source_code_display: bool = F
 
     # Mirrored from Snowpark generate_python_code() function
     # https://github.com/snowflakedb/snowpark-python/blob/main/src/snowflake/snowpark/_internal/udf_utils.py
-    source_code_comment = _generate_source_code_comment(func) if source_code_display else ""
+    source_code_comment = _generate_source_code_comment(function) if source_code_display else ""
 
     arg_dict_name = "kwargs"
-    if getattr(func, constants.IS_MLJOB_REMOTE_ATTR, None):
+    if isinstance(payload, function_payload_utils.FunctionPayload):
         param_code = f"{arg_dict_name} = {{}}"
     else:
         param_code = _generate_param_handler_code(signature, arg_dict_name)
-
     return f"""
 import sys
 import pickle
 
 try:
     {textwrap.indent(source_code_comment, '    ')}
-    {_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(func).hex()}'))
+    {_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(payload).hex()}'))
 except (TypeError, pickle.PickleError):
     if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor != {sys.version_info.minor}:
         raise RuntimeError(
@@ -551,3 +579,23 @@ if __name__ == '__main__':
 
     __return__ = {_ENTRYPOINT_FUNC_NAME}(**{arg_dict_name})
 """
+
+
+def create_function_payload(
+    func: Callable[..., Any], *args: Any, **kwargs: Any
+) -> function_payload_utils.FunctionPayload:
+    signature = inspect.signature(func)
+    bound = signature.bind(*args, **kwargs)
+    bound.apply_defaults()
+    session_argument = ""
+    session = None
+    for name, val in list(bound.arguments.items()):
+        if isinstance(val, snowpark.Session):
+            if session:
+                raise TypeError(f"Expected only one Session-type argument, but got both {session_argument} and {name}.")
+            session = val
+            session_argument = name
+            del bound.arguments[name]
+    payload = function_payload_utils.FunctionPayload(func, session, session_argument, *bound.args, **bound.kwargs)
+
+    return payload

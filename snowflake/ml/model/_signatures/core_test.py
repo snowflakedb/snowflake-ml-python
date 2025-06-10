@@ -209,6 +209,99 @@ class ModelSignatureTest(absltest.TestCase):
         self.assertEqual(s, eval(repr(s), core.__dict__))
         self.assertEqual(s, core.ModelSignature.from_dict(s.to_dict()))
 
+    def test_repr_html_happy_path(self) -> None:
+        """Test _repr_html_ method for ModelSignature with various feature types."""
+        # Create a comprehensive ModelSignature with different feature types
+        signature = core.ModelSignature(
+            inputs=[
+                # Simple feature with nullable=True (default)
+                core.FeatureSpec(dtype=core.DataType.FLOAT, name="temperature"),
+                # Non-nullable feature
+                core.FeatureSpec(dtype=core.DataType.INT64, name="user_id", nullable=False),
+                # Feature with shape
+                core.FeatureSpec(dtype=core.DataType.DOUBLE, name="embeddings", shape=(128,)),
+                # Feature group with nested features
+                core.FeatureGroupSpec(
+                    name="user_profile",
+                    specs=[
+                        core.FeatureSpec(dtype=core.DataType.STRING, name="username", nullable=False),
+                        core.FeatureSpec(dtype=core.DataType.INT32, name="age", nullable=True),
+                        core.FeatureSpec(dtype=core.DataType.BOOL, name="is_premium"),
+                    ],
+                ),
+                # Feature group with shape and nested arrays
+                core.FeatureGroupSpec(
+                    name="interaction_history",
+                    specs=[
+                        core.FeatureSpec(dtype=core.DataType.INT64, name="item_id", shape=(-1,), nullable=True),
+                        core.FeatureSpec(dtype=core.DataType.FLOAT, name="ratings", shape=(5,), nullable=False),
+                    ],
+                    shape=(10,),
+                ),
+            ],
+            outputs=[
+                # Output feature with simple type
+                core.FeatureSpec(name="prediction", dtype=core.DataType.FLOAT),
+                # Output feature with shape
+                core.FeatureSpec(name="confidence_scores", dtype=core.DataType.DOUBLE, shape=(3,)),
+            ],
+        )
+
+        # Generate HTML representation
+        html = signature._repr_html_()
+
+        # Verify HTML structure and content
+        self.assertIn("Model Signature", html)
+
+        # Check that it's properly formatted HTML
+        self.assertIn("<div style=", html)
+        self.assertIn("font-family: Helvetica, Arial, sans-serif", html)
+
+        # Verify inputs section
+        self.assertIn("Inputs", html)
+        self.assertIn("<details", html)
+        self.assertIn("<summary", html)
+
+        # Check input features are present
+        self.assertIn("temperature", html)
+        self.assertIn("FLOAT", html)
+        self.assertIn("user_id", html)
+        self.assertIn("INT64", html)
+        self.assertIn("not nullable", html)  # For non-nullable user_id
+        self.assertIn("embeddings", html)
+        self.assertIn("shape=(128,)", html)
+
+        # Check feature groups
+        self.assertIn("user_profile", html)
+        self.assertIn("(group)", html)
+        self.assertIn("username", html)
+        self.assertIn("STRING", html)
+        self.assertIn("age", html)
+        self.assertIn("INT32", html)
+        self.assertIn("is_premium", html)
+        self.assertIn("BOOL", html)
+
+        # Check nested feature group with shape
+        self.assertIn("interaction_history", html)
+        self.assertIn("item_id", html)
+        self.assertIn("shape=(-1,)", html)
+        self.assertIn("ratings", html)
+        self.assertIn("shape=(5,)", html)
+        # Note: Group shape is not displayed in HTML output
+
+        # Verify outputs section
+        self.assertIn("Outputs", html)
+        self.assertIn("prediction", html)
+        self.assertIn("confidence_scores", html)
+        self.assertIn("shape=(3,)", html)
+
+        # Check for proper indentation/nesting structure
+        self.assertIn("border-left: 2px solid #e0e0e0", html)  # Nested group styling
+        self.assertIn("margin-left:", html)  # Indentation
+
+        # Verify collapsible structure
+        self.assertIn("open", html)  # Details should be open by default
+
 
 if __name__ == "__main__":
     absltest.main()
