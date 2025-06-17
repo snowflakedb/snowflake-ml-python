@@ -58,6 +58,15 @@ class ServiceOpsTest(parameterized.TestCase):
 
     def test_create_service(self) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
@@ -77,9 +86,9 @@ class ServiceOpsTest(parameterized.TestCase):
             return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
         ) as mock_deploy_model, mock.patch.object(
             self.m_ops._service_client,
-            "get_service_status",
-            return_value=(service_sql.ServiceStatus.PENDING, None),
-        ) as mock_get_service_status:
+            "get_service_container_statuses",
+            return_value=m_statuses,
+        ) as mock_get_service_container_statuses:
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
@@ -157,7 +166,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
@@ -167,6 +176,15 @@ class ServiceOpsTest(parameterized.TestCase):
 
     def test_create_service_model_db_and_schema(self) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
@@ -186,9 +204,9 @@ class ServiceOpsTest(parameterized.TestCase):
             return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
         ) as mock_deploy_model, mock.patch.object(
             self.m_ops._service_client,
-            "get_service_status",
-            return_value=(service_sql.ServiceStatus.PENDING, None),
-        ) as mock_get_service_status:
+            "get_service_container_statuses",
+            return_value=m_statuses,
+        ) as mock_get_service_container_statuses:
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
@@ -266,7 +284,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
@@ -276,6 +294,15 @@ class ServiceOpsTest(parameterized.TestCase):
 
     def test_create_service_default_db_and_schema(self) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
@@ -295,9 +322,9 @@ class ServiceOpsTest(parameterized.TestCase):
             return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
         ) as mock_deploy_model, mock.patch.object(
             self.m_ops._service_client,
-            "get_service_status",
-            return_value=(service_sql.ServiceStatus.PENDING, None),
-        ) as mock_get_service_status:
+            "get_service_container_statuses",
+            return_value=m_statuses,
+        ) as mock_get_service_container_statuses:
             self.m_ops.create_service(
                 database_name=None,
                 schema_name=None,
@@ -375,7 +402,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
@@ -385,6 +412,15 @@ class ServiceOpsTest(parameterized.TestCase):
 
     def test_create_service_async_job(self) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
         with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",), mock.patch.object(
             snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
         ), mock.patch.object(self.m_ops._model_deployment_spec, "save",), mock.patch.object(
@@ -395,8 +431,8 @@ class ServiceOpsTest(parameterized.TestCase):
             return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
         ), mock.patch.object(
             self.m_ops._service_client,
-            "get_service_status",
-            return_value=(service_sql.ServiceStatus.PENDING, None),
+            "get_service_container_statuses",
+            return_value=m_statuses,
         ):
             res = self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -608,9 +644,15 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_output_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_output_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_get_model_build_service_name(self) -> None:
         query_id = "01b6fc10-0002-c121-0000-6ed10736311e"

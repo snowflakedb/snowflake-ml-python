@@ -175,6 +175,18 @@ py_test(
 )
 
 py_library(
+    name = "connection_params",
+    srcs = ["connection_params.py"],
+    deps = [],
+)
+
+py_test(
+    name = "connection_params_test",
+    srcs = ["connection_params_test.py"],
+    deps = [":connection_params"],
+)
+
+py_library(
     name = "parallelize",
     srcs = ["parallelize.py"],
 )
@@ -253,4 +265,10 @@ py_test(
 py_library(
     name = "jwt_generator",
     srcs = ["jwt_generator.py"],
+)
+
+py_library(
+    name = "mixins",
+    srcs = ["mixins.py"],
+    deps = [],
 )

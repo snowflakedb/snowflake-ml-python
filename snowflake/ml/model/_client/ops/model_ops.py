@@ -643,14 +643,17 @@ class ModelOperator:
         # TODO(sdas): Figure out a better way to filter out MODEL_BUILD_ services server side.
         fully_qualified_service_names = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
 
-        result = []
-
+        result: list[ServiceInfo] = []
         for fully_qualified_service_name in fully_qualified_service_names:
             ingress_url: Optional[str] = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
-            service_status, _ = self._service_client.get_service_status(
+            statuses = self._service_client.get_service_container_statuses(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             )
+            if len(statuses) == 0:
+                return result
+
+            service_status = statuses[0].service_status
             for res_row in self._service_client.show_endpoints(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             ):
@@ -952,7 +955,7 @@ class ModelOperator:
             output_with_input_features = False
             df = model_signature._convert_and_validate_local_data(X, signature.inputs, strict=strict_input_validation)
             s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-                self._session, df, keep_order=keep_order, features=signature.inputs
+                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
             )
         else:
             keep_order = False
@@ -966,9 +969,16 @@ class ModelOperator:
 
         # Compose input and output names
         input_args = []
+        quoted_identifiers_ignore_case = (
+            snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self._session, statement_params
+            )
+        )
+
         for input_feature in signature.inputs:
             col_name = identifier_rule.get_sql_identifier_from_feature(input_feature.name)
-
+            if quoted_identifiers_ignore_case:
+                col_name = sql_identifier.SqlIdentifier(input_feature.name.upper(), case_sensitive=True)
             input_args.append(col_name)
 
         returns = []
@@ -1048,7 +1058,9 @@ class ModelOperator:
 
         # Get final result
         if not isinstance(X, dataframe.DataFrame):
-            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(df_res, features=signature.outputs)
+            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
+                df_res, features=signature.outputs, statement_params=statement_params
+            )
         else:
             return df_res
 

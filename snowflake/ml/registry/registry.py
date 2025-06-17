@@ -11,10 +11,11 @@ from snowflake.ml.model import (
     Model,
     ModelVersion,
     model_signature,
+    task,
     type_hints as model_types,
 )
 from snowflake.ml.model._client.model import model_version_impl
-from snowflake.ml.monitoring import model_monitor, model_monitor_version
+from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring._manager import model_monitor_manager
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry._manager import model_manager
@@ -30,6 +31,7 @@ _MODEL_MONITORING_DISABLED_ERROR = (
 
 
 class Registry:
+    @telemetry.send_api_usage_telemetry(project=_TELEMETRY_PROJECT, subproject=_MODEL_TELEMETRY_SUBPROJECT)
     def __init__(
         self,
         session: session.Session,
@@ -73,6 +75,22 @@ class Registry:
                 if session_schema
                 else sql_identifier.SqlIdentifier("PUBLIC")
             )
+
+        database_exists = session.sql(
+            f"""SELECT 1 FROM INFORMATION_SCHEMA.DATABASES WHERE DATABASE_NAME = '{self._database_name.resolved()}';"""
+        ).collect()
+
+        if not database_exists:
+            raise ValueError(f"Database {self._database_name} does not exist.")
+
+        schema_exists = session.sql(
+            f"""
+            SELECT 1 FROM {self._database_name.identifier()}.INFORMATION_SCHEMA.SCHEMATA
+            WHERE SCHEMA_NAME = '{self._schema_name.resolved()}';"""
+        ).collect()
+
+        if not schema_exists:
+            raise ValueError(f"Schema {self._schema_name} does not exist.")
 
         self._model_manager = model_manager.ModelManager(
             session,
@@ -119,7 +137,7 @@ class Registry:
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
+        task: model_types.Task = task.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -155,7 +173,14 @@ class Registry:
                      `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
-                {"WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"}. Defaults to None.
+                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES", or a target platform constant:
+                - ["WAREHOUSE"] or snowflake.ml.model.target_platform.WAREHOUSE_ONLY (Warehouse only)
+                - ["SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+                  (Snowpark Container Services only)
+                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES (Both)
+                Defaults to None. When None, the target platforms will be both.
             python_version: Python version in which the model is run. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
                 sample_input_data would be used to infer the signatures for those models that cannot automatically
@@ -259,7 +284,7 @@ class Registry:
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
+        task: model_types.Task = task.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -295,8 +320,14 @@ class Registry:
                      `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
-                ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]. Defaults to None. When None, the target platforms will be
-                both.
+                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES", or a target platform constant:
+                - ["WAREHOUSE"] or snowflake.ml.model.target_platform.WAREHOUSE_ONLY (Warehouse only)
+                - ["SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+                  (Snowpark Container Services only)
+                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES (Both)
+                Defaults to None. When None, the target platforms will be both.
             python_version: Python version in which the model is run. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
                 sample_input_data would be used to infer the signatures for those models that cannot automatically
@@ -397,11 +428,11 @@ class Registry:
             if task is not model_types.Task.UNKNOWN:
                 raise ValueError("`task` cannot be specified when calling log_model with a ModelVersion.")
 
-        if pip_requirements:
+        if pip_requirements and not artifact_repository_map:
             warnings.warn(
-                "Models logged specifying `pip_requirements` can not be executed "
-                "in Snowflake Warehouse where all dependencies are required to be retrieved "
-                "from Snowflake Anaconda Channel.",
+                "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse "
+                "without specifying `artifact_repository_map`. This model can be run in Snowpark Container "
+                "Services. See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container.",
                 category=UserWarning,
                 stacklevel=1,
             )
@@ -500,7 +531,6 @@ class Registry:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def add_monitor(
         self,
         name: str,
@@ -525,7 +555,7 @@ class Registry:
         return self._model_monitor_manager.add_monitor(name, source_config, model_monitor_config)
 
     @overload
-    def get_monitor(self, model_version: model_version_impl.ModelVersion) -> model_monitor.ModelMonitor:
+    def get_monitor(self, *, model_version: model_version_impl.ModelVersion) -> model_monitor.ModelMonitor:
         """Get a Model Monitor on a Model Version from the Registry.
 
         Args:
@@ -534,7 +564,7 @@ class Registry:
         ...
 
     @overload
-    def get_monitor(self, name: str) -> model_monitor.ModelMonitor:
+    def get_monitor(self, *, name: str) -> model_monitor.ModelMonitor:
         """Get a Model Monitor by name from the Registry.
 
         Args:
@@ -546,7 +576,6 @@ class Registry:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def get_monitor(
         self, *, name: Optional[str] = None, model_version: Optional[model_version_impl.ModelVersion] = None
     ) -> model_monitor.ModelMonitor:
@@ -575,7 +604,6 @@ class Registry:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def show_model_monitors(self) -> list[snowpark.Row]:
         """Show all model monitors in the registry.
 
@@ -593,7 +621,6 @@ class Registry:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def delete_monitor(self, name: str) -> None:
         """Delete a Model Monitor by name from the Registry.
 

@@ -1,5 +1,7 @@
 import datetime
 import decimal
+from typing import cast
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -8,7 +10,7 @@ from absl.testing import absltest
 import snowflake.snowpark.types as spt
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._signatures import core, snowpark_handler
-from snowflake.ml.test_utils import exception_utils
+from snowflake.ml.test_utils import exception_utils, mock_session
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 
@@ -21,6 +23,10 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._session.close()
+
+    def setUp(self) -> None:
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
+        self.c_session = cast(Session, self.m_session)
 
     def test_validate_snowpark_df(self) -> None:
         schema = spt.StructType([spt.StructField('"a"', spt.VariantType()), spt.StructField('"b"', spt.StringType())])
@@ -362,6 +368,67 @@ class SnowParkDataFrameHandlerTest(absltest.TestCase):
         pd.testing.assert_frame_equal(
             pd_df, snowpark_handler.SnowparkDataFrameHandler.convert_to_df(sp_df), check_dtype=False
         )
+
+    def test_is_quoted_identifiers_ignore_case_enabled(self) -> None:
+        def create_mock_row(value: str) -> mock.Mock:
+            mock_row = mock.Mock()
+            mock_row.value = value
+            return mock_row
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("FALSE")]
+
+            statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": "TRUE"}
+            result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self.c_session, statement_params
+            )
+            self.assertTrue(result, "statement_params should take precedence over session parameter")
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("FALSE")]
+
+            result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self.c_session, None
+            )
+            self.assertFalse(result, "Should use session parameter when statement_params is None")
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("TRUE")]
+
+            statement_params = {}
+            result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self.c_session, statement_params
+            )
+            self.assertTrue(result, "Should fallback to session parameter when statement_params is empty")
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("FALSE")]
+
+            for param_value in ["TRUE", "True", "true"]:
+                statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": param_value}
+                result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                    self.c_session, statement_params
+                )
+                self.assertTrue(result, f"Failed for parameter value: {param_value}")
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("TRUE")]
+
+            for param_value in ["FALSE", "False", "false"]:
+                statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": param_value}
+                result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                    self.c_session, statement_params
+                )
+                self.assertFalse(result, f"Failed for parameter value: {param_value}")
+
+        with mock.patch.object(self.c_session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = [create_mock_row("FALSE")]
+
+            statement_params = {"quoted_identifiers_ignore_case": "true"}
+            result = snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self.c_session, statement_params
+            )
+            self.assertTrue(result, "Parameter name should be case insensitive")
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ DEFAULT_CONTAINER_NAME = "main"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
 RESULT_PATH_ENV_VAR = "MLRS_RESULT_PATH"
 MIN_INSTANCES_ENV_VAR = "MLRS_MIN_INSTANCES"
+RUNTIME_IMAGE_TAG_ENV_VAR = "MLRS_CONTAINER_IMAGE_TAG"
 MEMORY_VOLUME_NAME = "dshm"
 STAGE_VOLUME_NAME = "stage-volume"
 STAGE_VOLUME_MOUNT_PATH = "/mnt/app"
@@ -14,7 +15,7 @@ STAGE_VOLUME_MOUNT_PATH = "/mnt/app"
 DEFAULT_IMAGE_REPO = "/snowflake/images/snowflake_images"
 DEFAULT_IMAGE_CPU = "st_plat/runtime/x86/runtime_image/snowbooks"
 DEFAULT_IMAGE_GPU = "st_plat/runtime/x86/generic_gpu/runtime_image/snowbooks"
-DEFAULT_IMAGE_TAG = "1.2.3"
+DEFAULT_IMAGE_TAG = "1.5.0"
 DEFAULT_ENTRYPOINT_PATH = "func.py"
 
 # Percent of container memory to allocate for /dev/shm volume
@@ -43,7 +44,7 @@ ENABLE_HEALTH_CHECKS = "false"
 
 # Job status polling constants
 JOB_POLL_INITIAL_DELAY_SECONDS = 0.1
-JOB_POLL_MAX_DELAY_SECONDS = 1
+JOB_POLL_MAX_DELAY_SECONDS = 30
 
 # Magic attributes
 IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"

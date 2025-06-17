@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, Union, cast
 from unittest import mock
 
 import pandas as pd
@@ -6,7 +6,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import type_hints
+from snowflake.ml.model import target_platform, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
@@ -231,7 +231,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -313,7 +313,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -379,7 +379,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=m_options,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -448,7 +448,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -517,7 +517,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -597,11 +597,17 @@ class ModelManagerTest(parameterized.TestCase):
             )
             self.assertIn("is not a valid TargetPlatform", str(ex.exception))
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
+    @parameterized.product(  # type: ignore[misc]
+        is_live_commit_enabled=[True, False],
+        target_platforms=[
+            ["SNOWPARK_CONTAINER_SERVICES"],
+            [target_platform.TargetPlatform.WAREHOUSE],
+            [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+        ],
     )
-    def test_log_model_target_platforms(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_target_platforms(
+        self, target_platforms: list[type_hints.SupportedTargetPlatformType], is_live_commit_enabled: bool = False
+    ) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
@@ -623,7 +629,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
-                target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+                target_platforms=target_platforms,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -632,7 +638,7 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
-                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                target_platforms=[target_platform.TargetPlatform(platform) for platform in target_platforms],
                 python_version=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
@@ -640,14 +646,44 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
+
+    @parameterized.product(  # type: ignore[misc]
+        is_live_commit_enabled=[True, False],
+        target_platform_constant=[
+            target_platform.WAREHOUSE_ONLY,
+            target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY,
+            target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES,
+        ],
+    )
+    def test_log_model_target_platform_constant(
+        self,
+        target_platform_constant: list[Union[target_platform.TargetPlatform, str]],
+        is_live_commit_enabled: bool = False,
+    ) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+
+        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
+            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+        ), mock.patch.object(
+            model_composer.ModelComposer, "save", return_value=m_model_metadata
+        ) as mock_save, mock.patch.object(
+            self.m_r._model_ops, "create_from_stage"
+        ), mock.patch.object(
+            model_version_impl.ModelVersion, "_get_functions", return_value=[]
+        ), platform_capabilities.PlatformCapabilities.mock_features(
+            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
-                version_name="V2",
+                version_name="V1",
                 statement_params=self.base_statement_params,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                target_platforms=target_platform_constant,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -656,15 +692,15 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                target_platforms=[target_platform.TargetPlatform(platform) for platform in target_platform_constant],
+                python_version=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -720,7 +756,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -878,13 +914,13 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                target_platforms=[target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     @parameterized.product(  # type: ignore[misc]
@@ -936,13 +972,13 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                target_platforms=[target_platform.TargetPlatform.WAREHOUSE],
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=options,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     def test_delete_model(self) -> None:
@@ -1013,7 +1049,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
             self.m_r.log_model(
@@ -1040,7 +1076,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
             self.m_r.log_model(
@@ -1067,7 +1103,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     def test_resource_constraint(self) -> None:
@@ -1114,7 +1150,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
 

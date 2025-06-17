@@ -1,7 +1,5 @@
-from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.monitoring import model_monitor_version
 from snowflake.ml.monitoring._client import model_monitor_sql_client
 
 
@@ -29,7 +27,6 @@ class ModelMonitor:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def suspend(self) -> None:
         """Suspend the Model Monitor"""
         statement_params = telemetry.get_statement_params(
@@ -42,7 +39,6 @@ class ModelMonitor:
         project=telemetry.TelemetryProject.MLOPS.value,
         subproject=telemetry.TelemetrySubProject.MONITORING.value,
     )
-    @snowpark._internal.utils.private_preview(version=model_monitor_version.SNOWFLAKE_ML_MONITORING_MIN_VERSION)
     def resume(self) -> None:
         """Resume the Model Monitor"""
         statement_params = telemetry.get_statement_params(

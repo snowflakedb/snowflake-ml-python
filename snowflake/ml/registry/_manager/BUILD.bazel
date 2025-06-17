@@ -16,8 +16,6 @@ py_library(
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model",
-        "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_client/ops:metadata_ops",

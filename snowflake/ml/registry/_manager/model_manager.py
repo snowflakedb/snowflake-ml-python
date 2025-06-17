@@ -8,7 +8,7 @@ from snowflake.ml._internal import env, platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model import model_signature, target_platform, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
@@ -41,7 +41,7 @@ class ModelManager:
     def log_model(
         self,
         *,
-        model: Union[model_types.SupportedModelType, model_version_impl.ModelVersion],
+        model: Union[type_hints.SupportedModelType, model_version_impl.ModelVersion],
         model_name: str,
         version_name: Optional[str] = None,
         comment: Optional[str] = None,
@@ -50,15 +50,15 @@ class ModelManager:
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
+        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
-        options: Optional[model_types.ModelSaveOption] = None,
+        task: type_hints.Task = task.Task.UNKNOWN,
+        options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
 
@@ -147,7 +147,7 @@ class ModelManager:
 
     def _log_model(
         self,
-        model: model_types.SupportedModelType,
+        model: type_hints.SupportedModelType,
         *,
         model_name: str,
         version_name: str,
@@ -157,15 +157,15 @@ class ModelManager:
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
+        target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
-        options: Optional[model_types.ModelSaveOption] = None,
+        task: type_hints.Task = task.Task.UNKNOWN,
+        options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
@@ -215,7 +215,7 @@ class ModelManager:
         # User specified target platforms are defaulted to None and will not show up in the generated manifest.
         if target_platforms:
             # Convert any string target platforms to TargetPlatform objects
-            platforms = [model_types.TargetPlatform(platform) for platform in target_platforms]
+            platforms = [type_hints.TargetPlatform(platform) for platform in target_platforms]
         else:
             # Default the target platform to warehouse if not specified and any table function exists
             if options and (
@@ -231,7 +231,7 @@ class ModelManager:
                     "Logging a partitioned model with a table function without specifying `target_platforms`. "
                     'Default to `target_platforms=["WAREHOUSE"]`.'
                 )
-                platforms = [model_types.TargetPlatform.WAREHOUSE]
+                platforms = [target_platform.TargetPlatform.WAREHOUSE]
 
             # Default the target platform to SPCS if not specified when running in ML runtime
             if not platforms and env.IN_ML_RUNTIME:
@@ -239,7 +239,7 @@ class ModelManager:
                     "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
                     'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
                 )
-                platforms = [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                platforms = [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
 
         if artifact_repository_map:
             for channel, artifact_repository_name in artifact_repository_map.items():

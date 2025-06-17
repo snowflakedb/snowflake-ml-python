@@ -1,8 +1,11 @@
+import uuid
+
 from absl.testing import absltest
 from sklearn import datasets, linear_model
 
 from snowflake.ml.registry import registry
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
+from tests.integ.snowflake.ml.test_utils import db_manager
 
 
 class FullyQualifiedNameTest(registry_model_test_base.RegistryModelTestBase):
@@ -11,7 +14,22 @@ class FullyQualifiedNameTest(registry_model_test_base.RegistryModelTestBase):
         self.database_name = self._test_db
         self.schema_name = self._test_schema
         self._registry = self.registry
-        self.registry = registry.Registry(self.session, database_name="foo", schema_name="bar")
+        self._run_id = uuid.uuid4().hex
+        self._non_model_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "foo").upper()
+        self._non_model_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "bar"
+        ).upper()
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._non_model_db)
+        self._db_manager.create_schema(self._non_model_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(
+            self.session, database_name=self._non_model_db, schema_name=self._non_model_schema
+        )
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._non_model_db)
+        super().tearDown()
 
     def test_random_version_name(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)

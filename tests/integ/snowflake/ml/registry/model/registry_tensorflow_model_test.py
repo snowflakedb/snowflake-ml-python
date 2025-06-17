@@ -42,13 +42,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_tf_df_as_sample(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_tf_df_as_sample(self) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.TensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         y_pred = model(data_x)
@@ -65,7 +59,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -76,13 +70,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_tf_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_tf_sp(self) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.TensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = [f"col_{i}" for i in range(x_df.shape[1])]
@@ -95,7 +83,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -106,13 +94,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_tf_tensor_as_sample_multiple_inputs(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_tf_tensor_as_sample_multiple_inputs(self) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
@@ -129,7 +111,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
@@ -141,13 +123,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_tf_df_as_sample_multiple_inputs(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_tf_df_as_sample_multiple_inputs(self) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model(data_x)
@@ -164,7 +140,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={

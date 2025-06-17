@@ -1,13 +1,13 @@
 import copy
 import functools
-from typing import Callable, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 from typing_extensions import ParamSpec
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml.jobs import job as jb, manager as jm
-from snowflake.ml.jobs._utils import constants
+from snowflake.ml.jobs._utils import payload_utils
 
 _PROJECT = "MLJob"
 
@@ -20,16 +20,11 @@ def remote(
     compute_pool: str,
     *,
     stage_name: str,
+    target_instances: int = 1,
     pip_requirements: Optional[list[str]] = None,
     external_access_integrations: Optional[list[str]] = None,
-    query_warehouse: Optional[str] = None,
-    env_vars: Optional[dict[str, str]] = None,
-    target_instances: int = 1,
-    min_instances: int = 1,
-    enable_metrics: bool = False,
-    database: Optional[str] = None,
-    schema: Optional[str] = None,
     session: Optional[snowpark.Session] = None,
+    **kwargs: Any,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob[_ReturnValue]]]:
     """
     Submit a job to the compute pool.
@@ -37,17 +32,20 @@ def remote(
     Args:
         compute_pool: The compute pool to use for the job.
         stage_name: The name of the stage where the job payload will be uploaded.
+        target_instances: The number of nodes in the job. If none specified, create a single node job.
         pip_requirements: A list of pip requirements for the job.
         external_access_integrations: A list of external access integrations.
-        query_warehouse: The query warehouse to use. Defaults to session warehouse.
-        env_vars: Environment variables to set in container
-        target_instances: The number of nodes in the job. If none specified, create a single node job.
-        min_instances: The minimum number of nodes required to start the job. If none specified, defaults to 1.
-            If set, the job will not start until the minimum number of nodes is available.
-        enable_metrics: Whether to enable metrics publishing for the job.
-        database: The database to use for the job.
-        schema: The schema to use for the job.
         session: The Snowpark session to use. If none specified, uses active session.
+        kwargs: Additional keyword arguments. Supported arguments:
+            database (str): The database to use for the job.
+            schema (str): The schema to use for the job.
+            min_instances (int): The minimum number of nodes required to start the job.
+                If none specified, defaults to target_instances. If set, the job
+                will not start until the minimum number of nodes is available.
+            env_vars (dict): Environment variables to set in container.
+            enable_metrics (bool): Whether to enable metrics publishing for the job.
+            query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
+            spec_overrides (dict): A dictionary of overrides for the service spec.
 
     Returns:
         Decorator that dispatches invocations of the decorated function as remote jobs.
@@ -61,23 +59,17 @@ def remote(
         wrapped_func.__code__ = wrapped_func.__code__.replace(co_firstlineno=func.__code__.co_firstlineno + 1)
 
         @functools.wraps(func)
-        def wrapper(*args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
-            payload = functools.partial(func, *args, **kwargs)
-            setattr(payload, constants.IS_MLJOB_REMOTE_ATTR, True)
+        def wrapper(*_args: _Args.args, **_kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
+            payload = payload_utils.create_function_payload(func, *_args, **_kwargs)
             job = jm._submit_job(
                 source=payload,
                 stage_name=stage_name,
                 compute_pool=compute_pool,
+                target_instances=target_instances,
                 pip_requirements=pip_requirements,
                 external_access_integrations=external_access_integrations,
-                query_warehouse=query_warehouse,
-                env_vars=env_vars,
-                target_instances=target_instances,
-                min_instances=min_instances,
-                enable_metrics=enable_metrics,
-                database=database,
-                schema=schema,
-                session=session,
+                session=payload.session or session,
+                **kwargs,
             )
             assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
             return job

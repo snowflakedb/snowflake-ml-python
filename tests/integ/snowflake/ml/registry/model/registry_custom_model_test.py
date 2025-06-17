@@ -108,17 +108,11 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         asyncio.get_event_loop().run_until_complete(_test(self))
 
     @registry_model_test_base.RegistryModelTestBase.sproc_test(test_owners_rights=False)
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_large_input(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_large_input(self) -> None:
         arr = np.random.randint(100, size=(1_000_000, 3))
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         clf = DemoModel(custom_model.ModelContext())
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=clf,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -134,18 +128,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             options={"embed_local_ml_library": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_sp(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -153,20 +141,14 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_decimal(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_decimal(self) -> None:
         import decimal
 
         lm = DemoModel(custom_model.ModelContext())
         arr = [[decimal.Decimal(1.2), 2.3, 3.4], [decimal.Decimal(4.6), 2.7, 5.5]]
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         y_df_expected = pd.DataFrame([[1.2, 2.3, 3.4, 1.2], [4.6, 2.7, 5.5, 4.6]], columns=["c1", "c2", "c3", "output"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -174,13 +156,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_sp_one_query(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_sp_one_query(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
@@ -190,7 +166,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         assert len(sp_df_2.queries["queries"]) == 1, sp_df_2.queries
         assert len(sp_df_2.queries["post_actions"]) == 0, sp_df_2.queries
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [4, 2, 5, 4]], columns=["c1", "c2", "c3", "output"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df_2,
             prediction_assert_fns={
@@ -198,17 +174,11 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_none(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_none(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [None, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -223,17 +193,11 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_none_multi_block(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_none_multi_block(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2]] * 5000 + [[None, 2]] * 5000
         pd_df = pd.DataFrame(arr, columns=["c1", "c2"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -247,18 +211,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_none_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_none_sp(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [None, 2, 5]]
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [None, 2, 5, None]], columns=["c1", "c2", "c3", "output"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -266,19 +224,13 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_none_sp_mix1(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_none_sp_mix1(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [None, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         y_df_expected = pd.DataFrame([[1, 2, 3, 1], [None, 2, 5, None]], columns=["c1", "c2", "c3", "output"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -286,18 +238,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_none_sp_mix2(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_none_sp_mix2(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [None, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -312,18 +258,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_sp_quote(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_sp_quote(self) -> None:
         lm = DemoModelSPQuote(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         sp_df = self.session.create_dataframe(arr, schema=['"""c1"""', '"""c2"""', '"""c3"""'])
         pd_df = pd.DataFrame(arr, columns=['"c1"', '"c2"', '"c3"'])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -337,19 +277,13 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_sp_mix_1(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_sp_mix_1(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
         y_df_expected = pd.concat([pd_df, pd_df[["c1"]].rename(columns={"c1": "output"})], axis=1)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -360,18 +294,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_sp_mix_2(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_sp_mix_2(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         arr = [[1, 2, 3], [4, 2, 5]]
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(arr, schema=['"c1"', '"c2"', '"c3"'])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -385,17 +313,11 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_array(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_array(self) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -409,18 +331,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     @absltest.skip("Skip until we support pd.Series as output")
-    def test_custom_demo_model_pd_series(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_pd_series(self) -> None:
         lm = DemoModelWithPdSeriesOutPut(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -434,16 +350,10 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_str(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_str(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -457,13 +367,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_str_sp_none(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_str_sp_none(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([[None, "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(pd_df)
@@ -471,7 +375,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             [[None, "Civia", "Echo", None], ["Artia", "Doris", "Rosalyn", "Artia"]],
             columns=["c1", "c2", "c3", "output"],
         )
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -482,19 +386,13 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_array_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_array_sp(self) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         arr = np.array([[1, 2, 3], [4, 2, 5]])
         pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(pd_df)
         y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": [[1, 2, 3], [4, 2, 5]]})], axis=1)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -505,18 +403,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_str_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_str_sp(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
         sp_df = self.session.create_dataframe(pd_df)
         y_df_expected = pd.concat([pd_df, pd.DataFrame(data={"output": ["Yogiri", "Artia"]})], axis=1)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=sp_df,
             prediction_assert_fns={
@@ -527,16 +419,10 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_demo_model_array_str(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_demo_model_array_str(self) -> None:
         lm = DemoModelArray(custom_model.ModelContext())
         pd_df = pd.DataFrame([["Yogiri", "Civia", "Echo"], ["Artia", "Doris", "Rosalyn"]], columns=["c1", "c2", "c3"])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=lm,
             sample_input_data=pd_df,
             prediction_assert_fns={
@@ -550,13 +436,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_model_with_artifacts(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_model_with_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
                 f.write("10")
@@ -565,7 +445,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             )
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            getattr(self, registry_test_fn)(
+            self._test_registry_model(
                 model=lm,
                 sample_input_data=pd_df,
                 prediction_assert_fns={
@@ -635,10 +515,9 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
         )
 
     @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         key_name=["bias", "models", "artifacts"],
     )
-    def test_custom_model_with_kwargs(self, registry_test_fn: str, key_name: str) -> None:
+    def test_custom_model_with_kwargs(self, key_name: str) -> None:
         class DemoModelWithKwargs(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
                 super().__init__(context)
@@ -657,7 +536,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             lm = DemoModelWithKwargs(custom_model.ModelContext(**kwargs))
             arr = np.array([[1, 2, 3], [4, 2, 5]])
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
-            getattr(self, registry_test_fn)(
+            self._test_registry_model(
                 model=lm,
                 sample_input_data=pd_df,
                 prediction_assert_fns={
@@ -672,13 +551,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 },
             )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_custom_model_bool_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_custom_model_bool_sp(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with open(os.path.join(tmpdir, "bias"), "w", encoding="utf-8") as f:
                 f.write("10")
@@ -689,7 +562,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             pd_df = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
             sp_df = self.session.create_dataframe(pd_df)
             y_df_expected = pd.concat([pd_df, pd.DataFrame([False, True], columns=["output"])], axis=1)
-            getattr(self, registry_test_fn)(
+            self._test_registry_model(
                 model=lm,
                 sample_input_data=sp_df,
                 prediction_assert_fns={

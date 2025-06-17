@@ -465,14 +465,32 @@ class ModelOpsTest(absltest.TestCase):
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
         m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting")]
         m_endpoints_list_res_1 = [Row(name="inference", ingress_url="foo.snowflakecomputing.app")]
+        m_statuses_0 = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+        m_statuses_1 = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.RUNNING,
+                instance_id=1,
+                instance_status=service_sql.InstanceStatus.READY,
+                container_status=service_sql.ContainerStatus.READY,
+                message=None,
+            )
+        ]
 
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_services_list_res
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client,
-            "get_service_status",
-            side_effect=[(service_sql.ServiceStatus.PENDING, None), (service_sql.ServiceStatus.RUNNING, None)],
-        ) as mock_get_service_status, mock.patch.object(
+            "get_service_container_statuses",
+            side_effect=[m_statuses_0, m_statuses_1],
+        ) as mock_get_service_container_statuses, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
         ) as mock_show_endpoints:
             res = self.m_ops.show_services(
@@ -496,7 +514,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_has_calls(
+            mock_get_service_container_statuses.assert_has_calls(
                 [
                     mock.call(
                         database_name=sql_identifier.SqlIdentifier("a"),
@@ -532,12 +550,21 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_services_2(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
         m_endpoints_list_res = [Row(name="inference", ingress_url=None)]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
 
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_services_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
-        ) as mock_get_service_status, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ) as mock_show_endpoints:
             res = self.m_ops.show_services(
@@ -560,7 +587,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("a"),
                 schema_name=sql_identifier.SqlIdentifier("b"),
                 service_name=sql_identifier.SqlIdentifier("c"),
@@ -579,12 +606,21 @@ class ModelOpsTest(absltest.TestCase):
             Row(name="inference", ingress_url="foo.snowflakecomputing.app"),
             Row(name="another", ingress_url="bar.snowflakecomputing.app"),
         ]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
 
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_services_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
-        ) as mock_get_service_status, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ) as mock_show_endpoints:
             res = self.m_ops.show_services(
@@ -607,7 +643,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("a"),
                 schema_name=sql_identifier.SqlIdentifier("b"),
                 service_name=sql_identifier.SqlIdentifier("c"),
@@ -623,12 +659,21 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_services_4(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
         m_endpoints_list_res = [Row(name="custom", ingress_url="foo.snowflakecomputing.app")]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
 
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_services_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
-        ) as mock_get_service_status, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ) as mock_show_endpoints:
             res = self.m_ops.show_services(
@@ -651,7 +696,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("a"),
                 schema_name=sql_identifier.SqlIdentifier("b"),
                 service_name=sql_identifier.SqlIdentifier("c"),
@@ -693,11 +738,21 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_services_skip_build(self) -> None:
         m_list_res = [Row(inference_services='["A.B.MODEL_BUILD_34d35ew", "A.B.SERVICE"]')]
         m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
-        ) as mock_get_service_status, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
             self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res]
         ) as mock_show_endpoints:
             res = self.m_ops.show_services(
@@ -720,7 +775,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_status.assert_called_once_with(
+            mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("a"),
                 schema_name=sql_identifier.SqlIdentifier("b"),
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
@@ -736,10 +791,20 @@ class ModelOpsTest(absltest.TestCase):
     def test_delete_service_non_existent(self) -> None:
         m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
         m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -766,7 +831,7 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -794,7 +859,7 @@ class ModelOpsTest(absltest.TestCase):
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -822,12 +887,22 @@ class ModelOpsTest(absltest.TestCase):
     def test_delete_service_exists(self) -> None:
         m_list_res = [Row(inference_services='["A.B.C", "D.E.F"]')]
         m_endpoints_list_res = [Row(name="fooendpoint"), Row(name="barendpoint")]
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+
         with mock.patch.object(
             self.m_ops._model_client, "show_versions", return_value=m_list_res
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client, "drop_service"
         ) as mock_drop_service, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -859,7 +934,7 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client, "drop_service"
         ) as mock_drop_service, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -892,7 +967,7 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client, "drop_service"
         ) as mock_drop_service, mock.patch.object(
-            self.m_ops._service_client, "get_service_status", return_value=(service_sql.ServiceStatus.PENDING, None)
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
         ), mock.patch.object(
             self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
@@ -1116,7 +1191,11 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1129,7 +1208,9 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_1_no_sort(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1159,7 +1240,11 @@ class ModelOpsTest(absltest.TestCase):
                     statement_params=self.m_statement_params,
                 )
                 mock_convert_from_df.assert_called_once_with(
-                    self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                    self.c_session,
+                    mock.ANY,
+                    keep_order=True,
+                    features=m_sig.inputs,
+                    statement_params=self.m_statement_params,
                 )
                 mock_invoke_method.assert_called_once_with(
                     method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1172,7 +1257,9 @@ class ModelOpsTest(absltest.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
-                mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+                mock_convert_to_df.assert_called_once_with(
+                    m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+                )
 
     def test_invoke_method_1_no_drop(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1201,7 +1288,11 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1214,7 +1305,9 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_2(self) -> None:
         m_sig = _DUMMY_SIG["predict"]
@@ -1325,7 +1418,11 @@ class ModelOpsTest(absltest.TestCase):
                 is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
@@ -1340,7 +1437,9 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_table_function_partition_column(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1372,7 +1471,11 @@ class ModelOpsTest(absltest.TestCase):
                 is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
@@ -1387,7 +1490,9 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_service(self) -> None:
         m_sig = _DUMMY_SIG["predict"]
