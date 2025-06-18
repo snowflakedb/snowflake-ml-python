@@ -7,6 +7,7 @@ from typing import Optional, cast
 import yaml
 
 from snowflake.ml._internal import env_utils
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.data import data_source
 from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -53,17 +54,44 @@ class ModelManifest:
         if options is None:
             options = {}
 
+        has_pip_requirements = len(model_meta.env.pip_requirements) > 0
+        only_spcs = (
+            target_platforms
+            and len(target_platforms) == 1
+            and target_platforms[0] == type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES
+        )
+
         if "relax_version" not in options:
-            warnings.warn(
-                (
-                    "`relax_version` is not set and therefore defaulted to True. Dependency version constraints relaxed"
-                    " from ==x.y.z to >=x.y, <(x+1). To use specific dependency versions for compatibility, "
-                    "reproducibility, etc., set `options={'relax_version': False}` when logging the model."
-                ),
-                category=UserWarning,
-                stacklevel=2,
-            )
-        relax_version = options.get("relax_version", True)
+            if has_pip_requirements or only_spcs:
+                logger.info(
+                    "Setting `relax_version=False` as this model will run in Snowpark Container Services "
+                    "or in Warehouse with a specified artifact_repository_map where exact version "
+                    " specifications will be honored."
+                )
+                relax_version = False
+            else:
+                warnings.warn(
+                    (
+                        "`relax_version` is not set and therefore defaulted to True. Dependency version constraints"
+                        " relaxed from ==x.y.z to >=x.y, <(x+1). To use specific dependency versions for compatibility,"
+                        " reproducibility, etc., set `options={'relax_version': False}` when logging the model."
+                    ),
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                relax_version = True
+            options["relax_version"] = relax_version
+        else:
+            relax_version = options.get("relax_version", True)
+            if relax_version and (has_pip_requirements or only_spcs):
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "Setting `relax_version=True` is only allowed for models to be run in Warehouse with "
+                        "Snowflake Conda Channel dependencies. It cannot be used with pip requirements or when "
+                        "targeting only Snowpark Container Services."
+                    ),
+                )
 
         runtime_to_use = model_runtime.ModelRuntime(
             name=self._DEFAULT_RUNTIME_NAME,

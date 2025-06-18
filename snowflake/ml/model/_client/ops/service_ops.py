@@ -518,7 +518,7 @@ class ServiceOperator:
             output_with_input_features = False
             df = model_signature._convert_and_validate_local_data(X, signature.inputs)
             s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-                self._session, df, keep_order=keep_order, features=signature.inputs
+                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
             )
         else:
             keep_order = False
@@ -630,7 +630,9 @@ class ServiceOperator:
 
         # get final result
         if not isinstance(X, dataframe.DataFrame):
-            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(df_res, features=signature.outputs)
+            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
+                df_res, features=signature.outputs, statement_params=statement_params
+            )
         else:
             return df_res
 

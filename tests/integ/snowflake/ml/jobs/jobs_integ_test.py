@@ -1,5 +1,7 @@
 import inspect
 import itertools
+import json
+import os
 import pathlib
 import re
 import tempfile
@@ -9,17 +11,19 @@ from typing import Any, Callable, Optional, cast
 from unittest import mock
 from uuid import uuid4
 
+import cloudpickle as cp
 from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake import snowpark
+from snowflake.connector import errors
 from snowflake.ml import jobs
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
+from snowflake.ml.jobs import job as jd
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import exceptions as sp_exceptions
-from snowflake.snowpark.exceptions import SnowparkSQLException
 from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
@@ -108,40 +112,46 @@ class JobManagerTest(parameterized.TestCase):
         temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
             # Should be empty initially
-            self.assertEmpty(jobs.list_jobs(session=self.session).collect())
+            self.assertEmpty(jobs.list_jobs(session=self.session))
 
             # Submit a job
             job = self._submit_func_as_file(dummy_function)
 
             # Validate list jobs output
             jobs_df = jobs.list_jobs(session=self.session)
-            self.assertEqual(1, jobs_df.count())
+            self.assertEqual(1, jobs_df.shape[0])
             self.assertSequenceEqual(
-                ['"name"', '"owner"', '"status"', '"created_on"', '"compute_pool"'], jobs_df.columns
+                [
+                    "name",
+                    "status",
+                    "message",
+                    "database_name",
+                    "schema_name",
+                    "owner",
+                    "compute_pool",
+                    "target_instances",
+                    "created_time",
+                    "completed_time",
+                ],
+                list(jobs_df.columns),
             )
-            self.assertSequenceEqual(
-                ["name", "owner", "status", "created_on", "compute_pool"], list(jobs_df.to_pandas().columns)
-            )
-            self.assertEqual(job.name, jobs_df.collect()[0]["name"])
+            self.assertEqual(job.name, jobs_df.iloc[0]["name"])
 
             # Loading job ID shouldn't generate any additional jobs in backend
             loaded_job = jobs.get_job(job.id, session=self.session)
             loaded_job.status  # Trigger status check
-            self.assertEqual(1, jobs.list_jobs(session=self.session).count())
+            self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
 
             # Test different scopes
             scopes = [
-                "account",
-                "database",
-                f"database {self.db}",
-                "schema",
-                f"schema {temp_schema}",
-                f"schema {self.db}.{temp_schema}",
-                f"compute pool {self.compute_pool}",
+                (None, None),
+                (self.db, None),
+                (None, temp_schema),
+                (self.db, temp_schema),
             ]
-            for scope in scopes:
-                with self.subTest(f"scope={scope}"):
-                    self.assertGreater(jobs.list_jobs(scope=scope, session=self.session).count(), 0)
+            for database, schema in scopes:
+                with self.subTest(f"scope={database}.{schema}"):
+                    self.assertGreater(len(jobs.list_jobs(database=database, schema=schema, session=self.session)), 0)
 
             # Submit a second job to test different limits
             job2 = self._submit_func_as_file(dummy_function)
@@ -149,30 +159,41 @@ class JobManagerTest(parameterized.TestCase):
             for limit in limits:
                 with self.subTest(f"limit={limit}"):
                     self.assertBetween(
-                        jobs.list_jobs(limit=limit, scope="schema", session=self.session).count(), min(limit, 2), limit
+                        len(jobs.list_jobs(limit=limit, schema=temp_schema, session=self.session)),
+                        min(limit, 2),
+                        limit,
                     )
-            self.assertEqual(2, jobs.list_jobs(limit=0, scope="schema", session=self.session).count())
-            self.assertEqual(2, jobs.list_jobs(limit=-1, scope="schema", session=self.session).count())
-            self.assertEqual(2, jobs.list_jobs(limit=-10, scope="schema", session=self.session).count())
+            self.assertEqual(2, len(jobs.list_jobs(limit=0, schema=temp_schema, session=self.session)))
+            self.assertEqual(2, len(jobs.list_jobs(limit=-1, schema=temp_schema, session=self.session)))
+            self.assertEqual(2, len(jobs.list_jobs(limit=-10, schema=temp_schema, session=self.session)))
 
             # Delete the job
             jobs.delete_job(job.id, session=self.session)
             jobs.delete_job(job2.id, session=self.session)
-            self.assertEqual(0, jobs.list_jobs(session=self.session).count())
+            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
         finally:
             self.dbm.drop_schema(temp_schema, if_exists=True)
             self.session.use_schema(original_schema)
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"scope": "invalid_scope"},
-        {"scope": "database not_exist_db"},
-        {"scope": "schema not_exist_schema"},
-        {"scope": "schema not_exist_db.not_exist_schema"},
-        {"scope": "compute_pool not_exist_pool"},
+        {"database": '"not_exist_db"'},
+        {"schema": '"not_exist_schema"'},
+        {"database": '"not_exist_db"', "schema": '"not_exist_schema"'},
     )
     def test_list_jobs_negative(self, **kwargs: Any) -> None:
-        with self.assertRaises(sp_exceptions.SnowparkSQLException):
-            jobs.list_jobs(**kwargs, session=self.session)
+        enable_job_history_spcs = False
+        row = self.session.sql("show parameters like 'SNOWSERVICES_ENABLE_SPCS_JOB_HISTORY' in account;").collect()
+        if row and row[0]["value"] == "true":
+            row = self.session.sql("show parameters like 'ENABLE_SPCS_SCHEMA_IN_SNOWFLAKE_SHARE';").collect()
+            if row and row[0]["value"] == "true":
+                enable_job_history_spcs = True
+
+        if enable_job_history_spcs:
+            self.assertEmpty(jobs.list_jobs(**kwargs, session=self.session))
+
+        else:
+            with self.assertRaises(sp_exceptions.SnowparkSQLException):
+                jobs.list_jobs(**kwargs, session=self.session)
 
     def test_get_job_positive(self):
         # Submit a job
@@ -219,7 +240,7 @@ class JobManagerTest(parameterized.TestCase):
                 job = jobs.MLJob[None](id, session=self.session)
                 with self.assertRaises(ValueError, msg=f"id={id}"):
                     jobs.delete_job(job.id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                with self.assertRaises(errors.ProgrammingError, msg=f"id={id}"):
                     jobs.delete_job(job, session=self.session)
 
     def test_get_status_negative(self) -> None:
@@ -232,7 +253,7 @@ class JobManagerTest(parameterized.TestCase):
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
                 job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                with self.assertRaises(errors.ProgrammingError, msg=f"id={id}"):
                     job.status
 
     def test_get_logs(self) -> None:
@@ -382,6 +403,68 @@ class JobManagerTest(parameterized.TestCase):
             self.assertEqual(self.session.sql(query.format(job_id=job1.id)).count(), 0, job1.id)
             self.assertGreater(self.session.sql(query.format(job_id=job2.id)).count(), 0, job2.id)
 
+    def test_job_pickling(self) -> None:
+        """Dedicated test for MLJob pickling and unpickling functionality."""
+        payload = TestAsset("src/main.py")
+
+        # Create a job and wait for completion
+        job = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            args=["foo", "--delay", "1"],
+            session=self.session,
+        )
+
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+
+        # Get initial state for comparison
+        original_id = job.id
+        original_status = job.status
+        original_logs = job.get_logs()
+        original_result = job.result()
+        original_target_instances = job.target_instances
+
+        pickled_data = cp.dumps(job)
+        self.assertIsInstance(pickled_data, bytes)
+        self.assertGreater(len(pickled_data), 0)
+        unpickled_job: jobs.MLJob[None] = cp.loads(pickled_data)
+        self.assertIsInstance(unpickled_job, jobs.MLJob)
+
+        # Verify session validation - should get same session back
+        self.assertIs(unpickled_job._session, self.session)
+
+        # Verify job identity and basic properties are preserved
+        self.assertEqual(unpickled_job.id, original_id)
+        self.assertEqual(unpickled_job.name, job.name)
+
+        # Verify all MLJob functionality works on unpickled object
+        self.assertEqual(unpickled_job.status, original_status)
+        self.assertEqual(unpickled_job.target_instances, original_target_instances)
+        self.assertEqual(unpickled_job.get_logs(), original_logs)
+        self.assertEqual(unpickled_job.result(), original_result)
+
+        # Test that unpickled job can handle multiple operations
+        self.assertIn("Job start", unpickled_job.get_logs())
+        self.assertIn("Job complete", unpickled_job.get_logs())
+
+        # Verify cached properties work correctly
+        _ = unpickled_job.min_instances  # Should not raise an error
+
+        # Test that session-dependent operations work
+        self.assertIsNotNone(unpickled_job._compute_pool)
+
+        # Verify the job can be pickled again (round-trip test)
+        second_pickle = cp.dumps(unpickled_job)
+        second_unpickled = cp.loads(second_pickle)
+        self.assertEqual(second_unpickled.id, original_id)
+        self.assertEqual(second_unpickled.status, original_status)
+
+        # Test session validation - should fail with different session context
+        with mock.patch.object(self.session, "get_current_account", return_value="DIFFERENT_ACCOUNT"):
+            with self.assertRaisesRegex(RuntimeError, "No active Snowpark session available"):
+                cp.loads(pickled_data)
+
     # TODO(SNOW-1911482): Enable test for Python 3.11+
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
@@ -519,6 +602,8 @@ class JobManagerTest(parameterized.TestCase):
     def test_multinode_job_basic(self) -> None:
         job_from_file = self._submit_func_as_file(dummy_function, target_instances=2)
 
+        self.assertEqual(job_from_file.target_instances, 2)
+        self.assertEqual(job_from_file.min_instances, 2)  # min_instances defaults to target_instances
         self.assertEqual(job_from_file.wait(), "DONE", file_job_logs := job_from_file.get_logs())
         self.assertIn("hello world", file_job_logs)
 
@@ -564,6 +649,8 @@ class JobManagerTest(parameterized.TestCase):
             print("num_nodes:", mlrs_util.get_num_ray_nodes())
 
         job = self._submit_func_as_file(get_cluster_size, target_instances=2, min_instances=2)
+        self.assertEqual(job.target_instances, 2)
+        self.assertEqual(job.min_instances, 2)
         self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         self.assertEqual(re.match(r"num_nodes: (\d+)", job.get_logs(verbose=False)).group(1), "2")
 
@@ -751,8 +838,8 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_submit_job_negative(self):
         test_cases = [
-            ("not_valid_database", self.schema, SnowparkSQLException, "does not exist"),
-            (self.db, "not_valid_schema", SnowparkSQLException, "does not exist"),
+            ("not_valid_database", self.schema, errors.ProgrammingError, "does not exist"),
+            (self.db, "not_valid_schema", errors.ProgrammingError, "does not exist"),
             (self.db, None, ValueError, "Schema must be specified if database is specified."),
         ]
         for database, schema, expected_exception, expected_regex in test_cases:
@@ -776,7 +863,7 @@ class JobManagerTest(parameterized.TestCase):
                 invalid_kwargs = kwargs.copy()
                 invalid_kwargs[k] = v
                 with self.assertRaisesRegex(
-                    (ValueError, sp_exceptions.SnowparkSQLException), re.compile(re.escape(v), re.IGNORECASE)
+                    (ValueError, errors.ProgrammingError), re.compile(re.escape(v), re.IGNORECASE)
                 ):
                     _ = self._submit_func_as_file(
                         dummy_function,
@@ -869,7 +956,7 @@ class JobManagerTest(parameterized.TestCase):
         temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
             job = self._submit_func_as_file(dummy_function)
-            self.assertEqual(1, jobs.list_jobs(session=self.session).count())
+            self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
             stage_path = job._stage_path
             stage_files = self.session.sql(f"LIST '{stage_path}'").collect()
             self.assertGreater(len(stage_files), 0, "Stage should contain uploaded job files")
@@ -883,10 +970,127 @@ class JobManagerTest(parameterized.TestCase):
             jobs.delete_job(job.id if method == "job_id" else job, session=self.session)
             remaining_files = self.session.sql(f"LIST '{stage_path}'").collect()
             self.assertEqual(len(remaining_files), 0, "Stage files should be cleaned up after job deletion")
-            self.assertEqual(0, jobs.list_jobs(session=self.session).count())
+            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
         finally:
             self.dbm.drop_schema(temp_schema, if_exists=True)
             self.session.use_schema(original_schema)
+
+    def test_get_logs_fallback(self) -> None:
+        real_run_query = self.session._conn.run_query
+
+        def sql_side_effect(query_str: str, *args: Any, **kwargs: Any) -> Any:
+            if query_str.startswith("SELECT SYSTEM$GET_SERVICE_LOGS"):
+                raise errors.ProgrammingError("unable to get logs")
+            return real_run_query(query_str, *args, **kwargs)
+
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_SPCS_NESTED_FUNCTIONS = False").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to disable SPCS persistent logs parameter. Skipping test.")
+        job_event_table = self._submit_func_as_file(dummy_function)
+
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_SPCS_NESTED_FUNCTIONS = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to control the SPCS persistent logs parameter. Skipping test.")
+
+        # creat two separate jobs with different function service, one is enabled SPCS persistent logs, the other is not
+        job_spcs = self._submit_func_as_file(dummy_function)
+
+        self.assertEqual(job_event_table.wait(), "DONE", job_event_table.get_logs())
+        self.assertEqual(job_spcs.wait(), "DONE", job_event_table.get_logs())
+        # Wait for event table ingest to complete
+        # check if the event table ingest is complete for job_event_table
+        max_wait = 300
+        interval = 30
+        elapsed = 0
+        database, schema, id = identifier.parse_schema_level_object_identifier(job_event_table.id)
+        event_table_logs = []
+        while elapsed <= max_wait:
+            event_table_logs = jd._get_service_log_from_event_table(
+                self.session, id, database=database, schema=schema, instance_id=0
+            )
+            if len(event_table_logs) > 0:
+                break
+            time.sleep(interval)
+            elapsed += interval
+        else:
+            raise TimeoutError("Event table ingest did not complete in 5 minutes")
+
+        spcs_logs = []
+        # check if the event table ingest is complete for job_spcs
+        while elapsed <= max_wait:
+            spcs_logs = jd._get_logs_spcs(self.session, job_spcs.id, instance_id=0, container_name="main")
+            if len(spcs_logs) > 0:
+                break
+            time.sleep(interval)
+            elapsed += interval
+        else:
+            raise TimeoutError("Event table ingest did not complete in 5 minutes")
+
+        with mock.patch.object(self.session._conn, "run_query", side_effect=sql_side_effect):
+            # check the fallback logic
+            # fallback to event table if SPCS logs are not available
+            with self.assertLogs(level="DEBUG") as cm:
+                original_logs = job_event_table.get_logs(verbose=True)
+                self.assertEqual(original_logs, os.linesep.join(json.loads(row[0]) for row in event_table_logs))
+            self.assertTrue(any("falling back to event table" in line for line in cm.output))
+            # check the SPCS logs
+            with self.assertLogs(level="DEBUG") as cm:
+                original_logs = job_spcs.get_logs(verbose=True)
+                self.assertEqual(original_logs, os.linesep.join(row[0] for row in spcs_logs))
+            self.assertFalse(any("falling back to event table" in line for line in cm.output))
+
+    def test_file_indentation_tabs(self) -> None:
+        payload = TestAsset("src/test_tabs_indentation.py")
+
+        # Create a job
+        job = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+
+    def test_cancel_job(self) -> None:
+        """Test cancelling a long running job."""
+        try:
+            self.session.sql("ALTER SESSION SET SNOWSERVICES_ENABLE_SPCS_JOB_CANCELLATION = TRUE").collect()
+            self.session.sql("ALTER SESSION SET ENABLE_ENTITY_FACADE_SYSTEM_FUNCTIONS = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to control the SPCS job cancellation parameter. Skipping test.")
+
+        def long_running_function() -> None:
+            import time
+
+            time.sleep(300)
+
+        job = self._submit_func_as_file(long_running_function)
+        self.assertIn(job.status, ["PENDING", "RUNNING"])
+        job.cancel()
+        final_status = job.wait(timeout=20)
+        self.assertEqual(final_status, "CANCELLED")
+
+    def test_cancel_nonexistent_job(self) -> None:
+        """Test cancelling a job that doesn't exist."""
+        try:
+            self.session.sql("ALTER SESSION SET SNOWSERVICES_ENABLE_SPCS_JOB_CANCELLATION = TRUE").collect()
+            self.session.sql("ALTER SESSION SET ENABLE_ENTITY_FACADE_SYSTEM_FUNCTIONS = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to control the SPCS job cancellation parameter. Skipping test.")
+
+        nonexistent_job_ids = [
+            f"{self.db}.non_existent_schema.nonexistent_job_id",
+            f"{self.db}.{self.schema}.NONEXISTENT_JOB_ID",
+            "nonexistent_job_id",
+            *INVALID_IDENTIFIERS,
+        ]
+        for id in nonexistent_job_ids:
+            with self.subTest(f"id={id}"):
+                job = jobs.MLJob[None](id, session=self.session)
+                with self.assertRaises(RuntimeError, msg=f"id={id}"):
+                    job.cancel()
 
 
 if __name__ == "__main__":

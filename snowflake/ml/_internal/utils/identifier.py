@@ -240,7 +240,7 @@ def get_schema_level_object_identifier(
     """
 
     for identifier in (db, schema, object_name):
-        if identifier is not None and SF_IDENTIFIER_RE.match(identifier) is None:
+        if identifier is not None and SF_IDENTIFIER_RE.fullmatch(identifier) is None:
             raise ValueError(f"Invalid identifier {identifier}")
 
     if others is None:

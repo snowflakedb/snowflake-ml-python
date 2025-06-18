@@ -955,7 +955,7 @@ class ModelOperator:
             output_with_input_features = False
             df = model_signature._convert_and_validate_local_data(X, signature.inputs, strict=strict_input_validation)
             s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-                self._session, df, keep_order=keep_order, features=signature.inputs
+                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
             )
         else:
             keep_order = False
@@ -969,9 +969,16 @@ class ModelOperator:
 
         # Compose input and output names
         input_args = []
+        quoted_identifiers_ignore_case = (
+            snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                self._session, statement_params
+            )
+        )
+
         for input_feature in signature.inputs:
             col_name = identifier_rule.get_sql_identifier_from_feature(input_feature.name)
-
+            if quoted_identifiers_ignore_case:
+                col_name = sql_identifier.SqlIdentifier(input_feature.name.upper(), case_sensitive=True)
             input_args.append(col_name)
 
         returns = []
@@ -1051,7 +1058,9 @@ class ModelOperator:
 
         # Get final result
         if not isinstance(X, dataframe.DataFrame):
-            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(df_res, features=signature.outputs)
+            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
+                df_res, features=signature.outputs, statement_params=statement_params
+            )
         else:
             return df_res
 

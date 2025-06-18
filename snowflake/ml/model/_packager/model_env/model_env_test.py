@@ -11,6 +11,7 @@ from packaging import requirements, version
 
 from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 
 
@@ -1158,6 +1159,47 @@ class ModelEnvTest(absltest.TestCase):
         self.assertEqual(env.pip_requirements, ["pip-package==1.6.2"])
         self.assertEqual(env.conda_dependencies, ["pip-package==1.6.2"])
         self.assertEqual(env2.conda_dependencies, ["channel::pip-package==1.6.2"])
+
+    def test_warnings_with_target_platforms(self) -> None:
+        env = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
+
+        env_default = model_env.ModelEnv()
+        env_default.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_default.include_if_absent(
+                [model_env.ModelDependency(requirement="some-package", pip_name="some-package")]
+            )
+
+        env_warehouse = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.WAREHOUSE])
+        env_warehouse.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_warehouse.include_if_absent(
+                [model_env.ModelDependency(requirement="some-package", pip_name="some-package")]
+            )
+
+        env_both = model_env.ModelEnv(
+            target_platforms=[
+                model_types.TargetPlatform.WAREHOUSE,
+                model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+            ]
+        )
+        env_both.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_both.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
 
 
 if __name__ == "__main__":

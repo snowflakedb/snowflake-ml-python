@@ -1,9 +1,11 @@
 # mypy: disable-error-code="import"
-from enum import Enum
 from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
 
 import numpy.typing as npt
 from typing_extensions import NotRequired
+
+from snowflake.ml.model.target_platform import TargetPlatform
+from snowflake.ml.model.task import Task
 
 if TYPE_CHECKING:
     import catboost
@@ -321,17 +323,7 @@ ModelLoadOption = Union[
 ]
 
 
-class Task(Enum):
-    UNKNOWN = "UNKNOWN"
-    TABULAR_BINARY_CLASSIFICATION = "TABULAR_BINARY_CLASSIFICATION"
-    TABULAR_MULTI_CLASSIFICATION = "TABULAR_MULTI_CLASSIFICATION"
-    TABULAR_REGRESSION = "TABULAR_REGRESSION"
-    TABULAR_RANKING = "TABULAR_RANKING"
-
-
-class TargetPlatform(Enum):
-    WAREHOUSE = "WAREHOUSE"
-    SNOWPARK_CONTAINER_SERVICES = "SNOWPARK_CONTAINER_SERVICES"
-
-
 SupportedTargetPlatformType = Union[TargetPlatform, str]
+
+
+__all__ = ["TargetPlatform", "Task"]

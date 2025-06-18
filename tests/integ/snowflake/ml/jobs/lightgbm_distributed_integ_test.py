@@ -41,7 +41,7 @@ class LightGBMDistributedTest(BaseModelTest):
         "only works for Python 3.10 and below due to pickle compatibility",
     )
     def test_lightgbm_distributed(self) -> None:
-        @remote(self.compute_pool, stage_name="payload_stage", target_instances=2)
+        @remote(self.compute_pool, stage_name="payload_stage", target_instances=2, session=self.session)
         def distributed_lightgbm(table_name: str, input_cols: list[str], label_col: str) -> Any:
             from snowflake.ml.data import DataConnector
             from snowflake.ml.modeling.distributors.lightgbm import (

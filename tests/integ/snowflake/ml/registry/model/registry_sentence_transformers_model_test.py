@@ -60,13 +60,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_sentence_transformers_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_sentence_transformers_sp(self) -> None:
         import sentence_transformers
 
         # Sample Data
@@ -86,7 +80,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         embeddings = pd.DataFrame({"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()})
         y_df_expected = pd.concat([sentences_sp.to_pandas(), embeddings], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=sentences_sp,
             prediction_assert_fns={

@@ -1,3 +1,5 @@
+from typing import Callable
+
 import inflection
 import pandas as pd
 import shap
@@ -11,6 +13,7 @@ from sklearn import (
     preprocessing,
 )
 
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -18,7 +21,7 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
 class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(
+    @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
     def test_xgb_manual_shap_override(self, registry_test_fn: str) -> None:
@@ -48,13 +51,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -70,7 +67,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -82,13 +79,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_pipeline_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_pipeline_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -101,7 +92,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
         regressor.fit(cal_X_train, cal_y_train)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -120,13 +111,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_explain_by_default(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_explain_by_default(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -135,7 +120,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -151,13 +136,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_explain_explicitly_enabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_explain_explicitly_enabled(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -166,7 +145,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -183,13 +162,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_sp_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
         cal_data_sp_df = self.session.create_dataframe(cal_data)
@@ -206,7 +179,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             ],
             axis=1,
         )
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
@@ -218,13 +191,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
         cal_data_sp_df = self.session.create_dataframe(cal_data)
@@ -244,7 +211,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             ],
             axis=1,
         )
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
@@ -258,13 +225,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_booster_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_booster_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -281,7 +242,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -293,13 +254,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_booster_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_booster_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -308,7 +263,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
         regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -324,13 +279,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_booster_sp_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_booster_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
         cal_data_sp_df = self.session.create_dataframe(cal_data)
@@ -352,7 +301,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             ],
             axis=1,
         )
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
@@ -364,13 +313,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_booster_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_booster_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
         cal_data_sp_df = self.session.create_dataframe(cal_data)
@@ -393,7 +336,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             axis=1,
         )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train.drop('"target"'),
             prediction_assert_fns={
@@ -407,13 +350,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_booster_with_signature_and_sample_data(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_booster_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -427,7 +364,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         )
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         sig = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -444,13 +381,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             signatures=sig,
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_model_with_categorical_dtype_columns(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_model_with_categorical_dtype_columns(self) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
             "size": [1, 2, 2, 4],
@@ -489,7 +420,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=df[input_features],
             prediction_assert_fns={
@@ -500,13 +431,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_xgb_model_with_dmatrix_input(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_xgb_model_with_dmatrix_input(self) -> None:
         data = {
             "size": [1, 2, 2, 4],
             "price": [10, 15, 20, 25],
@@ -535,7 +460,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=xgb_model,
             sample_input_data=d_matrix,
             prediction_assert_fns={
@@ -601,6 +526,62 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                 ),
             },
         )
+
+    def test_xgb_model_with_quoted_identifiers_ignore_case(self):
+        cal_X, cal_y = datasets.load_breast_cancer(return_X_y=True)
+        cal_X_df = pd.DataFrame(cal_X, columns=[f"col_{i}" for i in range(cal_X.shape[1])])
+
+        regressor = xgboost.XGBRegressor()
+        regressor.fit(cal_X_df, cal_y)
+
+        name = "xgb_model_test_quoted_identifiers_param"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=regressor,
+            model_name=name,
+            version_name=version,
+            sample_input_data=cal_X_df,
+        )
+
+        statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": "TRUE"}
+
+        functions = mv._functions
+        predict_name = sql_identifier.SqlIdentifier("predict").identifier()
+        find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
+            lambda method: method["name"] == predict_name
+        )
+        target_function_info = next(
+            filter(find_method, functions),
+            None,
+        )
+        self.assertIsNotNone(target_function_info, "predict function not found")
+
+        result = mv._model_ops.invoke_method(
+            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            method_function_type=target_function_info["target_method_function_type"],
+            signature=target_function_info["signature"],
+            X=cal_X_df[:5],
+            database_name=None,
+            schema_name=None,
+            model_name=mv._model_name,
+            version_name=mv._version_name,
+            strict_input_validation=False,
+            statement_params=statement_params,
+            is_partitioned=target_function_info["is_partitioned"],
+        )
+
+        result_cols = list(result.columns)
+
+        for col in result_cols:
+            self.assertTrue(
+                col.isupper(), f"Expected column {col} to be uppercase with QUOTED_IDENTIFIERS_IGNORE_CASE=TRUE"
+            )
+
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertTrue(len(result) > 0, "Result should not be empty")
+
+        self.registry.delete_model(model_name=name)
 
 
 if __name__ == "__main__":

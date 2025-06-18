@@ -9,6 +9,7 @@ from packaging import requirements, version
 
 from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 # requirement: Full version requirement where name is conda package name.
@@ -30,6 +31,7 @@ class ModelEnv:
         conda_env_rel_path: Optional[str] = None,
         pip_requirements_rel_path: Optional[str] = None,
         prefer_pip: bool = False,
+        target_platforms: Optional[list[model_types.TargetPlatform]] = None,
     ) -> None:
         if conda_env_rel_path is None:
             conda_env_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_CONDA_ENV_FILENAME)
@@ -45,6 +47,7 @@ class ModelEnv:
         self._python_version: version.Version = version.parse(snowml_env.PYTHON_VERSION)
         self._cuda_version: Optional[version.Version] = None
         self._snowpark_ml_version: version.Version = version.parse(snowml_version.VERSION)
+        self._target_platforms = target_platforms
 
     @property
     def conda_dependencies(self) -> list[str]:
@@ -116,6 +119,11 @@ class ModelEnv:
         if snowpark_ml_version:
             self._snowpark_ml_version = version.parse(snowpark_ml_version)
 
+    @property
+    def targets_warehouse(self) -> bool:
+        """Returns True if warehouse is a target platform."""
+        return self._target_platforms is None or model_types.TargetPlatform.WAREHOUSE in self._target_platforms
+
     def include_if_absent(
         self,
         pkgs: list[ModelDependency],
@@ -130,14 +138,15 @@ class ModelEnv:
         """
         if (self.pip_requirements or self.prefer_pip) and not self.conda_dependencies and pkgs:
             pip_pkg_reqs: list[str] = []
-            warnings.warn(
-                (
-                    "Dependencies specified from pip requirements."
-                    " This may prevent model deploying to Snowflake Warehouse."
-                ),
-                category=UserWarning,
-                stacklevel=2,
-            )
+            if self.targets_warehouse:
+                warnings.warn(
+                    (
+                        "Dependencies specified from pip requirements."
+                        " This may prevent model deploying to Snowflake Warehouse."
+                    ),
+                    category=UserWarning,
+                    stacklevel=2,
+                )
             for conda_req_str, pip_name in pkgs:
                 _, conda_req = env_utils._validate_conda_dependency_string(conda_req_str)
                 pip_req = requirements.Requirement(f"{pip_name}{conda_req.specifier}")
@@ -162,7 +171,7 @@ class ModelEnv:
                 req_to_add.name = conda_req.name
             else:
                 req_to_add = conda_req
-            show_warning_message = conda_req_channel == env_utils.DEFAULT_CHANNEL_NAME
+            show_warning_message = conda_req_channel == env_utils.DEFAULT_CHANNEL_NAME and self.targets_warehouse
 
             if any(added_pip_req.name == pip_name for added_pip_req in self._pip_requirements):
                 if show_warning_message:
@@ -272,7 +281,7 @@ class ModelEnv:
         )
 
         for channel, channel_dependencies in conda_dependencies_dict.items():
-            if channel != env_utils.DEFAULT_CHANNEL_NAME:
+            if channel != env_utils.DEFAULT_CHANNEL_NAME and self.targets_warehouse:
                 warnings.warn(
                     (
                         "Found dependencies specified in the conda file from non-Snowflake channel."
@@ -281,7 +290,7 @@ class ModelEnv:
                     category=UserWarning,
                     stacklevel=2,
                 )
-            if len(channel_dependencies) == 0 and channel not in self._conda_dependencies:
+            if len(channel_dependencies) == 0 and channel not in self._conda_dependencies and self.targets_warehouse:
                 warnings.warn(
                     (
                         f"Found additional conda channel {channel} specified in the conda file."
@@ -307,7 +316,7 @@ class ModelEnv:
                         stacklevel=2,
                     )
 
-        if pip_requirements_list:
+        if pip_requirements_list and self.targets_warehouse:
             warnings.warn(
                 (
                     "Found dependencies specified as pip requirements."
@@ -333,7 +342,7 @@ class ModelEnv:
     def load_from_pip_file(self, pip_requirements_path: pathlib.Path) -> None:
         pip_requirements_list = env_utils.load_requirements_file(pip_requirements_path)
 
-        if pip_requirements_list:
+        if pip_requirements_list and self.targets_warehouse:
             warnings.warn(
                 (
                     "Found dependencies specified as pip requirements."

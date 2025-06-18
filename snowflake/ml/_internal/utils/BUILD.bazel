@@ -266,3 +266,9 @@ py_library(
     name = "jwt_generator",
     srcs = ["jwt_generator.py"],
 )
+
+py_library(
+    name = "mixins",
+    srcs = ["mixins.py"],
+    deps = [],
+)

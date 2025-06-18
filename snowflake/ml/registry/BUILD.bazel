@@ -53,6 +53,14 @@ py_test(
     ],
 )
 
+py_test(
+    name = "registry_event_handler_test",
+    srcs = ["registry_event_handler_test.py"],
+    deps = [
+        ":registry_impl",
+    ],
+)
+
 py_package(
     name = "model_registry_pkg",
     packages = ["snowflake.ml"],

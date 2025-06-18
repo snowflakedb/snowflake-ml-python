@@ -59,7 +59,7 @@ py_test(
     name = "jobs_integ_test",
     timeout = "long",
     srcs = ["jobs_integ_test.py"],
-    shard_count = 2,
+    shard_count = 8,
     deps = [
         ":test_constants",
         ":test_file_helper",

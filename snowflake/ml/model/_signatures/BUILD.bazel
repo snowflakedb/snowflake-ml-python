@@ -187,6 +187,7 @@ py_test(
         ":snowpark_handler",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/test_utils:exception_utils",
+        "//snowflake/ml/test_utils:mock_session",
         "//snowflake/ml/utils:connection_params",
     ],
 )

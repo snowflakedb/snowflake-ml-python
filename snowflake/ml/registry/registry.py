@@ -1,3 +1,5 @@
+import logging
+import os
 import warnings
 from types import ModuleType
 from typing import Any, Optional, Union, overload
@@ -11,6 +13,7 @@ from snowflake.ml.model import (
     Model,
     ModelVersion,
     model_signature,
+    task,
     type_hints as model_types,
 )
 from snowflake.ml.model._client.model import model_version_impl
@@ -27,6 +30,52 @@ _MODEL_MONITORING_UNIMPLEMENTED_ERROR = "Model Monitoring is not implemented in 
 _MODEL_MONITORING_DISABLED_ERROR = (
     """Must enable monitoring to use this method. Please set `options={"enable_monitoring": True}` in the Registry"""
 )
+
+
+class _NullStatusContext:
+    """A fallback context manager that logs status updates."""
+
+    def __init__(self, label: str) -> None:
+        self._label = label
+
+    def __enter__(self) -> "_NullStatusContext":
+        logging.info(f"Starting: {self._label}")
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        pass
+
+    def update(self, label: str, *, state: str = "running", expanded: bool = True) -> None:
+        """Update the status by logging the message."""
+        logging.info(f"Status update: {label} (state: {state})")
+
+
+class RegistryEventHandler:
+    def __init__(self) -> None:
+        try:
+            import streamlit as st
+
+            if not st.runtime.exists():
+                self._streamlit = None
+            else:
+                self._streamlit = st
+            USE_STREAMLIT_WIDGETS = os.getenv("USE_STREAMLIT_WIDGETS", "1") == "1"
+            if not USE_STREAMLIT_WIDGETS:
+                self._streamlit = None
+        except ImportError:
+            self._streamlit = None
+
+    def update(self, message: str) -> None:
+        """Write a message using streamlit if available, otherwise do nothing."""
+        if self._streamlit is not None:
+            self._streamlit.write(message)
+
+    def status(self, label: str, *, state: str = "running", expanded: bool = True) -> Any:
+        """Context manager that provides status updates with optional enhanced display capabilities."""
+        if self._streamlit is None:
+            return _NullStatusContext(label)
+        else:
+            return self._streamlit.status(label, state=state, expanded=expanded)
 
 
 class Registry:
@@ -136,7 +185,7 @@ class Registry:
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
+        task: model_types.Task = task.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -172,10 +221,13 @@ class Registry:
                      `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
-                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES":
-                - ["WAREHOUSE"]  (Warehouse only)
-                - ["SNOWPARK_CONTAINER_SERVICES"]  (Snowpark Container Services only)
-                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] (Both)
+                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES", or a target platform constant:
+                - ["WAREHOUSE"] or snowflake.ml.model.target_platform.WAREHOUSE_ONLY (Warehouse only)
+                - ["SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+                  (Snowpark Container Services only)
+                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES (Both)
                 Defaults to None. When None, the target platforms will be both.
             python_version: Python version in which the model is run. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
@@ -280,7 +332,7 @@ class Registry:
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = model_types.Task.UNKNOWN,
+        task: model_types.Task = task.Task.UNKNOWN,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
@@ -316,10 +368,13 @@ class Registry:
                      `snowflake.snowpark.pypi_shared_repository`.
             resource_constraint: Mapping of resource constraint keys and values, e.g. {"architecture": "x86"}.
             target_platforms: List of target platforms to run the model. The only acceptable inputs are a combination of
-                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES":
-                - ["WAREHOUSE"]  (Warehouse only)
-                - ["SNOWPARK_CONTAINER_SERVICES"]  (Snowpark Container Services only)
-                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] (Both)
+                "WAREHOUSE" and "SNOWPARK_CONTAINER_SERVICES", or a target platform constant:
+                - ["WAREHOUSE"] or snowflake.ml.model.target_platform.WAREHOUSE_ONLY (Warehouse only)
+                - ["SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+                  (Snowpark Container Services only)
+                - ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"] or
+                  snowflake.ml.model.target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES (Both)
                 Defaults to None. When None, the target platforms will be both.
             python_version: Python version in which the model is run. Defaults to None.
             signatures: Model data signatures for inputs and outputs for various target methods. If it is None,
@@ -366,6 +421,7 @@ class Registry:
 
         Raises:
             ValueError: If extra arguments are specified ModelVersion is provided.
+            Exception: If the model logging fails.
 
         Returns:
             ModelVersion: ModelVersion object corresponding to the model just logged.
@@ -421,7 +477,7 @@ class Registry:
             if task is not model_types.Task.UNKNOWN:
                 raise ValueError("`task` cannot be specified when calling log_model with a ModelVersion.")
 
-        if pip_requirements and not artifact_repository_map:
+        if pip_requirements and not artifact_repository_map and self._targets_warehouse(target_platforms):
             warnings.warn(
                 "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse "
                 "without specifying `artifact_repository_map`. This model can be run in Snowpark Container "
@@ -429,27 +485,39 @@ class Registry:
                 category=UserWarning,
                 stacklevel=1,
             )
-        return self._model_manager.log_model(
-            model=model,
-            model_name=model_name,
-            version_name=version_name,
-            comment=comment,
-            metrics=metrics,
-            conda_dependencies=conda_dependencies,
-            pip_requirements=pip_requirements,
-            artifact_repository_map=artifact_repository_map,
-            resource_constraint=resource_constraint,
-            target_platforms=target_platforms,
-            python_version=python_version,
-            signatures=signatures,
-            sample_input_data=sample_input_data,
-            user_files=user_files,
-            code_paths=code_paths,
-            ext_modules=ext_modules,
-            task=task,
-            options=options,
-            statement_params=statement_params,
-        )
+
+        event_handler = RegistryEventHandler()
+        with event_handler.status("Logging model to registry...") as status:
+            # Perform the actual model logging
+            try:
+                result = self._model_manager.log_model(
+                    model=model,
+                    model_name=model_name,
+                    version_name=version_name,
+                    comment=comment,
+                    metrics=metrics,
+                    conda_dependencies=conda_dependencies,
+                    pip_requirements=pip_requirements,
+                    artifact_repository_map=artifact_repository_map,
+                    resource_constraint=resource_constraint,
+                    target_platforms=target_platforms,
+                    python_version=python_version,
+                    signatures=signatures,
+                    sample_input_data=sample_input_data,
+                    user_files=user_files,
+                    code_paths=code_paths,
+                    ext_modules=ext_modules,
+                    task=task,
+                    options=options,
+                    statement_params=statement_params,
+                    event_handler=event_handler,
+                )
+                status.update(label="Model logged successfully!", state="complete", expanded=False)
+                return result
+            except Exception as e:
+                event_handler.update("❌ Model logging failed!")
+                status.update(label="Model logging failed!", state="error", expanded=False)
+                raise e
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -626,3 +694,12 @@ class Registry:
         if not self.enable_monitoring:
             raise ValueError(_MODEL_MONITORING_DISABLED_ERROR)
         self._model_monitor_manager.delete_monitor(name)
+
+    @staticmethod
+    def _targets_warehouse(target_platforms: Optional[list[model_types.SupportedTargetPlatformType]]) -> bool:
+        """Returns True if warehouse is a target platform (None defaults to True)."""
+        return (
+            target_platforms is None
+            or model_types.TargetPlatform.WAREHOUSE in target_platforms
+            or "WAREHOUSE" in target_platforms
+        )

@@ -1191,7 +1191,11 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1204,7 +1208,9 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_1_no_sort(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1234,7 +1240,11 @@ class ModelOpsTest(absltest.TestCase):
                     statement_params=self.m_statement_params,
                 )
                 mock_convert_from_df.assert_called_once_with(
-                    self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                    self.c_session,
+                    mock.ANY,
+                    keep_order=True,
+                    features=m_sig.inputs,
+                    statement_params=self.m_statement_params,
                 )
                 mock_invoke_method.assert_called_once_with(
                     method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1247,7 +1257,9 @@ class ModelOpsTest(absltest.TestCase):
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
                 )
-                mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+                mock_convert_to_df.assert_called_once_with(
+                    m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+                )
 
     def test_invoke_method_1_no_drop(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1276,7 +1288,11 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
@@ -1289,7 +1305,9 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_2(self) -> None:
         m_sig = _DUMMY_SIG["predict"]
@@ -1400,7 +1418,11 @@ class ModelOpsTest(absltest.TestCase):
                 is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
@@ -1415,7 +1437,9 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_table_function_partition_column(self) -> None:
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
@@ -1447,7 +1471,11 @@ class ModelOpsTest(absltest.TestCase):
                 is_partitioned=True,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
             mock_invoke_method.assert_called_once_with(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
@@ -1462,7 +1490,9 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
             )
-            mock_convert_to_df.assert_called_once_with(m_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_invoke_method_service(self) -> None:
         m_sig = _DUMMY_SIG["predict"]

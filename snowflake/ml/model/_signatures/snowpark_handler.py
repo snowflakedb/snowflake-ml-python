@@ -60,12 +60,19 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         data: snowflake.snowpark.DataFrame,
         ensure_serializable: bool = True,
         features: Optional[Sequence[core.BaseFeatureSpec]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> pd.DataFrame:
         # This method do things on top of to_pandas, to make sure the local dataframe got is in correct shape.
         dtype_map = {}
+
         if features:
+            quoted_identifiers_ignore_case = SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+                data.session, statement_params
+            )
             for feature in features:
-                dtype_map[feature.name] = feature.as_dtype()
+                feature_name = feature.name.upper() if quoted_identifiers_ignore_case else feature.name
+                dtype_map[feature_name] = feature.as_dtype()
+
         df_local = data.to_pandas()
 
         # This is because Array will become string (Even though the correct schema is set)
@@ -93,6 +100,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         df: pd.DataFrame,
         keep_order: bool = False,
         features: Optional[Sequence[core.BaseFeatureSpec]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
     ) -> snowflake.snowpark.DataFrame:
         # This method is necessary to create the Snowpark Dataframe in correct schema.
         # However, in this case, the order could not be preserved. Thus, a _ID column has to be added,
@@ -100,6 +108,12 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         # Although in this case, the column with array type can get correct ARRAY type, however, the element
         # type is not preserved, and will become string type. This affect the implementation of convert_from_df.
         df = pandas_handler.PandasDataFrameHandler.convert_to_df(df)
+        quoted_identifiers_ignore_case = SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
+            session, statement_params
+        )
+        if quoted_identifiers_ignore_case:
+            df.columns = [str(col).upper() for col in df.columns]
+
         df_cols = df.columns
         if df_cols.dtype != np.object_:
             raise snowml_exceptions.SnowflakeMLException(
@@ -116,9 +130,47 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
         column_names = []
         columns = []
         for feature in features:
-            column_names.append(identifier.get_inferred_name(feature.name))
-            columns.append(F.col(identifier.get_inferred_name(feature.name)).cast(feature.as_snowpark_type()))
+            feature_name = identifier.get_inferred_name(feature.name)
+            if quoted_identifiers_ignore_case:
+                feature_name = feature_name.upper()
+            column_names.append(feature_name)
+            columns.append(F.col(feature_name).cast(feature.as_snowpark_type()))
 
         sp_df = sp_df.with_columns(column_names, columns)
 
         return sp_df
+
+    @staticmethod
+    def _is_quoted_identifiers_ignore_case_enabled(
+        session: snowflake.snowpark.Session, statement_params: Optional[dict[str, Any]] = None
+    ) -> bool:
+        """
+        Check if QUOTED_IDENTIFIERS_IGNORE_CASE parameter is enabled.
+
+        Args:
+            session: Snowpark session to check parameter for
+            statement_params: Optional statement parameters to check first
+
+        Returns:
+            bool: True if QUOTED_IDENTIFIERS_IGNORE_CASE is enabled, False otherwise
+            Returns False if the parameter cannot be retrieved (e.g., in stored procedures)
+        """
+        if statement_params is not None:
+            for key, value in statement_params.items():
+                if key.upper() == "QUOTED_IDENTIFIERS_IGNORE_CASE":
+                    parameter_value = str(value)
+                    return parameter_value.lower() == "true"
+
+        try:
+            result = session.sql(
+                "SHOW PARAMETERS LIKE 'QUOTED_IDENTIFIERS_IGNORE_CASE' IN SESSION",
+                _emit_ast=False,
+            ).collect(_emit_ast=False)
+
+            parameter_value = str(result[0].value)
+            return parameter_value.lower() == "true"
+
+        except Exception:
+            # Parameter query can fail in certain environments (e.g., in stored procedures)
+            # In that case, assume default behavior (case-sensitive)
+            return False
