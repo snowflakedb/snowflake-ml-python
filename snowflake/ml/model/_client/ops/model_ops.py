@@ -643,14 +643,17 @@ class ModelOperator:
         # TODO(sdas): Figure out a better way to filter out MODEL_BUILD_ services server side.
         fully_qualified_service_names = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
 
-        result = []
-
+        result: list[ServiceInfo] = []
         for fully_qualified_service_name in fully_qualified_service_names:
             ingress_url: Optional[str] = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
-            service_status, _ = self._service_client.get_service_status(
+            statuses = self._service_client.get_service_container_statuses(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             )
+            if len(statuses) == 0:
+                return result
+
+            service_status = statuses[0].service_status
             for res_row in self._service_client.show_endpoints(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             ):

@@ -2,7 +2,6 @@ import contextlib
 import functools
 import io
 import os
-import pathlib
 import subprocess
 import sys
 import tempfile
@@ -10,7 +9,7 @@ from typing import Any, Callable, Generator, Optional
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import payload_utils
+from snowflake.ml.jobs._utils import payload_utils, stage_utils
 from snowflake.ml.jobs._utils.payload_utils_test_helper import dummy_function
 from snowflake.ml.jobs._utils.test_file_helper import resolve_path
 
@@ -95,14 +94,35 @@ class PayloadUtilsTests(parameterized.TestCase):
         (resolve_path("src"), "subdir1/file3.py", resolve_path("src/subdir1/file3.py")),
         (resolve_path("src"), "src/subdir1/file3.py", resolve_path("src/subdir1/file3.py")),
         (resolve_path("src"), resolve_path("src/subdir1/file3.py"), resolve_path("src/subdir1/file3.py")),
+        ("@test_stage/src", "@test_stage/src/main.py", "@test_stage/src/main.py"),
+        ("@test_stage/", "@test_stage/main.py", "@test_stage/main.py"),
+        ("@test_stage/main.py", None, "@test_stage/main.py"),
+        ("@test_stage/main.py", "@test_stage/main.py", "@test_stage/main.py"),
+        ("@test_stage/src/dir", "@test_stage/src/dir/dir1/main.py", "@test_stage/src/dir/dir1/main.py"),
+        ("snow://headless/abc/versions/v9.8.7/main.py", None, "snow://headless/abc/versions/v9.8.7/main.py"),
+        (
+            "snow://headless/abc/versions/v9.8.7/main.py",
+            "snow://headless/abc/versions/v9.8.7/main.py",
+            "snow://headless/abc/versions/v9.8.7/main.py",
+        ),
+        (
+            "snow://headless/abc/versions/v9.8.7",
+            "snow://headless/abc/versions/v9.8.7/main.py",
+            "snow://headless/abc/versions/v9.8.7/main.py",
+        ),
+        (
+            "snow://headless/abc/versions/v9.8.7/src",
+            "snow://headless/abc/versions/v9.8.7/src/main.py",
+            "snow://headless/abc/versions/v9.8.7/src/main.py",
+        ),
     )
     def test_payload_validate(self, source: str, entrypoint: Optional[str], expected_entrypoint: str) -> None:
         with pushd(resolve_path("")):
             payload = payload_utils.JobPayload(source, entrypoint)
             resolved_source = payload_utils.resolve_source(payload.source)
             resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
-            assert isinstance(resolved_source, pathlib.PurePath)
-            self.assertEqual(resolved_source.as_posix(), pathlib.Path(source).absolute().as_posix())
+            assert not callable(resolved_source)
+            self.assertEqual(resolved_source.as_posix(), stage_utils.identify_stage_path(source).absolute().as_posix())
             self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -115,6 +135,51 @@ class PayloadUtilsTests(parameterized.TestCase):
         ("src/subdir1", resolve_path("src/subdir2/file4.py"), ValueError),  # subdir2/ is not under subdir1/
         ("src/subdir1", "src/subdir2/file4.py", FileNotFoundError),  # relative path resolution fails to find file
         (".", "script1.sh", ValueError),  # script1.sh does not have a .py extension
+        ("@test_stage/src", "@test_stage/dir/main.py", ValueError),  # entrypoint is not under source
+        ("@test_stage/src/dir1", "@test_stage/src/dir2/main.py", ValueError),  # entrypoint is not under source
+        ("@test_stage/src/secondary.py", "@test_stage/src/main.py", ValueError),  # entrypoint is not under source
+        (
+            "@test_stage/src/secondary.py",
+            "snow://headless/abc/versions/v9.8.8/main.py",
+            ValueError,
+        ),  # entrypoint is not under source
+        ("@test_stage/src", "@test_stage/dir/main.java", ValueError),  # unsupported suffix
+        ("@test_stage/src", None, ValueError),  # does not specify entrypoint when source is dir
+        (
+            "snow://headless/abc/versions/v9.8.7",
+            "snow://headless/abc/versions/v9.8.8/main.py",
+            ValueError,
+        ),  # entrypoint is not under source
+        (
+            "snow://headless/abc/versions/v9.8.7/src/dir1",
+            "snow://headless/abc/versions/v9.8.7/src/dir2/main.py",
+            ValueError,
+        ),  # entrypoint is not under source
+        (
+            "snow://headless/abc/versions/v9.8.7/secondary.py",
+            "snow://headless/abc/versions/v9.8.7/main.py",
+            ValueError,
+        ),  # entrypoint is not under source
+        (
+            "snow://headless/abc/versions/v9.8.7/src",
+            "snow://headless/abc/versions/v9.8.7/src/main.java",
+            ValueError,
+        ),  # unsupported suffix
+        (
+            "snow://headless/test/versions/v9.8.7/",
+            None,
+            ValueError,
+        ),  # does not specify entrypoint when source is dir
+        (
+            "snowflake://headless/test/versions/v9.8.7/",
+            "snowflake://headless/test/versions/v9.8.7/main.py",
+            FileNotFoundError,
+        ),  # incorrect protocol
+        (
+            "snow://headless/abc/",
+            "snow://headless/test/versions/v9.8.7/main.py",
+            FileNotFoundError,
+        ),  # incomplete versioned stage
     )
     def test_payload_validate_negative(
         self, source: str, entrypoint: Optional[str], expected_error: type[Exception] = ValueError

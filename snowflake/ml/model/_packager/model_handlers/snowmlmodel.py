@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
 import cloudpickle
 import numpy as np
 import pandas as pd
+import shap
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
@@ -25,6 +26,19 @@ if TYPE_CHECKING:
     from snowflake.ml.modeling.framework.base import BaseEstimator
 
 
+def _apply_transforms_up_to_last_step(
+    model: "BaseEstimator",
+    data: model_types.SupportedDataType,
+) -> pd.DataFrame:
+    """Apply all transformations in the snowml pipeline model up to the last step."""
+    if type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model):
+        for step_name, step in model.steps[:-1]:  # type: ignore[attr-defined]
+            if not hasattr(step, "transform"):
+                raise ValueError(f"Step '{step_name}' does not have a 'transform' method.")
+            data = pd.DataFrame(step.transform(data))
+    return data
+
+
 @final
 class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     """Handler for SnowML based model.
@@ -39,7 +53,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     DEFAULT_TARGET_METHODS = ["predict", "transform", "predict_proba", "predict_log_proba", "decision_function"]
-    EXPLAIN_TARGET_METHODS = ["predict", "predict_proba", "predict_log_proba"]
+    EXPLAIN_TARGET_METHODS = ["predict_proba", "predict", "predict_log_proba"]
 
     IS_AUTO_SIGNATURE = True
 
@@ -97,11 +111,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                     return result
                 except exceptions.SnowflakeMLException:
                     pass  # Do nothing and continue to the next method
-
-        if enable_explainability:
-            raise ValueError(
-                "Explain only supported for xgboost, lightgbm and sklearn (not pipeline) Snowpark ML models."
-            )
         return None
 
     @classmethod
@@ -189,23 +198,46 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
             else:
                 enable_explainability = True
         if enable_explainability:
-            model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(
-                python_base_obj, model_meta.task
-            )
-            model_meta.task = model_task_and_output_type.task
-            model_meta = handlers_utils.add_explain_method_signature(
-                model_meta=model_meta,
-                explain_method="explain",
-                target_method=explain_target_method,
-                output_return_type=model_task_and_output_type.output_type,
-            )
-            background_data = handlers_utils.get_explainability_supported_background(
-                sample_input_data, model_meta, explain_target_method
-            )
-            if background_data is not None:
-                handlers_utils.save_background_data(
-                    model_blobs_dir_path, cls.EXPLAIN_ARTIFACTS_DIR, cls.BG_DATA_FILE_SUFFIX, name, background_data
+            try:
+                model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(
+                    python_base_obj, model_meta.task
                 )
+                model_meta.task = model_task_and_output_type.task
+                background_data = handlers_utils.get_explainability_supported_background(
+                    sample_input_data, model_meta, explain_target_method
+                )
+                if type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model):
+                    transformed_df = _apply_transforms_up_to_last_step(model, sample_input_data)
+                    explain_fn = cls._build_explain_fn(model, background_data)
+                    model_meta = handlers_utils.add_inferred_explain_method_signature(
+                        model_meta=model_meta,
+                        explain_method="explain",
+                        target_method=explain_target_method,  # type: ignore[arg-type]
+                        background_data=background_data,
+                        explain_fn=explain_fn,
+                        output_feature_names=transformed_df.columns,
+                    )
+                else:
+                    model_meta = handlers_utils.add_explain_method_signature(
+                        model_meta=model_meta,
+                        explain_method="explain",
+                        target_method=explain_target_method,
+                        output_return_type=model_task_and_output_type.output_type,
+                    )
+                if background_data is not None:
+                    handlers_utils.save_background_data(
+                        model_blobs_dir_path,
+                        cls.EXPLAIN_ARTIFACTS_DIR,
+                        cls.BG_DATA_FILE_SUFFIX,
+                        name,
+                        background_data,
+                    )
+            except Exception:
+                if kwargs.get("enable_explainability", None):
+                    # user explicitly enabled explainability, so we should raise the error
+                    raise ValueError(
+                        "Explainability for this model is not supported. Please set `enable_explainability=False`"
+                    )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
@@ -252,6 +284,53 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         return m
 
     @classmethod
+    def _build_explain_fn(
+        cls, model: "BaseEstimator", background_data: model_types.SupportedDataType
+    ) -> Callable[[model_types.SupportedDataType], pd.DataFrame]:
+
+        predictor = model
+        is_pipeline = type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model)
+        if is_pipeline:
+            background_data = _apply_transforms_up_to_last_step(model, background_data)
+            predictor = model.steps[-1][1]  # type: ignore[attr-defined]
+
+        def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:
+            data = _apply_transforms_up_to_last_step(model, data)
+            tree_methods = ["to_xgboost", "to_lightgbm"]
+            non_tree_methods = ["to_sklearn", None]  # None just uses the predictor directly
+            for method_name in tree_methods:
+                try:
+                    base_model = getattr(predictor, method_name)()
+                    explainer = shap.TreeExplainer(base_model)
+                    return handlers_utils.convert_explanations_to_2D_df(model, explainer.shap_values(data))
+                except exceptions.SnowflakeMLException:
+                    pass  # Do nothing and continue to the next method
+            for method_name in non_tree_methods:  # type: ignore[assignment]
+                try:
+                    base_model = getattr(predictor, method_name)() if method_name is not None else predictor
+                    try:
+                        explainer = shap.Explainer(base_model, masker=background_data)
+                        return handlers_utils.convert_explanations_to_2D_df(base_model, explainer(data).values)
+                    except TypeError:
+                        for explain_target_method in cls.EXPLAIN_TARGET_METHODS:
+                            if not hasattr(base_model, explain_target_method):
+                                continue
+                            explain_target_method_fn = getattr(base_model, explain_target_method)
+                            if isinstance(data, np.ndarray):
+                                explainer = shap.Explainer(
+                                    explain_target_method_fn,
+                                    background_data.values,  # type: ignore[union-attr]
+                                )
+                            else:
+                                explainer = shap.Explainer(explain_target_method_fn, background_data)
+                            return handlers_utils.convert_explanations_to_2D_df(base_model, explainer(data).values)
+                except Exception:
+                    pass  # Do nothing and continue to the next method
+            raise ValueError("Explainability for this model is not supported.")
+
+        return explain_fn
+
+    @classmethod
     def convert_as_custom_model(
         cls,
         raw_model: "BaseEstimator",
@@ -286,57 +365,8 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
 
                 @custom_model.inference_api
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    import shap
-
-                    tree_methods = ["to_xgboost", "to_lightgbm"]
-                    non_tree_methods = ["to_sklearn"]
-                    for method_name in tree_methods:
-                        try:
-                            base_model = getattr(raw_model, method_name)()
-                            explainer = shap.TreeExplainer(base_model)
-                            df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer.shap_values(X))
-                            return model_signature_utils.rename_pandas_df(df, signature.outputs)
-                        except exceptions.SnowflakeMLException:
-                            pass  # Do nothing and continue to the next method
-                    for method_name in non_tree_methods:
-                        try:
-                            base_model = getattr(raw_model, method_name)()
-                            try:
-                                explainer = shap.Explainer(base_model, masker=background_data)
-                                df = handlers_utils.convert_explanations_to_2D_df(base_model, explainer(X).values)
-                            except TypeError:
-                                try:
-                                    dtype_map = {
-                                        spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in signature.inputs
-                                    }
-
-                                    if isinstance(X, pd.DataFrame):
-                                        X = X.astype(dtype_map, copy=False)
-                                    if hasattr(base_model, "predict_proba"):
-                                        if isinstance(X, np.ndarray):
-                                            explainer = shap.Explainer(
-                                                base_model.predict_proba,
-                                                background_data.values,  # type: ignore[union-attr]
-                                            )
-                                        else:
-                                            explainer = shap.Explainer(base_model.predict_proba, background_data)
-                                    elif hasattr(base_model, "predict"):
-                                        if isinstance(X, np.ndarray):
-                                            explainer = shap.Explainer(
-                                                base_model.predict, background_data.values  # type: ignore[union-attr]
-                                            )
-                                        else:
-                                            explainer = shap.Explainer(base_model.predict, background_data)
-                                    else:
-                                        raise ValueError("Missing any supported target method to explain.")
-                                    df = handlers_utils.convert_explanations_to_2D_df(base_model, explainer(X).values)
-                                except TypeError as e:
-                                    raise ValueError(f"Explanation for this model type not supported yet: {str(e)}")
-                            return model_signature_utils.rename_pandas_df(df, signature.outputs)
-
-                        except exceptions.SnowflakeMLException:
-                            pass  # Do nothing and continue to the next method
-                    raise ValueError("The model must be an xgboost, lightgbm or sklearn (not pipeline) estimator.")
+                    fn = cls._build_explain_fn(raw_model, background_data)
+                    return model_signature_utils.rename_pandas_df(fn(X), signature.outputs)
 
                 if target_method == "explain":
                     return explain_fn

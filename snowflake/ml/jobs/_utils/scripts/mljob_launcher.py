@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import cloudpickle
-from constants import LOG_END_MSG, LOG_START_MSG
+from constants import LOG_END_MSG, LOG_START_MSG, MIN_INSTANCES_ENV_VAR
 
 from snowflake.ml.jobs._utils import constants
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
@@ -72,28 +72,6 @@ class SimpleJSONEncoder(json.JSONEncoder):
             return f"Unserializable object: {repr(obj)}"
 
 
-def get_active_node_count() -> int:
-    """
-    Count the number of active nodes in the Ray cluster.
-
-    Returns:
-        int: Total count of active nodes
-    """
-    import ray
-
-    if not ray.is_initialized():
-        ray.init(address="auto", ignore_reinit_error=True, log_to_driver=False)
-    try:
-        nodes = [node for node in ray.nodes() if node.get("Alive")]
-        total_active = len(nodes)
-
-        logger.info(f"Active nodes: {total_active}")
-        return total_active
-    except Exception as e:
-        logger.warning(f"Error getting active node count: {e}")
-        return 0
-
-
 def wait_for_min_instances(min_instances: int) -> None:
     """
     Wait until the specified minimum number of instances are available in the Ray cluster.
@@ -108,13 +86,16 @@ def wait_for_min_instances(min_instances: int) -> None:
         logger.debug("Minimum instances is 1 or less, no need to wait for additional instances")
         return
 
+    # mljob_launcher runs inside the CR where mlruntime libraries are available, so we can import common_util directly
+    from common_utils import common_util as mlrs_util
+
     start_time = time.time()
     timeout = os.getenv("JOB_MIN_INSTANCES_TIMEOUT", TIMEOUT)
     check_interval = os.getenv("JOB_MIN_INSTANCES_CHECK_INTERVAL", CHECK_INTERVAL)
     logger.debug(f"Waiting for at least {min_instances} instances to be ready (timeout: {timeout}s)")
 
     while time.time() - start_time < timeout:
-        total_nodes = get_active_node_count()
+        total_nodes = mlrs_util.get_num_ray_nodes()
 
         if total_nodes >= min_instances:
             elapsed = time.time() - start_time
@@ -128,7 +109,8 @@ def wait_for_min_instances(min_instances: int) -> None:
         time.sleep(check_interval)
 
     raise TimeoutError(
-        f"Timed out after {timeout}s waiting for {min_instances} instances, only {get_active_node_count()} available"
+        f"Timed out after {timeout}s waiting for {min_instances} instances, only "
+        f"{mlrs_util.get_num_ray_nodes()} available"
     )
 
 
@@ -199,7 +181,7 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
     """
     try:
         # Wait for minimum required instances if specified
-        min_instances_str = os.environ.get("JOB_MIN_INSTANCES", 1)
+        min_instances_str = os.environ.get(MIN_INSTANCES_ENV_VAR) or "1"
         if min_instances_str and int(min_instances_str) > 1:
             wait_for_min_instances(int(min_instances_str))
 

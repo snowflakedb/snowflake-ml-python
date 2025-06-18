@@ -1,5 +1,13 @@
 # Release History
 
+## 1.8.6
+
+### Bug Fixes
+
+### New Features
+
+- Registry: Add service container info to logs.
+
 ## 1.8.5
 
 ### Bug Fixes
@@ -19,6 +27,11 @@
 - Registry: No longer checks if the snowflake-ml-python version is available in the Snowflake Conda channel when logging
   an SPCS-only model.
 - ML Job: Add `min_instances` argument to the job decorator to allow waiting for workers to be ready.
+- ML Job: Adjust polling behavior to reduce number of SQL calls.
+
+### Deprecations
+
+- `SnowflakeLoginOptions` is deprecated and will be removed in a future release.
 
 ## 1.8.4 (2025-05-12)
 
@@ -46,10 +59,6 @@
 - Support categorical type for `xgboost.DMatrix` inputs.
 
 ## 1.8.3
-
-### Bug Fixes
-
-### Behavior Change
 
 ### New Features
 

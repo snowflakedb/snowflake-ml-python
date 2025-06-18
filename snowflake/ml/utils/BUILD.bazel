@@ -23,14 +23,6 @@ py_library(
     srcs = ["connection_params.py"],
 )
 
-py_test(
-    name = "connection_params_test",
-    srcs = ["connection_params_test.py"],
-    deps = [
-        ":connection_params",
-    ],
-)
-
 py_library(
     name = "sparse",
     srcs = ["sparse.py"],
@@ -58,12 +50,19 @@ py_test(
     ],
 )
 
+py_library(
+    name = "html_utils",
+    srcs = ["html_utils.py"],
+    deps = [],
+)
+
 py_package(
     name = "utils_pkg",
     packages = ["snowflake.ml"],
     deps = [
         ":authentication",
         ":connection_params",
+        ":html_utils",
         ":sparse",
         ":sql_client",
         "//snowflake/ml/_internal/utils:snowflake_env",  # Mitigate BuildSnowML failure

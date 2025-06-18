@@ -7,6 +7,7 @@ from snowflake.ml.jobs.manager import (
     list_jobs,
     submit_directory,
     submit_file,
+    submit_from_stage,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "delete_job",
     "MLJob",
     "JOB_STATUS",
+    "submit_from_stage",
 ]

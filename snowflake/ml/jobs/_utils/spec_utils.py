@@ -1,4 +1,5 @@
 import logging
+import os
 from math import ceil
 from pathlib import PurePath
 from typing import Any, Optional, Union
@@ -30,7 +31,7 @@ def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.Image
     # Use MLRuntime image
     image_repo = constants.DEFAULT_IMAGE_REPO
     image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
-    image_tag = constants.DEFAULT_IMAGE_TAG
+    image_tag = _get_runtime_image_tag()
 
     # TODO: Should each instance consume the entire pod?
     return types.ImageSpec(
@@ -346,3 +347,24 @@ def _merge_lists_of_dicts(
         result[key] = d
 
     return list(result.values())
+
+
+def _get_runtime_image_tag() -> str:
+    """
+    Detect runtime image tag from container environment.
+
+    Checks in order:
+    1. Environment variable MLRS_CONTAINER_IMAGE_TAG
+    2. Falls back to hardcoded default
+
+    Returns:
+        str: The runtime image tag to use for job containers
+    """
+    env_tag = os.environ.get(constants.RUNTIME_IMAGE_TAG_ENV_VAR)
+    if env_tag:
+        logging.debug(f"Using runtime image tag from environment: {env_tag}")
+        return env_tag
+
+    # Fall back to default
+    logging.debug(f"Using default runtime image tag: {constants.DEFAULT_IMAGE_TAG}")
+    return constants.DEFAULT_IMAGE_TAG
