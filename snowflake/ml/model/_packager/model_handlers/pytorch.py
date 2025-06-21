@@ -167,7 +167,11 @@ class PyTorchHandler(_base.BaseModelHandler["torch.nn.Module"]):
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
         with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            m = torch.load(f, map_location="cuda" if kwargs.get("use_gpu", False) else "cpu")
+            m = torch.load(
+                f,
+                map_location="cuda" if kwargs.get("use_gpu", False) else "cpu",
+                weights_only=False,
+            )
         assert isinstance(m, torch.nn.Module)
 
         return m

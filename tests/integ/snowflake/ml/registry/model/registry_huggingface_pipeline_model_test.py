@@ -72,13 +72,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             options={"relax_version": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_fill_mask_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_fill_mask_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -103,7 +97,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("token_str", row[0])
                 self.assertIn("sequence", row[0])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -113,13 +107,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_ner_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_ner_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(task="ner", model="hf-internal-testing/tiny-bert-for-token-classification")
@@ -142,7 +130,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("start", row[0])
                 self.assertIn("end", row[0])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -152,13 +140,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_question_answering_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_question_answering_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -188,7 +170,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertEqual(res["end"].dtype.type, np.int64)
             self.assertEqual(res["answer"].dtype.type, str)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -198,13 +180,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_question_answering_pipeline_multiple_output(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_question_answering_pipeline_multiple_output(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -236,7 +212,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("end", row[0])
                 self.assertIn("answer", row[0])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -246,13 +222,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_summarization_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_summarization_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(task="summarization", model="sshleifer/tiny-mbart")
@@ -278,7 +248,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
             self.assertEqual(res["summary_text"].dtype.type, str)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             additional_dependencies=[
                 str(env_utils.get_local_installed_version_of_pip_package(requirements.Requirement("sentencepiece")))
@@ -291,13 +261,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_table_question_answering_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_table_question_answering_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(task="table-question-answering", model="google/tapas-tiny-finetuned-wtq")
@@ -343,7 +307,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertIsInstance(res["cells"][0], list)
             self.assertEqual(res["aggregator"].dtype.type, str)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -353,13 +317,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_text_classification_pair_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_text_classification_pair_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(task="text-classification", model="cross-encoder/ms-marco-MiniLM-L-12-v2")
@@ -374,7 +332,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertEqual(res["label"].dtype.type, str)
             self.assertEqual(res["score"].dtype.type, np.float32)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -396,13 +354,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_text_classification_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_text_classification_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -427,7 +379,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("label", row[0])
                 self.assertIn("score", row[0])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -437,13 +389,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_text_generation_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_text_generation_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -462,7 +408,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIsInstance(row, list)
                 self.assertIn("generated_text", row[0])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -532,13 +478,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_text2text_generation_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_hf_pipeline_text2text_generation(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -554,7 +494,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["generated_text"]))
             self.assertEqual(res["generated_text"].dtype.type, str)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -564,13 +504,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_translation_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_translation_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(task="translation_en_to_ja", model="patrickvonplaten/t5-tiny-random")
@@ -596,7 +530,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["translation_text"]))
             self.assertEqual(res["translation_text"].dtype.type, str)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -606,13 +540,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_zero_shot_classification_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_zero_shot_classification_pipeline(self) -> None:
         import transformers
 
         model = transformers.pipeline(
@@ -651,7 +579,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertIsInstance(res["scores"][0], list)
             self.assertIsInstance(res["scores"][1], list)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (

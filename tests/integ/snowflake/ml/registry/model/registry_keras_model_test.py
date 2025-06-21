@@ -113,12 +113,10 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
     @parameterized.product(  # type: ignore[misc]
         model_fn=[_prepare_keras_subclass_model, _prepare_keras_sequential_model, _prepare_keras_functional_model],
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
     def test_keras_df_as_sample(
         self,
         model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()
         x_df = pd.DataFrame(data_x)
@@ -128,7 +126,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             y_pred_df = pd.DataFrame(y_pred, columns=res.columns)
             pd.testing.assert_frame_equal(res, y_pred_df, check_dtype=False)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -141,12 +139,10 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
 
     @parameterized.product(  # type: ignore[misc]
         model_fn=[_prepare_keras_subclass_model, _prepare_keras_sequential_model, _prepare_keras_functional_model],
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
     def test_keras_sp(
         self,
         model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()
         x_df = numpy_handler.NumpyArrayHandler.convert_to_df(data_x)
@@ -160,7 +156,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         y_pred_df.columns = [f"output_feature_{i}" for i in range(len(y_pred_df.columns))]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={

@@ -1,12 +1,47 @@
 # Release History
 
+## 1.9.0
+
+### Bug Fixes
+
+- Registry: Fixed bug causing snowpark to pandas dataframe conversion to fail when `QUOTED_IDENTIFIERS_IGNORE_CASE`
+  parameter is enabled
+- Registry: Fixed duplicate UserWarning logs during model packaging
+
+### Behavior Changes
+
+- ML Job: The `list_jobs()` API has been modified. The `scope` parameter has been removed,
+  optional `database` and `schema` parameters have been added, the return type has changed
+  from `snowpark.DataFrame` to `pandas.DataFrame`, and the returned columns have been updated
+  to `name`, `status`, `message`, `database_name`, `schema_name`, `owner`, `compute_pool`,
+  `target_instances`, `created_time`, and `completed_time`.
+- Registry: Set `relax_version` to false when pip_requirements are specified while logging model
+- Registry: UserWarning will now be raised based on specified target_platforms (addresses spurious warnings)
+
+### New Features
+
+- Registry: `target_platforms` supports `TargetPlatformMode`: `WAREHOUSE_ONLY`, `SNOWPARK_CONTAINER_SERVICES_ONLY`,
+  or `BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES`.
+- Registry: Introduce `snowflake.ml.model.target_platform.TargetPlatform`, target platform constants, and
+  `snowflake.ml.model.task.Task`.
+- ML Job: Single-node ML Jobs are now in GA. Multi-node support is now in PuPr
+  - Moved less frequently used job submission parameters to `**kwargs`
+  - Platform metrics are now enabled by default
+  - `list_jobs()` behavior changed, see [Behavior Changes](#behavior-changes) for more info
+
 ## 1.8.6
 
 ### Bug Fixes
 
+- Fixed fatal errors from internal telemetry wrappers.
+
 ### New Features
 
 - Registry: Add service container info to logs.
+- ML Job (PuPr): Add new `submit_from_stage()` API for submitting a payload from an existing stage path.
+- ML Job (PuPr): Add support for `snowpark.Session` objects in the argument list of
+  `@remote` decorated functions. `Session` object will be injected from context in
+  the job execution environment.
 
 ## 1.8.5
 
@@ -17,17 +52,17 @@
 - Explainability: bump minimum streamlit version down to 1.30
 - Modeling: Make XGBoost a required dependency (xgboost is not a required dependency in snowflake-ml-python 1.8.4).
 
-### Breaking change
+### Behavior Changes
 
-- ML Job: Rename argument `num_instances` to `target_instances` in job submission APIs and
+- ML Job (Multi-node PrPr): Rename argument `num_instances` to `target_instances` in job submission APIs and
   change type from `Optional[int]` to `int`
 
 ### New Features
 
 - Registry: No longer checks if the snowflake-ml-python version is available in the Snowflake Conda channel when logging
   an SPCS-only model.
-- ML Job: Add `min_instances` argument to the job decorator to allow waiting for workers to be ready.
-- ML Job: Adjust polling behavior to reduce number of SQL calls.
+- ML Job (PuPr): Add `min_instances` argument to the job decorator to allow waiting for workers to be ready.
+- ML Job (PuPr): Adjust polling behavior to reduce number of SQL calls.
 
 ### Deprecations
 
@@ -42,18 +77,19 @@
 - Registry: Fixed a bug when logging pytroch and tensorflow models that caused
   `UnboundLocalError: local variable 'multiple_inputs' referenced before assignment`.
 
-### Breaking change
+### Behavior Changes
 
-- ML Job: Updated property `id` to be fully qualified name; Introduced new property `name` to represent the ML Job name
-- ML Job: Modified `list_jobs()` to return ML Job `name` instead of `id`
+- ML Job (PuPr) Updated property `id` to be fully qualified name; Introduced new property `name`
+  to represent the ML Job name
+- ML Job (PuPr) Modified `list_jobs()` to return ML Job `name` instead of `id`
 - Registry: Error in `log_model` if `enable_explainability` is True and model is only deployed to
    Snowpark Container Services, instead of just user warning.
 
 ### New Features
 
-- ML Job: Extend `@remote` function decorator, `submit_file()` and `submit_directory()` to accept `database` and
+- ML Job (PuPr): Extend `@remote` function decorator, `submit_file()` and `submit_directory()` to accept `database` and
   `schema` parameters
-- ML Job: Support querying by fully qualified name in `get_job()`
+- ML Job (PuPr): Support querying by fully qualified name in `get_job()`
 - Explainability: Added visualization functions to `snowflake.ml.monitoring` to plot explanations in notebooks.
 - Explainability: Support explain for categorical transforms for sklearn pipeline
 - Support categorical type for `xgboost.DMatrix` inputs.
@@ -63,7 +99,7 @@
 ### New Features
 
 - Registry: Default to the runtime cuda version if available when logging a GPU model in Container Runtime.
-- ML Job: Added `as_list` argument to `MLJob.get_logs()` to enable retrieving logs
+- ML Job (PuPr): Added `as_list` argument to `MLJob.get_logs()` to enable retrieving logs
   as a list of strings
 - Registry: Support `ModelVersion.run_job` to run inference with a single-node Snowpark Container Services job.
 - DataConnector: Removed PrPr decorators
@@ -74,11 +110,11 @@
 ### New Features
 
 - ML Job now available as a PuPr feature
-- ML Job: Add ability to retrieve results for `@remote` decorated functions using
-  new `MLJobWithResult.result()` API, which will return the unpickled result
-  or raise an exception if the job execution failed.
-- ML Job: Pre-created Snowpark Session is now available inside job payloads using
-  `snowflake.snowpark.context.get_active_session()`
+  - Add ability to retrieve results for `@remote` decorated functions using
+    new `MLJobWithResult.result()` API, which will return the unpickled result
+    or raise an exception if the job execution failed.
+  - Pre-created Snowpark Session is now available inside job payloads using
+    `snowflake.snowpark.context.get_active_session()`
 - Registry: Introducing `save_location` to `log_model` using the `options` argument.
   User's can provide the path to write the model version's files that get stored in Snowflake's stage.
 

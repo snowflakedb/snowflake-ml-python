@@ -6,16 +6,18 @@ from typing import Any, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
-from snowflake.ml.jobs._utils import constants, types
+from snowflake.ml.jobs._utils import constants, query_helper, types
 
 
 def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.ComputeResources:
     """Extract resource information for the specified compute pool"""
     # Get the instance family
-    rows = session.sql("show compute pools like ?", params=[compute_pool]).collect()
-    if not rows:
+    rows = session._conn.run_query("show compute pools like ?", params=[compute_pool], _force_qmark_paramstyle=True)
+    if not rows or not isinstance(rows, dict) or not rows.get("data"):
         raise ValueError(f"Compute pool '{compute_pool}' not found")
-    instance_family: str = rows[0]["instance_family"]
+    requested_attributes = query_helper.get_attribute_map(session, {"instance_family": 4})
+    compute_pool_info = rows["data"]
+    instance_family: str = compute_pool_info[0][requested_attributes["instance_family"]]
     cloud = snowflake_env.get_current_cloud(session, default=snowflake_env.SnowflakeCloudType.AWS)
 
     return (

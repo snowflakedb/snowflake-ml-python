@@ -6,9 +6,23 @@ py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
     deps = [
+        ":target_platform",
+        ":task",
         "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/modeling/framework",
     ],
+)
+
+py_library(
+    name = "target_platform",
+    srcs = ["target_platform.py"],
+    deps = [],
+)
+
+py_library(
+    name = "task",
+    srcs = ["task.py"],
+    deps = [],
 )
 
 py_library(

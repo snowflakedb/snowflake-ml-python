@@ -1,4 +1,4 @@
-from typing import Optional, cast
+from typing import Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ from sklearn import (
     preprocessing,
 )
 
+from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
@@ -62,13 +63,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_skl_model_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_skl_model_explain(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # sample input needs to be pandas dataframe for now
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
@@ -88,7 +83,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=iris_X_df,
             prediction_assert_fns={
@@ -121,13 +116,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_sklearn_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_sklearn_explain_sp(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
         iris_X_sp_df = self.session.create_dataframe(iris_X_df)
@@ -139,7 +128,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         ).set_axis([f"{c}_explanation" for c in iris_X_df.columns], axis=1)
 
         explanation_df_expected = pd.concat([iris_X_df, explain_df], axis=1)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=iris_X_sp_df,
             prediction_assert_fns={
@@ -158,18 +147,12 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_skl_model_case_sensitive(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_skl_model_case_sensitive(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # LogisticRegression is for classification task, such as iris
         regr = linear_model.LogisticRegression()
         regr.fit(iris_X, iris_y)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             sample_input_data=iris_X,
             options={
@@ -196,19 +179,13 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_skl_multiple_output_model(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_skl_multiple_output_model(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
         model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
         model.fit(iris_X[:10], dual_target[:10])
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=iris_X,
             prediction_assert_fns={
@@ -284,13 +261,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_skl_model_with_signature_and_sample_data(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_skl_model_with_signature_and_sample_data(self) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # sample input needs to be pandas dataframe for now
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
@@ -315,7 +286,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=iris_X_df,
             prediction_assert_fns={
@@ -337,12 +308,10 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
     @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         enable_explainability=[True, False, None],
     )
     def test_skl_model_with_categorical_dtype_columns(
         self,
-        registry_test_fn: str,
         enable_explainability: Optional[bool],
     ) -> None:
         data = {
@@ -408,7 +377,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         if enable_explainability:
             prediction_assert_fns["explain"] = (df[input_features], _check_explain)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=df[input_features],
             prediction_assert_fns=prediction_assert_fns,
@@ -416,13 +385,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             signatures=expected_signatures,
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_skl_KDensity_model(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_skl_KDensity_model(self) -> None:
 
         # Generate sample data
         X = np.arange(0, 10)[:, np.newaxis]
@@ -446,7 +409,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=kde,
             sample_input_data=X,
             prediction_assert_fns={
@@ -487,6 +450,92 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             },
             options={"enable_explainability": enable_explainability},
         )
+
+    def test_skl_model_with_quoted_identifiers_ignore_case(self):
+        X, y = datasets.load_iris(return_X_y=True)
+        X_df = pd.DataFrame(X, columns=["a", "b", "c", "d"])
+        model = linear_model.LogisticRegression()
+        model.fit(X_df, y)
+
+        name = "model_test_skl_quoted_identifiers_param"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=name,
+            version_name=version,
+            sample_input_data=X_df,
+        )
+
+        statement_params = {"QUOTED_IDENTIFIERS_IGNORE_CASE": "TRUE"}
+
+        functions = mv._functions
+        predict_proba_name = sql_identifier.SqlIdentifier("predict_proba").identifier()
+        find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
+            lambda method: method["name"] == predict_proba_name
+        )
+        target_function_info = next(
+            filter(find_method, functions),
+            None,
+        )
+        self.assertIsNotNone(target_function_info, "predict_proba function not found")
+
+        result = mv._model_ops.invoke_method(
+            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            method_function_type=target_function_info["target_method_function_type"],
+            signature=target_function_info["signature"],
+            X=X_df,
+            database_name=None,
+            schema_name=None,
+            model_name=mv._model_name,
+            version_name=mv._version_name,
+            strict_input_validation=False,
+            statement_params=statement_params,
+            is_partitioned=target_function_info["is_partitioned"],
+        )
+
+        result_cols = list(result.columns)
+        for col in result_cols:
+            self.assertTrue(
+                col.isupper(), f"Expected column {col} to be uppercase with QUOTED_IDENTIFIERS_IGNORE_CASE=TRUE"
+            )
+
+        predict_name = sql_identifier.SqlIdentifier("predict").identifier()
+        find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
+            lambda method: method["name"] == predict_name
+        )
+        target_function_info = next(
+            filter(find_method, functions),
+            None,
+        )
+        self.assertIsNotNone(target_function_info, "predict function not found")
+
+        predict_result = mv._model_ops.invoke_method(
+            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            method_function_type=target_function_info["target_method_function_type"],
+            signature=target_function_info["signature"],
+            X=X_df,
+            database_name=None,
+            schema_name=None,
+            model_name=mv._model_name,
+            version_name=mv._version_name,
+            strict_input_validation=False,
+            statement_params=statement_params,
+            is_partitioned=target_function_info["is_partitioned"],
+        )
+
+        predict_cols = list(predict_result.columns)
+        for col in predict_cols:
+            self.assertTrue(
+                col.isupper(), f"Expected column {col} to be uppercase with QUOTED_IDENTIFIERS_IGNORE_CASE=TRUE"
+            )
+
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertTrue(len(result) > 0, "Result should not be empty")
+        self.assertIsInstance(predict_result, pd.DataFrame)
+        self.assertTrue(len(predict_result) > 0, "Predict result should not be empty")
+
+        self.registry.delete_model(model_name=name)
 
 
 if __name__ == "__main__":
