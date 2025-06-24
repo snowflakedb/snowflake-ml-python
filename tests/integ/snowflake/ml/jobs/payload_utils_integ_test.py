@@ -120,7 +120,11 @@ class PayloadUtilsTests(parameterized.TestCase):
             item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
         )
         self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
-        self.assertEqual(self.session.sql(f"LIST {stage_path}").count(), expected_file_count)
+        self.assertEqual(
+            self.session.sql(f"LIST {stage_path}").count(),
+            expected_file_count,
+            self.session.sql(f"LIST {stage_path}").collect(),
+        )
 
     @parameterized.parameters(
         (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", f"@{_TEST_STAGE}/main.py", "main.py", 1),
@@ -175,7 +179,11 @@ class PayloadUtilsTests(parameterized.TestCase):
         )
 
         self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
-        self.assertEqual(self.session.sql(f"LIST {stage_path}").count(), expected_file_count)
+        self.assertEqual(
+            self.session.sql(f"LIST {stage_path}").count(),
+            expected_file_count,
+            self.session.sql(f"LIST {stage_path}").collect(),
+        )
 
 
 if __name__ == "__main__":

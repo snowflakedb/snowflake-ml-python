@@ -5,7 +5,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import type_hints, type_hints as model_types
+from snowflake.ml.model import task, type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.model.model_version_impl import ModelVersion
 from snowflake.ml.monitoring import model_monitor
@@ -83,21 +83,24 @@ class RegistryNameTest(absltest.TestCase):
                     with self.assertRaisesRegex(ValueError, "You need to provide a database to use registry."):
                         r = registry.Registry(c_session, schema_name="TEMP")
 
-                with mock.patch.object(
-                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-                ), mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True):
+                with (
+                    mock.patch.object(c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True),
+                    mock.patch.object(c_session, "get_current_schema", return_value='"CURRENT_TEMP"', create=True),
+                ):
                     r = registry.Registry(c_session)
                     self.assertEqual(r.location, "CURRENT_TEMP.CURRENT_TEMP")
 
-                with mock.patch.object(
-                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-                ), mock.patch.object(c_session, "get_current_schema", return_value='"current_temp"', create=True):
+                with (
+                    mock.patch.object(c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True),
+                    mock.patch.object(c_session, "get_current_schema", return_value='"current_temp"', create=True),
+                ):
                     r = registry.Registry(c_session)
                     self.assertEqual(r.location, 'CURRENT_TEMP."current_temp"')
 
-                with mock.patch.object(
-                    c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True
-                ), mock.patch.object(c_session, "get_current_schema", return_value=None, create=True):
+                with (
+                    mock.patch.object(c_session, "get_current_database", return_value='"CURRENT_TEMP"', create=True),
+                    mock.patch.object(c_session, "get_current_schema", return_value=None, create=True),
+                ):
                     r = registry.Registry(c_session)
                     self.assertEqual(r.location, "CURRENT_TEMP.PUBLIC")
 
@@ -189,6 +192,7 @@ class RegistryTest(absltest.TestCase):
                 options=m_options,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
+                event_handler=mock.ANY,
             )
 
     def test_log_model_from_model_version(self) -> None:
@@ -219,6 +223,7 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
+                event_handler=mock.ANY,
             )
 
     def test_log_model_from_model_version_bad_arguments(self) -> None:
@@ -241,7 +246,7 @@ class RegistryTest(absltest.TestCase):
                 model=m_model_version,
                 model_name="MODEL",
                 version_name="v1",
-                task=model_types.Task.TABULAR_RANKING,
+                task=task.Task.TABULAR_RANKING,
             )
 
     def test_log_model_with_artifact_repo(self) -> None:
@@ -273,6 +278,7 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
+                event_handler=mock.ANY,
             )
 
     def test_log_model_with_resource_constraint(self) -> None:
@@ -304,6 +310,7 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
+                event_handler=mock.ANY,
             )
 
     def test_delete_model(self) -> None:
@@ -315,6 +322,76 @@ class RegistryTest(absltest.TestCase):
                 model_name="MODEL",
                 statement_params=mock.ANY,
             )
+
+    def test_targets_warehouse(self) -> None:
+        self.assertTrue(self.m_r._targets_warehouse(target_platforms=None))
+        self.assertFalse(self.m_r._targets_warehouse(target_platforms=[]))
+        self.assertFalse(
+            self.m_r._targets_warehouse(target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+        )
+        self.assertTrue(self.m_r._targets_warehouse(target_platforms=[type_hints.TargetPlatform.WAREHOUSE]))
+        self.assertTrue(
+            self.m_r._targets_warehouse(
+                target_platforms=[
+                    type_hints.TargetPlatform.WAREHOUSE,
+                    type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+                ]
+            )
+        )
+        self.assertTrue(self.m_r._targets_warehouse(target_platforms=["WAREHOUSE"]))
+        self.assertFalse(self.m_r._targets_warehouse(target_platforms=["SNOWPARK_CONTAINER_SERVICES"]))
+        self.assertTrue(self.m_r._targets_warehouse(target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]))
+
+        m_model = mock.MagicMock()
+        with mock.patch.object(
+            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
+        ) as mock_targets_warehouse:
+            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+                self.m_r.log_model(
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="v1",
+                    target_platforms=None,
+                    pip_requirements=["some-package"],
+                )
+                mock_targets_warehouse.assert_called_once_with(None)
+                mock_log_model.assert_called_once()
+
+        with mock.patch.object(
+            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
+        ) as mock_targets_warehouse:
+            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+                test_platforms_enum: list[type_hints.SupportedTargetPlatformType] = [
+                    type_hints.TargetPlatform.WAREHOUSE,
+                    type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+                ]
+                self.m_r.log_model(
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="v1",
+                    target_platforms=test_platforms_enum,
+                    pip_requirements=["some-package"],
+                )
+                mock_targets_warehouse.assert_called_once_with(test_platforms_enum)
+                mock_log_model.assert_called_once()
+
+        with mock.patch.object(
+            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
+        ) as mock_targets_warehouse:
+            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+                test_platforms_str: list[type_hints.SupportedTargetPlatformType] = [
+                    "WAREHOUSE",
+                    "SNOWPARK_CONTAINER_SERVICES",
+                ]
+                self.m_r.log_model(
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="v1",
+                    target_platforms=test_platforms_str,
+                    pip_requirements=["some-package"],
+                )
+                mock_targets_warehouse.assert_called_once_with(test_platforms_str)
+                mock_log_model.assert_called_once()
 
 
 class MonitorRegistryTest(absltest.TestCase):

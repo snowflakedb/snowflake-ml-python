@@ -18,13 +18,7 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
 class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_classifier_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_classifier_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -34,7 +28,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         classifier = catboost.CatBoostClassifier()
         classifier.fit(cal_X_train, cal_y_train)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -58,13 +52,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_classifier_pipeline_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_classifier_pipeline_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -95,7 +83,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -111,13 +99,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_classifier_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_classifier_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -128,7 +110,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         classifier.fit(cal_X_train, cal_y_train)
         expected_explanations = shap.Explainer(classifier)(cal_X_test).values
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -164,13 +146,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_classifier_sp_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_classifier_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -197,7 +173,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -213,13 +189,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_classifier_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_classifier_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -256,7 +226,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -280,13 +250,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_catboost_with_signature_and_sample_data(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_catboost_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
         cal_y = pd.Series(cal_data.target)
@@ -306,7 +270,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         expected_explanations = shap.Explainer(classifier)(cal_X_test).values
 
         # passing both signature and sample_input_data when enable_explainability is True
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={

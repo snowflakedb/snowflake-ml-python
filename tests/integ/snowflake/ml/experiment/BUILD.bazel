@@ -1,0 +1,12 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+py_test(
+    name = "experiment_tracking_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_integ_test.py"],
+    deps = [
+        "//snowflake/ml/beta/experiment",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

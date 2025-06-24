@@ -32,18 +32,12 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_pytorch_df_as_sample(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_pytorch_df_as_sample(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -56,13 +50,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_pytorch_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_pytorch_sp(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = [f"col_{i}" for i in range(data_x.shape[1])]
@@ -72,7 +60,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -83,19 +71,13 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_torchscript_tensor_as_sample(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_torchscript_tensor_as_sample(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float32)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=data_x,
             prediction_assert_fns={
@@ -108,19 +90,13 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_torchscript_df_as_sample(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_torchscript_df_as_sample(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -133,13 +109,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_torchscript_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_torchscript_sp(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = [f"col_{i}" for i in range(data_x.shape[1])]
@@ -150,7 +120,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -161,18 +131,12 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_pytorch_tensor_as_sample_multiple_inputs(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_pytorch_tensor_as_sample_multiple_inputs(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=[data_x],
             prediction_assert_fns={
@@ -186,18 +150,14 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_pytorch_df_as_sample_multiple_inputs(
         self,
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -211,13 +171,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_pytorch_sp_multiple_inputs(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_pytorch_sp_multiple_inputs(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
@@ -227,7 +181,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -239,19 +193,15 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_torchscript_tensor_as_sample_multiple_inputs(
         self,
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float32)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=[data_x],
             prediction_assert_fns={
@@ -265,19 +215,15 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_torchscript_df_as_sample_multiple_inputs(
         self,
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         model_script = torch.jit.script(model)
         y_pred = model_script.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=x_df,
             prediction_assert_fns={
@@ -291,13 +237,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_torchscript_sp_multiple_inputs(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_torchscript_sp_multiple_inputs(self) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_jittable_torch_model(torch.float64)
         x_df = pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False)
         x_df.columns = ["col_0"]
@@ -308,7 +248,7 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model_script,
             sample_input_data=x_df,
             prediction_assert_fns={

@@ -2,6 +2,7 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = [
     "//bazel:snowml_public_common",
+    "//snowflake/ml/beta/experiment/_client:__pkg__",
     "//snowflake/ml/model/_client/ops:__pkg__",
     "//snowflake/ml/model/_client/service:__pkg__",
 ])

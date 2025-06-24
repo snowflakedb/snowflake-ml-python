@@ -68,13 +68,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
             options={"relax_version": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_mlflow_model_deploy_sklearn(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_mlflow_model_deploy_sklearn(self) -> None:
         db = datasets.load_diabetes()
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
         with mlflow.start_run() as run:
@@ -112,7 +106,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
 
         X_test_df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df([X_test])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
             prediction_assert_fns={
                 "predict": (

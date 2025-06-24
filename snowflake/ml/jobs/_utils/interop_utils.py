@@ -75,16 +75,75 @@ def fetch_result(session: snowpark.Session, result_path: str) -> ExecutionResult
 
     Returns:
         A dictionary containing the execution result if available, None otherwise.
+
+    Raises:
+        RuntimeError: If both pickle and JSON result retrieval fail.
     """
     try:
         # TODO: Check if file exists
         with session.file.get_stream(result_path) as result_stream:
             return ExecutionResult.from_dict(pickle.load(result_stream))
-    except (sp_exceptions.SnowparkSQLException, pickle.UnpicklingError, TypeError, ImportError):
+    except (
+        sp_exceptions.SnowparkSQLException,
+        pickle.UnpicklingError,
+        TypeError,
+        ImportError,
+        AttributeError,
+        MemoryError,
+    ) as pickle_error:
         # Fall back to JSON result if loading pickled result fails for any reason
-        result_json_path = os.path.splitext(result_path)[0] + ".json"
-        with session.file.get_stream(result_json_path) as result_stream:
-            return ExecutionResult.from_dict(json.load(result_stream))
+        try:
+            result_json_path = os.path.splitext(result_path)[0] + ".json"
+            with session.file.get_stream(result_json_path) as result_stream:
+                return ExecutionResult.from_dict(json.load(result_stream))
+        except Exception as json_error:
+            # Both pickle and JSON failed - provide helpful error message
+            raise RuntimeError(_fetch_result_error_message(pickle_error, result_path, json_error)) from pickle_error
+
+
+def _fetch_result_error_message(error: Exception, result_path: str, json_error: Optional[Exception] = None) -> str:
+    """Create helpful error messages for common result retrieval failures."""
+
+    # Package import issues
+    if isinstance(error, ImportError):
+        return f"Failed to retrieve job result: Package not installed in your local environment. Error: {str(error)}"
+
+    # Package versions differ between runtime and local environment
+    if isinstance(error, AttributeError):
+        return f"Failed to retrieve job result: Package version mismatch. Error: {str(error)}"
+
+    # Serialization issues
+    if isinstance(error, TypeError):
+        return f"Failed to retrieve job result: Non-serializable objects were returned. Error: {str(error)}"
+
+    # Python version pickling incompatibility
+    if isinstance(error, pickle.UnpicklingError) and "protocol" in str(error).lower():
+        # TODO: Update this once we support different Python versions
+        client_version = f"Python {sys.version_info.major}.{sys.version_info.minor}"
+        runtime_version = "Python 3.10"
+        return (
+            f"Failed to retrieve job result: Python version mismatch - job ran on {runtime_version}, "
+            f"local environment using Python {client_version}. Error: {str(error)}"
+        )
+
+    # File access issues
+    if isinstance(error, sp_exceptions.SnowparkSQLException):
+        if "not found" in str(error).lower() or "does not exist" in str(error).lower():
+            return (
+                f"Failed to retrieve job result: No result file found. Check job.get_logs() for execution "
+                f"errors. Error: {str(error)}"
+            )
+        else:
+            return f"Failed to retrieve job result: Cannot access result file. Error: {str(error)}"
+
+    if isinstance(error, MemoryError):
+        return f"Failed to retrieve job result: Result too large for memory. Error: {str(error)}"
+
+    # Generic fallback
+    base_message = f"Failed to retrieve job result: {str(error)}"
+    if json_error:
+        base_message += f" (JSON fallback also failed: {str(json_error)})"
+    return base_message
 
 
 def load_exception(exc_type_name: str, exc_value: Union[Exception, str], exc_tb: str) -> Exception:

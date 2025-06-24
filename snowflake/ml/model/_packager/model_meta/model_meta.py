@@ -110,6 +110,7 @@ def create_model_metadata(
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
         prefer_pip=prefer_pip,
+        target_platforms=target_platforms,
     )
 
     if embed_local_ml_library:
@@ -162,8 +163,9 @@ def _create_env_for_model_metadata(
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
     prefer_pip: bool = False,
+    target_platforms: Optional[list[model_types.TargetPlatform]] = None,
 ) -> model_env.ModelEnv:
-    env = model_env.ModelEnv(prefer_pip=prefer_pip)
+    env = model_env.ModelEnv(prefer_pip=prefer_pip, target_platforms=target_platforms)
 
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
     env.conda_dependencies = conda_dependencies  # type: ignore[assignment]

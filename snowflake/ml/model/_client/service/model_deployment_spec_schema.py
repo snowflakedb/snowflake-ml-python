@@ -2,6 +2,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+BaseModel.model_config["protected_namespaces"] = ()
+
 
 class Model(BaseModel):
     name: str

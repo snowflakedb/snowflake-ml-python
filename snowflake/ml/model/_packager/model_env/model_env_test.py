@@ -11,7 +11,9 @@ from packaging import requirements, version
 
 from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 
 class ModelEnvTest(absltest.TestCase):
@@ -1158,6 +1160,142 @@ class ModelEnvTest(absltest.TestCase):
         self.assertEqual(env.pip_requirements, ["pip-package==1.6.2"])
         self.assertEqual(env.conda_dependencies, ["pip-package==1.6.2"])
         self.assertEqual(env2.conda_dependencies, ["channel::pip-package==1.6.2"])
+
+    def test_warnings_with_target_platforms(self) -> None:
+        env = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            env.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
+
+        env_default = model_env.ModelEnv()
+        env_default.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_default.include_if_absent(
+                [model_env.ModelDependency(requirement="some-package", pip_name="some-package")]
+            )
+
+        env_warehouse = model_env.ModelEnv(target_platforms=[model_types.TargetPlatform.WAREHOUSE])
+        env_warehouse.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_warehouse.include_if_absent(
+                [model_env.ModelDependency(requirement="some-package", pip_name="some-package")]
+            )
+
+        env_both = model_env.ModelEnv(
+            target_platforms=[
+                model_types.TargetPlatform.WAREHOUSE,
+                model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+            ]
+        )
+        env_both.pip_requirements = ["some-package==1.0.1"]
+
+        with self.assertWarnsRegex(
+            UserWarning, "Dependencies specified from pip requirements.*prevent model deploying to Snowflake Warehouse"
+        ):
+            env_both.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
+
+    def test_warn_once_functionality(self) -> None:
+        env = model_env.ModelEnv()
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            env._warn_once("Test warning message")
+            env._warn_once("Test warning message")
+            env._warn_once("Test warning message")
+
+            self.assertEqual(len(w), 1)
+            self.assertIn("Test warning message", str(w[0].message))
+            self.assertEqual(w[0].category, UserWarning)
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            env._warn_once("First warning message")
+            env._warn_once("Second warning message")
+            env._warn_once("First warning message")
+            env._warn_once("Third warning message")
+
+            self.assertEqual(len(w), 3)
+            warning_messages = [str(warning.message) for warning in w]
+            self.assertIn("First warning message", warning_messages)
+            self.assertIn("Second warning message", warning_messages)
+            self.assertIn("Third warning message", warning_messages)
+
+    def test_include_if_absent_warnings(self) -> None:
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+
+            env.include_if_absent([model_env.ModelDependency(requirement="pkg1", pip_name="pkg1")])
+            env.include_if_absent([model_env.ModelDependency(requirement="pkg2", pip_name="pkg2")])
+            env.include_if_absent([model_env.ModelDependency(requirement="pkg3", pip_name="pkg3")])
+
+            pip_warnings = [
+                warning for warning in w if "Dependencies specified from pip requirements" in str(warning.message)
+            ]
+            self.assertEqual(len(pip_warnings), 1)
+            self.assertEqual(
+                str(pip_warnings[0].message),
+                "Dependencies specified from pip requirements."
+                " This may prevent model deploying to Snowflake Warehouse.",
+            )
+
+    def test_load_from_dict_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            conda_file_path = pathlib.Path(os.path.join(tmpdir, "conda.yml"))
+            with open(conda_file_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(
+                    stream=f,
+                    data={
+                        "name": "test-env",
+                        "dependencies": [
+                            "python=3.10",
+                            "pip",
+                            {"pip": ["some-pip-package==1.0.0"]},
+                        ],
+                    },
+                )
+
+            pip_file_path = pathlib.Path(os.path.join(tmpdir, "requirements.txt"))
+            with open(pip_file_path, "w", encoding="utf-8") as f:
+                f.writelines(["another-pip-package==2.0.0\n"])
+
+            env_dict: model_meta_schema.ModelEnvDict = {
+                "conda": "conda.yml",
+                "pip": "requirements.txt",
+                "python_version": "3.10",
+                "snowpark_ml_version": "1.1.0",
+            }
+
+            env = model_env.ModelEnv()
+
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+
+                env.load_from_dict(pathlib.Path(tmpdir), env_dict)
+
+                pip_warnings = [
+                    warning
+                    for warning in w
+                    if "Found dependencies specified as pip requirements" in str(warning.message)
+                ]
+                self.assertEqual(len(pip_warnings), 1)
+                self.assertEqual(
+                    str(pip_warnings[0].message),
+                    "Found dependencies specified as pip requirements."
+                    " This may prevent model deploying to Snowflake Warehouse.",
+                )
 
 
 if __name__ == "__main__":

@@ -644,9 +644,15 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_convert_from_df.assert_called_once_with(
-                self.c_session, mock.ANY, keep_order=True, features=m_sig.inputs
+                self.c_session,
+                mock.ANY,
+                keep_order=True,
+                features=m_sig.inputs,
+                statement_params=self.m_statement_params,
             )
-            mock_convert_to_df.assert_called_once_with(m_output_df, features=m_sig.outputs)
+            mock_convert_to_df.assert_called_once_with(
+                m_output_df, features=m_sig.outputs, statement_params=self.m_statement_params
+            )
 
     def test_get_model_build_service_name(self) -> None:
         query_id = "01b6fc10-0002-c121-0000-6ed10736311e"

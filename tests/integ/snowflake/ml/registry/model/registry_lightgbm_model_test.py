@@ -63,13 +63,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_classifier_pipeline_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_classifier_pipeline_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -97,7 +91,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -113,13 +107,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_classifier_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_classifier_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -139,7 +127,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -171,13 +159,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_classifier_sp_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_classifier_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -204,7 +186,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -220,13 +202,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_classifier_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_classifier_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -263,7 +239,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -289,13 +265,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_booster_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_booster_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -305,7 +275,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
         y_pred = regressor.predict(cal_X_test)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -321,13 +291,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_booster_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_booster_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -338,7 +302,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         y_pred = regressor.predict(cal_X_test)
         expected_explanations = shap.Explainer(regressor)(cal_X_test).values
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -365,13 +329,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_booster_sp_no_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_booster_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -389,7 +347,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -401,13 +359,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_booster_explain_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_booster_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -436,7 +388,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
 
         cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
         cal_data_sp_df_test = self.session.create_dataframe(cal_X_test)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regressor,
             sample_input_data=cal_data_sp_df_train,
             prediction_assert_fns={
@@ -455,13 +407,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_lightgbm_with_signature_and_sample_data(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_lightgbm_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -479,7 +425,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         if expected_explanations.ndim == 3 and expected_explanations.shape[2] == 2:
             expected_explanations = np.apply_along_axis(lambda arr: arr[1], -1, expected_explanations)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
