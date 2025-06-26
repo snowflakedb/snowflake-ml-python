@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, Union, cast
 from unittest import mock
 
 import pandas as pd
@@ -6,13 +6,14 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import type_hints
+from snowflake.ml.model import target_platform, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.registry._manager import model_manager
+from snowflake.ml.registry._manager.model_manager import EventHandler
 from snowflake.ml.test_utils import mock_session
 from snowflake.snowpark import Row, Session
 
@@ -52,15 +53,19 @@ class ModelManagerTest(parameterized.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
             )
 
+        # Create a mock event handler for all tests
+        self.mock_event_handler = mock.MagicMock(spec=EventHandler)
+
     def test_get_model_1(self) -> None:
         m_model = model_impl.Model._ref(
             self.m_r._model_ops,
             service_ops=self.m_r._service_ops,
             model_name=sql_identifier.SqlIdentifier("MODEL"),
         )
-        with mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=True
-        ) as mock_validate_existence, platform_capabilities.PlatformCapabilities.mock_features():
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=True) as mock_validate_existence,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             m = self.m_r.get_model("MODEL")
             self.assertEqual(m, m_model)
             mock_validate_existence.assert_called_with(
@@ -182,28 +187,30 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
 
-        with mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
-        ) as mock_validate_existence, mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            self.m_r._model_ops, "list_models_or_versions", return_value=[]
-        ) as mock_list_models_or_versions, mock.patch.object(
-            self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
-        ) as mock_hrid_generate, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False) as mock_validate_existence,
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(
+                self.m_r._model_ops, "list_models_or_versions", return_value=[]
+            ) as mock_list_models_or_versions,
+            mock.patch.object(
+                self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
+            ) as mock_hrid_generate,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_validate_existence.assert_called_with(
                 database_name=None,
@@ -231,7 +238,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -266,18 +273,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
-        ) as mock_validate_existence, mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False) as mock_validate_existence,
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -286,6 +292,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=m_conda_dependency,
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_validate_existence.assert_called_with(
                 database_name=None,
@@ -313,7 +320,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -339,16 +346,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -358,6 +366,7 @@ class ModelManagerTest(parameterized.TestCase):
                 signatures=m_signatures,
                 options=m_options,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -379,7 +388,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=m_options,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -408,16 +417,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -427,6 +437,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -448,7 +459,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -474,20 +485,19 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            ModelOperator, "set_comment"
-        ) as mock_set_comment, mock.patch.object(
-            self.m_r._model_ops._metadata_ops, "save"
-        ) as mock_metadata_save, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(ModelOperator, "set_comment") as mock_set_comment,
+            mock.patch.object(self.m_r._model_ops._metadata_ops, "save") as mock_metadata_save,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -496,6 +506,7 @@ class ModelManagerTest(parameterized.TestCase):
                 comment="this is comment",
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -517,7 +528,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -557,7 +568,11 @@ class ModelManagerTest(parameterized.TestCase):
                 "Model MODEL version V1 already existed. To auto-generate `version_name`, skip that argument.",
             ):
                 self.m_r.log_model(
-                    model=m_model, model_name="MODEL", version_name="V1", statement_params=self.base_statement_params
+                    model=m_model,
+                    model_name="MODEL",
+                    version_name="V1",
+                    statement_params=self.base_statement_params,
+                    event_handler=self.mock_event_handler,
                 )
             mock_validate_existence.assert_has_calls(
                 [
@@ -584,46 +599,56 @@ class ModelManagerTest(parameterized.TestCase):
     def test_log_model_unsupported_platform(self, is_live_commit_enabled: bool = False) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), self.assertRaises(ValueError) as ex, platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            self.assertRaises(ValueError) as ex,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 version_name="V1",
                 target_platforms=["UNSUPPORTED_PLATFORM"],
+                event_handler=self.mock_event_handler,
             )
             self.assertIn("is not a valid TargetPlatform", str(ex.exception))
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"is_live_commit_enabled": True},
-        {"is_live_commit_enabled": False},
+    @parameterized.product(  # type: ignore[misc]
+        is_live_commit_enabled=[True, False],
+        target_platforms=[
+            ["SNOWPARK_CONTAINER_SERVICES"],
+            [target_platform.TargetPlatform.WAREHOUSE],
+            [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+        ],
     )
-    def test_log_model_target_platforms(self, is_live_commit_enabled: bool = False) -> None:
+    def test_log_model_target_platforms(
+        self, target_platforms: list[type_hints.SupportedTargetPlatformType], is_live_commit_enabled: bool = False
+    ) -> None:
         m_model = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
-                target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+                event_handler=self.mock_event_handler,
+                target_platforms=target_platforms,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -632,7 +657,7 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
-                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                target_platforms=[target_platform.TargetPlatform(platform) for platform in target_platforms],
                 python_version=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
@@ -640,14 +665,44 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
+
+    @parameterized.product(  # type: ignore[misc]
+        is_live_commit_enabled=[True, False],
+        target_platform_constant=[
+            target_platform.WAREHOUSE_ONLY,
+            target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY,
+            target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES,
+        ],
+    )
+    def test_log_model_target_platform_constant(
+        self,
+        target_platform_constant: list[Union[target_platform.TargetPlatform, str]],
+        is_live_commit_enabled: bool = False,
+    ) -> None:
+        m_model = mock.MagicMock()
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
+        ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
-                version_name="V2",
+                version_name="V1",
                 statement_params=self.base_statement_params,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                event_handler=self.mock_event_handler,
+                target_platforms=target_platform_constant,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -656,15 +711,15 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=None,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                target_platforms=[target_platform.TargetPlatform(platform) for platform in target_platform_constant],
+                python_version=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -677,20 +732,19 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
 
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ) as mock_prepare_model_temp_stage_path, mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ) as mock_create_from_stage, mock.patch.object(
-            ModelOperator, "set_comment"
-        ) as mock_set_comment, mock.patch.object(
-            self.m_r._model_ops._metadata_ops, "save"
-        ) as mock_metadata_save, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(
+                self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
+            ) as mock_prepare_model_temp_stage_path,
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(ModelOperator, "set_comment") as mock_set_comment,
+            mock.patch.object(self.m_r._model_ops._metadata_ops, "save") as mock_metadata_save,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             mv = self.m_r.log_model(
                 model=m_model,
@@ -699,6 +753,7 @@ class ModelManagerTest(parameterized.TestCase):
                 comment="this is comment",
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("FOO"),
@@ -720,7 +775,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -769,18 +824,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_version = mock.MagicMock(spec=model_version_impl.ModelVersion)
         m_model_version.fully_qualified_model_name = 'TEMP."test".SOURCE_MODEL'
         m_model_version.version_name = "SOURCE_VERSION"
-        with mock.patch.object(
-            self.m_r._model_ops, "create_from_model_version"
-        ) as mock_create_from_model_version, mock.patch.object(
-            self.m_r, "get_model"
-        ) as mock_get_model, mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
+        with (
+            mock.patch.object(self.m_r._model_ops, "create_from_model_version") as mock_create_from_model_version,
+            mock.patch.object(self.m_r, "get_model") as mock_get_model,
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
         ):
             self.m_r.log_model(
                 model=m_model_version,
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_create_from_model_version.assert_called_once_with(
                 source_database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -815,28 +869,30 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
 
-        with mock.patch.object(
-            self.m_r._model_ops, "validate_existence", side_effect=validate_existence_side_effect
-        ), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ), mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            self.m_r._model_ops, "list_models_or_versions", return_value=[sql_identifier.SqlIdentifier("angry_yeti_1")]
-        ), mock.patch.object(
-            self.m_r._hrid_generator, "generate", side_effect=[(1, "angry_yeti_1"), (2, "angry_yeti_2")]
-        ) as mock_hrid_generate, mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", side_effect=validate_existence_side_effect),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata),
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(
+                self.m_r._model_ops,
+                "list_models_or_versions",
+                return_value=[sql_identifier.SqlIdentifier("angry_yeti_1")],
+            ),
+            mock.patch.object(
+                self.m_r._hrid_generator, "generate", side_effect=[(1, "angry_yeti_1"), (2, "angry_yeti_2")]
+            ) as mock_hrid_generate,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             self.assertEqual(mock_hrid_generate.call_count, 2)
 
@@ -850,24 +906,23 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
 
-        with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"), mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
-        ), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"),
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_once_with(
                 name="MODEL",
@@ -878,13 +933,13 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                target_platforms=[target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     @parameterized.product(  # type: ignore[misc]
@@ -907,18 +962,16 @@ class ModelManagerTest(parameterized.TestCase):
         m_model_metadata = mock.MagicMock()
         m_stage_path = "@TEMP.TEST.MODEL/V1"
 
-        with mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"), mock.patch.object(
-            self.m_r._model_ops, "validate_existence", return_value=False
-        ), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+        with (
+            mock.patch("snowflake.ml._internal.env.IN_ML_RUNTIME", return_value="True"),
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -926,6 +979,7 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=m_sample_input_data,
                 options=options,
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_once_with(
                 name="MODEL",
@@ -936,13 +990,13 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[type_hints.TargetPlatform.WAREHOUSE],
+                target_platforms=[target_platform.TargetPlatform.WAREHOUSE],
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=options,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     def test_delete_model(self) -> None:
@@ -974,20 +1028,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            ModelOperator, "set_comment"
-        ), mock.patch.object(
-            self.m_r._model_ops._metadata_ops, "save"
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(ModelOperator, "set_comment"),
+            mock.patch.object(self.m_r._model_ops._metadata_ops, "save"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -997,6 +1048,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "myrepo"},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1013,7 +1065,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
             self.m_r.log_model(
@@ -1024,6 +1076,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "sch.myrepo"},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1040,7 +1093,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
             self.m_r.log_model(
@@ -1051,6 +1104,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "db.sch.myrepo"},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1067,7 +1121,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
     def test_resource_constraint(self) -> None:
@@ -1075,20 +1129,17 @@ class ModelManagerTest(parameterized.TestCase):
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
-        with mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False), mock.patch.object(
-            self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path
-        ), mock.patch.object(
-            model_composer.ModelComposer, "save", return_value=m_model_metadata
-        ) as mock_save, mock.patch.object(
-            self.m_r._model_ops, "create_from_stage"
-        ), mock.patch.object(
-            ModelOperator, "set_comment"
-        ), mock.patch.object(
-            self.m_r._model_ops._metadata_ops, "save"
-        ), mock.patch.object(
-            model_version_impl.ModelVersion, "_get_functions", return_value=[]
-        ), platform_capabilities.PlatformCapabilities.mock_features(
-            {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage"),
+            mock.patch.object(ModelOperator, "set_comment"),
+            mock.patch.object(self.m_r._model_ops._metadata_ops, "save"),
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
         ):
             self.m_r.log_model(
                 model=m_model,
@@ -1098,6 +1149,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 resource_constraint={"architecture": "x86"},
                 statement_params=self.base_statement_params,
+                event_handler=self.mock_event_handler,
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1114,7 +1166,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=None,
-                task=type_hints.Task.UNKNOWN,
+                task=task.Task.UNKNOWN,
             )
 
 

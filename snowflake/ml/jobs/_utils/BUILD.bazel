@@ -33,6 +33,7 @@ py_library(
     ],
     deps = [
         ":constants",
+        ":query_helper",
         ":types",
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
@@ -94,6 +95,11 @@ py_test(
 )
 
 py_library(
+    name = "query_helper",
+    srcs = ["query_helper.py"],
+)
+
+py_library(
     name = "interop_utils",
     srcs = ["interop_utils.py"],
 )
@@ -129,7 +135,9 @@ py_library(
     deps = [
         ":interop_utils",
         ":payload_utils",
+        ":query_helper",
         ":spec_utils",
         ":stage_utils",
+        "//snowflake/ml/_internal/utils:mixins",
     ],
 )

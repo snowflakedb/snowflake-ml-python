@@ -73,6 +73,9 @@ dkms.conf
 *.mod
 *.smod
 
+# Allow Go module files
+!go.mod
+
 # Compiled Static libraries
 *.lai
 

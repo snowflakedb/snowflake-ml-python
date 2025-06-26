@@ -51,6 +51,7 @@ py_test(
     deps = [
         ":model_manifest",
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_meta",

@@ -57,13 +57,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_snowml_sklearn_explain_default(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_snowml_sklearn_explain_default(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -96,7 +90,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -111,13 +105,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             sample_input_data=test_data,
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_snowml_sklearn_explain_enabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_snowml_sklearn_explain_enabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -149,7 +137,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         test_data = test_features[INPUT_COLUMNS]
         expected_explanations = shap.Explainer(regr.to_sklearn(), masker=test_data)(test_data).values
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -165,13 +153,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_snowml_pipeline_explain_enabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_snowml_pipeline_explain_enabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -204,7 +186,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         bg_data = iris_X[INPUT_COLUMNS]
         test_data = test_features[INPUT_COLUMNS]
         expected_explanations = shap.Explainer(regr.to_sklearn().predict_proba, masker=bg_data)(test_data).values
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -220,13 +202,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": True},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_xgboost_explain_disabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_xgboost_explain_disabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -237,7 +213,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X[:10]
         regr.fit(test_features)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -252,13 +228,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_xgboost_explain_default(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_xgboost_explain_default(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -273,7 +243,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         expected_explanations = shap.Explainer(regr.to_xgboost())(test_features[INPUT_COLUMNS]).values
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -295,13 +265,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_xgboost_explain_enabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_xgboost_explain_enabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -316,7 +280,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
 
         expected_explanations = shap.Explainer(regr.to_xgboost())(test_features[INPUT_COLUMNS]).values
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -343,13 +307,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_xgboost_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_xgboost_explain(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -376,7 +334,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -394,13 +352,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm_explain_disabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_lightgbm_explain_disabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -411,7 +363,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X[:10]
         regr.fit(test_features)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -426,13 +378,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm_explain_default(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_lightgbm_explain_default(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -458,7 +404,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -480,13 +426,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm_explain_enabled(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_lightgbm_explain_enabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -512,7 +452,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -535,13 +475,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_lightgbm_explain(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_lightgbm_explain(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
 
@@ -567,7 +501,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -586,12 +520,10 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         )
 
     @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         use_pipeline=[False, True],
     )
     def test_dataset_to_model_lineage(
         self,
-        registry_test_fn: str,
         use_pipeline: bool = False,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
@@ -631,7 +563,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         self._check_lineage_in_manifest_file(regr, test_features_dataset)
 
         # Case 2 : test remaining life cycle.
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -719,13 +651,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             else:
                 assert "lineage_sources" not in yaml_content
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_snowml_model_deploy_transformers_only_pipeline_sp(
-        self,
-        registry_test_fn: str,
-    ) -> None:
+    def test_snowml_model_deploy_transformers_only_pipeline_sp(self) -> None:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
         df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
@@ -782,7 +708,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         expected_res = expected_res_sp.to_pandas()
         expected_res.columns = expected_res_sp.columns
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=test_features_sp,
             prediction_assert_fns={

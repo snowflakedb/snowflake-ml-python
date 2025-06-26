@@ -60,6 +60,7 @@ def register_accumulator_udtf(*, session: Session, statement_params: dict[str, A
         ),
         input_types=[T.BinaryType()],
         packages=[f"numpy=={np.__version__}", f"cloudpickle=={cloudpickle.__version__}"],
+        imports=[],  # Prevents unnecessary import resolution.
         name=accumulator,
         is_permanent=False,
         replace=True,
@@ -175,6 +176,7 @@ def register_sharded_dot_sum_computer(*, session: Session, statement_params: dic
         ),
         input_types=[T.ArrayType(), T.IntegerType(), T.IntegerType()],
         packages=[f"numpy=={np.__version__}", f"cloudpickle=={cloudpickle.__version__}"],
+        imports=[],  # Prevents unnecessary import resolution.
         name=sharded_dot_and_sum_computer,
         is_permanent=False,
         replace=True,
