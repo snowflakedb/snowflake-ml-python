@@ -95,6 +95,6 @@ def _preprocess_array(
         array_list = arr.tolist()
         # If this is an array of arrays, convert the dtype to match the underlying array.
         # Otherwise, if this is a numpy array of strings, convert the array to a list.
-        arr = np.array(array_list, dtype=arr.flat[0].dtype) if isinstance(arr.flat[0], np.ndarray) else array_list
+        arr = np.array(array_list, dtype=arr.item(0).dtype) if isinstance(arr.item(0), np.ndarray) else array_list
 
     return arr
