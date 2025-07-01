@@ -39,6 +39,7 @@ py_test(
     deps = [
         ":test_file_helper",
         "//snowflake/ml/jobs/_utils:payload_utils",
+        "//snowflake/ml/jobs/_utils:query_helper",
         "//snowflake/ml/jobs/_utils:stage_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",

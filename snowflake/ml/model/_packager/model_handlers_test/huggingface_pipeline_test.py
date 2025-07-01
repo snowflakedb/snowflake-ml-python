@@ -13,6 +13,9 @@ from packaging import version
 
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_handlers import (
+    huggingface_pipeline as hf_pipeline_handler,
+)
 from snowflake.ml.model._packager.model_handlers.huggingface_pipeline import (
     HuggingFacePipelineHandler,
 )
@@ -26,6 +29,8 @@ if TYPE_CHECKING:
 class HuggingFacePipelineHandlerTest(absltest.TestCase):
     @classmethod
     def setUpClass(self) -> None:
+        # environment variables for huggingface cache
+        # needs to be set before importing transformers
         self.cache_dir = tempfile.TemporaryDirectory()
         self._original_hf_home = os.getenv("HF_HOME", None)
         os.environ["HF_HOME"] = self.cache_dir.name
@@ -103,6 +108,30 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         import transformers
 
         model = transformers.pipeline(task=task, model=model_id, **options)
+        self._basic_test_case_with_transformers_pipeline(
+            model=model,
+            task=task,
+            udf_test_input=udf_test_input,
+            options=options,
+            check_pipeline_fn=check_pipeline_fn,
+            check_udf_res_fn=check_udf_res_fn,
+            signature=signature,
+            check_gpu=check_gpu,
+        )
+
+    def _basic_test_case_with_transformers_pipeline(
+        self,
+        model: "transformers.Pipeline",
+        task: str,
+        udf_test_input: pd.DataFrame,
+        options: dict[str, object],
+        check_pipeline_fn: Callable[["transformers.Pipeline", "transformers.Pipeline"], None],
+        check_udf_res_fn: Callable[[pd.DataFrame], None],
+        model_id: Optional[str] = None,
+        signature: Optional[model_signature.ModelSignature] = None,
+        check_gpu: bool = True,
+    ) -> None:
+        import transformers
 
         is_signature_auto_infer = signature is None
         signature = signature or utils.huggingface_pipeline_signature_auto_infer(task=task, params=options)
@@ -179,6 +208,10 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 res = pk.model(udf_test_input.copy(deep=True))
                 check_udf_res_fn(res)
 
+        if model_id is None:
+            # the transformer model is user defined, and is not available in huggingface hub
+            # can't test the wrapper model
+            return
         wrapper_model = huggingface_pipeline.HuggingFacePipelineModel(
             task=task, model=model_id, **options  # type:ignore[arg-type]
         )
@@ -832,6 +865,77 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             udf_test_input=x_df,
             options={"max_length": 200, "num_return_sequences": 4, "do_sample": True, "num_beams": 1},
             check_pipeline_fn=lambda x, y: None,  # ignore this check
+            check_udf_res_fn=check_udf_res,
+            check_gpu=False,
+        )
+
+    def test_text_generation_without_chat_template_pipeline(
+        self,
+    ) -> None:
+        x = [
+            [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                },
+            ]
+        ]
+
+        x_df = pd.DataFrame([x], columns=["inputs"])
+
+        def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
+            self.assertIsNotNone(loaded.tokenizer.chat_template)
+            self.assertEqual(loaded.tokenizer.chat_template, hf_pipeline_handler.DEFAULT_CHAT_TEMPLATE)
+            original_res = original(x, max_length=60, num_return_sequences=1)
+            loaded_res = loaded(x, max_length=60, num_return_sequences=1)
+            self.assertEqual(len(original_res), len(loaded_res))
+
+        def check_udf_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("generated_text", row[0])
+
+        import transformers
+
+        # Define a very small GPT-2 configuration (approximately 350k parameters)
+        # without a chat template
+        small_config = transformers.GPT2Config(
+            n_embd=128,  # Embedding dimension
+            n_head=4,  # Number of attention heads
+            n_layer=2,  # Number of transformer layers
+            n_positions=512,  # Maximum sequence length
+            vocab_size=30522,  # BERT vocabulary size
+        )
+
+        # Initialize the model with the small configuration
+        model = transformers.GPT2LMHeadModel(small_config)
+
+        # Load BERT tokenizer which doesn't have chat template
+        tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
+        # Add special tokens needed for GPT-2 generation
+        tokenizer.add_special_tokens({"pad_token": "[PAD]"})
+        # Resize model embeddings to match new tokenizer
+        model.resize_token_embeddings(len(tokenizer))
+        self.assertIsNone(tokenizer.chat_template)
+
+        # Create a pipeline with our small model
+        generator = transformers.pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_length=450,
+            pad_token_id=tokenizer.pad_token_id,
+        )
+
+        self._basic_test_case_with_transformers_pipeline(
+            task="text-generation",
+            model=generator,
+            udf_test_input=x_df,
+            options={},
+            check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
         )

@@ -76,6 +76,17 @@ class DataConnector:
         return cls.from_sources(ds._session, [source], ingestor_class=ingestor_class, **kwargs)
 
     @classmethod
+    def from_ray_dataset(
+        cls: type[DataConnectorType],
+        ray_ds: "ray.data.Dataset",
+        ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
+        **kwargs: Any,
+    ) -> DataConnectorType:
+        ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
+        ray_ingestor = ingestor_class.from_ray_dataset(ray_ds=ray_ds)
+        return cls(ray_ingestor, **kwargs)
+
+    @classmethod
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         subproject_extractor=lambda cls: cls.__name__,

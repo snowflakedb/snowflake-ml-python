@@ -16,12 +16,11 @@ from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.connector import errors
 from snowflake.ml import jobs
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jd
-from snowflake.ml.jobs._utils import constants
+from snowflake.ml.jobs._utils import constants, query_helper
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import exceptions as sp_exceptions
 from tests.integ.snowflake.ml.jobs import test_constants
@@ -240,7 +239,7 @@ class JobManagerTest(parameterized.TestCase):
                 job = jobs.MLJob[None](id, session=self.session)
                 with self.assertRaises(ValueError, msg=f"id={id}"):
                     jobs.delete_job(job.id, session=self.session)
-                with self.assertRaises(errors.ProgrammingError, msg=f"id={id}"):
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                     jobs.delete_job(job, session=self.session)
 
     def test_get_status_negative(self) -> None:
@@ -253,7 +252,7 @@ class JobManagerTest(parameterized.TestCase):
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
                 job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(errors.ProgrammingError, msg=f"id={id}"):
+                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                     job.status
 
     def test_get_logs(self) -> None:
@@ -838,8 +837,8 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_submit_job_negative(self):
         test_cases = [
-            ("not_valid_database", self.schema, errors.ProgrammingError, "does not exist"),
-            (self.db, "not_valid_schema", errors.ProgrammingError, "does not exist"),
+            ("not_valid_database", self.schema, sp_exceptions.SnowparkSQLException, "does not exist"),
+            (self.db, "not_valid_schema", sp_exceptions.SnowparkSQLException, "does not exist"),
             (self.db, None, ValueError, "Schema must be specified if database is specified."),
         ]
         for database, schema, expected_exception, expected_regex in test_cases:
@@ -863,7 +862,7 @@ class JobManagerTest(parameterized.TestCase):
                 invalid_kwargs = kwargs.copy()
                 invalid_kwargs[k] = v
                 with self.assertRaisesRegex(
-                    (ValueError, errors.ProgrammingError), re.compile(re.escape(v), re.IGNORECASE)
+                    (ValueError, sp_exceptions.SnowparkSQLException), re.compile(re.escape(v), re.IGNORECASE)
                 ):
                     _ = self._submit_func_as_file(
                         dummy_function,
@@ -976,12 +975,12 @@ class JobManagerTest(parameterized.TestCase):
             self.session.use_schema(original_schema)
 
     def test_get_logs_fallback(self) -> None:
-        real_run_query = self.session._conn.run_query
+        real_run_query = query_helper.run_query
 
-        def sql_side_effect(query_str: str, *args: Any, **kwargs: Any) -> Any:
+        def sql_side_effect(session: snowpark.Session, query_str: str, *args: Any, **kwargs: Any) -> Any:
             if query_str.startswith("SELECT SYSTEM$GET_SERVICE_LOGS"):
-                raise errors.ProgrammingError("unable to get logs")
-            return real_run_query(query_str, *args, **kwargs)
+                raise sp_exceptions.SnowparkSQLException("unable to get logs")
+            return real_run_query(session, query_str, *args, **kwargs)
 
         try:
             self.session.sql("ALTER SESSION SET ENABLE_SPCS_NESTED_FUNCTIONS = False").collect()
@@ -1028,7 +1027,7 @@ class JobManagerTest(parameterized.TestCase):
         else:
             raise TimeoutError("Event table ingest did not complete in 5 minutes")
 
-        with mock.patch.object(self.session._conn, "run_query", side_effect=sql_side_effect):
+        with mock.patch("snowflake.ml.jobs._utils.query_helper.run_query", side_effect=sql_side_effect):
             # check the fallback logic
             # fallback to event table if SPCS logs are not available
             with self.assertLogs(level="DEBUG") as cm:

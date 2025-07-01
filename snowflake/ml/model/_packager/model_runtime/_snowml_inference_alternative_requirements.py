@@ -10,7 +10,7 @@ REQUIREMENTS = [
     "cryptography",
     "fsspec>=2024.6.1,<2026",
     "importlib_resources>=6.1.1, <7",
-    "numpy>=1.23,<2",
+    "numpy>=1.23,<3",
     "packaging>=20.9,<25",
     "pandas>=2.1.4,<3",
     "pyarrow",

@@ -29,7 +29,7 @@ def d2_absolute_error_score(
     y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     :math:`D^2` regression score function, \
     fraction of absolute error explained.
@@ -111,7 +111,7 @@ def d2_absolute_error_score(
 
     kwargs = telemetry.get_sproc_statement_params_kwargs(d2_absolute_error_score_anon_sproc, statement_params)
     result_object = result.deserialize(session, d2_absolute_error_score_anon_sproc(session, **kwargs))
-    score: Union[float, npt.NDArray[np.float_]] = result_object
+    score: Union[float, npt.NDArray[np.float64]] = result_object
     return score
 
 
@@ -124,7 +124,7 @@ def d2_pinball_score(
     sample_weight_col_name: Optional[str] = None,
     alpha: float = 0.5,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     :math:`D^2` regression score function, fraction of pinball loss explained.
 
@@ -211,7 +211,7 @@ def d2_pinball_score(
     kwargs = telemetry.get_sproc_statement_params_kwargs(d2_pinball_score_anon_sproc, statement_params)
     result_object = result.deserialize(session, d2_pinball_score_anon_sproc(session, **kwargs))
 
-    score: Union[float, npt.NDArray[np.float_]] = result_object
+    score: Union[float, npt.NDArray[np.float64]] = result_object
     return score
 
 
@@ -224,7 +224,7 @@ def explained_variance_score(
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
     force_finite: bool = True,
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Explained variance regression score function.
 
@@ -326,7 +326,7 @@ def explained_variance_score(
 
     kwargs = telemetry.get_sproc_statement_params_kwargs(explained_variance_score_anon_sproc, statement_params)
     result_object = result.deserialize(session, explained_variance_score_anon_sproc(session, **kwargs))
-    score: Union[float, npt.NDArray[np.float_]] = result_object
+    score: Union[float, npt.NDArray[np.float64]] = result_object
     return score
 
 
@@ -338,7 +338,7 @@ def mean_absolute_error(
     y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Mean absolute error regression loss.
 
@@ -411,7 +411,7 @@ def mean_absolute_percentage_error(
     y_pred_col_names: Union[str, list[str]],
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Mean absolute percentage error (MAPE) regression loss.
 
@@ -495,7 +495,7 @@ def mean_squared_error(
     sample_weight_col_name: Optional[str] = None,
     multioutput: Union[str, npt.ArrayLike] = "uniform_average",
     squared: bool = True,
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Mean squared error regression loss.
 

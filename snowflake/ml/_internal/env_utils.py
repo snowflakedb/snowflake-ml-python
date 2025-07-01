@@ -337,11 +337,52 @@ def get_package_spec_with_supported_ops_only(req: requirements.Requirement) -> r
     Returns:
         A requirements.Requirement object with supported ops only
     """
+
+    if req.name == "numpy":
+        import numpy as np
+
+        package_specifiers = get_numpy_specifiers(req, version.Version(np.__version__).major)
+    else:
+        package_specifiers = [spec for spec in req.specifier if spec.operator in _SUPPORTED_PACKAGE_SPEC_OPS]
+
     new_req = copy.deepcopy(req)
-    new_req.specifier = specifiers.SpecifierSet(
-        specifiers=",".join([str(spec) for spec in req.specifier if spec.operator in _SUPPORTED_PACKAGE_SPEC_OPS])
-    )
+    new_req.specifier = specifiers.SpecifierSet(specifiers=",".join([str(spec) for spec in package_specifiers]))
     return new_req
+
+
+def get_numpy_specifiers(
+    req: requirements.Requirement,
+    client_numpy_major_version: int,
+) -> list[specifiers.Specifier]:
+    """Get the package spec with supported ops only including ==, >=, <=, > and < based on the client numpy
+    major version.
+
+    Args:
+        req: A requirements.Requirement object showing the requirement.
+        client_numpy_major_version: The major version of numpy to be used.
+
+    Returns:
+        A list of specifiers with supported ops only
+    """
+    req_specifiers = []
+    for org_spec in req.specifier:
+        # check specifier that provides upper bound
+        if org_spec.operator in ["<", "<="]:
+            client_version = version.Version(str(client_numpy_major_version))
+            org_spec_version = version.Version(org_spec.version)
+            # check if the client's numpy major version is less than the specifier's upper bound
+            # if so, pin to max possible client major version
+            if client_version.major < org_spec_version.major:
+                modified_spec = specifiers.Specifier(f"<{client_version.major + 1}")
+                req_specifiers.append(modified_spec)
+            else:
+                # use the original specifier
+                req_specifiers.append(org_spec)
+        else:
+            # use the original specifier
+            req_specifiers.append(org_spec)
+
+    return req_specifiers
 
 
 def _relax_specifier_set(

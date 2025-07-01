@@ -7,6 +7,17 @@
 - Registry: Fixed bug causing snowpark to pandas dataframe conversion to fail when `QUOTED_IDENTIFIERS_IGNORE_CASE`
   parameter is enabled
 - Registry: Fixed duplicate UserWarning logs during model packaging
+- Registry: If the huggingface pipeline text-generation model doesn't contain a default chat template, a ChatML template
+  is assigned to the tokenizer.
+
+```shell
+{% for message in messages %}
+  {{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}
+{% endfor %}
+{% if add_generation_prompt %}
+  {{ '<|im_start|>assistant\n' }}
+{% endif %}"
+```
 
 ### Behavior Changes
 

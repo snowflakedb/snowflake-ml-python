@@ -82,6 +82,7 @@ repos:
       - id: typos
         exclude_types:
           - image
+          - html
   - repo: https://github.com/lyz-code/yamlfix
     rev: 1.16.1
     hooks:

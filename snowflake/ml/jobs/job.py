@@ -8,7 +8,6 @@ from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overlo
 import yaml
 
 from snowflake import snowpark
-from snowflake.connector import errors
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
@@ -70,8 +69,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def _compute_pool(self) -> str:
         """Get the job's compute pool name."""
         row = _get_service_info(self._session, self.id)
-        compute_pool = row[query_helper.get_attribute_map(self._session, {"compute_pool": 5})["compute_pool"]]
-        return cast(str, compute_pool)
+        return cast(str, row["compute_pool"])
 
     @property
     def _service_spec(self) -> dict[str, Any]:
@@ -185,13 +183,9 @@ class MLJob(Generic[T], SerializableSessionMixin):
         while (status := self.status) not in TERMINAL_JOB_STATUSES:
             if status == "PENDING" and not warning_shown:
                 pool_info = _get_compute_pool_info(self._session, self._compute_pool)
-                requested_attributes = {"max_nodes": 3, "active_nodes": 9}
-                if (
-                    pool_info[requested_attributes["max_nodes"]] - pool_info[requested_attributes["active_nodes"]]
-                ) < self.min_instances:
+                if (pool_info.max_nodes - pool_info.active_nodes) < self.min_instances:
                     logger.warning(
-                        f'Compute pool busy ({pool_info[requested_attributes["active_nodes"]]}'
-                        f'/{pool_info[requested_attributes["max_nodes"]]} nodes in use, '
+                        f"Compute pool busy ({pool_info.active_nodes}/{pool_info.max_nodes} nodes in use, "
                         f"{self.min_instances} nodes required). Job execution may be delayed."
                     )
                     warning_shown = True
@@ -247,27 +241,21 @@ def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[in
     """Retrieve job or job instance execution status."""
     if instance_id is not None:
         # Get specific instance status
-        rows = session._conn.run_query(
-            "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=[job_id], _force_qmark_paramstyle=True
-        )
-        request_attributes = query_helper.get_attribute_map(session, {"status": 5, "instance_id": 4})
-        if isinstance(rows, dict) and "data" in rows:
-            for row in rows["data"]:
-                if row[request_attributes["instance_id"]] == str(instance_id):
-                    return cast(types.JOB_STATUS, row[request_attributes["status"]])
+        rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
+        for row in rows:
+            if row["instance_id"] == str(instance_id):
+                return cast(types.JOB_STATUS, row["status"])
         raise ValueError(f"Instance {instance_id} not found in job {job_id}")
     else:
         row = _get_service_info(session, job_id)
-        request_attributes = query_helper.get_attribute_map(session, {"status": 1})
-        return cast(types.JOB_STATUS, row[request_attributes["status"]])
+        return cast(types.JOB_STATUS, row["status"])
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_service_spec(session: snowpark.Session, job_id: str) -> dict[str, Any]:
     """Retrieve job execution service spec."""
     row = _get_service_info(session, job_id)
-    requested_attributes = query_helper.get_attribute_map(session, {"spec": 6})
-    return cast(dict[str, Any], yaml.safe_load(row[requested_attributes["spec"]]))
+    return cast(dict[str, Any], yaml.safe_load(row["spec"]))
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "limit", "instance_id"])
@@ -307,18 +295,14 @@ def _get_logs(
     if limit > 0:
         params.append(limit)
     try:
-        data = session._conn.run_query(
+        (row,) = query_helper.run_query(
+            session,
             f"SELECT SYSTEM$GET_SERVICE_LOGS(?, ?, ?{f', ?' if limit > 0 else ''})",
             params=params,
-            _force_qmark_paramstyle=True,
         )
-        if isinstance(data, dict) and "data" in data:
-            full_log = str(data["data"][0][0])
-        # pass type check
-        else:
-            full_log = ""
-    except errors.ProgrammingError as e:
-        if "Container Status: PENDING" in str(e):
+        full_log = str(row[0])
+    except SnowparkSQLException as e:
+        if "Container Status: PENDING" in e.message:
             logger.warning("Waiting for container to start. Logs will be shown when available.")
             return ""
         else:
@@ -399,7 +383,7 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
 
     try:
         target_instances = _get_target_instances(session, job_id)
-    except errors.ProgrammingError:
+    except SnowparkSQLException:
         # service may be deleted
         raise RuntimeError("Couldn’t retrieve service information")
 
@@ -407,34 +391,32 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
         return 0
 
     try:
-        rows = session._conn.run_query(
-            "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,), _force_qmark_paramstyle=True
+        rows = query_helper.run_query(
+            session,
+            "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)",
+            params=(job_id,),
         )
-    except errors.ProgrammingError:
+    except SnowparkSQLException:
         # service may be deleted
         raise RuntimeError("Couldn’t retrieve instances")
 
-    if not rows or not isinstance(rows, dict) or not rows.get("data"):
+    if not rows:
         return None
 
-    if target_instances > len(rows["data"]):
+    if target_instances > len(rows):
         raise RuntimeError("Couldn’t retrieve head instance due to missing instances.")
 
-    requested_attributes = query_helper.get_attribute_map(session, {"start_time": 8, "instance_id": 4})
     # Sort by start_time first, then by instance_id
     try:
-        sorted_instances = sorted(
-            rows["data"],
-            key=lambda x: (x[requested_attributes["start_time"]], int(x[requested_attributes["instance_id"]])),
-        )
+        sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
     except TypeError:
         raise RuntimeError("Job instance information unavailable.")
     head_instance = sorted_instances[0]
-    if not head_instance[requested_attributes["start_time"]]:
+    if not head_instance["start_time"]:
         # If head instance hasn't started yet, return None
         return None
     try:
-        return int(head_instance[requested_attributes["instance_id"]])
+        return int(head_instance["instance_id"])
     except (ValueError, TypeError):
         return 0
 
@@ -446,7 +428,7 @@ def _get_service_log_from_event_table(
     schema: Optional[str] = None,
     instance_id: Optional[int] = None,
     limit: int = -1,
-) -> Any:
+) -> list[Row]:
     params: list[Any] = [
         name,
     ]
@@ -473,23 +455,22 @@ def _get_service_log_from_event_table(
     if limit > 0:
         query.append("LIMIT ?")
         params.append(limit)
-    rows = session._conn.run_query(
-        "\n".join(line for line in query if line), params=params, _force_qmark_paramstyle=True
+    # the wrap used in query_helper does not have return type.
+    # sticking a # type: ignore[no-any-return] is to pass type check
+    rows = query_helper.run_query(
+        session,
+        "\n".join(line for line in query if line),
+        params=params,
     )
-    if not rows or not isinstance(rows, dict) or not rows.get("data"):
-        return []
-    return rows["data"]
+    return rows  # type: ignore[no-any-return]
 
 
 def _get_service_info(session: snowpark.Session, job_id: str) -> Any:
-    row = session._conn.run_query("DESCRIBE SERVICE IDENTIFIER(?)", params=(job_id,), _force_qmark_paramstyle=True)
-    # pass the type check
-    if not row or not isinstance(row, dict) or not row.get("data"):
-        raise errors.ProgrammingError("failed to retrieve service information")
-    return row["data"][0]
+    (row,) = query_helper.run_query(session, "DESCRIBE SERVICE IDENTIFIER(?)", params=(job_id,))
+    return row
 
 
-def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Any:
+def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Row:
     """
     Check if the compute pool has enough available instances.
 
@@ -498,19 +479,16 @@ def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Any:
         compute_pool (str): The name of the compute pool.
 
     Returns:
-        Any: The compute pool information.
+        Row: The compute pool information.
 
     Raises:
         ValueError: If the compute pool is not found.
     """
     try:
-        compute_pool_info = session._conn.run_query(
-            "SHOW COMPUTE POOLS LIKE ?", params=(compute_pool,), _force_qmark_paramstyle=True
-        )
-        # pass the type check
-        if not compute_pool_info or not isinstance(compute_pool_info, dict) or not compute_pool_info.get("data"):
-            raise ValueError(f"Compute pool '{compute_pool}' not found")
-        return compute_pool_info["data"][0]
+        # the wrap used in query_helper does not have return type.
+        # sticking a # type: ignore[no-any-return] is to pass type check
+        (pool_info,) = query_helper.run_query(session, "SHOW COMPUTE POOLS LIKE ?", params=(compute_pool,))
+        return pool_info  # type: ignore[no-any-return]
     except ValueError as e:
         if "not enough values to unpack" in str(e):
             raise ValueError(f"Compute pool '{compute_pool}' not found")
@@ -520,8 +498,7 @@ def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Any:
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_target_instances(session: snowpark.Session, job_id: str) -> int:
     row = _get_service_info(session, job_id)
-    requested_attributes = query_helper.get_attribute_map(session, {"target_instances": 9})
-    return int(row[requested_attributes["target_instances"]])
+    return int(row["target_instances"])
 
 
 def _get_logs_spcs(
