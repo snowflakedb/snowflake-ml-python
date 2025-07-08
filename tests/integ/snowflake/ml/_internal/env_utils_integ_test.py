@@ -2,7 +2,7 @@ from absl.testing import absltest
 from packaging import requirements
 
 from snowflake.ml._internal import env as snowml_env, env_utils
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params
 from snowflake.snowpark import Session
 
 

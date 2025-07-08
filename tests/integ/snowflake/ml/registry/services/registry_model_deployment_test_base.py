@@ -184,18 +184,20 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             )
 
         # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(mv._service_ops._get_model_build_service_name(query_id))
+        model_build_service_name = sql_identifier.SqlIdentifier(
+            mv._service_ops._get_service_id_from_deployment_step(query_id, service_ops.DeploymentStep.MODEL_BUILD)
+        )
         model_build_service = service_ops.ServiceLogInfo(
             database_name=database_name_id,
             schema_name=schema_name_id,
             service_name=model_build_service_name,
-            container_name="model-build",
+            deployment_step=service_ops.DeploymentStep.MODEL_BUILD,
         )
         model_inference_service = service_ops.ServiceLogInfo(
             database_name=database_name_id,
             schema_name=schema_name_id,
             service_name=service_name_id,
-            container_name="model-inference",
+            deployment_step=service_ops.DeploymentStep.MODEL_INFERENCE,
         )
         services = [model_build_service, model_inference_service]
         log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)

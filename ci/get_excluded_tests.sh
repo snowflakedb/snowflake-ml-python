@@ -179,6 +179,14 @@ if [[ -n "${incompatible_targets}" ]]; then
     echo "${incompatible_targets}" | sed 's|^//||' | sed 's|:|/|g' | sed 's|$|.py|' >>"${output_path}"
 fi
 
+# Force-add any labels in the quarantine list that bazel query didn’t pick up
+if [[ -f "ci/targets/quarantine/${SF_ENV}.txt" ]]; then
+grep ':' "ci/targets/quarantine/${SF_ENV}.txt" | \
+    sed -e 's|^//||' \
+        -e 's|:|/|' \
+        -e 's|$|.py|' \
+    >> "${output_path}"
+fi
 echo "Tests getting excluded:"
 
 cat "${output_path}"

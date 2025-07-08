@@ -8,7 +8,7 @@ import pandas as pd
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model import (
     Model,
     ModelVersion,
@@ -124,20 +124,30 @@ class Registry:
                 else sql_identifier.SqlIdentifier("PUBLIC")
             )
 
-        database_exists = session.sql(
-            f"""SELECT 1 FROM INFORMATION_SCHEMA.DATABASES WHERE DATABASE_NAME = '{self._database_name.resolved()}';"""
-        ).collect()
+        database_results = (
+            query_result_checker.SqlResultValidator(
+                session, f"""SHOW DATABASES LIKE '{self._database_name.resolved()}';"""
+            )
+            .has_column("name", allow_empty=True)
+            .validate()
+        )
 
-        if not database_exists:
+        db_names = [row["name"] for row in database_results]
+        if not self._database_name.resolved() in db_names:
             raise ValueError(f"Database {self._database_name} does not exist.")
 
-        schema_exists = session.sql(
-            f"""
-            SELECT 1 FROM {self._database_name.identifier()}.INFORMATION_SCHEMA.SCHEMATA
-            WHERE SCHEMA_NAME = '{self._schema_name.resolved()}';"""
-        ).collect()
+        schema_results = (
+            query_result_checker.SqlResultValidator(
+                session,
+                f"""SHOW SCHEMAS LIKE '{self._schema_name.resolved()}'
+                IN DATABASE {self._database_name.identifier()};""",
+            )
+            .has_column("name", allow_empty=True)
+            .validate()
+        )
 
-        if not schema_exists:
+        schema_names = [row["name"] for row in schema_results]
+        if not self._schema_name.resolved() in schema_names:
             raise ValueError(f"Schema {self._schema_name} does not exist.")
 
         self._model_manager = model_manager.ModelManager(
@@ -258,7 +268,8 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
-                - save_location: Location to save the model and metadata.
+                - save_location: Local directory to save the the serialized model files first before
+                  uploading to Snowflake. This is useful when default tmp directory is not writable.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options.
 

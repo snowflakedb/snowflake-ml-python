@@ -17,4 +17,7 @@ py_library(
         "__init__.py",
         "lineage_node.py",
     ],
+    deps = [
+        "//snowflake/ml/_internal/utils:mixins",
+    ],
 )

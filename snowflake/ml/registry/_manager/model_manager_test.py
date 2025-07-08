@@ -239,6 +239,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -321,6 +322,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -389,6 +391,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=m_options,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -460,6 +463,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=m_ext_modules,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -529,6 +533,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -666,6 +671,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
     @parameterized.product(  # type: ignore[misc]
@@ -720,6 +726,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -776,6 +783,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
                 composed_model=mock.ANY,
@@ -940,6 +948,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
     @parameterized.product(  # type: ignore[misc]
@@ -997,6 +1006,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=options,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
     def test_delete_model(self) -> None:
@@ -1066,6 +1076,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
             self.m_r.log_model(
@@ -1094,6 +1105,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
             self.m_r.log_model(
@@ -1122,6 +1134,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
     def test_resource_constraint(self) -> None:
@@ -1167,6 +1180,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options=None,
                 task=task.Task.UNKNOWN,
+                experiment_info=None,
             )
 
 

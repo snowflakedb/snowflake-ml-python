@@ -698,7 +698,7 @@ class BaseTransformer(BaseEstimator):
         self,
         attribute: Optional[Mapping[str, Union[int, float, str, Iterable[Union[int, float, str]]]]],
         dtype: Optional[type] = None,
-    ) -> Optional[npt.NDArray[Union[np.int_, np.float_, np.str_]]]:
+    ) -> Optional[npt.NDArray[Union[np.int_, np.float64, np.str_]]]:
         """
         Convert the attribute from dict to ndarray based on the order of `self.input_cols`.
 

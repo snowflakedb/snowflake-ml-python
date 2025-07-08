@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Any, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Any, Optional, Protocol, Union
 
 import pandas as pd
 from absl.logging import logging
@@ -16,6 +16,9 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+if TYPE_CHECKING:
+    from snowflake.ml.experiment._experiment_info import ExperimentInfo
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,7 @@ class ModelManager:
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: type_hints.Task = task.Task.UNKNOWN,
+        experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
         event_handler: EventHandler,
@@ -150,6 +154,7 @@ class ModelManager:
             code_paths=code_paths,
             ext_modules=ext_modules,
             task=task,
+            experiment_info=experiment_info,
             options=options,
             statement_params=statement_params,
             event_handler=event_handler,
@@ -175,6 +180,7 @@ class ModelManager:
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: type_hints.Task = task.Task.UNKNOWN,
+        experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
         event_handler: EventHandler,
@@ -295,6 +301,7 @@ class ModelManager:
             ext_modules=ext_modules,
             options=options,
             task=task,
+            experiment_info=experiment_info,
         )
         statement_params = telemetry.add_statement_params_custom_tags(
             statement_params, model_metadata.telemetry_metadata()

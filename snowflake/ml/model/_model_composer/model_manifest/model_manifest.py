@@ -2,7 +2,7 @@ import collections
 import logging
 import pathlib
 import warnings
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
 
 import yaml
 
@@ -22,6 +22,9 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._packager.model_runtime import model_runtime
+
+if TYPE_CHECKING:
+    from snowflake.ml.experiment._experiment_info import ExperimentInfo
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,7 @@ class ModelManifest:
         user_files: Optional[dict[str, list[str]]] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         data_sources: Optional[list[data_source.DataSource]] = None,
+        experiment_info: Optional["ExperimentInfo"] = None,
         target_platforms: Optional[list[type_hints.TargetPlatform]] = None,
     ) -> None:
         if options is None:
@@ -183,7 +187,7 @@ class ModelManifest:
         if self.user_files:
             manifest_dict["user_files"] = [user_file.save(self.workspace_path) for user_file in self.user_files]
 
-        lineage_sources = self._extract_lineage_info(data_sources)
+        lineage_sources = self._extract_lineage_info(data_sources, experiment_info)
         if lineage_sources:
             manifest_dict["lineage_sources"] = lineage_sources
 
@@ -210,7 +214,9 @@ class ModelManifest:
         return res
 
     def _extract_lineage_info(
-        self, data_sources: Optional[list[data_source.DataSource]]
+        self,
+        data_sources: Optional[list[data_source.DataSource]],
+        experiment_info: Optional["ExperimentInfo"],
     ) -> list[model_manifest_schema.LineageSourceDict]:
         result = []
         if data_sources:
@@ -229,4 +235,12 @@ class ModelManifest:
                             type=model_manifest_schema.LineageSourceTypes.QUERY.value, entity=source.sql
                         )
                     )
+        if experiment_info:
+            result.append(
+                model_manifest_schema.LineageSourceDict(
+                    type=model_manifest_schema.LineageSourceTypes.EXPERIMENT.value,
+                    entity=experiment_info.fully_qualified_name,
+                    version=experiment_info.run_name,
+                )
+            )
         return result

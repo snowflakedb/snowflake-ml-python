@@ -1,0 +1,18 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "experiment_info",
+    srcs = ["_experiment_info.py"],
+    deps = [
+        "//snowflake/ml/registry/_manager:model_manager",
+    ],
+)
+
+py_test(
+    name = "experiment_info_test",
+    srcs = ["_experiment_info_test.py"],
+    main = "_experiment_info_test.py",
+    deps = [":experiment_info"],
+)

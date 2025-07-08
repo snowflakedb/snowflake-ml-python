@@ -1,5 +1,34 @@
 # Release History
 
+## 1.9.1
+
+### Bug Fixes
+
+### New Features
+
+- DataConnector: DataConnector objects can now be pickled
+- Dataset: Dataset objects can now be pickled
+- Registry (PrPr): Introducing `create_service` function in `snowflake/ml/model/models/huggingface_pipeline.py`
+  which creates a service to log a HF model and upon successful logging, an inference service is created.
+
+```python
+from snowflake.ml.model.models import huggingface_pipeline
+
+hf_model_ref = huggingface_pipeline.HuggingFacePipelineModel(
+  model="gpt2",
+  task="text-generation", # Optional
+)
+
+
+hf_model_ref.create_service(
+    session=session,
+    service_name="test_service",
+    service_compute_pool="test_compute_pool",
+    image_repo="test_repo",
+    ...
+)
+```
+
 ## 1.9.0
 
 ### Bug Fixes
@@ -7,6 +36,19 @@
 - Registry: Fixed bug causing snowpark to pandas dataframe conversion to fail when `QUOTED_IDENTIFIERS_IGNORE_CASE`
   parameter is enabled
 - Registry: Fixed duplicate UserWarning logs during model packaging
+- Registry: If the huggingface pipeline text-generation model doesn't contain a default chat template, a ChatML template
+  is assigned to the tokenizer.
+
+```shell
+{% for message in messages %}
+  {{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}
+{% endfor %}
+{% if add_generation_prompt %}
+  {{ '<|im_start|>assistant\n' }}
+{% endif %}"
+```
+
+- Registry: Fixed SQL queries during registry initialization that were forcing warehouse requirement
 
 ### Behavior Changes
 
@@ -116,7 +158,8 @@
   - Pre-created Snowpark Session is now available inside job payloads using
     `snowflake.snowpark.context.get_active_session()`
 - Registry: Introducing `save_location` to `log_model` using the `options` argument.
-  User's can provide the path to write the model version's files that get stored in Snowflake's stage.
+  Users can use the `save_location` option to specify a local directory where the model files and configuration are written.
+  This is useful when the default temporary directory has space limitations.
 
 ```python
 reg.log_model(

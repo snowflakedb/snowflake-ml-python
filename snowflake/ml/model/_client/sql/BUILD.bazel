@@ -5,6 +5,7 @@ package(default_visibility = [
     "//snowflake/ml/beta/experiment/_client:__pkg__",
     "//snowflake/ml/model/_client/ops:__pkg__",
     "//snowflake/ml/model/_client/service:__pkg__",
+    "//snowflake/ml/model/models:__pkg__",
 ])
 
 py_library(

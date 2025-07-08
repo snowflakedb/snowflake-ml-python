@@ -37,6 +37,7 @@ py_library(
         ":torch_utils",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:mixins",
         "//snowflake/ml/data/_internal:arrow_ingestor",
     ],
 )

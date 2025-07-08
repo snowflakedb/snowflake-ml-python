@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Literal, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, mixins
 
 if TYPE_CHECKING:
     from snowflake.ml import dataset
@@ -15,7 +15,7 @@ _PROJECT = "LINEAGE"
 DOMAIN_LINEAGE_REGISTRY: dict[str, type["LineageNode"]] = {}
 
 
-class LineageNode:
+class LineageNode(mixins.SerializableSessionMixin):
     """
     Represents a node in a lineage graph and serves as the base class for all machine learning objects.
     """

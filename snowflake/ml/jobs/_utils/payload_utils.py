@@ -12,13 +12,14 @@ import cloudpickle as cp
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.connector import errors
 from snowflake.ml.jobs._utils import (
     constants,
     function_payload_utils,
+    query_helper,
     stage_utils,
     types,
 )
+from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 
 cp.register_pickle_by_value(function_payload_utils)
@@ -312,14 +313,14 @@ class JobPayload:
         stage_name = stage_path.parts[0].lstrip("@")
         # Explicitly check if stage exists first since we may not have CREATE STAGE privilege
         try:
-            session._conn.run_query("describe stage identifier(?)", params=[stage_name], _force_qmark_paramstyle=True)
-        except errors.ProgrammingError:
-            session._conn.run_query(
+            query_helper.run_query(session, "describe stage identifier(?)", params=[stage_name])
+        except sp_exceptions.SnowparkSQLException:
+            query_helper.run_query(
+                session,
                 "create stage if not exists identifier(?)"
                 " encryption = ( type = 'SNOWFLAKE_SSE' )"
                 " comment = 'Created by snowflake.ml.jobs Python API'",
                 params=[stage_name],
-                _force_qmark_paramstyle=True,
             )
 
         # Upload payload to stage

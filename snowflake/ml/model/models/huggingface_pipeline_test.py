@@ -3,7 +3,10 @@ import tempfile
 
 from absl.testing import absltest
 
+from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.snowpark import async_job, session
 
 
 class HuggingFacePipelineTest(absltest.TestCase):
@@ -122,6 +125,178 @@ class HuggingFacePipelineTest(absltest.TestCase):
             huggingface_pipeline.HuggingFacePipelineModel(
                 task="text-generation", model="gpt2", device_map="auto", device=0
             )
+
+    def test_create_service(self) -> None:
+        """Test the create_service function with mocked ServiceOperator."""
+
+        # Mock session
+        mock_session = absltest.mock.Mock(spec=session.Session)
+        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
+        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
+        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
+
+        # Mock the ServiceOperator
+        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
+        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
+        mock_service_operator.create_service = mock_create_service
+
+        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
+            model="openai-community/gpt2",
+            task="text-generation",
+            trust_remote_code=True,
+        )
+
+        # Patch the ServiceOperator constructor to return our mock
+        with absltest.mock.patch(
+            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
+            return_value=mock_service_operator,
+        ):
+            # Call the create_service function
+            result = model_ref.create_service(
+                session=mock_session,
+                model_name="test_model",
+                version_name="v1",
+                service_name="test_service",
+                service_compute_pool="test_compute_pool",
+                image_repo="test_repo",
+                ingress_enabled=True,
+                max_instances=2,
+                num_workers=4,
+                max_batch_rows=100,
+                cpu_requests="1",
+                memory_requests="4Gi",
+                gpu_requests="1",
+                force_rebuild=True,
+                block=True,
+            )
+
+            # Check that the result is correct
+            self.assertEqual(result, "test_service_id")
+
+            # Verify specific parameters
+            args = mock_create_service.call_args.kwargs
+            self.assertEqual(args["database_name"], sql_identifier.SqlIdentifier("test_db"))
+            self.assertEqual(args["schema_name"], sql_identifier.SqlIdentifier("test_schema"))
+            self.assertEqual(args["model_name"], sql_identifier.SqlIdentifier("test_model"))
+            self.assertEqual(args["version_name"], sql_identifier.SqlIdentifier("v1"))
+            self.assertEqual(args["service_name"], sql_identifier.SqlIdentifier("test_service"))
+            self.assertIsNone(args["service_database_name"])
+            self.assertIsNone(args["service_schema_name"])
+            self.assertEqual(
+                args["hf_model_args"],
+                service_ops.HFModelArgs(
+                    hf_model_name="openai-community/gpt2",
+                    hf_task="text-generation",
+                    hf_tokenizer=None,
+                    hf_revision=None,
+                    hf_token=None,
+                    hf_trust_remote_code=True,
+                    hf_model_kwargs={},
+                    pip_requirements=None,
+                    conda_dependencies=None,
+                    comment=None,
+                    warehouse="test_warehouse",
+                ),
+            )
+            self.assertTrue(args["block"])
+
+        # Patch the ServiceOperator constructor to return our mock
+        with absltest.mock.patch(
+            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
+            return_value=mock_service_operator,
+        ):
+            # Call the create_service function
+            result = model_ref.create_service(
+                session=mock_session,
+                model_name="test_model",
+                version_name="v1",
+                service_name="test_service_db.test_service_schema.test_service",
+                service_compute_pool="test_compute_pool",
+                image_repo="test_repo",
+                ingress_enabled=True,
+                max_instances=2,
+                num_workers=4,
+                max_batch_rows=100,
+                cpu_requests="1",
+                memory_requests="4Gi",
+                gpu_requests="1",
+                force_rebuild=True,
+                block=True,
+            )
+
+            # Check that the result is correct
+            self.assertEqual(result, "test_service_id")
+
+            # Verify specific parameters
+            args = mock_create_service.call_args.kwargs
+            self.assertEqual(args["database_name"], sql_identifier.SqlIdentifier("test_db"))
+            self.assertEqual(args["schema_name"], sql_identifier.SqlIdentifier("test_schema"))
+            self.assertEqual(args["model_name"], sql_identifier.SqlIdentifier("test_model"))
+            self.assertEqual(args["version_name"], sql_identifier.SqlIdentifier("v1"))
+            self.assertEqual(args["service_name"], sql_identifier.SqlIdentifier("test_service"))
+            self.assertEqual(args["service_database_name"], sql_identifier.SqlIdentifier("test_service_db"))
+            self.assertEqual(args["service_schema_name"], sql_identifier.SqlIdentifier("test_service_schema"))
+            self.assertEqual(
+                args["hf_model_args"],
+                service_ops.HFModelArgs(
+                    hf_model_name="openai-community/gpt2",
+                    hf_task="text-generation",
+                    hf_tokenizer=None,
+                    hf_revision=None,
+                    hf_token=None,
+                    hf_trust_remote_code=True,
+                    hf_model_kwargs={},
+                    pip_requirements=None,
+                    conda_dependencies=None,
+                    comment=None,
+                    warehouse="test_warehouse",
+                ),
+            )
+            self.assertTrue(args["block"])
+
+    def test_create_service_async(self) -> None:
+        """Test the create_service function in async mode with mocked ServiceOperator."""
+
+        # Mock session
+        mock_session = absltest.mock.Mock(spec=session.Session)
+        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
+        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
+
+        # Mock async job
+        mock_async_job = absltest.mock.Mock(spec=async_job.AsyncJob)
+
+        # Mock the ServiceOperator
+        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
+        mock_create_service = absltest.mock.Mock(return_value=mock_async_job)
+        mock_service_operator.create_service = mock_create_service
+
+        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
+            model="openai-community/gpt2",
+            task="text-generation",
+            trust_remote_code=True,
+        )
+
+        # Patch the ServiceOperator constructor to return our mock
+        with absltest.mock.patch(
+            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
+            return_value=mock_service_operator,
+        ):
+            # Call the create_service function in non-blocking mode
+            result = model_ref.create_service(
+                session=mock_session,
+                model_name="test_model",
+                service_name="test_service",
+                service_compute_pool="test_compute_pool",
+                image_repo="test_repo",
+                block=False,  # Non-blocking mode
+            )
+
+            # Check that the result is an AsyncJob
+            self.assertIs(result, mock_async_job)
+
+            # Check that create_service was called with block=False
+            args = mock_create_service.call_args.kwargs
+            self.assertFalse(args["block"])
 
 
 if __name__ == "__main__":

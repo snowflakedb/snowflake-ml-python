@@ -281,7 +281,7 @@ class {transform.test_class_name}(TestCase):
             if inference_with_udf:
                 actual_score = getattr(reg, "score")(dataset=input_df)
                 if isinstance(actual_score, DataFrame):
-                    actual_score.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy(dtype=np.float_).squeeze()
+                    actual_score.to_pandas().sort_values(by="INDEX")[output_cols].to_numpy(dtype=np.float64).squeeze()
             else:
                 actual_score = getattr(reg, "score")(dataset=input_df_pandas)
                 if isinstance(actual_score, pd.DataFrame):
@@ -289,7 +289,7 @@ class {transform.test_class_name}(TestCase):
                         c for c in actual_score.columns 
                         if any([c.find(colName) >= 0 for colName in output_cols])
                     ]
-                    actual_score = actual_score[actual_output_cols].to_numpy(dtype=np.float_).squeeze()
+                    actual_score = actual_score[actual_output_cols].to_numpy(dtype=np.float64).squeeze()
 
             sklearn_score = getattr(sklearn_reg, "score")(**args)
 

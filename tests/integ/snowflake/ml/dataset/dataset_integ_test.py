@@ -5,6 +5,7 @@ import unittest
 from typing import Any, Dict, Generator
 from uuid import uuid4
 
+import cloudpickle as cp
 import numpy as np
 import pandas as pd
 import torch
@@ -135,6 +136,12 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         ds1 = ds.create_version("no_comment", self.session.sql("SELECT 1"))
         self.assertEmpty(ds1.read.data_sources[0].exclude_cols)
         self.assertIsNone(ds1.selected_version.comment)
+
+        ds_pickle = cp.dumps(ds)
+        ds_unpickle = cp.loads(ds_pickle)
+        self.assertListEqual(ds_unpickle.read.data_sources[0].exclude_cols, ["timestamp"])
+        self.assertEqual(ds_unpickle.selected_version.comment, "this is my dataset 'with quotes'")
+        self.assertEqual(1, len(ds_unpickle.read.to_pandas()))
 
     # Don't run in sprocs to speed up tests
     def test_dataset_partition_by(self) -> None:

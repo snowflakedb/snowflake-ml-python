@@ -3,7 +3,9 @@ from contextlib import contextmanager
 from typing import Any, Optional
 
 from absl import logging
+from packaging import version
 
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import (
@@ -12,7 +14,7 @@ from snowflake.snowpark import (
 )
 
 LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
-INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC"
+INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
 
 
 class PlatformCapabilities:
@@ -67,7 +69,7 @@ class PlatformCapabilities:
             cls.clear_mock_features()
 
     def is_inlined_deployment_spec_enabled(self) -> bool:
-        return self._get_bool_feature(INLINE_DEPLOYMENT_SPEC_PARAMETER, False)
+        return self._is_version_feature_enabled(INLINE_DEPLOYMENT_SPEC_PARAMETER)
 
     def is_live_commit_enabled(self) -> bool:
         return self._get_bool_feature(LIVE_COMMIT_PARAMETER, False)
@@ -126,3 +128,51 @@ class PlatformCapabilities:
             else:
                 raise ValueError(f"Invalid boolean string: {value} for feature {feature_name}")
         raise ValueError(f"Invalid boolean feature value: {value} for feature {feature_name}")
+
+    def _get_version_feature(self, feature_name: str) -> version.Version:
+        """Get a version feature value, returning a large version number on failure or missing feature.
+
+        Args:
+            feature_name: The name of the feature to retrieve.
+
+        Returns:
+            version.Version: The parsed version, or a large version number (999.999.999) if parsing fails
+            or the feature is missing.
+        """
+        # Large version number to use as fallback
+        large_version = version.Version("999.999.999")
+
+        value = self.features.get(feature_name)
+        if value is None:
+            logging.debug(f"Feature {feature_name} not found, returning large version number")
+            return large_version
+
+        try:
+            # Convert to string if it's not already
+            version_str = str(value)
+            return version.Version(version_str)
+        except (version.InvalidVersion, ValueError, TypeError) as e:
+            logging.debug(
+                f"Failed to parse version from feature {feature_name} with value '{value}': {e}. "
+                f"Returning large version number"
+            )
+            return large_version
+
+    def _is_version_feature_enabled(self, feature_name: str) -> bool:
+        """Check if the current package version is greater than or equal to the version feature.
+
+        Args:
+            feature_name: The name of the version feature to compare against.
+
+        Returns:
+            bool: True if current package version >= feature version, False otherwise.
+        """
+        current_version = version.Version(snowml_version.VERSION)
+        feature_version = self._get_version_feature(feature_name)
+
+        result = current_version >= feature_version
+        logging.debug(
+            f"Version comparison for feature {feature_name}: "
+            f"current={current_version}, feature={feature_version}, enabled={result}"
+        )
+        return result

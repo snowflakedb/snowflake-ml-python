@@ -49,7 +49,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.c_session = cast(Session, self.m_session)
         with (
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
         ):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
@@ -69,7 +69,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_ref(self) -> None:
         with (
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods,
-            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
         ):
             model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(

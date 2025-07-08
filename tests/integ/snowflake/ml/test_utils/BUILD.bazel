@@ -65,9 +65,9 @@ py_library(
     deps = [
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:snowflake_env",
-        "//snowflake/ml/utils:connection_params",
     ],
 )
 
