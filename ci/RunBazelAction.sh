@@ -98,7 +98,7 @@ action_env=()
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     export SKIP_GRYPE=true
     source model_container_services_deployment/ci/build_and_push_images.sh
-    action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}")
+    action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}" "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}")
 fi
 
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")

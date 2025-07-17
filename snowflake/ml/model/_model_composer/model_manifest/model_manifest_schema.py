@@ -83,6 +83,7 @@ class SnowparkMLDataDict(TypedDict):
 class LineageSourceTypes(enum.Enum):
     DATASET = "DATASET"
     QUERY = "QUERY"
+    EXPERIMENT = "EXPERIMENT"
 
 
 class LineageSourceDict(TypedDict):

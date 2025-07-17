@@ -98,9 +98,9 @@ class ModelRuntime:
             dependencies=model_meta_schema.ModelRuntimeDependenciesDict(
                 conda=env_dict["conda"],
                 pip=env_dict["pip"],
-                artifact_repository_map=env_dict["artifact_repository_map"]
-                if env_dict.get("artifact_repository_map") is not None
-                else {},
+                artifact_repository_map=(
+                    env_dict["artifact_repository_map"] if env_dict.get("artifact_repository_map") is not None else {}
+                ),
             ),
             resource_constraint=env_dict["resource_constraint"],
         )

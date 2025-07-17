@@ -66,4 +66,4 @@ class LazyType(Generic[T]):
             return False
 
 
-LiteralNDArrayType = Union[npt.NDArray[np.int_], npt.NDArray[np.float_], npt.NDArray[np.str_], npt.NDArray[np.bool_]]
+LiteralNDArrayType = Union[npt.NDArray[np.int_], npt.NDArray[np.float64], npt.NDArray[np.str_], npt.NDArray[np.bool_]]

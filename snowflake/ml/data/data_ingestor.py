@@ -7,6 +7,7 @@ from snowflake.ml.data import data_source
 
 if TYPE_CHECKING:
     import pandas as pd
+    import ray
 
 
 DataIngestorType = TypeVar("DataIngestorType", bound="DataIngestor")
@@ -16,6 +17,13 @@ class DataIngestor(Protocol):
     @classmethod
     def from_sources(
         cls: type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource]
+    ) -> DataIngestorType:
+        raise NotImplementedError
+
+    @classmethod
+    def from_ray_dataset(
+        cls: type[DataIngestorType],
+        ray_ds: "ray.data.Dataset",
     ) -> DataIngestorType:
         raise NotImplementedError
 

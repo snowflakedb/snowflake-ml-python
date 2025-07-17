@@ -194,9 +194,10 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             pandas_df[_Y_PRED_COLS],
             average=average,
         )
+
         np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
+            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float64),
+            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float64),
         )
 
     @parameterized.product(  # type: ignore[misc]
@@ -218,8 +219,8 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             average=average,
         )
         np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
+            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float64),
+            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float64),
         )
 
     @parameterized.product(
@@ -255,8 +256,8 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             sample_weight=sample_weight,
         )
         np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float_),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float_),
+            np.array((actual_p, actual_r, actual_f, actual_s), dtype=np.float64),
+            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s), dtype=np.float64),
         )
 
     @parameterized.product(

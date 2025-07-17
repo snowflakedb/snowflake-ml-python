@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
@@ -23,8 +24,12 @@ from snowflake.ml.model._signatures import utils as model_signature_utils
 from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.snowpark._internal import utils as snowpark_utils
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     import transformers
+
+DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"  # noqa: E501
 
 
 def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model_env.ModelDependency]:
@@ -326,6 +331,23 @@ class HuggingFacePipelineHandler(
                 **device_config,
             )
 
+            # If the task is text-generation, and the tokenizer does not have a chat_template,
+            # set the default chat template.
+            if (
+                hasattr(m, "task")
+                and m.task == "text-generation"
+                and hasattr(m.tokenizer, "chat_template")
+                and not m.tokenizer.chat_template
+            ):
+                warnings.warn(
+                    "The tokenizer does not have default chat_template. "
+                    "Setting the chat_template to default ChatML template.",
+                    UserWarning,
+                    stacklevel=1,
+                )
+                logger.info(DEFAULT_CHAT_TEMPLATE)
+                m.tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
+
             m.__dict__.update(pipeline_params)
 
         else:
@@ -481,8 +503,25 @@ class HuggingFacePipelineHandler(
 
         # To enable batch_size > 1 for LLM
         # Pipe might not have tokenizer, but should always have a model, and model should always have a config.
-        if getattr(pipe, "tokenizer", None) is not None and pipe.tokenizer.pad_token_id is None:
-            pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+        if (
+            getattr(pipe, "tokenizer", None) is not None
+            and pipe.tokenizer.pad_token_id is None
+            and hasattr(pipe.model.config, "eos_token_id")
+        ):
+            if isinstance(pipe.model.config.eos_token_id, int):
+                pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id
+            elif (
+                isinstance(pipe.model.config.eos_token_id, list)
+                and len(pipe.model.config.eos_token_id) > 0
+                and isinstance(pipe.model.config.eos_token_id[0], int)
+            ):
+                pipe.tokenizer.pad_token_id = pipe.model.config.eos_token_id[0]
+            else:
+                warnings.warn(
+                    f"Unexpected type of eos_token_id: {type(pipe.model.config.eos_token_id)}. "
+                    "Not setting pad_token_id to eos_token_id.",
+                    stacklevel=2,
+                )
 
         _HFPipelineModel = _create_custom_model(pipe, model_meta)
         hg_pipe_model = _HFPipelineModel(custom_model.ModelContext())

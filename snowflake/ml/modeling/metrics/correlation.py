@@ -26,7 +26,7 @@ def correlation(*, df: snowpark.DataFrame, columns: Optional[Collection[str]] = 
     The below steps explain how correlation matrix is computed in a distributed way:
     Let n = # of rows in the dataframe; sqrt_n = sqrt(n); X, Y are 2 columns in the dataframe
     Correlation(X, Y) = numerator/denominator where
-    numerator = dot(X/sqrt_n, Y/sqrt_n) - sum(X/n)*sum(X/n)
+    numerator = dot(X/sqrt_n, Y/sqrt_n) - sum(X/n)*sum(Y/n)
     denominator = std_dev(X)*std_dev(Y)
     std_dev(X) = sqrt(dot(X/sqrt_n, X/sqrt_n) - sum(X/n)*sum(X/n))
 
@@ -74,27 +74,38 @@ def correlation(*, df: snowpark.DataFrame, columns: Optional[Collection[str]] = 
     # Pushing this to a udtf requires creating a temp udtf which takes about 20 secs, so it doesn't make sense
     # to have this in a udtf.
     n_cols = len(columns)
-    sum_arr = np.zeros(n_cols)
-    squared_sum_arr = np.zeros(n_cols)
+    column_means = np.zeros(n_cols)
+    mean_of_squares = np.zeros(n_cols)
     dot_prod = np.zeros((n_cols, n_cols))
     # Get sum, dot_prod and squared sum array from the results.
     for i in range(len(results)):
         x = results[i]
         if x[1] == "sum_by_count":
-            sum_arr = cloudpickle.loads(x[0])
+            column_means = cloudpickle.loads(x[0])
         else:
             row = int(x[1].strip("row_"))
             dot_prod[row, :] = cloudpickle.loads(x[0])
-            squared_sum_arr[row] = dot_prod[row, row]
+            mean_of_squares[row] = dot_prod[row, row]
 
     # sum(X/n)*sum(Y/n) is computed for all combinations of X,Y (columns in the dataframe)
-    exey_arr = np.einsum("t,m->tm", sum_arr, sum_arr, optimize="optimal")
+    exey_arr = np.einsum("t,m->tm", column_means, column_means, optimize="optimal")
     numerator_matrix = dot_prod - exey_arr
 
     # standard deviation for all columns in the dataframe
-    stddev_arr = np.sqrt(squared_sum_arr - np.einsum("i, i -> i", sum_arr, sum_arr, optimize="optimal"))
+    variance_arr = mean_of_squares - np.einsum("i, i -> i", column_means, column_means, optimize="optimal")
+    # ensure non-negative values from potential precision issues where variance might be slightly negative
+    variance_arr = np.maximum(variance_arr, 0)
+    stddev_arr = np.sqrt(variance_arr)
     # std_dev(X)*std_dev(Y) is computed for all combinations of X,Y (columns in the dataframe)
     denominator_matrix = np.einsum("t,m->tm", stddev_arr, stddev_arr, optimize="optimal")
-    corr_res = numerator_matrix / denominator_matrix
+
+    # Use np.divide to handle NaN cases
+    corr_res = np.divide(
+        numerator_matrix,
+        denominator_matrix,
+        out=np.full_like(numerator_matrix, np.nan),
+        where=(denominator_matrix != 0),
+    )
+
     correlation_matrix = pd.DataFrame(corr_res, columns=columns, index=columns)
     return correlation_matrix

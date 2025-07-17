@@ -12,6 +12,7 @@ py_library(
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model",
+        "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/monitoring:model_monitor",
@@ -50,14 +51,6 @@ py_test(
     srcs = ["package_visibility_test.py"],
     deps = [
         ":registry",
-    ],
-)
-
-py_test(
-    name = "registry_event_handler_test",
-    srcs = ["registry_event_handler_test.py"],
-    deps = [
-        ":registry_impl",
     ],
 )
 

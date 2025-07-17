@@ -1,0 +1,28 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = [
+    "//bazel:snowml_public_common",
+    "//snowflake/ml/experiment:__subpackages__",
+])
+
+py_library(
+    name = "experiment_tracking_sql_client",
+    srcs = ["experiment_tracking_sql_client.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:query_result_checker",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model/_client/sql:_base",
+        "//snowflake/ml/utils:sql_client",
+    ],
+)
+
+py_test(
+    name = "experiment_tracking_sql_client_test",
+    srcs = ["experiment_tracking_sql_client_test.py"],
+    deps = [
+        ":experiment_tracking_sql_client",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)

@@ -264,6 +264,7 @@ def plot_force(
 def plot_influence_sensitivity(
     shap_values: type_hints.SupportedDataType,
     feature_values: type_hints.SupportedDataType,
+    infer_is_categorical: bool = True,
     figsize: tuple[float, float] = DEFAULT_FIGSIZE,
 ) -> Any:
     """
@@ -274,6 +275,8 @@ def plot_influence_sensitivity(
     Args:
         shap_values: pandas Series or 2D array containing the SHAP values for a specific feature
         feature_values: pandas Series or 2D array containing the feature values for the same feature
+        infer_is_categorical: If True, the function will infer if the feature is categorical
+            based on the number of unique values.
         figsize: tuple of (width, height) for the plot
 
     Returns:
@@ -294,7 +297,7 @@ def plot_influence_sensitivity(
     elif feature_values_df.shape[0] != shap_values_df.shape[0]:
         raise ValueError("Feature values and SHAP values must have the same number of rows.")
 
-    scatter = _create_scatter_plot(feature_values, shap_values, figsize)
+    scatter = _create_scatter_plot(feature_values, shap_values, infer_is_categorical, figsize)
     return st.altair_chart(scatter) if use_streamlit else scatter
 
 
@@ -322,11 +325,13 @@ def _prepare_feature_values_for_streamlit(
     return feature_values, shap_values, st
 
 
-def _create_scatter_plot(feature_values: pd.Series, shap_values: pd.Series, figsize: tuple[float, float]) -> alt.Chart:
+def _create_scatter_plot(
+    feature_values: pd.Series, shap_values: pd.Series, infer_is_categorical: bool, figsize: tuple[float, float]
+) -> alt.Chart:
     unique_vals = np.sort(np.unique(feature_values.values))
     max_points_per_unique_value = float(np.max(np.bincount(np.searchsorted(unique_vals, feature_values.values))))
     points_per_value = len(feature_values.values) / len(unique_vals)
-    is_categorical = float(max(max_points_per_unique_value, points_per_value)) > 10
+    is_categorical = float(max(max_points_per_unique_value, points_per_value)) > 10 if infer_is_categorical else False
 
     kwargs = (
         {
@@ -403,9 +408,11 @@ def plot_violin(
         .transform_density(density="shap_value", groupby=["feature_name"], as_=["shap_value", "density"])
         .mark_area(orient="vertical")
         .encode(
-            y=alt.Y("density:Q", title=None).stack("center").impute(None).axis(labels=False, grid=False, ticks=True),
+            y=alt.Y("density:Q", title=None).stack("center").impute(None).axis(labels=False, grid=False, ticks=False),
             x=alt.X("shap_value:Q", title="SHAP Value"),
-            row=alt.Row("feature_name:N", sort=column_sort_order).spacing(0),
+            row=alt.Row(
+                "feature_name:N", sort=column_sort_order, header=alt.Header(labelAngle=0, labelAlign="left")
+            ).spacing(0),
             color=alt.Color("feature_name:N", legend=None),
             tooltip=["feature_name", "shap_value"],
         )

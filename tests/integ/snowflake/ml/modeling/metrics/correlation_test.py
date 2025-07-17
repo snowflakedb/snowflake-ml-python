@@ -103,6 +103,53 @@ class CorrelationTest(TestCase):
 
         assert np.allclose(corr_matrix, expected_corr_matrix)
 
+    def test_with_all_same_values(self) -> None:
+        """Test that the correlation matrix is computed when all values are the same."""
+        input_df = self._session.create_dataframe(
+            [
+                Row(2.0, 2.0, 2.0, 2.0, 2.0),
+                Row(2.0, 2.0, 2.0, 2.0, 2.0),
+                Row(2.0, 2.0, 2.0, 2.0, 2.0),
+                Row(2.0, 2.0, 2.0, 2.0, 2.0),
+                Row(2.0, 2.0, 2.0, 2.0, 2.0),
+            ],
+            schema=["col1", "col2", "col3", "col4", "col5"],
+        )
+        corr_matrix = metrics.correlation(df=input_df).to_numpy()
+        expected_corr_matrix = input_df.to_pandas().corr(numeric_only=True).to_numpy()
+        assert np.allclose(corr_matrix, expected_corr_matrix, equal_nan=True)
+
+    def test_nan_generation_with_zero_variance(self) -> None:
+        """Test that NaN values are generated when correlations cannot be computed due to zero variance."""
+        # col1 and col2 have zero variance, col3 and col4 have normal variance
+        input_df = self._session.create_dataframe(
+            [
+                Row(2.0, 2.0, 1.0, 3.0),
+                Row(2.0, 2.0, 2.0, 4.0),
+                Row(2.0, 2.0, 3.0, 5.0),
+                Row(2.0, 2.0, 4.0, 6.0),
+                Row(2.0, 2.0, 5.0, 7.0),
+            ],
+            schema=["col1", "col2", "col3", "col4"],
+        )
+        corr_matrix = metrics.correlation(df=input_df)
+
+        # Check that correlations involving constant columns are NaN
+        assert np.isnan(corr_matrix.loc["COL1", "COL3"])
+        assert np.isnan(corr_matrix.loc["COL1", "COL4"])
+        assert np.isnan(corr_matrix.loc["COL2", "COL3"])
+        assert np.isnan(corr_matrix.loc["COL2", "COL4"])
+        assert np.isnan(corr_matrix.loc["COL1", "COL2"])
+
+        # Check that correlations between varying columns are not NaN
+        assert not np.isnan(corr_matrix.loc["COL3", "COL4"])
+
+        # Check that diagonal elements
+        assert np.isnan(corr_matrix.loc["COL1", "COL1"])
+        assert np.isnan(corr_matrix.loc["COL2", "COL2"])
+        assert np.isclose(corr_matrix.loc["COL3", "COL3"], 1.0)
+        assert np.isclose(corr_matrix.loc["COL4", "COL4"], 1.0)
+
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,5 @@
 import dataclasses
+import enum
 import hashlib
 import logging
 import pathlib
@@ -22,19 +23,62 @@ module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY
 module_logger.propagate = False
 
 
+class DeploymentStep(enum.Enum):
+    MODEL_BUILD = ("model-build", "model_build_")
+    MODEL_INFERENCE = ("model-inference", None)
+    MODEL_LOGGING = ("model-logging", "model_logging_")
+
+    def __init__(self, container_name: str, service_name_prefix: Optional[str]) -> None:
+        self._container_name = container_name
+        self._service_name_prefix = service_name_prefix
+
+    @property
+    def container_name(self) -> str:
+        """Get the container name for the deployment step."""
+        return self._container_name
+
+    @property
+    def service_name_prefix(self) -> Optional[str]:
+        """Get the service name prefix for the deployment step."""
+        return self._service_name_prefix
+
+
 @dataclasses.dataclass
 class ServiceLogInfo:
     database_name: Optional[sql_identifier.SqlIdentifier]
     schema_name: Optional[sql_identifier.SqlIdentifier]
     service_name: sql_identifier.SqlIdentifier
-    container_name: str
+    deployment_step: DeploymentStep
     instance_id: str = "0"
+    log_color: service_logger.LogColor = service_logger.LogColor.GREY
 
     def __post_init__(self) -> None:
         # service name used in logs for display
         self.display_service_name = sql_identifier.get_fully_qualified_name(
-            self.database_name, self.schema_name, self.service_name
+            self.database_name,
+            self.schema_name,
+            self.service_name,
         )
+
+    def fetch_logs(
+        self,
+        service_client: service_sql.ServiceSQLClient,
+        offset: int,
+        statement_params: Optional[dict[str, Any]],
+    ) -> tuple[str, int]:
+        service_logs = service_client.get_service_logs(
+            database_name=self.database_name,
+            schema_name=self.schema_name,
+            service_name=self.service_name,
+            container_name=self.deployment_step.container_name,
+            statement_params=statement_params,
+        )
+
+        # return only new logs starting after the offset
+        new_logs = service_logs[offset:]
+        new_offset = max(offset, len(service_logs))
+
+        return new_logs, new_offset
 
 
 @dataclasses.dataclass
@@ -43,7 +87,46 @@ class ServiceLogMetadata:
     service: ServiceLogInfo
     service_status: Optional[service_sql.ServiceStatus]
     is_model_build_service_done: bool
+    is_model_logger_service_done: bool
     log_offset: int
+
+    def transition_service_log_metadata(
+        self,
+        to_service: ServiceLogInfo,
+        msg: str,
+        is_model_build_service_done: bool,
+        is_model_logger_service_done: bool,
+        propagate: bool = False,
+    ) -> None:
+        to_service_logger = service_logger.get_logger(
+            f"{to_service.display_service_name}-{to_service.instance_id}",
+            to_service.log_color,
+        )
+        to_service_logger.propagate = propagate
+        self.service_logger = to_service_logger
+        self.service = to_service
+        self.service_status = None
+        self.is_model_build_service_done = is_model_build_service_done
+        self.is_model_logger_service_done = is_model_logger_service_done
+        self.log_offset = 0
+        block_size = 180
+        module_logger.info(msg)
+        module_logger.info("-" * block_size)
+
+
+@dataclasses.dataclass
+class HFModelArgs:
+    hf_model_name: str
+    hf_task: Optional[str] = None
+    hf_tokenizer: Optional[str] = None
+    hf_revision: Optional[str] = None
+    hf_token: Optional[str] = None
+    hf_trust_remote_code: bool = False
+    hf_model_kwargs: Optional[dict[str, Any]] = None
+    pip_requirements: Optional[list[str]] = None
+    conda_dependencies: Optional[list[str]] = None
+    comment: Optional[str] = None
+    warehouse: Optional[str] = None
 
 
 class ServiceOperator:
@@ -109,6 +192,8 @@ class ServiceOperator:
         build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
         block: bool,
         statement_params: Optional[dict[str, Any]] = None,
+        # hf model
+        hf_model_args: Optional[HFModelArgs] = None,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Fall back to the registry's database and schema if not provided
@@ -153,6 +238,21 @@ class ServiceOperator:
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
         )
+        if hf_model_args:
+            # hf model
+            self._model_deployment_spec.add_hf_logger_spec(
+                hf_model_name=hf_model_args.hf_model_name,
+                hf_task=hf_model_args.hf_task,
+                hf_token=hf_model_args.hf_token,
+                hf_tokenizer=hf_model_args.hf_tokenizer,
+                hf_revision=hf_model_args.hf_revision,
+                hf_trust_remote_code=hf_model_args.hf_trust_remote_code,
+                pip_requirements=hf_model_args.pip_requirements,
+                conda_dependencies=hf_model_args.conda_dependencies,
+                comment=hf_model_args.comment,
+                warehouse=hf_model_args.warehouse,
+                **(hf_model_args.hf_model_kwargs if hf_model_args.hf_model_kwargs else {}),
+            )
         spec_yaml_str_or_path = self._model_deployment_spec.save()
         if self._workspace:
             assert stage_path is not None
@@ -187,22 +287,47 @@ class ServiceOperator:
         )
 
         # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(self._get_model_build_service_name(query_id))
+        model_build_service_name = sql_identifier.SqlIdentifier(
+            self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_BUILD)
+        )
         model_build_service = ServiceLogInfo(
             database_name=service_database_name,
             schema_name=service_schema_name,
             service_name=model_build_service_name,
-            container_name="model-build",
+            deployment_step=DeploymentStep.MODEL_BUILD,
+            log_color=service_logger.LogColor.GREEN,
         )
         model_inference_service = ServiceLogInfo(
             database_name=service_database_name,
             schema_name=service_schema_name,
             service_name=service_name,
-            container_name="model-inference",
+            deployment_step=DeploymentStep.MODEL_INFERENCE,
+            log_color=service_logger.LogColor.BLUE,
         )
-        services = [model_build_service, model_inference_service]
+
+        model_logger_service: Optional[ServiceLogInfo] = None
+        if hf_model_args:
+            model_logger_service_name = sql_identifier.SqlIdentifier(
+                self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_LOGGING)
+            )
+
+            model_logger_service = ServiceLogInfo(
+                database_name=service_database_name,
+                schema_name=service_schema_name,
+                service_name=model_logger_service_name,
+                deployment_step=DeploymentStep.MODEL_LOGGING,
+                log_color=service_logger.LogColor.ORANGE,
+            )
+
+        # start service log streaming
         log_thread = self._start_service_log_streaming(
-            async_job, services, model_inference_service_exists, force_rebuild, statement_params
+            async_job=async_job,
+            model_logger_service=model_logger_service,
+            model_build_service=model_build_service,
+            model_inference_service=model_inference_service,
+            model_inference_service_exists=model_inference_service_exists,
+            force_rebuild=force_rebuild,
+            statement_params=statement_params,
         )
 
         if block:
@@ -217,17 +342,22 @@ class ServiceOperator:
     def _start_service_log_streaming(
         self,
         async_job: snowpark.AsyncJob,
-        services: list[ServiceLogInfo],
+        model_logger_service: Optional[ServiceLogInfo],
+        model_build_service: ServiceLogInfo,
+        model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> threading.Thread:
         """Start the service log streaming in a separate thread."""
+        # TODO: create a DAG of services and stream logs in the order of the DAG
         log_thread = threading.Thread(
             target=self._stream_service_logs,
             args=(
                 async_job,
-                services,
+                model_logger_service,
+                model_build_service,
+                model_inference_service,
                 model_inference_service_exists,
                 force_rebuild,
                 statement_params,
@@ -236,151 +366,199 @@ class ServiceOperator:
         log_thread.start()
         return log_thread
 
+    def _fetch_log_and_update_meta(
+        self,
+        force_rebuild: bool,
+        service_log_meta: ServiceLogMetadata,
+        model_build_service: ServiceLogInfo,
+        model_inference_service: ServiceLogInfo,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Helper function to fetch logs and update the service log metadata if needed.
+
+        This function checks the service status and fetches logs if the service exists.
+        It also updates the service log metadata with the
+        new service status and logs.
+        If the service is done, it transitions the service log metadata.
+
+        Args:
+            force_rebuild: Whether to force rebuild the model build image.
+            service_log_meta: The ServiceLogMetadata holds the state of the service log metadata.
+            model_build_service: The ServiceLogInfo for the model build service.
+            model_inference_service: The ServiceLogInfo for the model inference service.
+            statement_params: The statement parameters to use for the service client.
+        """
+
+        service = service_log_meta.service
+        # check if using an existing model build image
+        if (
+            service.deployment_step == DeploymentStep.MODEL_BUILD
+            and not force_rebuild
+            and service_log_meta.is_model_logger_service_done
+            and not service_log_meta.is_model_build_service_done
+        ):
+            model_build_service_exists = self._check_if_service_exists(
+                database_name=service.database_name,
+                schema_name=service.schema_name,
+                service_name=service.service_name,
+                statement_params=statement_params,
+            )
+            new_model_inference_service_exists = self._check_if_service_exists(
+                database_name=model_inference_service.database_name,
+                schema_name=model_inference_service.schema_name,
+                service_name=model_inference_service.service_name,
+                statement_params=statement_params,
+            )
+            if not model_build_service_exists and new_model_inference_service_exists:
+                service_log_meta.transition_service_log_metadata(
+                    model_inference_service,
+                    "Model build is not rebuilding the inference image, but using a previously built image.",
+                    is_model_build_service_done=True,
+                    is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                )
+
+        try:
+            statuses = self._service_client.get_service_container_statuses(
+                database_name=service.database_name,
+                schema_name=service.schema_name,
+                service_name=service.service_name,
+                include_message=True,
+                statement_params=statement_params,
+            )
+            service_status = statuses[0].service_status
+        except exceptions.SnowparkSQLException:
+            # If the service is not found, log that the service is not found
+            # and wait for a few seconds before returning
+            module_logger.info(f"Service status for service {service.display_service_name} not found.")
+            time.sleep(5)
+            return
+
+        # Case 1: service_status is PENDING or the service_status changed
+        if (service_status != service_sql.ServiceStatus.RUNNING) or (service_status != service_log_meta.service_status):
+            service_log_meta.service_status = service_status
+
+            if service.deployment_step == DeploymentStep.MODEL_BUILD:
+                module_logger.info(
+                    f"Image build service {service.display_service_name} is "
+                    f"{service_log_meta.service_status.value}."
+                )
+            elif service.deployment_step == DeploymentStep.MODEL_INFERENCE:
+                module_logger.info(
+                    f"Inference service {service.display_service_name} is {service_log_meta.service_status.value}."
+                )
+            elif service.deployment_step == DeploymentStep.MODEL_LOGGING:
+                module_logger.info(
+                    f"Model logger service {service.display_service_name} is "
+                    f"{service_log_meta.service_status.value}."
+                )
+            for status in statuses:
+                if status.instance_id is not None:
+                    instance_status, container_status = None, None
+                    if status.instance_status is not None:
+                        instance_status = status.instance_status.value
+                    if status.container_status is not None:
+                        container_status = status.container_status.value
+                    module_logger.info(
+                        f"Instance[{status.instance_id}]: "
+                        f"instance status: {instance_status}, "
+                        f"container status: {container_status}, "
+                        f"message: {status.message}"
+                    )
+            time.sleep(5)
+
+        # Case 2: service_status is RUNNING
+        # stream logs and update the log offset
+        if service_status == service_sql.ServiceStatus.RUNNING:
+            new_logs, new_offset = service.fetch_logs(
+                self._service_client,
+                service_log_meta.log_offset,
+                statement_params=statement_params,
+            )
+            if new_logs:
+                service_log_meta.service_logger.info(new_logs)
+                service_log_meta.log_offset = new_offset
+
+        # Case 3: service_status is DONE
+        if service_status == service_sql.ServiceStatus.DONE:
+            # check if model logger service is done
+            # and transition the service log metadata to the model image build service
+            if service.deployment_step == DeploymentStep.MODEL_LOGGING:
+                service_log_meta.transition_service_log_metadata(
+                    model_build_service,
+                    f"Model Logger service {service.display_service_name} complete.",
+                    is_model_build_service_done=False,
+                    is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                )
+            # check if model build service is done
+            # and transition the service log metadata to the model inference service
+            elif service.deployment_step == DeploymentStep.MODEL_BUILD:
+                service_log_meta.transition_service_log_metadata(
+                    model_inference_service,
+                    f"Image build service {service.display_service_name} complete.",
+                    is_model_build_service_done=True,
+                    is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                )
+            else:
+                module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
+
     def _stream_service_logs(
         self,
         async_job: snowpark.AsyncJob,
-        services: list[ServiceLogInfo],
+        model_logger_service: Optional[ServiceLogInfo],
+        model_build_service: ServiceLogInfo,
+        model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Stream service logs while the async job is running."""
 
-        def fetch_logs(service: ServiceLogInfo, offset: int) -> tuple[str, int]:
-            service_logs = self._service_client.get_service_logs(
-                database_name=service.database_name,
-                schema_name=service.schema_name,
-                service_name=service.service_name,
-                container_name=service.container_name,
-                statement_params=statement_params,
-            )
-
-            # return only new logs starting after the offset
-            if len(service_logs) > offset:
-                new_logs = service_logs[offset:]
-                new_offset = len(service_logs)
-            else:
-                new_logs = ""
-                new_offset = offset
-
-            return new_logs, new_offset
-
-        def set_service_log_metadata_to_model_inference(
-            meta: ServiceLogMetadata, inference_service: ServiceLogInfo, msg: str
-        ) -> None:
-            model_inference_service_logger = service_logger.get_logger(  # InferenceServiceName-InstanceId
-                f"{inference_service.display_service_name}-{inference_service.instance_id}",
-                service_logger.LogColor.BLUE,
-            )
-            model_inference_service_logger.propagate = False
-            meta.service_logger = model_inference_service_logger
-            meta.service = inference_service
-            meta.service_status = None
-            meta.is_model_build_service_done = True
-            meta.log_offset = 0
-            block_size = 180
-            module_logger.info(msg)
-            module_logger.info("-" * block_size)
-
-        model_build_service, model_inference_service = services[0], services[1]
         model_build_service_logger = service_logger.get_logger(  # BuildJobName
-            model_build_service.display_service_name, service_logger.LogColor.GREEN
+            model_build_service.display_service_name,
+            model_build_service.log_color,
         )
         model_build_service_logger.propagate = False
-        service_log_meta = ServiceLogMetadata(
-            service_logger=model_build_service_logger,
-            service=model_build_service,
-            service_status=None,
-            is_model_build_service_done=False,
-            log_offset=0,
-        )
+        if model_logger_service:
+            model_logger_service_logger = service_logger.get_logger(  # ModelLoggerName
+                model_logger_service.display_service_name,
+                model_logger_service.log_color,
+            )
+            model_logger_service_logger.propagate = False
+
+            service_log_meta = ServiceLogMetadata(
+                service_logger=model_logger_service_logger,
+                service=model_logger_service,
+                service_status=None,
+                is_model_build_service_done=False,
+                is_model_logger_service_done=False,
+                log_offset=0,
+            )
+        else:
+            service_log_meta = ServiceLogMetadata(
+                service_logger=model_build_service_logger,
+                service=model_build_service,
+                service_status=None,
+                is_model_build_service_done=False,
+                is_model_logger_service_done=True,
+                log_offset=0,
+            )
+
         while not async_job.is_done():
             if model_inference_service_exists:
                 time.sleep(5)
                 continue
 
             try:
-                # check if using an existing model build image
-                if not force_rebuild and not service_log_meta.is_model_build_service_done:
-                    model_build_service_exists = self._check_if_service_exists(
-                        database_name=model_build_service.database_name,
-                        schema_name=model_build_service.schema_name,
-                        service_name=model_build_service.service_name,
-                        statement_params=statement_params,
-                    )
-                    new_model_inference_service_exists = self._check_if_service_exists(
-                        database_name=model_inference_service.database_name,
-                        schema_name=model_inference_service.schema_name,
-                        service_name=model_inference_service.service_name,
-                        statement_params=statement_params,
-                    )
-                    if not model_build_service_exists and new_model_inference_service_exists:
-                        set_service_log_metadata_to_model_inference(
-                            service_log_meta,
-                            model_inference_service,
-                            (
-                                "Model Inference image build is not rebuilding the image, but using a previously built "
-                                "image."
-                            ),
-                        )
-                        continue
-
-                statuses = self._service_client.get_service_container_statuses(
-                    database_name=service_log_meta.service.database_name,
-                    schema_name=service_log_meta.service.schema_name,
-                    service_name=service_log_meta.service.service_name,
-                    include_message=True,
+                # fetch logs for the service
+                # (model logging, model build, or model inference)
+                # upon completion, transition to the next service if any
+                self._fetch_log_and_update_meta(
+                    service_log_meta=service_log_meta,
+                    force_rebuild=force_rebuild,
+                    model_build_service=model_build_service,
+                    model_inference_service=model_inference_service,
                     statement_params=statement_params,
                 )
-                service_status = statuses[0].service_status
-                if (service_status != service_sql.ServiceStatus.RUNNING) or (
-                    service_status != service_log_meta.service_status
-                ):
-                    service_log_meta.service_status = service_status
-                    module_logger.info(
-                        f"{'Inference' if service_log_meta.is_model_build_service_done else 'Image build'} service "
-                        f"{service_log_meta.service.display_service_name} is "
-                        f"{service_log_meta.service_status.value}."
-                    )
-                    for status in statuses:
-                        if status.instance_id is not None:
-                            instance_status, container_status = None, None
-                            if status.instance_status is not None:
-                                instance_status = status.instance_status.value
-                            if status.container_status is not None:
-                                container_status = status.container_status.value
-                            module_logger.info(
-                                f"Instance[{status.instance_id}]: "
-                                f"instance status: {instance_status}, "
-                                f"container status: {container_status}, "
-                                f"message: {status.message}"
-                            )
-
-                new_logs, new_offset = fetch_logs(
-                    service_log_meta.service,
-                    service_log_meta.log_offset,
-                )
-                if new_logs:
-                    service_log_meta.service_logger.info(new_logs)
-                    service_log_meta.log_offset = new_offset
-
-                # check if model build service is done
-                if not service_log_meta.is_model_build_service_done:
-                    statuses = self._service_client.get_service_container_statuses(
-                        database_name=model_build_service.database_name,
-                        schema_name=model_build_service.schema_name,
-                        service_name=model_build_service.service_name,
-                        include_message=False,
-                        statement_params=statement_params,
-                    )
-                    service_status = statuses[0].service_status
-
-                    if service_status == service_sql.ServiceStatus.DONE:
-                        set_service_log_metadata_to_model_inference(
-                            service_log_meta,
-                            model_inference_service,
-                            f"Image build service {model_build_service.display_service_name} complete.",
-                        )
             except Exception as ex:
                 pattern = r"002003 \(02000\)"  # error code: service does not exist
                 is_snowpark_sql_exception = isinstance(ex, exceptions.SnowparkSQLException)
@@ -388,8 +566,7 @@ class ServiceOperator:
                 matches_pattern = service_log_meta.service_status is None and re.search(pattern, str(ex)) is not None
                 if not (is_snowpark_sql_exception and (contains_msg or matches_pattern)):
                     module_logger.warning(f"Caught an exception when logging: {repr(ex)}")
-
-            time.sleep(5)
+                time.sleep(5)
 
         if model_inference_service_exists:
             module_logger.info(
@@ -397,7 +574,10 @@ class ServiceOperator:
             )
         else:
             self._finalize_logs(
-                service_log_meta.service_logger, service_log_meta.service, service_log_meta.log_offset, statement_params
+                service_log_meta.service_logger,
+                service_log_meta.service,
+                service_log_meta.log_offset,
+                statement_params,
             )
 
     def _finalize_logs(
@@ -414,7 +594,7 @@ class ServiceOperator:
                 database_name=service.database_name,
                 schema_name=service.schema_name,
                 service_name=service.service_name,
-                container_name=service.container_name,
+                container_name=service.deployment_step.container_name,
                 statement_params=statement_params,
             )
 
@@ -424,13 +604,17 @@ class ServiceOperator:
             module_logger.warning(f"Caught an exception when logging: {repr(ex)}")
 
     @staticmethod
-    def _get_model_build_service_name(query_id: str) -> str:
-        """Get the model build service name through the server-side logic."""
+    def _get_service_id_from_deployment_step(query_id: str, deployment_step: DeploymentStep) -> str:
+        """Get the service ID through the server-side logic."""
         uuid = query_id.replace("-", "")
         big_int = int(uuid, 16)
         md5_hash = hashlib.md5(str(big_int).encode()).hexdigest()
         identifier = md5_hash[:8]
-        return ("model_build_" + identifier).upper()
+        service_name_prefix = deployment_step.service_name_prefix
+        if service_name_prefix is None:
+            # raise an exception if the service name prefix is None
+            raise ValueError(f"Service name prefix is {service_name_prefix} for deployment step {deployment_step}.")
+        return (service_name_prefix + identifier).upper()
 
     def _check_if_service_exists(
         self,

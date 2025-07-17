@@ -3,7 +3,7 @@ import tempfile
 import uuid
 import warnings
 from types import ModuleType
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 from urllib import parse
 
 from absl import logging
@@ -20,6 +20,9 @@ from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+if TYPE_CHECKING:
+    from snowflake.ml.experiment._experiment_info import ExperimentInfo
 
 
 class ModelComposer:
@@ -136,6 +139,7 @@ class ModelComposer:
         ext_modules: Optional[list[ModuleType]] = None,
         code_paths: Optional[list[str]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
+        experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
         # set enable_explainability=False if the model is not runnable in WH or the target platforms include SPCS
@@ -230,6 +234,7 @@ class ModelComposer:
             options=options,
             user_files=user_files,
             data_sources=self._get_data_sources(model, sample_input_data),
+            experiment_info=experiment_info,
             target_platforms=target_platforms,
         )
 

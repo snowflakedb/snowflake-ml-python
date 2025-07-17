@@ -2,13 +2,16 @@ import collections
 import logging
 import os
 import time
-from typing import Any, Deque, Iterator, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Deque, Iterator, Optional, Sequence, Union
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as pds
+
+if TYPE_CHECKING:
+    import ray
 
 from snowflake import snowpark
 from snowflake.ml.data import data_ingestor, data_source, ingestor_utils
@@ -69,6 +72,13 @@ class ArrowIngestor(data_ingestor.DataIngestor):
     @classmethod
     def from_sources(cls, session: snowpark.Session, sources: Sequence[data_source.DataSource]) -> "ArrowIngestor":
         return cls(session, sources)
+
+    @classmethod
+    def from_ray_dataset(
+        cls,
+        ray_ds: "ray.data.Dataset",
+    ) -> "ArrowIngestor":
+        raise NotImplementedError
 
     @property
     def data_sources(self) -> list[data_source.DataSource]:

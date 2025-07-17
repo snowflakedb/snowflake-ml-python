@@ -60,6 +60,7 @@ dependencies:
   - tokenizers==0.15.1
   - toml==0.10.2
   - torchdata==0.6.1
+  - tqdm==4.67.1
   - transformers==4.39.3
   - types-PyYAML==6.0.12.12
   - types-protobuf==4.23.0.1

@@ -142,15 +142,27 @@ class TestSnowflakeFileSetBase(common_test_base.CommonTestBase):
         for key, value in actual_sum_counter.items():
             actual_avg_counter[key] = value / actual_num_rows
 
+        def _check_abs_diff_with_threshold(expected: float, actual: float, threshold: float) -> None:
+            diff = abs(expected - actual)
+            self.assertLessEqual(diff, threshold, f"Expected the abs diff {diff} to be less than {threshold}")
+
         if not drop_last_batch:
             # We can only get the whole set of data for comparison if drop_last_batch is False.
             for key in ["NUMBER_INT_COL", "NUMBER_FIXED_POINT_COL"]:
-                self.assertAlmostEqual(fileset_integ_utils.get_column_min(key), actual_min_counter[key], 1)
-                self.assertAlmostEqual(
-                    fileset_integ_utils.get_column_max(key, expected_num_rows), actual_max_counter[key], 1
+                _check_abs_diff_with_threshold(
+                    expected=fileset_integ_utils.get_column_min(key),
+                    actual=actual_min_counter[key],
+                    threshold=1,
                 )
-                self.assertAlmostEqual(
-                    fileset_integ_utils.get_column_avg(key, expected_num_rows), actual_avg_counter[key], 1
+                _check_abs_diff_with_threshold(
+                    expected=fileset_integ_utils.get_column_max(key, expected_num_rows),
+                    actual=actual_max_counter[key],
+                    threshold=1,
+                )
+                _check_abs_diff_with_threshold(
+                    expected=fileset_integ_utils.get_column_avg(key, expected_num_rows),
+                    actual=actual_avg_counter[key],
+                    threshold=1,
                 )
 
 

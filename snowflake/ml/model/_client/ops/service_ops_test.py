@@ -1,6 +1,6 @@
 import pathlib
 import uuid
-from typing import cast
+from typing import Any, Optional, cast
 from unittest import mock
 
 import numpy as np
@@ -35,6 +35,30 @@ _DUMMY_SIG = {
 
 
 class ServiceOpsTest(parameterized.TestCase):
+
+    _default_hf_args = {
+        "hf_model_name": None,
+        "hf_task": None,
+        "hf_token": None,
+        "hf_tokenizer": None,
+        "hf_revision": None,
+        "hf_trust_remote_code": False,
+        "pip_requirements": None,
+        "conda_dependencies": None,
+        "comment": None,
+        "warehouse": None,
+    }
+
+    def _get_hugging_face_model_save_args(
+        self,
+        huggingface_args: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if huggingface_args is None:
+            return self._default_hf_args
+        else:
+            # union huggingface_args with _default_hf_args
+            return {**self._default_hf_args, **huggingface_args}
+
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_statement_params = {"test": "1"}
@@ -56,7 +80,17 @@ class ServiceOpsTest(parameterized.TestCase):
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         return m_session
 
-    def test_create_service(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"huggingface_args": {}},
+        {
+            "huggingface_args": {
+                "hf_model_name": "gpt2",
+                "hf_task": "text-generation",
+                "hf_token": "token",
+            }
+        },
+    )
+    def test_create_service(self, huggingface_args: dict[str, Any]) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
         m_statuses = [
             service_sql.ServiceStatusInfo(
@@ -79,6 +113,9 @@ class ServiceOpsTest(parameterized.TestCase):
             self.m_ops._model_deployment_spec,
             "add_image_build_spec",
         ) as mock_add_image_build_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_hf_logger_spec",
+        ) as mock_add_hf_logger, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -113,6 +150,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
                 block=True,
                 statement_params=self.m_statement_params,
+                hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -147,6 +185,9 @@ class ServiceOpsTest(parameterized.TestCase):
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
+            if huggingface_args:
+                mock_add_hf_logger.assert_called_once_with(**self._get_hugging_face_model_save_args(huggingface_args))
+
             mock_save.assert_called_once()
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
@@ -174,7 +215,17 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_create_service_model_db_and_schema(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"huggingface_args": {}},
+        {
+            "huggingface_args": {
+                "hf_model_name": "gpt2",
+                "hf_task": "text-generation",
+                "hf_token": "token",
+            }
+        },
+    )
+    def test_create_service_model_db_and_schema(self, huggingface_args: dict[str, Any]) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
         m_statuses = [
             service_sql.ServiceStatusInfo(
@@ -197,6 +248,9 @@ class ServiceOpsTest(parameterized.TestCase):
             self.m_ops._model_deployment_spec,
             "add_image_build_spec",
         ) as mock_add_image_build_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_hf_logger_spec",
+        ) as mock_add_hf_logger, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -231,6 +285,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
                 block=True,
                 statement_params=self.m_statement_params,
+                hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -266,6 +321,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
+            if huggingface_args:
+                mock_add_hf_logger.assert_called_once_with(**self._get_hugging_face_model_save_args(huggingface_args))
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
                 local_path=self.m_ops._model_deployment_spec.workspace_path,
@@ -292,7 +349,17 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_create_service_default_db_and_schema(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"huggingface_args": {}},
+        {
+            "huggingface_args": {
+                "hf_model_name": "gpt2",
+                "hf_task": "text-generation",
+                "hf_token": "token",
+            }
+        },
+    )
+    def test_create_service_default_db_and_schema(self, huggingface_args: dict[str, Any]) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
         m_statuses = [
             service_sql.ServiceStatusInfo(
@@ -315,6 +382,9 @@ class ServiceOpsTest(parameterized.TestCase):
             self.m_ops._model_deployment_spec,
             "add_image_build_spec",
         ) as mock_add_image_build_spec, mock.patch.object(
+            self.m_ops._model_deployment_spec,
+            "add_hf_logger_spec",
+        ) as mock_add_hf_logger, mock.patch.object(
             file_utils, "upload_directory_to_stage", return_value=None
         ) as mock_upload_directory_to_stage, mock.patch.object(
             self.m_ops._service_client,
@@ -349,6 +419,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
                 block=True,
                 statement_params=self.m_statement_params,
+                hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -383,6 +454,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
+            if huggingface_args:
+                mock_add_hf_logger.assert_called_once_with(**self._get_hugging_face_model_save_args(huggingface_args))
             mock_save.assert_called_once()
             mock_upload_directory_to_stage.assert_called_once_with(
                 self.c_session,
@@ -410,7 +483,17 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
-    def test_create_service_async_job(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"huggingface_args": {}},
+        {
+            "huggingface_args": {
+                "hf_model_name": "gpt2",
+                "hf_task": "text-generation",
+                "hf_token": "token",
+            }
+        },
+    )
+    def test_create_service_async_job(self, huggingface_args: dict[str, Any]) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
         m_statuses = [
             service_sql.ServiceStatusInfo(
@@ -458,6 +541,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
                 block=False,
                 statement_params=self.m_statement_params,
+                hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
             )
             self.assertIsInstance(res, snowpark.AsyncJob)
 
@@ -668,7 +752,13 @@ class ServiceOpsTest(parameterized.TestCase):
         """
         identifier = "81edd120"
         expected = ("model_build_" + identifier).upper()
-        self.assertEqual(self.m_ops._get_model_build_service_name(query_id), expected)
+        self.assertEqual(
+            self.m_ops._get_service_id_from_deployment_step(
+                query_id,
+                service_ops.DeploymentStep.MODEL_BUILD,
+            ),
+            expected,
+        )
 
 
 if __name__ == "__main__":

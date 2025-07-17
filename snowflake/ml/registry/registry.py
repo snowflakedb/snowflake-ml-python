@@ -1,5 +1,3 @@
-import logging
-import os
 import warnings
 from types import ModuleType
 from typing import Any, Optional, Union, overload
@@ -8,13 +6,15 @@ import pandas as pd
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.model import (
     Model,
     ModelVersion,
+    event_handler,
     model_signature,
+    target_platform,
     task,
-    type_hints as model_types,
+    type_hints,
 )
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.monitoring import model_monitor
@@ -30,52 +30,6 @@ _MODEL_MONITORING_UNIMPLEMENTED_ERROR = "Model Monitoring is not implemented in 
 _MODEL_MONITORING_DISABLED_ERROR = (
     """Must enable monitoring to use this method. Please set `options={"enable_monitoring": True}` in the Registry"""
 )
-
-
-class _NullStatusContext:
-    """A fallback context manager that logs status updates."""
-
-    def __init__(self, label: str) -> None:
-        self._label = label
-
-    def __enter__(self) -> "_NullStatusContext":
-        logging.info(f"Starting: {self._label}")
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        pass
-
-    def update(self, label: str, *, state: str = "running", expanded: bool = True) -> None:
-        """Update the status by logging the message."""
-        logging.info(f"Status update: {label} (state: {state})")
-
-
-class RegistryEventHandler:
-    def __init__(self) -> None:
-        try:
-            import streamlit as st
-
-            if not st.runtime.exists():
-                self._streamlit = None
-            else:
-                self._streamlit = st
-            USE_STREAMLIT_WIDGETS = os.getenv("USE_STREAMLIT_WIDGETS", "1") == "1"
-            if not USE_STREAMLIT_WIDGETS:
-                self._streamlit = None
-        except ImportError:
-            self._streamlit = None
-
-    def update(self, message: str) -> None:
-        """Write a message using streamlit if available, otherwise do nothing."""
-        if self._streamlit is not None:
-            self._streamlit.write(message)
-
-    def status(self, label: str, *, state: str = "running", expanded: bool = True) -> Any:
-        """Context manager that provides status updates with optional enhanced display capabilities."""
-        if self._streamlit is None:
-            return _NullStatusContext(label)
-        else:
-            return self._streamlit.status(label, state=state, expanded=expanded)
 
 
 class Registry:
@@ -124,20 +78,30 @@ class Registry:
                 else sql_identifier.SqlIdentifier("PUBLIC")
             )
 
-        database_exists = session.sql(
-            f"""SELECT 1 FROM INFORMATION_SCHEMA.DATABASES WHERE DATABASE_NAME = '{self._database_name.resolved()}';"""
-        ).collect()
+        database_results = (
+            query_result_checker.SqlResultValidator(
+                session, f"""SHOW DATABASES LIKE '{self._database_name.resolved()}';"""
+            )
+            .has_column("name", allow_empty=True)
+            .validate()
+        )
 
-        if not database_exists:
+        db_names = [row["name"] for row in database_results]
+        if not self._database_name.resolved() in db_names:
             raise ValueError(f"Database {self._database_name} does not exist.")
 
-        schema_exists = session.sql(
-            f"""
-            SELECT 1 FROM {self._database_name.identifier()}.INFORMATION_SCHEMA.SCHEMATA
-            WHERE SCHEMA_NAME = '{self._schema_name.resolved()}';"""
-        ).collect()
+        schema_results = (
+            query_result_checker.SqlResultValidator(
+                session,
+                f"""SHOW SCHEMAS LIKE '{self._schema_name.resolved()}'
+                IN DATABASE {self._database_name.identifier()};""",
+            )
+            .has_column("name", allow_empty=True)
+            .validate()
+        )
 
-        if not schema_exists:
+        schema_names = [row["name"] for row in schema_results]
+        if not self._schema_name.resolved() in schema_names:
             raise ValueError(f"Schema {self._schema_name} does not exist.")
 
         self._model_manager = model_manager.ModelManager(
@@ -168,7 +132,7 @@ class Registry:
     @overload
     def log_model(
         self,
-        model: model_types.SupportedModelType,
+        model: type_hints.SupportedModelType,
         *,
         model_name: str,
         version_name: Optional[str] = None,
@@ -178,15 +142,15 @@ class Registry:
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
+        target_platforms: Optional[list[Union[target_platform.TargetPlatform, str]]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = task.Task.UNKNOWN,
-        options: Optional[model_types.ModelSaveOption] = None,
+        task: task.Task = task.Task.UNKNOWN,
+        options: Optional[type_hints.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
         Log a model with various parameters and metadata, or a ModelVersion object.
@@ -258,7 +222,8 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
-                - save_location: Location to save the model and metadata.
+                - save_location: Local directory to save the the serialized model files first before
+                  uploading to Snowflake. This is useful when default tmp directory is not writable.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options.
 
@@ -315,7 +280,7 @@ class Registry:
     )
     def log_model(
         self,
-        model: Union[model_types.SupportedModelType, ModelVersion],
+        model: Union[type_hints.SupportedModelType, ModelVersion],
         *,
         model_name: str,
         version_name: Optional[str] = None,
@@ -325,15 +290,15 @@ class Registry:
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
-        target_platforms: Optional[list[model_types.SupportedTargetPlatformType]] = None,
+        target_platforms: Optional[list[Union[target_platform.TargetPlatform, str]]] = None,
         python_version: Optional[str] = None,
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
-        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        task: model_types.Task = task.Task.UNKNOWN,
-        options: Optional[model_types.ModelSaveOption] = None,
+        task: task.Task = task.Task.UNKNOWN,
+        options: Optional[type_hints.ModelSaveOption] = None,
     ) -> ModelVersion:
         """
         Log a model with various parameters and metadata, or a ModelVersion object.
@@ -474,7 +439,7 @@ class Registry:
                     raise ValueError(
                         "When calling log_model with a ModelVersion, only model_name and version_name may be specified."
                     )
-            if task is not model_types.Task.UNKNOWN:
+            if task is not type_hints.Task.UNKNOWN:
                 raise ValueError("`task` cannot be specified when calling log_model with a ModelVersion.")
 
         if pip_requirements and not artifact_repository_map and self._targets_warehouse(target_platforms):
@@ -486,8 +451,12 @@ class Registry:
                 stacklevel=1,
             )
 
-        event_handler = RegistryEventHandler()
-        with event_handler.status("Logging model to registry...") as status:
+        registry_event_handler = event_handler.ModelEventHandler()
+        with registry_event_handler.status("Logging model", total=6) as status:
+            # Step 1: Validation and setup
+            status.update("validating model and dependencies...")
+            status.increment()
+
             # Perform the actual model logging
             try:
                 result = self._model_manager.log_model(
@@ -510,13 +479,12 @@ class Registry:
                     task=task,
                     options=options,
                     statement_params=statement_params,
-                    event_handler=event_handler,
+                    progress_status=status,
                 )
-                status.update(label="Model logged successfully!", state="complete", expanded=False)
+                status.update(label="Model logged successfully.", state="complete", expanded=False)
                 return result
             except Exception as e:
-                event_handler.update("❌ Model logging failed!")
-                status.update(label="Model logging failed!", state="error", expanded=False)
+                status.update(label="Model logging failed.", state="error", expanded=False)
                 raise e
 
     @telemetry.send_api_usage_telemetry(
@@ -696,10 +664,10 @@ class Registry:
         self._model_monitor_manager.delete_monitor(name)
 
     @staticmethod
-    def _targets_warehouse(target_platforms: Optional[list[model_types.SupportedTargetPlatformType]]) -> bool:
+    def _targets_warehouse(target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]]) -> bool:
         """Returns True if warehouse is a target platform (None defaults to True)."""
         return (
             target_platforms is None
-            or model_types.TargetPlatform.WAREHOUSE in target_platforms
+            or type_hints.TargetPlatform.WAREHOUSE in target_platforms
             or "WAREHOUSE" in target_platforms
         )

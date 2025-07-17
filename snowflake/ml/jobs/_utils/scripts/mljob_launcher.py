@@ -16,8 +16,12 @@ import cloudpickle
 from constants import LOG_END_MSG, LOG_START_MSG, MIN_INSTANCES_ENV_VAR
 
 from snowflake.ml.jobs._utils import constants
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+
+try:
+    from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
+except ImportError:
+    from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")

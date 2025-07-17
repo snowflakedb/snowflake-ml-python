@@ -3,8 +3,7 @@ import functools
 from packaging import requirements, version
 
 from snowflake.ml._internal import env, env_utils
-from snowflake.ml._internal.utils import snowflake_env
-from snowflake.ml.utils import connection_params
+from snowflake.ml._internal.utils import connection_params, snowflake_env
 from snowflake.snowpark import session
 from snowflake.snowpark._internal import utils as snowpark_utils
 

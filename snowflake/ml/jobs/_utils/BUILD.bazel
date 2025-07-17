@@ -81,6 +81,7 @@ py_test(
     ],
     deps = [
         ":payload_utils",
+        ":query_helper",
         ":stage_utils",
         ":test_file_helper",
     ],

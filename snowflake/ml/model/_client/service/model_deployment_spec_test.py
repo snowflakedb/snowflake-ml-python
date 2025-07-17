@@ -382,7 +382,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                                 "hf_model": {
                                     "hf_model_name": "hf_model",
                                     "task": "hf_task",
-                                    "hf_token": "hf_token",
+                                    "token": "hf_token",
                                     "tokenizer": "hf_tokenizer",
                                     "trust_remote_code": False,
                                     "hf_model_kwargs": '{"trust_remote_code": false, "max_tokens": 100}',

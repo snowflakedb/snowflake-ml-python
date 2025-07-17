@@ -1,4 +1,4 @@
-"""Tests for RegistryEventHandler and related event handling functionality."""
+"""Tests for ModelEventHandler and related event handling functionality."""
 
 import os
 from contextlib import contextmanager
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest
 
-from snowflake.ml.registry.registry import RegistryEventHandler, _NullStatusContext
+from snowflake.ml.model.event_handler import ModelEventHandler
 
 
 @contextmanager
@@ -24,67 +24,33 @@ def _mock_streamlit_not_available() -> Generator[None, None, None]:
         yield
 
 
-class TestNullStatusContext(absltest.TestCase):
-    """Test the _NullStatusContext fallback implementation."""
-
-    def test_context_manager_protocol(self) -> None:
-        """Test that _NullStatusContext implements context manager protocol correctly."""
-        context = _NullStatusContext("Test operation")
-
-        # Test __enter__ returns self
-        with context as ctx:
-            self.assertIs(ctx, context)
-
-    def test_context_manager_logs_start_message(self) -> None:
-        """Test that entering the context manager logs the start message."""
-        with self.assertLogs(level="INFO") as log:
-            with _NullStatusContext("Test operation"):
-                pass
-
-            # Should log the starting message
-            self.assertEqual(len(log.output), 1)
-            self.assertIn("Starting: Test operation", log.output[0])
-
-    def test_update_method_logs_correctly(self) -> None:
-        """Test the update method logs messages with correct format."""
-        context = _NullStatusContext("Test operation")
-
-        with self.assertLogs(level="INFO") as log:
-            with context as ctx:
-                ctx.update("Processing data", state="running")
-                ctx.update("Complete!", state="complete", expanded=False)
-
-            # Should have start message plus 2 update messages
-            self.assertEqual(len(log.output), 3)
-            self.assertIn("Starting: Test operation", log.output[0])
-            self.assertIn("Status update: Processing data (state: running)", log.output[1])
-            self.assertIn("Status update: Complete! (state: complete)", log.output[2])
-
-
-class TestRegistryEventHandler(absltest.TestCase):
-    """Test the RegistryEventHandler class."""
+class TestModelEventHandler(absltest.TestCase):
+    """Test the ModelEventHandler class."""
 
     def test_streamlit_not_available(self) -> None:
         """Test behavior when streamlit is not available."""
         with _mock_streamlit_not_available():
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
             self.assertIsNone(handler._streamlit)
+            self.assertIsNotNone(handler._tqdm)  # tqdm should always be available
 
     def test_streamlit_available_but_not_running(self) -> None:
         """Test behavior when streamlit is available but not running."""
         mock_st = MagicMock()
         mock_st.runtime.exists.return_value = False
         with patch("builtins.__import__", return_value=mock_st):
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
             self.assertIsNone(handler._streamlit)
+            self.assertIsNotNone(handler._tqdm)  # tqdm should always be available
 
     def test_streamlit_available_and_running(self) -> None:
         """Test behavior when streamlit is available and running."""
         mock_st = MagicMock()
         mock_st.runtime.exists.return_value = True
         with patch("builtins.__import__", return_value=mock_st):
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
             self.assertEqual(handler._streamlit, mock_st)
+            self.assertIsNotNone(handler._tqdm)  # tqdm should always be available
 
     def test_streamlit_disabled_by_env_var(self) -> None:
         """Test that streamlit can be disabled via environment variable."""
@@ -92,24 +58,28 @@ class TestRegistryEventHandler(absltest.TestCase):
         mock_st.runtime.exists.return_value = True
         with patch("builtins.__import__", return_value=mock_st):
             with patch.dict(os.environ, {"USE_STREAMLIT_WIDGETS": "0"}):
-                handler = RegistryEventHandler()
+                handler = ModelEventHandler()
                 self.assertIsNone(handler._streamlit)
+                self.assertIsNotNone(handler._tqdm)  # tqdm should always be available
 
     def test_update_with_streamlit(self) -> None:
         """Test update method when streamlit is available."""
         mock_st = MagicMock()
         mock_st.runtime.exists.return_value = True
         with patch("builtins.__import__", return_value=mock_st):
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
             handler.update("Test message")
             mock_st.write.assert_called_once_with("Test message")
 
     def test_update_without_streamlit(self) -> None:
-        """Test update method when streamlit is not available."""
+        """Test update method when streamlit is not available (falls back to tqdm)."""
         with _mock_streamlit_not_available():
-            handler = RegistryEventHandler()
-            # Should not raise an exception
-            handler.update("Test message")
+            # Mock tqdm.write method
+            with patch("tqdm.tqdm.write") as mock_tqdm_write:
+                handler = ModelEventHandler()
+                # Should not raise an exception and should use tqdm.write
+                handler.update("Test message")
+                mock_tqdm_write.assert_called_once_with("Test message")
 
     def test_status_with_streamlit(self) -> None:
         """Test status method when streamlit is available."""
@@ -119,34 +89,38 @@ class TestRegistryEventHandler(absltest.TestCase):
         mock_st.status.return_value = mock_status
 
         with patch("builtins.__import__", return_value=mock_st):
-            handler = RegistryEventHandler()
-            result = handler.status("Test status", state="running", expanded=True)
+            handler = ModelEventHandler()
 
+            # Test that the status method returns a context manager
+            with handler.status("Test status", state="running", expanded=True):
+                pass
+
+            # The streamlit status should be called when entering the context
             mock_st.status.assert_called_once_with("Test status", state="running", expanded=True)
-            self.assertEqual(result, mock_status)
 
-    def test_status_context_with_logging_fallback(self) -> None:
-        """Test that status context with logging fallback works correctly."""
+    def test_status_context_with_tqdm_fallback(self) -> None:
+        """Test that status context falls back to tqdm when streamlit is not available."""
+
         with _mock_streamlit_not_available():
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
 
-            with self.assertLogs(level="INFO") as log:
-                with handler.status("Test operation") as status:
-                    status.update("Progress update")
+            # Test that we get a tqdm context manager
+            with handler.status("Test operation", total=2) as status:
+                status.update("Progress update")
+                status.increment()
 
-                # Should have start message and update message
-                self.assertEqual(len(log.output), 2)
-                self.assertIn("Starting: Test operation", log.output[0])
-                self.assertIn("Status update: Progress update (state: running)", log.output[1])
+            # Verify tqdm was used
+            self.assertIsNone(handler._streamlit)
+            self.assertIsNotNone(handler._tqdm)
 
 
 class TestEventHandlerProtocol(absltest.TestCase):
     """Test EventHandler protocol compliance."""
 
-    def test_registry_event_handler_satisfies_protocol(self) -> None:
-        """Test that RegistryEventHandler satisfies EventHandler protocol."""
+    def test_model_event_handler_satisfies_protocol(self) -> None:
+        """Test that ModelEventHandler satisfies EventHandler protocol."""
         with _mock_streamlit_not_available():
-            handler = RegistryEventHandler()
+            handler = ModelEventHandler()
 
             # Check that it has the required method
             self.assertTrue(hasattr(handler, "update"))

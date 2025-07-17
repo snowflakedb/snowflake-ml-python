@@ -1,7 +1,21 @@
+import logging
 import warnings
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from packaging import version
+
+from snowflake import snowpark
+from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.human_readable_id import hrid_generator
+from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model._client.ops import service_ops
+from snowflake.snowpark import async_job, session
+
+logger = logging.getLogger(__name__)
+
+
+_TELEMETRY_PROJECT = "MLOps"
+_TELEMETRY_SUBPROJECT = "ModelManagement"
 
 
 class HuggingFacePipelineModel:
@@ -214,4 +228,159 @@ class HuggingFacePipelineModel:
         self.token = token
         self.trust_remote_code = trust_remote_code
         self.model_kwargs = model_kwargs
+        self.tokenizer = tokenizer
         self.__dict__.update(kwargs)
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=[
+            "service_name",
+            "image_build_compute_pool",
+            "service_compute_pool",
+            "image_repo",
+            "gpu_requests",
+            "num_workers",
+            "max_batch_rows",
+        ],
+    )
+    @snowpark._internal.utils.private_preview(version="1.9.1")
+    def create_service(
+        self,
+        *,
+        session: session.Session,
+        # registry.log_model parameters
+        model_name: str,
+        version_name: Optional[str] = None,
+        pip_requirements: Optional[list[str]] = None,
+        conda_dependencies: Optional[list[str]] = None,
+        comment: Optional[str] = None,
+        # model_version_impl.create_service parameters
+        service_name: str,
+        service_compute_pool: str,
+        image_repo: str,
+        image_build_compute_pool: Optional[str] = None,
+        ingress_enabled: bool = False,
+        max_instances: int = 1,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        gpu_requests: Optional[Union[str, int]] = None,
+        num_workers: Optional[int] = None,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = False,
+        build_external_access_integrations: Optional[list[str]] = None,
+        block: bool = True,
+    ) -> Union[str, async_job.AsyncJob]:
+        """Logs a Hugging Face model and creates a service in Snowflake.
+
+        Args:
+            session: The Snowflake session object.
+            model_name: The name of the model in Snowflake.
+            version_name: The version name of the model. Defaults to None.
+            pip_requirements: Pip requirements for the model. Defaults to None.
+            conda_dependencies: Conda dependencies for the model. Defaults to None.
+            comment: Comment for the model. Defaults to None.
+            service_name: The name of the service to create.
+            service_compute_pool: The compute pool for the service.
+            image_repo: The name of the image repository.
+            image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
+            the service compute pool if None.
+            ingress_enabled: Whether ingress is enabled. Defaults to False.
+            max_instances: Maximum number of instances. Defaults to 1.
+            cpu_requests: CPU requests configuration. Defaults to None.
+            memory_requests: Memory requests configuration. Defaults to None.
+            gpu_requests: GPU requests configuration. Defaults to None.
+            num_workers: Number of workers. Defaults to None.
+            max_batch_rows: Maximum batch rows. Defaults to None.
+            force_rebuild: Whether to force rebuild the image. Defaults to False.
+            build_external_access_integrations: External access integrations for building the image. Defaults to None.
+            block: Whether to block the operation. Defaults to True.
+
+        Raises:
+            ValueError: if database and schema name is not provided and session doesn't have a
+            database and schema name.
+
+        Returns:
+            The service ID or an async job object.
+
+        .. # noqa: DAR003
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+
+        database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
+        session_database_name = session.get_current_database()
+        session_schema_name = session.get_current_schema()
+        if database_name_id is None:
+            if session_database_name is None:
+                raise ValueError("Either database needs to be provided or needs to be available in session.")
+            database_name_id = sql_identifier.SqlIdentifier(session_database_name)
+        if schema_name_id is None:
+            if session_schema_name is None:
+                raise ValueError("Either schema needs to be provided or needs to be available in session.")
+            schema_name_id = sql_identifier.SqlIdentifier(session_schema_name)
+
+        if version_name is None:
+            name_generator = hrid_generator.HRID16()
+            version_name = name_generator.generate()[1]
+
+        service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
+        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
+
+        service_operator = service_ops.ServiceOperator(
+            session=session,
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+        )
+        logger.info(f"A service job is going to register the hf model as: {model_name}.{version_name}")
+
+        return service_operator.create_service(
+            database_name=database_name_id,
+            schema_name=schema_name_id,
+            model_name=model_name_id,
+            version_name=sql_identifier.SqlIdentifier(version_name),
+            service_database_name=service_db_id,
+            service_schema_name=service_schema_id,
+            service_name=service_id,
+            image_build_compute_pool_name=(
+                sql_identifier.SqlIdentifier(image_build_compute_pool)
+                if image_build_compute_pool
+                else sql_identifier.SqlIdentifier(service_compute_pool)
+            ),
+            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+            image_repo_database_name=image_repo_db_id,
+            image_repo_schema_name=image_repo_schema_id,
+            image_repo_name=image_repo_id,
+            ingress_enabled=ingress_enabled,
+            max_instances=max_instances,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
+            gpu_requests=gpu_requests,
+            num_workers=num_workers,
+            max_batch_rows=max_batch_rows,
+            force_rebuild=force_rebuild,
+            build_external_access_integrations=(
+                None
+                if build_external_access_integrations is None
+                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
+            ),
+            block=block,
+            statement_params=statement_params,
+            # hf model
+            hf_model_args=service_ops.HFModelArgs(
+                hf_model_name=self.model,
+                hf_task=self.task,
+                hf_tokenizer=self.tokenizer,
+                hf_revision=self.revision,
+                hf_token=self.token,
+                hf_trust_remote_code=bool(self.trust_remote_code),
+                hf_model_kwargs=self.model_kwargs,
+                pip_requirements=pip_requirements,
+                conda_dependencies=conda_dependencies,
+                comment=comment,
+                # TODO: remove warehouse in the next release
+                warehouse=session.get_current_warehouse(),
+            ),
+        )
