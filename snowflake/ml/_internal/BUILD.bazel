@@ -99,6 +99,7 @@ py_library(
     name = "platform_capabilities",
     srcs = ["platform_capabilities.py"],
     deps = [
+        "//snowflake/ml:version",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:query_result_checker",
     ],

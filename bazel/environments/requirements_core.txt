@@ -48,6 +48,7 @@ sphinx==5.0.2
 sqlparse==0.4.4
 starlette==0.27.0
 toml==0.10.2
+tqdm==4.67.1
 types-PyYAML==6.0.12.12
 types-cachetools==4.2.2
 types-protobuf==4.23.0.1

@@ -10,7 +10,7 @@ REQUIREMENTS = [
     "cryptography",
     "fsspec>=2024.6.1,<2026",
     "importlib_resources>=6.1.1, <7",
-    "numpy>=1.23,<2",
+    "numpy>=1.23,<3",
     "packaging>=20.9,<25",
     "pandas>=2.1.4,<3",
     "pyarrow",
@@ -28,6 +28,7 @@ REQUIREMENTS = [
     "snowflake-snowpark-python>=1.17.0,<2,!=1.26.0",
     "snowflake.core>=1.0.2,<2",
     "sqlparse>=0.4,<1",
+    "tqdm<5",
     "typing-extensions>=4.1.0,<5",
     "xgboost>=1.7.3,<3",
 ]

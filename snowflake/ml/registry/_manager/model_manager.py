@@ -1,5 +1,5 @@
 from types import ModuleType
-from typing import Any, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 import pandas as pd
 from absl.logging import logging
@@ -17,15 +17,10 @@ from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
+if TYPE_CHECKING:
+    from snowflake.ml.experiment._experiment_info import ExperimentInfo
+
 logger = logging.getLogger(__name__)
-
-
-class EventHandler(Protocol):
-    """Protocol defining the interface for event handlers used during model operations."""
-
-    def update(self, message: str) -> None:
-        """Update with a progress message."""
-        ...
 
 
 class ModelManager:
@@ -66,9 +61,10 @@ class ModelManager:
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: type_hints.Task = task.Task.UNKNOWN,
+        experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
-        event_handler: EventHandler,
+        progress_status: Optional[Any] = None,
     ) -> model_version_impl.ModelVersion:
 
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
@@ -150,9 +146,10 @@ class ModelManager:
             code_paths=code_paths,
             ext_modules=ext_modules,
             task=task,
+            experiment_info=experiment_info,
             options=options,
             statement_params=statement_params,
-            event_handler=event_handler,
+            progress_status=progress_status,
         )
 
     def _log_model(
@@ -175,9 +172,10 @@ class ModelManager:
         code_paths: Optional[list[str]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: type_hints.Task = task.Task.UNKNOWN,
+        experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
-        event_handler: EventHandler,
+        progress_status: Optional[Any] = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
@@ -265,7 +263,9 @@ class ModelManager:
                 )
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
-        event_handler.update("📦 Packaging model...")
+        if progress_status:
+            progress_status.update("packaging model...")
+            progress_status.increment()
 
         # Extract save_location from options if present
         save_location = None
@@ -279,6 +279,11 @@ class ModelManager:
             statement_params=statement_params,
             save_location=save_location,
         )
+
+        if progress_status:
+            progress_status.update("creating model manifest...")
+            progress_status.increment()
+
         model_metadata: model_meta.ModelMetadata = mc.save(
             name=model_name_id.resolved(),
             model=model,
@@ -295,7 +300,12 @@ class ModelManager:
             ext_modules=ext_modules,
             options=options,
             task=task,
+            experiment_info=experiment_info,
         )
+
+        if progress_status:
+            progress_status.update("uploading model files...")
+            progress_status.increment()
         statement_params = telemetry.add_statement_params_custom_tags(
             statement_params, model_metadata.telemetry_metadata()
         )
@@ -304,7 +314,9 @@ class ModelManager:
         )
 
         logger.info("Start creating MODEL object for you in the Snowflake.")
-        event_handler.update("🏗️ Creating model object in Snowflake...")
+        if progress_status:
+            progress_status.update("creating model object in Snowflake...")
+            progress_status.increment()
 
         self._model_ops.create_from_stage(
             composed_model=mc,
@@ -331,6 +343,10 @@ class ModelManager:
             version_name=version_name_id,
         )
 
+        if progress_status:
+            progress_status.update("setting model metadata...")
+            progress_status.increment()
+
         if comment:
             mv.comment = comment
 
@@ -344,7 +360,8 @@ class ModelManager:
                 statement_params=statement_params,
             )
 
-        event_handler.update("✅ Model logged successfully!")
+        if progress_status:
+            progress_status.update("model logged successfully!")
 
         return mv
 

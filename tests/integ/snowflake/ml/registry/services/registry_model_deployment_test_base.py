@@ -58,6 +58,9 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
 
+        # Set log level to INFO so that service logs are visible
+        logging.basicConfig(level=logging.INFO)
+
         with open(self.session._conn._lower_case_parameters["private_key_path"], "rb") as f:
             self.private_key = serialization.load_pem_private_key(
                 f.read(), password=None, backend=backends.default_backend()
@@ -184,21 +187,30 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             )
 
         # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(mv._service_ops._get_model_build_service_name(query_id))
+        model_build_service_name = sql_identifier.SqlIdentifier(
+            mv._service_ops._get_service_id_from_deployment_step(query_id, service_ops.DeploymentStep.MODEL_BUILD)
+        )
         model_build_service = service_ops.ServiceLogInfo(
             database_name=database_name_id,
             schema_name=schema_name_id,
             service_name=model_build_service_name,
-            container_name="model-build",
+            deployment_step=service_ops.DeploymentStep.MODEL_BUILD,
         )
         model_inference_service = service_ops.ServiceLogInfo(
             database_name=database_name_id,
             schema_name=schema_name_id,
             service_name=service_name_id,
-            container_name="model-inference",
+            deployment_step=service_ops.DeploymentStep.MODEL_INFERENCE,
         )
-        services = [model_build_service, model_inference_service]
-        log_thread = mv._service_ops._start_service_log_streaming(async_job, services, False, True)
+
+        log_thread = mv._service_ops._start_service_log_streaming(
+            async_job=async_job,
+            model_logger_service=None,
+            model_build_service=model_build_service,
+            model_inference_service=model_inference_service,
+            model_inference_service_exists=False,
+            force_rebuild=True,
+        )
         log_thread.join()
 
         res = cast(str, cast(list[row.Row], async_job.result())[0][0])

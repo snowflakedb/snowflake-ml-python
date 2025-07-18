@@ -3,6 +3,12 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "event_handler",
+    srcs = ["event_handler.py"],
+    deps = [],
+)
+
+py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
     deps = [
@@ -95,5 +101,13 @@ py_test(
     deps = [
         ":model_signature",
         "//snowflake/ml/test_utils:exception_utils",
+    ],
+)
+
+py_test(
+    name = "model_event_handler_test",
+    srcs = ["model_event_handler_test.py"],
+    deps = [
+        ":event_handler",
     ],
 )

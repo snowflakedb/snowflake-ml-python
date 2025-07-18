@@ -145,7 +145,7 @@
   dev_version: 2.8.4
 - name: numpy
   dev_version: 1.26.4
-  version_requirements: '>=1.23,<2'
+  version_requirements: '>=1.23,<3'
   tags:
     - build_essential
 - name: packaging
@@ -314,6 +314,9 @@
   version_requirements: '>=1.30.0,<2'
   requirements_extra_tags:
     - streamlit
+- name: tqdm
+  dev_version: 4.67.1
+  version_requirements: <5
 
 # Below are pip only external packages
 - name_pypi: --extra-index-url https://pypi.org/simple

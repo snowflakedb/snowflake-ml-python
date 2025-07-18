@@ -2,3 +2,6 @@
 //tests/integ/snowflake/ml/extra_tests:pipeline_with_ohe_and_xgbr_test
 //tests/integ/snowflake/ml/lineage:lineage_integ_test
 //tests/integ/snowflake/ml/modeling/manifold:spectral_embedding_test
+//tests/integ/snowflake/ml/modeling/linear_model:logistic_regression_test
+//tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
+//tests/integ/snowflake/ml/registry/services:registry_sentence_transformers_model_deployment_test

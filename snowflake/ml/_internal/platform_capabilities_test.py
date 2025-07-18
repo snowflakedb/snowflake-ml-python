@@ -24,7 +24,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         """Helper to add expected sql calls."""
         self._session.add_mock_sql(query=query, result=result)
 
-    def test_enabled_inline_deployment_spec_bool(self) -> None:
+    def test_enabled_inline_deployment_spec_full_version(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
@@ -33,7 +33,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
                     snowpark.Row(
                         FEATURES=json.dumps(
                             {
-                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: True,
+                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: "1.8.6",
                             }
                         )
                     )
@@ -44,7 +44,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_inlined_deployment_spec_enabled())
 
-    def test_disabled_inline_deployment_spec_bool(self) -> None:
+    def test_disabled_inline_deployment_spec_empty_string(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
@@ -53,7 +53,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
                     snowpark.Row(
                         FEATURES=json.dumps(
                             {
-                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: False,
+                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: "",
                             }
                         )
                     )
@@ -64,7 +64,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
-    def test_is_inlined_deployment_spec_enabled_false(self) -> None:
+    def test_disabled_inlined_deployment_spec_enabled_no_value(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
@@ -74,39 +74,23 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
-    def test_enabled_inline_deployment_spec_true(self) -> None:
+    def test_disabled_inline_deployment_spec_full_version(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
             result=mock_data_frame.MockDataFrame(
                 [
                     snowpark.Row(
-                        FEATURES=json.dumps(
-                            {
-                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: True,
-                            }
-                        )
+                        FEATURES=json.dumps({platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: "999.999.999"})
                     )
                 ]
             ),
         )
 
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
-        self.assertTrue(pc.is_inlined_deployment_spec_enabled())
-
-    def test_enabled_inline_deployment_spec_str(self) -> None:
-        """Test is_inlined_deployment_spec_enabled method."""
-        self._add_session_mock_sql(
-            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
-            result=mock_data_frame.MockDataFrame(
-                [snowpark.Row(FEATURES=json.dumps({platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: False}))]
-            ),
-        )
-
-        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertFalse(pc.is_inlined_deployment_spec_enabled())
 
-    def test_enabled_inline_deployment_spec_int(self) -> None:
+    def test_enabled_inline_deployment_spec_minor_version(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
@@ -115,7 +99,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
                     snowpark.Row(
                         FEATURES=json.dumps(
                             {
-                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: 1,
+                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: "1.9",
                             }
                         )
                     )
@@ -126,7 +110,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_inlined_deployment_spec_enabled())
 
-    def test_disabled_inline_deployment_spec_int(self) -> None:
+    def test_disabled_inline_deployment_spec_minor_version(self) -> None:
         """Test is_inlined_deployment_spec_enabled method."""
         self._add_session_mock_sql(
             query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
@@ -135,7 +119,7 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
                     snowpark.Row(
                         FEATURES=json.dumps(
                             {
-                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: 0,
+                                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: "99.9",
                             }
                         )
                     )
@@ -216,17 +200,15 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_live_commit_enabled())
 
-    @parameterized.product(inline_deployment_spec=[True, False], live_commit=[True, False])  # type: ignore[misc]
-    def test_mocking(self, inline_deployment_spec: bool, live_commit: bool) -> None:
+    @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
+    def test_mocking(self, live_commit: bool) -> None:
         """Test mocking of platform capabilities."""
         with platform_capabilities.PlatformCapabilities.mock_features(
             {
-                platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: inline_deployment_spec,
                 platform_capabilities.LIVE_COMMIT_PARAMETER: live_commit,
             }
         ):
             pc = platform_capabilities.PlatformCapabilities.get_instance()
-            self.assertEqual(pc.is_inlined_deployment_spec_enabled(), inline_deployment_spec, "Inline deployment spec")
             self.assertEqual(pc.is_live_commit_enabled(), live_commit, "Live commit")
 
 

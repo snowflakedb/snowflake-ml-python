@@ -16,7 +16,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
-from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model import type_hints
 from snowflake.ml.model._signatures import (
     base_handler,
     builtins_handler,
@@ -55,9 +55,9 @@ _MODEL_TELEMETRY_SUBPROJECT = "ModelSignature"
 
 
 def _truncate_data(
-    data: model_types.SupportedDataType,
+    data: type_hints.SupportedDataType,
     length: Optional[int] = 100,
-) -> model_types.SupportedDataType:
+) -> type_hints.SupportedDataType:
     for handler in _ALL_DATA_HANDLERS:
         if handler.can_handle(data):
             # If length is None, return the original data
@@ -89,7 +89,7 @@ def _truncate_data(
 
 
 def _infer_signature(
-    data: model_types.SupportedLocalDataType, role: Literal["input", "output"], use_snowflake_identifiers: bool = False
+    data: type_hints.SupportedLocalDataType, role: Literal["input", "output"], use_snowflake_identifiers: bool = False
 ) -> Sequence[core.BaseFeatureSpec]:
     """Infer the inputs/outputs signature given a data that could be dataframe, numpy array or list.
         Dispatching is used to separate logic for different types.
@@ -142,7 +142,7 @@ def _rename_signature_with_snowflake_identifiers(
 
 
 def _validate_array_or_series_type(
-    arr: Union[model_types._SupportedNumpyArray, pd.Series], feature_type: core.DataType, strict: bool = False
+    arr: Union[type_hints._SupportedNumpyArray, pd.Series], feature_type: core.DataType, strict: bool = False
 ) -> bool:
     original_dtype = arr.dtype
     dtype = arr.dtype
@@ -649,7 +649,7 @@ def _validate_snowpark_type_feature(
 
 
 def _convert_local_data_to_df(
-    data: model_types.SupportedLocalDataType, ensure_serializable: bool = False
+    data: type_hints.SupportedLocalDataType, ensure_serializable: bool = False
 ) -> pd.DataFrame:
     """Convert local data to pandas DataFrame or Snowpark DataFrame
 
@@ -679,7 +679,7 @@ def _convert_local_data_to_df(
 
 
 def _convert_and_validate_local_data(
-    data: model_types.SupportedLocalDataType, features: Sequence[core.BaseFeatureSpec], strict: bool = False
+    data: type_hints.SupportedLocalDataType, features: Sequence[core.BaseFeatureSpec], strict: bool = False
 ) -> pd.DataFrame:
     """Validate the data with features in model signature and convert to DataFrame
 
@@ -703,8 +703,8 @@ def _convert_and_validate_local_data(
     subproject=_MODEL_TELEMETRY_SUBPROJECT,
 )
 def infer_signature(
-    input_data: model_types.SupportedLocalDataType,
-    output_data: model_types.SupportedLocalDataType,
+    input_data: type_hints.SupportedLocalDataType,
+    output_data: type_hints.SupportedLocalDataType,
     input_feature_names: Optional[list[str]] = None,
     output_feature_names: Optional[list[str]] = None,
     input_data_limit: Optional[int] = 100,

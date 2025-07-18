@@ -347,7 +347,7 @@ class ModelDeploymentSpec:
         hf_model = model_deployment_spec_schema.HuggingFaceModel(
             hf_model_name=hf_model_name,
             task=hf_task,
-            hf_token=hf_token,
+            token=hf_token,
             tokenizer=hf_tokenizer,
             trust_remote_code=hf_trust_remote_code,
             revision=hf_revision,

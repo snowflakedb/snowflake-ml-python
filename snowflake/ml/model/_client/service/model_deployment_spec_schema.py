@@ -55,7 +55,7 @@ class HuggingFaceModel(BaseModel):
     hf_model_name: str
     task: Optional[str] = None
     tokenizer: Optional[str] = None
-    hf_token: Optional[str] = None
+    token: Optional[str] = None
     trust_remote_code: Optional[bool] = False
     revision: Optional[str] = None
     hf_model_kwargs: Optional[str] = "{}"

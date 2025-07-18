@@ -1,0 +1,73 @@
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "callback",
+    srcs = ["callback.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "callback_test",
+    srcs = ["callback_test.py"],
+    deps = [
+        ":callback",
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "experiment_info",
+    srcs = ["_experiment_info.py"],
+    deps = [
+        "//snowflake/ml/registry/_manager:model_manager",
+    ],
+)
+
+py_test(
+    name = "experiment_info_test",
+    srcs = ["_experiment_info_test.py"],
+    main = "_experiment_info_test.py",
+    deps = [":experiment_info"],
+)
+
+py_library(
+    name = "experiment_tracking",
+    srcs = ["experiment_tracking.py"],
+    deps = [
+        "//snowflake/ml/_internal/human_readable_id:hrid_generator",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
+        "//snowflake/ml/experiment/_entities:entities",
+        "//snowflake/ml/registry",
+    ],
+)
+
+py_library(
+    name = "experiment",
+    srcs = ["__init__.py"],
+    deps = [
+        ":experiment_tracking",
+    ],
+)
+
+py_test(
+    name = "experiment_tracking_test",
+    srcs = ["experiment_tracking_test.py"],
+    deps = [
+        ":experiment_tracking",
+    ],
+)
+
+py_package(
+    name = "experiment_pkg",
+    packages = ["snowflake.ml"],
+    deps = [
+        ":experiment_tracking",
+    ],
+)

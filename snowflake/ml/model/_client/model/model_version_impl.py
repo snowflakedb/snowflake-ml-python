@@ -1,4 +1,5 @@
 import enum
+import logging
 import pathlib
 import tempfile
 import warnings
@@ -10,7 +11,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
-from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model import task, type_hints
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -401,7 +402,7 @@ class ModelVersion(lineage_node.LineageNode):
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
     )
-    def get_model_task(self) -> model_types.Task:
+    def get_model_task(self) -> task.Task:
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -607,8 +608,8 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         force: bool = False,
-        options: Optional[model_types.ModelLoadOption] = None,
-    ) -> model_types.SupportedModelType:
+        options: Optional[type_hints.ModelLoadOption] = None,
+    ) -> type_hints.SupportedModelType:
         """Load the underlying original Python object back from a model.
             This operation requires to have the exact the same environment as the one when logging the model, otherwise,
             the model might be not functional or some other problems might occur.
@@ -889,6 +890,17 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+
+        # Check root logger level and emit warning if needed
+        root_logger = logging.getLogger()
+        if root_logger.level in (logging.WARNING, logging.ERROR):
+            warnings.warn(
+                "Suppressing service logs. Set the log level to INFO if you would like "
+                "verbose service logs (e.g., logging.getLogger().setLevel(logging.INFO)).",
+                UserWarning,
+                stacklevel=2,
+            )
+
         if build_external_access_integration is not None:
             msg = (
                 "`build_external_access_integration` is deprecated. "

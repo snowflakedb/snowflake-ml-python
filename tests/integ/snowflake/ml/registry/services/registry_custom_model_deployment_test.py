@@ -3,6 +3,7 @@ import os
 import tempfile
 
 import inflection
+import numpy as np
 import pandas as pd
 import xgboost
 from absl.testing import absltest
@@ -33,6 +34,18 @@ class MyCustomModel(custom_model.CustomModel):
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         model_output = self.context.model_ref("regressor").predict(input)
         return pd.DataFrame({"output": model_output + self.bias})
+
+
+class WideInputModel(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        numeric_sum = input.select_dtypes(include=[np.number]).sum(axis=1)
+        string_count = input.select_dtypes(include=[object, "string"]).count(axis=1)
+        result = numeric_sum + string_count
+        return pd.DataFrame({"output": result})
 
 
 class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
@@ -96,6 +109,43 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
                     lambda res: pd.testing.assert_frame_equal(
                         res,
                         y_df_expected,
+                        check_dtype=False,
+                    ),
+                ),
+            },
+        )
+
+    @absltest.skipIf(True, "Temporarily quarantined until Inference server release")
+    def test_custom_model_wide_input(self) -> None:
+        n_samples = 10
+        n_features = 600
+        data = {}
+
+        for i in range(n_features):
+            if i % 3 == 0:
+                col_name = f'"z_feature_{i:03d}"'
+                data[col_name] = np.random.randint(0, 10, n_samples)
+            elif i % 3 == 1:
+                col_name = f'"b_feature_{i:03d}"'
+                data[col_name] = np.random.choice(["X", "Y", "Z"], n_samples)
+            else:
+                col_name = f"a_feature_{i:03d}"
+                data[col_name] = np.random.normal(5, 2, n_samples)
+
+        train_df = pd.DataFrame(data)
+        sp_train_df = self.session.create_dataframe(train_df)
+        wide_model = WideInputModel(custom_model.ModelContext())
+        expected_predictions = wide_model.predict(train_df)
+
+        self._test_registry_model_deployment(
+            model=wide_model,
+            sample_input_data=sp_train_df,
+            prediction_assert_fns={
+                "predict": (
+                    train_df,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        expected_predictions,
                         check_dtype=False,
                     ),
                 ),

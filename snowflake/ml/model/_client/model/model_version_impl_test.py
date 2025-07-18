@@ -9,7 +9,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model import model_signature, task, type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
@@ -49,7 +49,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.c_session = cast(Session, self.m_session)
         with (
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
-            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
         ):
             self.m_mv = model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
@@ -69,7 +69,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_ref(self) -> None:
         with (
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]) as mock_list_methods,
-            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}),
+            pc.PlatformCapabilities.mock_features({"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}),
         ):
             model_version_impl.ModelVersion._ref(
                 model_ops.ModelOperator(
@@ -239,9 +239,9 @@ class ModelVersionImplTest(absltest.TestCase):
         with mock.patch.object(
             self.m_mv._model_ops,
             attribute="get_model_task",
-            return_value=model_types.Task.TABULAR_REGRESSION,
+            return_value=task.Task.TABULAR_REGRESSION,
         ) as mock_get_model_task:
-            self.assertEqual(model_types.Task.TABULAR_REGRESSION, self.m_mv.get_model_task())
+            self.assertEqual(task.Task.TABULAR_REGRESSION, self.m_mv.get_model_task())
             mock_get_model_task.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
@@ -620,7 +620,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.SKLModelLoadOptions()
+        m_options = type_hints.SKLModelLoadOptions()
         with (
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(
@@ -672,7 +672,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.SKLModelLoadOptions()
+        m_options = type_hints.SKLModelLoadOptions()
         with (
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(
@@ -710,7 +710,7 @@ class ModelVersionImplTest(absltest.TestCase):
         m_pk.meta = mock.MagicMock()
         m_pk.model = m_model
 
-        m_options = model_types.SKLModelLoadOptions()
+        m_options = type_hints.SKLModelLoadOptions()
         with (
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]) as mock_load,
@@ -1166,9 +1166,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Mock the various methods used in _repr_html_
         with (
-            mock.patch.object(
-                self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_REGRESSION
-            ) as mock_get_task,
+            mock.patch.object(self.m_mv, "get_model_task", return_value=task.Task.TABULAR_REGRESSION) as mock_get_task,
             mock.patch.object(self.m_mv, "show_functions", return_value=m_functions) as mock_show_functions,
             mock.patch.object(
                 self.m_mv, "show_metrics", return_value={"accuracy": 0.95, "precision": 0.87, "recall": None}
@@ -1214,7 +1212,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_repr_html_happy_path_no_functions_no_metrics(self) -> None:
         """Test _repr_html_ method with no functions and no metrics."""
         with (
-            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_BINARY_CLASSIFICATION),
+            mock.patch.object(self.m_mv, "get_model_task", return_value=task.Task.TABULAR_BINARY_CLASSIFICATION),
             mock.patch.object(self.m_mv, "show_functions", return_value=[]),
             mock.patch.object(self.m_mv, "show_metrics", return_value={}),
             mock.patch.object(type(self.m_mv), "description", new_callable=mock.PropertyMock, return_value=""),
@@ -1252,7 +1250,7 @@ class ModelVersionImplTest(absltest.TestCase):
         ]
 
         with (
-            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_REGRESSION),
+            mock.patch.object(self.m_mv, "get_model_task", return_value=task.Task.TABULAR_REGRESSION),
             mock.patch.object(self.m_mv, "show_functions", return_value=m_functions),
             mock.patch.object(self.m_mv, "show_metrics", return_value={"f1_score": 0.89}),
             mock.patch.object(
@@ -1270,7 +1268,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_repr_html_happy_path_mixed_metric_values(self) -> None:
         """Test _repr_html_ method with various metric value types."""
         with (
-            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_MULTI_CLASSIFICATION),
+            mock.patch.object(self.m_mv, "get_model_task", return_value=task.Task.TABULAR_MULTI_CLASSIFICATION),
             mock.patch.object(self.m_mv, "show_functions", return_value=[]),
             mock.patch.object(
                 self.m_mv,
@@ -1322,7 +1320,7 @@ class ModelVersionImplTest(absltest.TestCase):
         ]
 
         with (
-            mock.patch.object(self.m_mv, "get_model_task", return_value=model_types.Task.TABULAR_RANKING),
+            mock.patch.object(self.m_mv, "get_model_task", return_value=task.Task.TABULAR_RANKING),
             mock.patch.object(self.m_mv, "show_functions", return_value=m_functions),
             mock.patch.object(self.m_mv, "show_metrics", return_value={"auc": 0.92}),
             mock.patch.object(

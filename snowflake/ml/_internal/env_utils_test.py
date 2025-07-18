@@ -319,6 +319,49 @@ class EnvUtilsTest(absltest.TestCase):
         )
         self.assertIsNot(env_utils.get_package_spec_with_supported_ops_only(r), r)
 
+    def test_get_numpy_specifiers(self) -> None:
+        r = requirements.Requirement("numpy>=1.2.3,<3")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=1),
+            [specifiers.Specifier(">=1.2.3"), specifiers.Specifier("<2")],
+        )
+
+        r = requirements.Requirement("numpy>=1.2.3,<3")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=2),
+            [specifiers.Specifier(">=1.2.3"), specifiers.Specifier("<3")],
+        )
+
+        r = requirements.Requirement("numpy>=1.2.3,<=2.2.5")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=1),
+            [specifiers.Specifier(">=1.2.3"), specifiers.Specifier("<2")],
+        )
+
+        r = requirements.Requirement("numpy>=1.2.3,<2.2.5")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=2),
+            [specifiers.Specifier(">=1.2.3"), specifiers.Specifier("<2.2.5")],
+        )
+
+        r = requirements.Requirement("numpy>=1.2.3,<=1.6.1")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=1),
+            [specifiers.Specifier(">=1.2.3"), specifiers.Specifier("<=1.6.1")],
+        )
+
+        r = requirements.Requirement("numpy>=0.5,<1.2.3")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=0),
+            [specifiers.Specifier(">=0.5"), specifiers.Specifier("<1")],
+        )
+
+        r = requirements.Requirement("numpy>=0.5,<2.3.5")
+        self.assertSameElements(
+            env_utils.get_numpy_specifiers(r, client_numpy_major_version=0),
+            [specifiers.Specifier(">=0.5"), specifiers.Specifier("<1")],
+        )
+
     def test_relax_specifier_set(self) -> None:
         spec_set = specifiers.SpecifierSet("==1.0.1")
         relaxed_spec_set = env_utils._relax_specifier_set(

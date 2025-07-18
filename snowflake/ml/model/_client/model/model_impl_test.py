@@ -16,7 +16,9 @@ class ModelImplTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
-        with pc.PlatformCapabilities.mock_features(features={"ENABLE_INLINE_DEPLOYMENT_SPEC": "true"}):
+        with pc.PlatformCapabilities.mock_features(
+            features={"ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION": "1.8.6"}
+        ):
             self.m_model = model_impl.Model._ref(
                 model_ops.ModelOperator(
                     self.c_session,

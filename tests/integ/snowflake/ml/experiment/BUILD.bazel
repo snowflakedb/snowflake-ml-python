@@ -1,0 +1,15 @@
+load("//bazel:py_rules.bzl", "py_test")
+
+py_test(
+    name = "experiment_tracking_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_integ_test.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:snowflake_env",
+        "//snowflake/ml/experiment",
+        "//snowflake/ml/experiment:callback",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)

@@ -10,6 +10,10 @@ class LogColor(enum.Enum):
     YELLOW = "\x1b[33;20m"
     BLUE = "\x1b[34;20m"
     GREEN = "\x1b[32;20m"
+    ORANGE = "\x1b[38;5;214m"
+    BOLD_ORANGE = "\x1b[38;5;214;1m"
+    PURPLE = "\x1b[35;20m"
+    BOLD_PURPLE = "\x1b[35;1m"
 
 
 class CustomFormatter(logging.Formatter):
@@ -55,9 +59,7 @@ class CustomFormatter(logging.Formatter):
 
 def get_logger(logger_name: str, info_color: LogColor) -> logging.Logger:
     logger = logging.getLogger(logger_name)
-    logger.setLevel(logging.INFO)
     handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.INFO)
     handler.setFormatter(CustomFormatter(info_color))
     logger.addHandler(handler)
     return logger

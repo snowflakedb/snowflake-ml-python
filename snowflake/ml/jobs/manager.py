@@ -8,7 +8,6 @@ import pandas as pd
 import yaml
 
 from snowflake import snowpark
-from snowflake.connector import errors
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jb
@@ -169,8 +168,8 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
         job = jb.MLJob[Any](job_id, session=session)
         _ = job._service_spec
         return job
-    except errors.ProgrammingError as e:
-        if "does not exist" in str(e):
+    except SnowparkSQLException as e:
+        if "does not exist" in e.message:
             raise ValueError(f"Job does not exist: {job_id}") from e
         raise
 
@@ -186,7 +185,7 @@ def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Sessio
         logger.info(f"Successfully cleaned up stage files for job {job.id} at {stage_path}")
     except Exception as e:
         logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
-    session._conn.run_query("DROP SERVICE IDENTIFIER(?)", params=(job.id,), _force_qmark_paramstyle=True)
+    query_helper.run_query(session, "DROP SERVICE IDENTIFIER(?)", params=(job.id,))
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -426,11 +425,17 @@ def _submit_job(
         An object representing the submitted job.
 
     Raises:
-        RuntimeError: If required Snowflake features are not enabled.
         ValueError: If database or schema value(s) are invalid
-        errors.ProgrammingError: if the SQL query or its parameters are invalid
+        SnowparkSQLException: If there is an error submitting the job.
     """
     session = session or get_active_session()
+
+    # Check for deprecated args
+    if "num_instances" in kwargs:
+        logger.warning(
+            "'num_instances' is deprecated and will be removed in a future release. Use 'target_instances' instead."
+        )
+        target_instances = max(target_instances, kwargs.pop("num_instances"))
 
     # Use kwargs for less common optional parameters
     database = kwargs.pop("database", None)
@@ -442,13 +447,6 @@ def _submit_job(
     spec_overrides = kwargs.pop("spec_overrides", None)
     enable_metrics = kwargs.pop("enable_metrics", True)
     query_warehouse = kwargs.pop("query_warehouse", None)
-
-    # Check for deprecated args
-    if "num_instances" in kwargs:
-        logger.warning(
-            "'num_instances' is deprecated and will be removed in a future release. Use 'target_instances' instead."
-        )
-        target_instances = max(target_instances, kwargs.pop("num_instances"))
 
     # Warn if there are unknown kwargs
     if kwargs:
@@ -464,8 +462,7 @@ def _submit_job(
     if min_instances > 1:
         # Validate min_instances against compute pool max_nodes
         pool_info = jb._get_compute_pool_info(session, compute_pool)
-        requested_attributes = query_helper.get_attribute_map(session, {"max_nodes": 3})
-        max_nodes = int(pool_info[requested_attributes["max_nodes"]])
+        max_nodes = int(pool_info["max_nodes"])
         if min_instances > max_nodes:
             raise ValueError(
                 f"The requested min_instances ({min_instances}) exceeds the max_nodes ({max_nodes}) "
@@ -502,7 +499,48 @@ def _submit_job(
     if spec_overrides:
         spec = spec_utils.merge_patch(spec, spec_overrides, display_name="spec_overrides")
 
-    # Generate SQL command for job submission
+    query_text, params = _generate_submission_query(
+        spec, external_access_integrations, query_warehouse, target_instances, session, compute_pool, job_id
+    )
+    try:
+        _ = query_helper.run_query(session, query_text, params=params)
+    except SnowparkSQLException as e:
+        if "Invalid spec: unknown option 'resourceManagement' for 'spec'." in e.message:
+            logger.warning("Dropping 'resourceManagement' from spec because control policy is not enabled.")
+            spec["spec"].pop("resourceManagement", None)
+            query_text, params = _generate_submission_query(
+                spec, external_access_integrations, query_warehouse, target_instances, session, compute_pool, job_id
+            )
+            _ = query_helper.run_query(session, query_text, params=params)
+        else:
+            raise
+    return get_job(job_id, session=session)
+
+
+def _generate_submission_query(
+    spec: dict[str, Any],
+    external_access_integrations: list[str],
+    query_warehouse: Optional[str],
+    target_instances: int,
+    session: snowpark.Session,
+    compute_pool: str,
+    job_id: str,
+) -> tuple[str, list[Any]]:
+    """
+    Generate the SQL query for job submission.
+
+    Args:
+        spec: The service spec for the job.
+        external_access_integrations: The external access integrations for the job.
+        query_warehouse: The query warehouse for the job.
+        target_instances: The number of instances for the job.
+        session: The Snowpark session to use.
+        compute_pool: The compute pool to use for the job.
+        job_id: The ID of the job.
+
+    Returns:
+        A tuple containing the SQL query text and the parameters for the query.
+    """
     query_template = textwrap.dedent(
         """\
         EXECUTE JOB SERVICE
@@ -526,17 +564,5 @@ def _submit_job(
     if target_instances > 1:
         query.append("REPLICAS = ?")
         params.append(target_instances)
-
-    # Submit job
     query_text = "\n".join(line for line in query if line)
-
-    try:
-        _ = session._conn.run_query(query_text, params=params, _force_qmark_paramstyle=True)
-    except errors.ProgrammingError as e:
-        if "invalid property 'ASYNC'" in str(e):
-            raise RuntimeError(
-                "SPCS Async Jobs not enabled. Set parameter `ENABLE_SNOWSERVICES_ASYNC_JOBS = TRUE` to enable."
-            ) from e
-        raise
-
-    return get_job(job_id, session=session)
+    return query_text, params

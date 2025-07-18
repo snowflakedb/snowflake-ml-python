@@ -1,8 +1,10 @@
 from typing import Any, Optional
+from warnings import warn
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.lineage import lineage_utils
+from snowflake.ml._internal.utils import mixins
 from snowflake.ml.data import data_connector, data_ingestor, data_source, ingestor_utils
 from snowflake.ml.fileset import snowfs
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -11,7 +13,7 @@ _PROJECT = "Dataset"
 _SUBPROJECT = "DatasetReader"
 
 
-class DatasetReader(data_connector.DataConnector):
+class DatasetReader(data_connector.DataConnector, mixins.SerializableSessionMixin):
     """Snowflake Dataset abstraction which provides application integration connectors"""
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, subproject=_SUBPROJECT)
@@ -19,13 +21,25 @@ class DatasetReader(data_connector.DataConnector):
         self,
         ingestor: data_ingestor.DataIngestor,
         *,
-        snowpark_session: snowpark.Session,
+        session: snowpark.Session,
+        snowpark_session: Optional[snowpark.Session] = None,
     ) -> None:
-        super().__init__(ingestor)
+        if snowpark_session is not None:
+            warn(
+                "Argument snowpark_session is deprecated and will be removed in a future release. Use session instead."
+            )
+            session = snowpark_session
+        super().__init__(ingestor, session=session)
 
-        self._session: snowpark.Session = snowpark_session
-        self._fs: snowfs.SnowFileSystem = ingestor_utils.get_dataset_filesystem(self._session)
+        self._fs_cached: Optional[snowfs.SnowFileSystem] = None
         self._files: Optional[list[str]] = None
+
+    @property
+    def _fs(self) -> snowfs.SnowFileSystem:
+        if self._fs_cached is None:
+            assert self._session is not None
+            self._fs_cached = ingestor_utils.get_dataset_filesystem(self._session)
+        return self._fs_cached
 
     @classmethod
     def from_dataframe(
@@ -42,6 +56,7 @@ class DatasetReader(data_connector.DataConnector):
         files: list[str] = []
         for source in self.data_sources:
             assert isinstance(source, data_source.DatasetInfo)
+            assert self._session is not None
             files.extend(ingestor_utils.get_dataset_files(self._session, source, filesystem=self._fs))
         files.sort()
 
@@ -95,6 +110,7 @@ class DatasetReader(data_connector.DataConnector):
         dfs: list[snowpark.DataFrame] = []
         for source in self.data_sources:
             assert isinstance(source, data_source.DatasetInfo) and source.url is not None
+            assert self._session is not None
             stage_reader = self._session.read.option("pattern", file_path_pattern)
             if "INFER_SCHEMA_OPTIONS" in snowpark_utils.NON_FORMAT_TYPE_OPTIONS:
                 stage_reader = stage_reader.option("INFER_SCHEMA_OPTIONS", {"MAX_FILE_COUNT": 1})

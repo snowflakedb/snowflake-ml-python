@@ -14,6 +14,7 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml._internal.utils import (
     formatting,
     identifier,
+    mixins,
     query_result_checker,
     snowpark_dataframe_utils,
 )
@@ -27,7 +28,7 @@ _METADATA_MAX_QUERY_LENGTH = 10000
 _DATASET_VERSION_NAME_COL = "version"
 
 
-class DatasetVersion:
+class DatasetVersion(mixins.SerializableSessionMixin):
     """Represents a version of a Snowflake Dataset"""
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -176,7 +177,7 @@ class Dataset(lineage_node.LineageNode):
                 original_exception=RuntimeError("No Dataset version selected."),
             )
         if self._reader is None:
-            self._reader = dataset_reader.DatasetReader.from_dataset(self, snowpark_session=self._session)
+            self._reader = dataset_reader.DatasetReader.from_dataset(self)
         return self._reader
 
     @staticmethod

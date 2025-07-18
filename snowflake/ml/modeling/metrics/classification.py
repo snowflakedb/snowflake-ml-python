@@ -96,7 +96,7 @@ def confusion_matrix(
     labels: Optional[npt.ArrayLike] = None,
     sample_weight_col_name: Optional[str] = None,
     normalize: Optional[str] = None,
-) -> Union[npt.NDArray[np.int_], npt.NDArray[np.float_]]:
+) -> Union[npt.NDArray[np.int_], npt.NDArray[np.float64]]:
     """
     Compute confusion matrix to evaluate the accuracy of a classification.
 
@@ -320,7 +320,7 @@ def f1_score(
     average: Optional[str] = "binary",
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Compute the F1 score, also known as balanced F-score or F-measure.
 
@@ -414,7 +414,7 @@ def fbeta_score(
     average: Optional[str] = "binary",
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Compute the F-beta score.
 
@@ -696,7 +696,7 @@ def precision_recall_fscore_support(
     zero_division: Union[str, int] = "warn",
 ) -> Union[
     tuple[float, float, float, None],
-    tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
+    tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]],
 ]:
     """
     Compute precision, recall, F-measure and support for each class.
@@ -855,7 +855,7 @@ def precision_recall_fscore_support(
 
         res: Union[
             tuple[float, float, float, None],
-            tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]],
+            tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]],
         ] = result_object[:4]
         warning = result_object[-1]
         if warning:
@@ -1050,7 +1050,7 @@ def _register_multilabel_confusion_matrix_computer(
 
         def end_partition(
             self,
-        ) -> Iterable[tuple[npt.NDArray[np.float_], npt.NDArray[np.float_], npt.NDArray[np.float_]]]:
+        ) -> Iterable[tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]]:
             MCM = metrics.multilabel_confusion_matrix(
                 self._y_true,
                 self._y_pred,
@@ -1098,7 +1098,7 @@ def _binary_precision_score(
     pos_label: Union[str, int] = 1,
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
 
     statement_params = telemetry.get_statement_params(_PROJECT, _SUBPROJECT)
 
@@ -1173,7 +1173,7 @@ def precision_score(
     average: Optional[str] = "binary",
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Compute the precision.
 
@@ -1271,7 +1271,7 @@ def recall_score(
     average: Optional[str] = "binary",
     sample_weight_col_name: Optional[str] = None,
     zero_division: Union[str, int] = "warn",
-) -> Union[float, npt.NDArray[np.float_]]:
+) -> Union[float, npt.NDArray[np.float64]]:
     """
     Compute the recall.
 
@@ -1406,14 +1406,14 @@ def _check_binary_labels(
 
 
 def _prf_divide(
-    numerator: npt.NDArray[np.float_],
-    denominator: npt.NDArray[np.float_],
+    numerator: npt.NDArray[np.float64],
+    denominator: npt.NDArray[np.float64],
     metric: str,
     modifier: str,
     average: Optional[str] = None,
     warn_for: Union[tuple[str, ...], set[str]] = ("precision", "recall", "f-score"),
     zero_division: Union[str, int] = "warn",
-) -> npt.NDArray[np.float_]:
+) -> npt.NDArray[np.float64]:
     """Performs division and handles divide-by-zero.
 
     On zero-division, sets the corresponding result elements equal to
@@ -1436,7 +1436,7 @@ def _prf_divide(
             "warn", this acts as 0, but warnings are also raised.
 
     Returns:
-        npt.NDArray[np.float_]: Result of the division, an array of floats.
+        npt.NDArray[np.float64]: Result of the division, an array of floats.
     """
     mask = denominator == 0.0
     denominator = denominator.copy()
@@ -1522,7 +1522,7 @@ def _check_zero_division(zero_division: Union[int, float, str]) -> float:
         return np.nan
 
 
-def _nanaverage(a: npt.NDArray[np.float_], weights: Optional[npt.ArrayLike] = None) -> Any:
+def _nanaverage(a: npt.NDArray[np.float64], weights: Optional[npt.ArrayLike] = None) -> Any:
     """Compute the weighted average, ignoring NaNs.
 
     Args:
