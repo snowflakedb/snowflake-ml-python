@@ -412,3 +412,7 @@ def infer_dict(name: str, data: dict[str, Any]) -> core.FeatureGroupSpec:
             specs.append(core.FeatureSpec(name=key, dtype=core.DataType.from_numpy_type(np.array(value).dtype)))
 
     return core.FeatureGroupSpec(name=name, specs=specs)
+
+
+def check_if_series_is_empty(series: Optional[pd.Series]) -> bool:
+    return series is None or series.empty

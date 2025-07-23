@@ -5,6 +5,7 @@ package(default_visibility = ["//visibility:public"])
 py_test(
     name = "parallelize_test",
     srcs = ["parallelize_test.py"],
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/_internal/utils:parallelize",
         "//snowflake/ml/utils:connection_params",

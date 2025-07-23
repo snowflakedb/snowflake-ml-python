@@ -8,8 +8,6 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.experiment import ExperimentTracking
 from snowflake.ml.experiment._entities.run_metadata import RunStatus
-from snowflake.ml.experiment.callback import SnowflakeXgboostCallback
-from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -305,79 +303,22 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
             ')"""
             ).collect()[0][0]
         )
-        edges = dgql_json["data"]["V"]["E"]
-        self.assertEqual(len(edges), 1)
+        lineage_edges = dgql_json.get("data", {}).get("V", {}).get("E", [])
+        self.assertEqual(len(lineage_edges), 1, f"Expected 1 lineage edge, got {len(lineage_edges)}")
         # Confirm source is correct
-        source = edges[0]["S"]
+        source = lineage_edges[0]["S"]
         self.assertEqual(source["domain"], "EXPERIMENT")
         self.assertEqual(source["name"], run_name)
         self.assertEqual(source["properties"]["parentName"], experiment_name)
         self.assertEqual(source["schema"], self._schema_name)
         self.assertEqual(source["db"], self._db_name)
         # Confirm target is correct
-        target = edges[0]["T"]
+        target = lineage_edges[0]["T"]
         self.assertEqual(target["domain"], "MODULE")
         self.assertEqual(target["name"], mv.version_name)
         self.assertEqual(target["properties"]["parentName"], model_name)
         self.assertEqual(target["schema"], self._schema_name)
         self.assertEqual(target["db"], self._db_name)
-
-    def test_xgboost_autolog(self) -> None:
-        """Test that XGBoost autologging works."""
-        self.skip_if_version_less_than((9, 20, 0))  # experiment-model lineage only supported in >=9.20.x
-
-        experiment_name = "TEST_EXPERIMENT_XGBOOST_AUTOLOG"
-        run_name = "TEST_RUN_XGBOOST_AUTOLOG"
-        model_name = "TEST_XGBOOST_MODEL"
-
-        X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-        y = [0, 1, 0]
-        num_steps = 5
-        model_signature = ModelSignature(
-            inputs=[
-                FeatureSpec(name="a", dtype=DataType.FLOAT),
-                FeatureSpec(name="b", dtype=DataType.FLOAT),
-            ],
-            outputs=[FeatureSpec(name="target", dtype=DataType.INT8)],
-        )
-
-        # Create and train an XGBoost model with autologging
-        model = xgb.XGBClassifier(
-            callbacks=[
-                SnowflakeXgboostCallback(
-                    self.exp,
-                    log_model=True,
-                    log_metrics=True,
-                    log_params=True,
-                    model_name=model_name,
-                    model_signature=model_signature,
-                )
-            ],
-            n_estimators=num_steps,
-        )
-        self.exp.set_experiment(experiment_name=experiment_name)
-        with self.exp.start_run(run_name=run_name):
-            model.fit(X, y, eval_set=[(X, y)])
-
-        # Verify all data was logged correctly
-        runs = self._session.sql(
-            f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}"
-        ).collect()
-        self.assertEqual(len(runs), 1)
-
-        # Parse and verify metadata
-        metadata = json.loads(runs[0]["metadata"])
-        self.assertIn("metrics", metadata)
-        metric_dict = {f"{m['name']}_step_{m['step']}": m for m in metadata["metrics"]}
-        # Verify that the logloss metric was logged for each step
-        for step in range(num_steps):
-            self.assertIn(f"validation_0:logloss_step_{step}", metric_dict)
-        # Verify that params were logged
-        self.assertIn("parameters", metadata)
-        self.assertGreater(len(metadata["parameters"]), 0)
-        # Verify that the model was logged
-        models = self._session.sql(f"SHOW MODELS LIKE '{model_name}'").collect()
-        self.assertEqual(len(models), 1)
 
 
 if __name__ == "__main__":

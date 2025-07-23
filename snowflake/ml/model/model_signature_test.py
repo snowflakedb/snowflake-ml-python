@@ -613,6 +613,14 @@ class ModelSignatureMiscTest(absltest.TestCase):
             pd.DataFrame({"a": [[{"b": 1, "c": [2, 3]}, {"b": 4, "c": [5, 6]}], [{"b": 7, "c": [8, 9]}]]}), ftgs
         )
 
+        fts = [
+            model_signature.FeatureSpec("a", model_signature.DataType.STRING, shape=(-1,)),
+        ]
+        model_signature._validate_pandas_df(
+            pd.DataFrame({"a": [["a", "b", "c"], ["d", "e", "f"], None]}),
+            fts,
+        )
+
     def test_validate_data_with_features(self) -> None:
         fts = [
             model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64),

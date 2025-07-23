@@ -12,6 +12,7 @@ py_test(
         "tensorflow",
     ],
     shard_count = 8,
+    tags = ["feature:data"],
     deps = [
         "//snowflake/ml/data",
         "//snowflake/ml/dataset",

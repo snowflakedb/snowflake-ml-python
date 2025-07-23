@@ -1,11 +1,50 @@
 # Release History
 
-## 1.9.1
+## 1.9.2
+
+### Bug Fixes
+
+- DataConnector: Fix `self._session` related errors inside Container Runtime.
+
+### Behavior Changes
+
+### New Features
+
+- Experiment Tracking (PrPr): Automatically log the model, metrics, and parameters while training
+  XGBoost and LightGBM models.
+
+```python
+from snowflake.ml.experiment import ExperimentTracking
+from snowflake.ml.experiment.callback import SnowflakeXgboostCallback, SnowflakeLightgbmCallback
+
+exp = ExperimentTracking(session=sp_session, database_name="ML", schema_name="PUBLIC")
+
+exp.set_experiment("MY_EXPERIMENT")
+
+# XGBoost
+callback = SnowflakeXgboostCallback(
+  exp, log_model=True, log_metrics=True, log_params=True, model_name="model_name", model_signature=sig
+)
+model = XGBClassifier(callbacks=[callback])
+with exp.start_run():
+  model.fit(X, y, eval_set=[(X_test, y_test)])
+
+# LightGBM
+callback = SnowflakeLightgbmCallback(
+  exp, log_model=True, log_metrics=True, log_params=True, model_name="model_name", model_signature=sig
+)
+model = LGBMClassifier()
+with exp.start_run():
+  model.fit(X, y, eval_set=[(X_test, y_test)], callbacks=[callback])
+```
+
+## 1.9.1 (07-18-2025)
 
 ### Bug Fixes
 
 - Registry: Fix a bug when trying to set the PAD token the HuggingFace `text-generation` model had multiple EOS tokens.
   The handler picks the first EOS token as PAD token now.
+- Registry: Fix a bug when trying to pass `None` to array (`pd.dtype('O')`) in signature and pandas data handler.
 
 ### New Features
 

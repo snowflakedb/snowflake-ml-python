@@ -42,6 +42,7 @@ py_library(
 py_test(
     name = "spec_utils_test",
     srcs = ["spec_utils_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":spec_utils",
         ":test_file_helper",
@@ -79,6 +80,7 @@ py_test(
         "payload_utils_test.py",
         "payload_utils_test_helper.py",
     ],
+    tags = ["feature:jobs"],
     deps = [
         ":payload_utils",
         ":query_helper",
@@ -90,6 +92,7 @@ py_test(
 py_test(
     name = "stage_utils_test",
     srcs = ["stage_utils_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":stage_utils",
     ],
@@ -113,6 +116,7 @@ py_library(
 py_test(
     name = "interop_utils_test",
     srcs = ["interop_utils_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":interop_utils",
     ],
@@ -121,6 +125,7 @@ py_test(
 py_test(
     name = "mljob_launcher_test",
     srcs = ["mljob_launcher_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":constants",
         ":interop_utils",

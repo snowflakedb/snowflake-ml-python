@@ -1,6 +1,16 @@
 ---
 exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch)
 repos:
+  - repo: local
+    hooks:
+      - id: check-py-test-feature-tags
+        name: Check py_test feature area tags
+        description: Ensure all py_test targets have feature area tags
+        entry: python bazel/check_feature_tags.py --precommit
+        language: system
+        files: BUILD\.bazel$
+        stages:
+          - pre-commit
   - repo: https://github.com/asottile/pyupgrade
     rev: v2.31.1
     hooks:

@@ -86,6 +86,9 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                 df_col_data = utils.series_dropna(df_col_data)
                 df_col_dtype = df_col_data.dtype
 
+            if utils.check_if_series_is_empty(df_col_data):
+                continue
+
             if df_col_dtype == np.dtype("O"):
                 # Check if all objects have the same type
                 if not all(isinstance(data_row, type(df_col_data.iloc[0])) for data_row in df_col_data):

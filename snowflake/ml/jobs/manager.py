@@ -447,6 +447,10 @@ def _submit_job(
     spec_overrides = kwargs.pop("spec_overrides", None)
     enable_metrics = kwargs.pop("enable_metrics", True)
     query_warehouse = kwargs.pop("query_warehouse", None)
+    additional_payloads = kwargs.pop("additional_payloads", None)
+
+    if additional_payloads:
+        logger.warning("'additional_payloads' is in private preview since 1.9.1. Do not use it in production.")
 
     # Warn if there are unknown kwargs
     if kwargs:
@@ -477,9 +481,7 @@ def _submit_job(
 
     # Upload payload
     uploaded_payload = payload_utils.JobPayload(
-        source,
-        entrypoint=entrypoint,
-        pip_requirements=pip_requirements,
+        source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=additional_payloads
     ).upload(session, stage_path)
 
     # Generate service spec

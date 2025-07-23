@@ -1,5 +1,5 @@
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Any, Optional
 from unittest import mock
 
@@ -324,7 +324,7 @@ class SpecUtilsTests(parameterized.TestCase):
             )
             payload = types.UploadedPayload(
                 Path("@dummy_stage"),
-                [entrypoint],
+                [PurePath(f"{constants.APP_MOUNT_PATH}/{entrypoint}")],
             )
             spec = spec_utils.generate_service_spec(
                 None,  # type: ignore[arg-type] # (Don't need session since we mock out _get_image_spec)

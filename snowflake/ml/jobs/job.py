@@ -3,6 +3,7 @@ import logging
 import os
 import time
 from functools import cached_property
+from pathlib import Path
 from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overload
 
 import yaml
@@ -95,10 +96,24 @@ class MLJob(Generic[T], SerializableSessionMixin):
     @property
     def _result_path(self) -> str:
         """Get the job's result file location."""
-        result_path = self._container_spec["env"].get(constants.RESULT_PATH_ENV_VAR)
-        if result_path is None:
+        result_path_str = self._container_spec["env"].get(constants.RESULT_PATH_ENV_VAR)
+        if result_path_str is None:
             raise RuntimeError(f"Job {self.name} doesn't have a result path configured")
-        return f"{self._stage_path}/{result_path}"
+        volume_mounts = self._container_spec["volumeMounts"]
+        stage_mount_str = next(v for v in volume_mounts if v.get("name") == constants.STAGE_VOLUME_NAME)["mountPath"]
+
+        result_path = Path(result_path_str)
+        stage_mount = Path(stage_mount_str)
+        try:
+            relative_path = result_path.relative_to(stage_mount)
+        except ValueError:
+            if result_path.is_absolute():
+                raise ValueError(
+                    f"Result path {result_path} is absolute, but should be relative to stage mount {stage_mount}"
+                )
+            relative_path = result_path
+
+        return f"{self._stage_path}/{relative_path.as_posix()}"
 
     @overload
     def get_logs(
@@ -181,7 +196,10 @@ class MLJob(Generic[T], SerializableSessionMixin):
         start_time = time.monotonic()
         warning_shown = False
         while (status := self.status) not in TERMINAL_JOB_STATUSES:
-            if status == "PENDING" and not warning_shown:
+            elapsed = time.monotonic() - start_time
+            if elapsed >= timeout >= 0:
+                raise TimeoutError(f"Job {self.name} did not complete within {timeout} seconds")
+            elif status == "PENDING" and not warning_shown and elapsed >= 2:  # Only show warning after 2s
                 pool_info = _get_compute_pool_info(self._session, self._compute_pool)
                 if (pool_info.max_nodes - pool_info.active_nodes) < self.min_instances:
                     logger.warning(
@@ -189,8 +207,6 @@ class MLJob(Generic[T], SerializableSessionMixin):
                         f"{self.min_instances} nodes required). Job execution may be delayed."
                     )
                     warning_shown = True
-            if timeout >= 0 and (elapsed := time.monotonic() - start_time) >= timeout:
-                raise TimeoutError(f"Job {self.name} did not complete within {elapsed} seconds")
             time.sleep(delay)
             delay = min(delay * 1.2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
         return self.status

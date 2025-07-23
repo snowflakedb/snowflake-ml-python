@@ -120,6 +120,10 @@ def py_test(optional_dependencies = None, **attrs):
       optional_dependencies: see file-level document.
       **attrs: Rule attributes
     """
+
+    # Validate required feature area tag
+    _validate_feature_area_tag(attrs)
+
     if not check_for_test_name(native.package_name(), attrs):
         fail("A test target does not have a valid name!")
     if not check_for_tests_dependencies(native.package_name(), attrs):
@@ -133,6 +137,37 @@ def py_test(optional_dependencies = None, **attrs):
     # * https://github.com/bazelbuild/rules_python/issues/55
     attrs["legacy_create_init"] = 0
     native_py_test(**attrs)
+
+def _validate_feature_area_tag(attrs):
+    """Validates that a py_test target has a required feature area tag.
+
+    Args:
+        attrs: Rule attributes
+    """
+    VALID_FEATURE_AREAS = ["model_registry", "feature_store", "jobs", "observability", "cortex", "core", "modeling", "model_serving", "data", "none"]
+
+    tags = attrs.get("tags", [])
+    feature_tags = [tag for tag in tags if tag.startswith("feature:")]
+
+    if not feature_tags:
+        fail("py_test target '{}' must have a feature area tag in format 'feature:<feature_area>'. Valid feature areas: {}. For help: bazel run //bazel:check_feature_tags".format(
+            attrs.get("name", "unknown"),
+            ", ".join(VALID_FEATURE_AREAS),
+        ))
+
+    if len(feature_tags) > 1:
+        fail("py_test target '{}' can only have one feature area tag, found: {}".format(
+            attrs.get("name", "unknown"),
+            ", ".join(feature_tags),
+        ))
+
+    feature_area = feature_tags[0][8:]  # Remove "feature:" prefix
+    if feature_area not in VALID_FEATURE_AREAS:
+        fail("py_test target '{}' has invalid feature area '{}'. Valid feature areas: {}".format(
+            attrs.get("name", "unknown"),
+            feature_area,
+            ", ".join(VALID_FEATURE_AREAS),
+        ))
 
 def _path_inside_wheel(input_file):
     # input_file.short_path is sometimes relative ("../${repository_root}/foobar")

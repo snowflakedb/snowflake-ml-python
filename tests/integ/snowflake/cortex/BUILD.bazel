@@ -8,6 +8,7 @@ py_test(
     name = "complete_test",
     timeout = "long",
     srcs = ["complete_test.py"],
+    tags = ["feature:cortex"],
     deps = [
         "//snowflake/cortex:init",
         "//snowflake/cortex:schema_utils",
@@ -22,6 +23,7 @@ py_test(
     name = "embed_text_test",
     timeout = "long",
     srcs = ["embed_text_test.py"],
+    tags = ["feature:cortex"],
     deps = [
         "//snowflake/cortex:init",
         "//snowflake/ml/_internal/utils:snowflake_env",

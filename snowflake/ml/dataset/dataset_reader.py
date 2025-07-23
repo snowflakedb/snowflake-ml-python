@@ -1,5 +1,4 @@
 from typing import Any, Optional
-from warnings import warn
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -21,16 +20,11 @@ class DatasetReader(data_connector.DataConnector, mixins.SerializableSessionMixi
         self,
         ingestor: data_ingestor.DataIngestor,
         *,
-        session: snowpark.Session,
         snowpark_session: Optional[snowpark.Session] = None,
     ) -> None:
-        if snowpark_session is not None:
-            warn(
-                "Argument snowpark_session is deprecated and will be removed in a future release. Use session instead."
-            )
-            session = snowpark_session
-        super().__init__(ingestor, session=session)
+        super().__init__(ingestor)
 
+        self._session = snowpark_session
         self._fs_cached: Optional[snowfs.SnowFileSystem] = None
         self._files: Optional[list[str]] = None
 

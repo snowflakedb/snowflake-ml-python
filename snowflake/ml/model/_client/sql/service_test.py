@@ -17,62 +17,6 @@ class ServiceSQLTest(absltest.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
 
-    def test_build_model_container(self) -> None:
-        m_statement_params = {"test": "1"}
-        m_df = mock_data_frame.MockDataFrame(
-            collect_result=[Row("Image built successfully.")], collect_statement_params=m_statement_params
-        )
-        self.m_session.add_mock_sql(
-            """
-                CALL SYSTEM$BUILD_MODEL_CONTAINER('TEMP."test".MODEL', 'V1', '"my_pool"',
-                'TEMP."test"."image_repo"', 'FALSE', 'FALSE', '','MY_EAI')""",
-            copy.deepcopy(m_df),
-        )
-        c_session = cast(Session, self.m_session)
-        service_sql.ServiceSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).build_model_container(
-            database_name=None,
-            schema_name=None,
-            model_name=sql_identifier.SqlIdentifier("MODEL"),
-            version_name=sql_identifier.SqlIdentifier("V1"),
-            compute_pool_name=sql_identifier.SqlIdentifier("my_pool", case_sensitive=True),
-            image_repo_database_name=None,
-            image_repo_schema_name=None,
-            image_repo_name=sql_identifier.SqlIdentifier("image_repo", case_sensitive=True),
-            gpu=None,
-            force_rebuild=False,
-            external_access_integration=sql_identifier.SqlIdentifier("MY_EAI"),
-            statement_params=m_statement_params,
-        )
-
-        self.m_session.add_mock_sql(
-            """
-                CALL SYSTEM$BUILD_MODEL_CONTAINER('DB_1."sch_1"."model"', '"v1"', 'MY_POOL',
-                '"db_2".SCH_2.IMAGE_REPO', 'TRUE', 'TRUE', '', '"my_eai"')""",
-            copy.deepcopy(m_df),
-        )
-        service_sql.ServiceSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).build_model_container(
-            database_name=sql_identifier.SqlIdentifier("DB_1"),
-            schema_name=sql_identifier.SqlIdentifier("sch_1", case_sensitive=True),
-            model_name=sql_identifier.SqlIdentifier("model", case_sensitive=True),
-            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-            compute_pool_name=sql_identifier.SqlIdentifier("my_pool"),
-            image_repo_database_name=sql_identifier.SqlIdentifier("db_2", case_sensitive=True),
-            image_repo_schema_name=sql_identifier.SqlIdentifier("SCH_2"),
-            image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
-            gpu="1",
-            force_rebuild=True,
-            external_access_integration=sql_identifier.SqlIdentifier("my_eai", case_sensitive=True),
-            statement_params=m_statement_params,
-        )
-
     def test_deploy_model(self) -> None:
         m_statement_params = {"test": "1"}
         m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)

@@ -1,11 +1,13 @@
 from typing import Iterable, Optional
 from unittest import mock
 
+import cloudpickle as cp
 import numpy as np
 import torch
 import torch.utils.data as torch_data
 from absl.testing import absltest, parameterized
 
+from snowflake import snowpark
 from snowflake.ml.data import data_connector
 from snowflake.ml.data._internal import arrow_ingestor
 from snowflake.ml.fileset import parquet_test_util
@@ -270,6 +272,64 @@ class DataConnectorTest(parameterized.TestCase):
         with self.assertRaises(ImportError) as context:
             self._sut.to_ray_dataset()
         self.assertIn("Ray is not installed, please install ray in your local environment.", str(context.exception))
+
+    def test_pickle_basic(self) -> None:
+        """Test that DataConnector can be pickled and unpickled."""
+        mock_session = mock.Mock(spec=snowpark.Session)
+        mock_session.get_current_account.return_value = "ACCT"
+        mock_session.get_current_role.return_value = "ROLE"
+        mock_session.get_current_database.return_value = "DB"
+        mock_session.get_current_schema.return_value = "SCHEMA"
+        ingestor = arrow_ingestor.ArrowIngestor(mock_session, [f.name for f in self._files])
+        original_data_sources = ingestor.data_sources
+
+        # Test with a session in the DataConnector object
+        sut = data_connector.DataConnector(ingestor)
+        with mock.patch("snowflake.snowpark.session._active_sessions", {mock_session}):
+            pickled_dc = cp.dumps(sut)
+            unpickled_dc = cp.loads(pickled_dc)
+
+        self.assertIsNotNone(unpickled_dc)
+        self.assertIsInstance(unpickled_dc, data_connector.DataConnector)
+        self.assertIsNotNone(unpickled_dc._ingestor)
+        self.assertIsInstance(unpickled_dc._ingestor, arrow_ingestor.ArrowIngestor)
+        self.assertEqual(unpickled_dc.data_sources, original_data_sources)
+
+    def test_pickle_derived_class(self) -> None:
+        """Test that a derived class of DataConnector can be pickled and unpickled."""
+        mock_session = mock.Mock(spec=snowpark.Session)
+        mock_session.get_current_account.return_value = "ACCT"
+        mock_session.get_current_role.return_value = "ROLE"
+        mock_session.get_current_database.return_value = "DB"
+        mock_session.get_current_schema.return_value = "SCHEMA"
+        ingestor = arrow_ingestor.ArrowIngestor(mock_session, [f.name for f in self._files])
+        original_data_sources = ingestor.data_sources
+
+        class DerivedDataConnector(data_connector.DataConnector):
+            pass
+
+        # Test with a session in the DataConnector object
+        sut = DerivedDataConnector(ingestor)
+        with mock.patch("snowflake.snowpark.session._active_sessions", {mock_session}):
+            pickled_dc = cp.dumps(sut)
+            unpickled_dc = cp.loads(pickled_dc)
+
+        self.assertIsNotNone(unpickled_dc)
+        self.assertIsInstance(unpickled_dc, DerivedDataConnector)
+        self.assertIsNotNone(unpickled_dc._ingestor)
+        self.assertIsInstance(unpickled_dc._ingestor, arrow_ingestor.ArrowIngestor)
+        self.assertEqual(unpickled_dc.data_sources, original_data_sources)
+
+        # Test pickling the same DataConnector object again
+        with mock.patch("snowflake.snowpark.session._active_sessions", {mock_session}):
+            pickled_dc = cp.dumps(sut)
+            unpickled_dc = cp.loads(pickled_dc)
+
+        self.assertIsNotNone(unpickled_dc)
+        self.assertIsInstance(unpickled_dc, DerivedDataConnector)
+        self.assertIsNotNone(unpickled_dc._ingestor)
+        self.assertIsInstance(unpickled_dc._ingestor, arrow_ingestor.ArrowIngestor)
+        self.assertEqual(unpickled_dc.data_sources, original_data_sources)
 
 
 if __name__ == "__main__":

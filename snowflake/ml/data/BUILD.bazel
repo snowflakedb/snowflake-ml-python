@@ -49,6 +49,7 @@ py_test(
         "torch",
         "tensorflow",
     ],
+    tags = ["feature:data"],
     deps = [
         ":data_connector",
         "//snowflake/ml/fileset:parquet_test_util",

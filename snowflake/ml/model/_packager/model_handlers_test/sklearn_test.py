@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 import warnings
@@ -500,6 +501,38 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 explain_method = getattr(pk.model, "explain", None)
                 assert callable(transform_method)
                 self.assertEqual(explain_method, None)
+
+    def test_skl_pipeline_step_with_no_transform_method(self) -> None:
+        logger = logging.getLogger("snowflake.ml.model._packager.model_handlers.sklearn")
+
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        pipe = Pipeline([("passthrough", "passthrough"), ("regr", regr)])  # passthrough has no transform method
+        pipe.fit(iris_X, iris_y)
+
+        with tempfile.TemporaryDirectory() as tmpdir, self.assertLogs(logger, level="DEBUG") as log:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=pipe,
+                sample_input_data=iris_X,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SKLModelSaveOptions(),
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                self.assertEqual(explain_method, None)
+
+            self.assertEqual(len(log.output), 1)
+            self.assertIn("Explainability is disabled due to an exception.", log.output[0])
 
     def test_skl_with_cr_estimator(self) -> None:
         class SecondMockEstimator:

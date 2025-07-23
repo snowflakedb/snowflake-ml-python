@@ -4,6 +4,7 @@ py_test(
     name = "model_impl_integ_test",
     timeout = "long",
     srcs = ["model_impl_integ_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/registry",
@@ -18,6 +19,7 @@ py_test(
     name = "model_version_impl_integ_test",
     timeout = "long",
     srcs = ["model_version_impl_integ_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_version_impl",
@@ -32,6 +34,7 @@ py_test(
     name = "input_validation_integ_test",
     timeout = "long",
     srcs = ["input_validation_integ_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",

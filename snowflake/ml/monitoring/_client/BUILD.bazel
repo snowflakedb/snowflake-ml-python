@@ -36,6 +36,7 @@ py_test(
     srcs = [
         "model_monitor_sql_client_test.py",
     ],
+    tags = ["feature:observability"],
     deps = [
         ":model_monitor_sql_client",
         "//snowflake/ml/test_utils:mock_session",
@@ -47,6 +48,7 @@ py_test(
     srcs = [
         "model_monitor_sql_client_server_test.py",
     ],
+    tags = ["feature:observability"],
     deps = [
         ":model_monitor_sql_client",
         "//snowflake/ml/test_utils:mock_session",

@@ -21,10 +21,12 @@ class SerializableSessionMixin:
 
     def __getstate__(self) -> dict[str, Any]:
         """Customize pickling to exclude non-serializable session and related components."""
-        if hasattr(super(), "__getstate__"):
-            state: dict[str, Any] = super().__getstate__()  # type: ignore[misc]
-        else:
-            state = self.__dict__.copy()
+        parent_state = (
+            super().__getstate__()  # type: ignore[misc] # object.__getstate__ appears in 3.11
+            if hasattr(super(), "__getstate__")
+            else self.__dict__
+        )
+        state = dict(parent_state)  # Create a copy so we can safely modify the state
 
         # Save session metadata for validation during unpickling
         session = state.pop(_SESSION_KEY, None)

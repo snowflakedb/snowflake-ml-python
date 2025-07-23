@@ -71,10 +71,10 @@
     - build_essential
 # For fsspec[http] in conda
 - name_conda: aiohttp
-  dev_version_conda: 3.8.3
+  dev_version_conda: 3.9.5
   version_requirements_conda: '!=4.0.0a0, !=4.0.0a1'
 - name: anyio
-  dev_version: 3.5.0
+  dev_version: 4.2.0
   version_requirements: '>=3.5.0,<5'
 - name_conda: python-build
   name_pypi: build
@@ -92,22 +92,22 @@
   dev_version: 2.2.1
   version_requirements: '>=2.0.0'
 - name: cryptography
-  dev_version: 39.0.1
+  dev_version: 41.0.3
   version_requirements: ''
   # Skipping version requirements as it should come as part of connector.
   # Only used in connection_params.py, which is an util library anyways.
 - name: coverage
-  dev_version: 6.3.2
+  dev_version: 7.2.2
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask
-  dev_version: 2.1.3
+  dev_version: 2.2.2
 - name_pypi: fsspec[http]
   name_conda: fsspec
   dev_version: 2024.6.1
   version_requirements: '>=2024.6.1,<2026'
 - name: httpx
-  dev_version: 0.23.0
+  dev_version: 0.28.1
 - name: importlib_resources
   dev_version: 6.1.1
   version_requirements: '>=6.1.1, <7'
@@ -138,11 +138,11 @@
   requirements_extra_tags:
     - mlflow
 - name: moto
-  dev_version: 4.0.11
+  dev_version: 5.0.5
 - name: mypy
   dev_version: 1.10.0
 - name: networkx
-  dev_version: 2.8.4
+  dev_version: 3.1
 - name: numpy
   dev_version: 1.26.4
   version_requirements: '>=1.23,<3'
@@ -196,14 +196,14 @@
     - transformers
     - keras
 - name: pyyaml
-  dev_version: '6.0'
+  dev_version: 6.0.1
   version_requirements: '>=6.0,<7'
 - name: retrying
   dev_version: 1.3.3
   version_requirements: '>=1.3.3,<2'
 # For fsspec[http] in conda
 - name_conda: requests
-  dev_version_conda: 2.29.0
+  dev_version_conda: 2.31.0
   version_requirements_conda: ''
 - name: ruamel.yaml
   dev_version: 0.17.21
@@ -218,7 +218,7 @@
   tags:
     - build_essential
 - name: scipy
-  dev_version: 1.10.1
+  dev_version: 1.11.3
   version_requirements: '>=1.9,<2'
 - name: sentencepiece
   dev_version: 0.1.99
@@ -235,7 +235,7 @@
   dev_version: 3.15.0
   version_requirements: '>=3.15.0,<4'
 - name: snowflake.core
-  dev_version: 1.0.2
+  dev_version: 1.0.5
   version_requirements: '>=1.0.2,<2'
 - name: snowflake-snowpark-python
   dev_version: 1.28.0
@@ -270,7 +270,7 @@
     - torch
 - name: transformers
   dev_version: 4.39.3
-  version_requirements: '>=4.39.3,<5'
+  version_requirements: '>=4.39.3,<5,!=4.51.3'
   requirements_extra_tags:
     - transformers
 - name: types-requests
@@ -297,7 +297,7 @@
   tags:
     - build_essential
 - name: werkzeug
-  dev_version: 2.2.2
+  dev_version: 2.3.8
 - name: cachetools
   dev_version: 5.3.3
   version_requirements: '>=3.1.1,<6'
@@ -314,6 +314,9 @@
   version_requirements: '>=1.30.0,<2'
   requirements_extra_tags:
     - streamlit
+- name: platformdirs
+  dev_version: 4.3.7
+  version_requirements: <5
 - name: tqdm
   dev_version: 4.67.1
   version_requirements: <5

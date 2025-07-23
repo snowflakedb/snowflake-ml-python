@@ -9,7 +9,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import service_logger, sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
@@ -101,31 +101,48 @@ class ServiceOpsTest(parameterized.TestCase):
                 message=None,
             )
         ]
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_model_spec",
-        ) as mock_add_model_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_service_spec",
-        ) as mock_add_service_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_image_build_spec",
-        ) as mock_add_image_build_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_hf_logger_spec",
-        ) as mock_add_hf_logger, mock.patch.object(
-            file_utils, "upload_directory_to_stage", return_value=None
-        ) as mock_upload_directory_to_stage, mock.patch.object(
-            self.m_ops._service_client,
-            "deploy_model",
-            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-        ) as mock_deploy_model, mock.patch.object(
-            self.m_ops._service_client,
-            "get_service_container_statuses",
-            return_value=m_statuses,
-        ) as mock_get_service_container_statuses:
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_hf_logger_spec",
+            ) as mock_add_hf_logger,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+        ):
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
@@ -236,31 +253,48 @@ class ServiceOpsTest(parameterized.TestCase):
                 message=None,
             )
         ]
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_model_spec",
-        ) as mock_add_model_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_service_spec",
-        ) as mock_add_service_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_image_build_spec",
-        ) as mock_add_image_build_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_hf_logger_spec",
-        ) as mock_add_hf_logger, mock.patch.object(
-            file_utils, "upload_directory_to_stage", return_value=None
-        ) as mock_upload_directory_to_stage, mock.patch.object(
-            self.m_ops._service_client,
-            "deploy_model",
-            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-        ) as mock_deploy_model, mock.patch.object(
-            self.m_ops._service_client,
-            "get_service_container_statuses",
-            return_value=m_statuses,
-        ) as mock_get_service_container_statuses:
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_hf_logger_spec",
+            ) as mock_add_hf_logger,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+        ):
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
@@ -370,31 +404,48 @@ class ServiceOpsTest(parameterized.TestCase):
                 message=None,
             )
         ]
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_model_spec",
-        ) as mock_add_model_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_service_spec",
-        ) as mock_add_service_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_image_build_spec",
-        ) as mock_add_image_build_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_hf_logger_spec",
-        ) as mock_add_hf_logger, mock.patch.object(
-            file_utils, "upload_directory_to_stage", return_value=None
-        ) as mock_upload_directory_to_stage, mock.patch.object(
-            self.m_ops._service_client,
-            "deploy_model",
-            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-        ) as mock_deploy_model, mock.patch.object(
-            self.m_ops._service_client,
-            "get_service_container_statuses",
-            return_value=m_statuses,
-        ) as mock_get_service_container_statuses:
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_hf_logger_spec",
+            ) as mock_add_hf_logger,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+        ):
             self.m_ops.create_service(
                 database_name=None,
                 schema_name=None,
@@ -504,18 +555,29 @@ class ServiceOpsTest(parameterized.TestCase):
                 message=None,
             )
         ]
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",), mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",), mock.patch.object(
-            file_utils, "upload_directory_to_stage", return_value=None
-        ), mock.patch.object(
-            self.m_ops._service_client,
-            "deploy_model",
-            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-        ), mock.patch.object(
-            self.m_ops._service_client,
-            "get_service_container_statuses",
-            return_value=m_statuses,
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ),
         ):
             res = self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -625,28 +687,43 @@ class ServiceOpsTest(parameterized.TestCase):
             schema_name[1],
             sql_identifier.SqlIdentifier("SNOWPARK_TEMP_ABCDEF0123"),
         )
-        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage",) as mock_create_stage, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_ABCDEF0123"
-        ), mock.patch.object(self.m_ops._model_deployment_spec, "save",) as mock_save, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_model_spec",
-        ) as mock_add_model_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_job_spec",
-        ) as mock_add_job_spec, mock.patch.object(
-            self.m_ops._model_deployment_spec,
-            "add_image_build_spec",
-        ) as mock_add_image_build_spec, mock.patch.object(
-            file_utils, "upload_directory_to_stage", return_value=None
-        ) as mock_upload_directory_to_stage, mock.patch.object(
-            self.m_ops._service_client,
-            "deploy_model",
-            return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-        ) as mock_deploy_model, mock.patch.object(
-            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_input_df
-        ) as mock_convert_from_df, mock.patch.object(
-            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-        ) as mock_convert_to_df:
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_ABCDEF0123"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_job_spec",
+            ) as mock_add_job_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_input_df
+            ) as mock_convert_from_df,
+            mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+            ) as mock_convert_to_df,
+        ):
             self.m_ops.invoke_job_method(
                 target_method="predict",
                 signature=m_sig,
@@ -737,6 +814,87 @@ class ServiceOpsTest(parameterized.TestCase):
             mock_convert_to_df.assert_called_once_with(
                 m_output_df, features=m_sig.outputs, statement_params=self.m_statement_params
             )
+
+    def test_create_service_uses_operation_id_for_logging(self) -> None:
+        """Test that create_service generates operation_id and passes it to service loggers."""
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.DONE,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+        with (
+            mock.patch.object(self.m_ops._stage_client, "create_tmp_stage"),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(self.m_ops._model_deployment_spec, "save"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_service_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ),
+            mock.patch.object(
+                service_logger, "get_operation_id", return_value="test_operation_123"
+            ) as mock_get_operation_id,
+            mock.patch.object(service_logger, "get_logger") as mock_get_logger,
+        ):
+            # Mock the get_logger to return a mock logger
+            mock_logger = mock.MagicMock()
+            mock_get_logger.return_value = mock_logger
+
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
+                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
+                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                ingress_enabled=True,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="1",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
+                statement_params=self.m_statement_params,
+                hf_model_args=None,
+            )
+
+            # Verify operation_id was generated
+            mock_get_operation_id.assert_called_once()
+
+            # Verify get_logger was called with the operation_id
+            operation_id_calls = [
+                call for call in mock_get_logger.call_args_list if len(call[1]) > 0 and "operation_id" in call[1]
+            ]
+            self.assertGreater(len(operation_id_calls), 0, "get_logger should be called with operation_id")
+
+            # Verify the operation_id passed to get_logger matches what was generated
+            for call in operation_id_calls:
+                self.assertEqual(call[1]["operation_id"], "test_operation_123")
 
     def test_get_model_build_service_name(self) -> None:
         query_id = "01b6fc10-0002-c121-0000-6ed10736311e"

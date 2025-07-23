@@ -210,6 +210,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             model_inference_service=model_inference_service,
             model_inference_service_exists=False,
             force_rebuild=True,
+            operation_id=query_id,
         )
         log_thread.join()
 

@@ -2,7 +2,7 @@ import dataclasses
 import enum
 import logging
 import textwrap
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -68,43 +68,6 @@ class ServiceSQLClient(_base._BaseSQLClient):
     INSTANCE_STATUS = "instance_status"
     CONTAINER_STATUS = "status"
     MESSAGE = "message"
-
-    def build_model_container(
-        self,
-        *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        model_name: sql_identifier.SqlIdentifier,
-        version_name: sql_identifier.SqlIdentifier,
-        compute_pool_name: sql_identifier.SqlIdentifier,
-        image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_name: sql_identifier.SqlIdentifier,
-        gpu: Optional[Union[str, int]],
-        force_rebuild: bool,
-        external_access_integration: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> None:
-        actual_image_repo_database = image_repo_database_name or self._database_name
-        actual_image_repo_schema = image_repo_schema_name or self._schema_name
-        actual_model_database = database_name or self._database_name
-        actual_model_schema = schema_name or self._schema_name
-        fq_model_name = self.fully_qualified_object_name(actual_model_database, actual_model_schema, model_name)
-        fq_image_repo_name = identifier.get_schema_level_object_identifier(
-            actual_image_repo_database.identifier(),
-            actual_image_repo_schema.identifier(),
-            image_repo_name.identifier(),
-        )
-        is_gpu_str = "TRUE" if gpu else "FALSE"
-        force_rebuild_str = "TRUE" if force_rebuild else "FALSE"
-        query_result_checker.SqlResultValidator(
-            self._session,
-            (
-                f"CALL SYSTEM$BUILD_MODEL_CONTAINER('{fq_model_name}', '{version_name}', '{compute_pool_name}',"
-                f" '{fq_image_repo_name}', '{is_gpu_str}', '{force_rebuild_str}', '', '{external_access_integration}')"
-            ),
-            statement_params=statement_params,
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def deploy_model(
         self,

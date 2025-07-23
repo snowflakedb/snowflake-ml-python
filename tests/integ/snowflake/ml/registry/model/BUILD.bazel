@@ -31,6 +31,7 @@ py_test(
     name = "additional_import_test",
     srcs = ["additional_import_test.py"],
     data = [":ext_module"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -39,6 +40,7 @@ py_test(
 py_test(
     name = "multiple_model_test",
     srcs = ["multiple_model_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -47,6 +49,7 @@ py_test(
 py_test(
     name = "random_version_name_test",
     srcs = ["random_version_name_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -55,6 +58,7 @@ py_test(
 py_test(
     name = "fully_qualified_name_test",
     srcs = ["fully_qualified_name_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -64,6 +68,7 @@ py_test(
 py_test(
     name = "registry_initialization_test",
     srcs = ["registry_initialization_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/registry",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
@@ -76,6 +81,7 @@ py_test(
     timeout = "long",
     srcs = ["registry_sklearn_model_test.py"],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
@@ -90,6 +96,7 @@ py_test(
         "catboost",
     ],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
@@ -101,6 +108,7 @@ py_test(
     timeout = "long",
     srcs = ["registry_xgboost_model_test.py"],
     shard_count = 4,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
@@ -115,6 +123,7 @@ py_test(
         "lightgbm",
     ],
     shard_count = 6,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//tests/integ/snowflake/ml/test_utils:dataframe_utils",
@@ -126,6 +135,7 @@ py_test(
     timeout = "long",
     srcs = ["registry_custom_model_test.py"],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model:custom_model",
@@ -139,6 +149,7 @@ py_test(
     srcs = ["registry_pytorch_model_test.py"],
     optional_dependencies = ["torch"],
     shard_count = 4,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model/_signatures:pytorch_handler",
@@ -156,6 +167,7 @@ py_test(
         "tensorflow",
     ],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",
@@ -174,6 +186,7 @@ py_test(
         "lightgbm",
     ],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/dataset",
@@ -193,6 +206,7 @@ py_test(
     srcs = ["registry_mlflow_model_test.py"],
     optional_dependencies = ["mlflow"],
     shard_count = 4,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env",
@@ -206,6 +220,7 @@ py_test(
     srcs = ["registry_huggingface_pipeline_model_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 8,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env_utils",
@@ -218,6 +233,7 @@ py_test(
     srcs = ["registry_sentence_transformers_model_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 4,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env_utils",
@@ -229,6 +245,7 @@ py_test(
 py_test(
     name = "registry_in_sproc_test",
     srcs = ["registry_in_sproc_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal/utils:identifier",
@@ -243,6 +260,7 @@ py_test(
     main = "registry_keras_model_test.py",
     optional_dependencies = ["keras"],
     shard_count = 6,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",
@@ -258,6 +276,7 @@ py_test(
     main = "registry_keras_model_test.py",
     optional_dependencies = ["keras"],
     shard_count = 6,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model/_signatures:numpy_handler",
@@ -270,6 +289,7 @@ py_test(
     name = "registry_artifact_repository_test",
     srcs = ["registry_artifact_repository_test.py"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
     ],
@@ -278,6 +298,7 @@ py_test(
 py_test(
     name = "registry_target_platforms_test",
     srcs = ["registry_target_platforms_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal/utils:snowflake_env",

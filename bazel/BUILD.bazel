@@ -1,4 +1,4 @@
-load("@rules_python//python:defs.bzl", native_py_test = "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", native_py_test = "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -12,11 +12,20 @@ native_py_test(
     data = ["repo_paths.bzl"],
     python_version = "PY3",
     srcs_version = "PY3",
+    tags = ["feature:model_registry"],
 )
 
 sh_binary(
     name = "test_wrapper",
     srcs = ["test_wrapper.sh"],
+)
+
+py_binary(
+    name = "check_feature_tags",
+    srcs = ["check_feature_tags.py"],
+    main = "check_feature_tags.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
 )
 
 # Package group for common targets in the repo.

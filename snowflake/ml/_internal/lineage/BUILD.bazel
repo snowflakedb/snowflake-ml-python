@@ -13,6 +13,7 @@ py_library(
 py_test(
     name = "lineage_utils_test",
     srcs = ["lineage_utils_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":lineage_utils",
         "//snowflake/ml/utils:connection_params",

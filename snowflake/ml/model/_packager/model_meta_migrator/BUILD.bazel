@@ -13,6 +13,7 @@ py_library(
 py_test(
     name = "base_migrator_test",
     srcs = ["base_migrator_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":base_migrator",
         "//snowflake/ml/_internal:migrator_utils",
@@ -31,6 +32,7 @@ py_library(
 py_test(
     name = "migrator_plans_test",
     srcs = ["migrator_plans_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":migrator_plans",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
@@ -49,6 +51,7 @@ py_library(
 py_test(
     name = "migrator_v1_test",
     srcs = ["migrator_v1_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model/_packager/model_meta",
     ],

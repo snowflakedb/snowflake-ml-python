@@ -230,7 +230,8 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
             self.registry.log_model(
                 model=model,
                 model_name=name,
-                version_name=version,
+                # TODO(SNOW-2210046): Remove this once the live-commit deletes the version upon error
+                version_name=version + "_error",
                 sample_input_data=iris_X_df,
                 conda_dependencies=conda_dependencies,
                 options={"enable_explainability": True},

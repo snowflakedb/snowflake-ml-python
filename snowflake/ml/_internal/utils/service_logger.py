@@ -1,6 +1,13 @@
 import enum
 import logging
+import os
 import sys
+import tempfile
+import time
+import uuid
+from typing import Optional
+
+import platformdirs
 
 
 class LogColor(enum.Enum):
@@ -57,9 +64,102 @@ class CustomFormatter(logging.Formatter):
         return "\n".join(formatted_lines)
 
 
-def get_logger(logger_name: str, info_color: LogColor) -> logging.Logger:
+def _test_writability(directory: str) -> bool:
+    """Test if a directory is writable by creating and removing a test file."""
+    try:
+        os.makedirs(directory, exist_ok=True)
+        test_file = os.path.join(directory, f".write_test_{uuid.uuid4().hex[:8]}")
+        with open(test_file, "w") as f:
+            f.write("test")
+        os.remove(test_file)
+        return True
+    except OSError:
+        return False
+
+
+def _try_log_location(log_dir: str, operation_id: str) -> Optional[str]:
+    """Try to create a log file in the given directory if it's writable."""
+    if _test_writability(log_dir):
+        return os.path.join(log_dir, f"{operation_id}.log")
+    return None
+
+
+def _get_log_file_path(operation_id: str) -> Optional[str]:
+    """Get platform-independent log file path. Returns None if no writable location found."""
+    # Try locations in order of preference
+    locations = [
+        # Primary: User log directory
+        platformdirs.user_log_dir("snowflake-ml", "Snowflake"),
+        # Fallback 1: System temp directory
+        os.path.join(tempfile.gettempdir(), "snowflake-ml-logs"),
+        # Fallback 2: Current working directory
+        ".",
+    ]
+
+    for location in locations:
+        log_file_path = _try_log_location(location, operation_id)
+        if log_file_path:
+            return log_file_path
+
+    # No writable location found
+    return None
+
+
+def _get_or_create_parent_logger(operation_id: str) -> logging.Logger:
+    """Get or create a parent logger with FileHandler for the operation."""
+    parent_logger_name = f"snowflake_ml_operation_{operation_id}"
+    parent_logger = logging.getLogger(parent_logger_name)
+
+    # Only add handler if it doesn't exist yet
+    if not parent_logger.handlers:
+        log_file_path = _get_log_file_path(operation_id)
+
+        if log_file_path:
+            # Successfully found a writable location
+            try:
+                file_handler = logging.FileHandler(log_file_path)
+                file_handler.setFormatter(logging.Formatter("%(name)s [%(asctime)s] [%(levelname)s] %(message)s"))
+                parent_logger.addHandler(file_handler)
+                parent_logger.setLevel(logging.DEBUG)
+                parent_logger.propagate = False  # Don't propagate to root logger
+
+                # Log the file location
+                parent_logger.warning(f"Operation logs saved to: {log_file_path}")
+            except OSError as e:
+                # Even though we found a path, file creation failed
+                # Fall back to console-only logging
+                parent_logger.setLevel(logging.DEBUG)
+                parent_logger.propagate = False
+                parent_logger.warning(f"Could not create log file at {log_file_path}: {e}. Using console-only logging.")
+        else:
+            # No writable location found, use console-only logging
+            parent_logger.setLevel(logging.DEBUG)
+            parent_logger.propagate = False
+            parent_logger.warning("Filesystem appears to be readonly. Using console-only logging.")
+
+    return parent_logger
+
+
+def get_logger(logger_name: str, info_color: LogColor, operation_id: Optional[str] = None) -> logging.Logger:
     logger = logging.getLogger(logger_name)
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CustomFormatter(info_color))
     logger.addHandler(handler)
+
+    # If operation_id provided, set up parent logger with file handler
+    if operation_id:
+        parent_logger = _get_or_create_parent_logger(operation_id)
+        logger.parent = parent_logger
+        logger.propagate = True
+
     return logger
+
+
+def get_operation_id() -> str:
+    """Generate a unique operation ID."""
+    return f"model_deploy_{uuid.uuid4().hex[:8]}_{int(time.time())}"
+
+
+def get_log_file_location(operation_id: str) -> Optional[str]:
+    """Get the log file path for an operation ID. Returns None if no writable location available."""
+    return _get_log_file_path(operation_id)

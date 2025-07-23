@@ -13,6 +13,7 @@ py_library(
 py_test(
     name = "authentication_test",
     srcs = ["authentication_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":authentication",
     ],
@@ -31,6 +32,7 @@ py_library(
 py_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":sparse",
     ],
@@ -45,6 +47,7 @@ py_library(
 py_test(
     name = "sql_client_test",
     srcs = ["sql_client_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":sql_client",
     ],

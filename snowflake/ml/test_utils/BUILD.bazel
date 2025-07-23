@@ -39,6 +39,7 @@ py_library(
 py_test(
     name = "mock_data_frame_test",
     srcs = ["mock_data_frame_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":mock_data_frame",
     ],
@@ -57,6 +58,7 @@ py_library(
 py_test(
     name = "mock_session_test",
     srcs = ["mock_session_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":mock_data_frame",
         ":mock_session",

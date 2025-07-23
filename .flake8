@@ -25,6 +25,6 @@ max_line_length=120
 ; T2xx: Use print https://github.com/jbkahn/flake8-print
 
 extend-ignore=E203
-exclude=build,setup,tool,.tox,connector_python3,parameters.py
+exclude=build,setup,tool,.tox,connector_python3,parameters.py,check_feature_tags.py
 per-file-ignores =
     tests/*: T2

@@ -23,6 +23,7 @@ py_library(
 py_test(
     name = "core_test",
     srcs = ["core_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         "//snowflake/ml/test_utils:exception_utils",
@@ -44,6 +45,7 @@ py_library(
 py_test(
     name = "pandas_test",
     srcs = ["pandas_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":pandas_handler",
@@ -66,6 +68,7 @@ py_library(
 py_test(
     name = "numpy_test",
     srcs = ["numpy_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":numpy_handler",
@@ -90,6 +93,7 @@ py_test(
     name = "pytorch_test",
     srcs = ["pytorch_test.py"],
     optional_dependencies = ["torch"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":pytorch_handler",
@@ -117,6 +121,7 @@ py_test(
     optional_dependencies = [
         "tensorflow",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":tensorflow_handler",
@@ -140,6 +145,7 @@ py_library(
 py_test(
     name = "builtins_test",
     srcs = ["builtins_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":builtins_handler",
         ":core",
@@ -159,6 +165,7 @@ py_library(
 py_test(
     name = "utils_test",
     srcs = ["utils_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":utils",
@@ -182,6 +189,7 @@ py_library(
 py_test(
     name = "snowpark_test",
     srcs = ["snowpark_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":snowpark_handler",
@@ -208,6 +216,7 @@ py_library(
 py_test(
     name = "dmatrix_test",
     srcs = ["dmatrix_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":core",
         ":dmatrix_handler",

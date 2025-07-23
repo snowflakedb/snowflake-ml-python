@@ -19,6 +19,7 @@ py_library(
 py_test(
     name = "model_composer_test",
     srcs = ["model_composer_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_composer",
         "//snowflake/ml/_internal:env_utils",

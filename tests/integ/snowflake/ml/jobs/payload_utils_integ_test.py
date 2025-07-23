@@ -80,21 +80,26 @@ class PayloadUtilsTests(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         # Payload == entrypoint
-        (TestAsset("src/main.py"), TestAsset("src/main.py"), "main.py", 1),
-        (TestAsset("src/main.py"), None, "main.py", 1),
+        (TestAsset("src/main.py"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 1),
+        (TestAsset("src/main.py"), None, "/mnt/job_stage/app/main.py", 1),
         # Entrypoint as relative path inside payload directory
-        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "main.py", 6),
-        (TestAsset("src"), TestAsset("subdir/sub_main.py", resolve_path=False), "subdir/sub_main.py", 6),
-        (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "sub_main.py", 1),
+        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 14),
+        (
+            TestAsset("src"),
+            TestAsset("subdir/sub_main.py", resolve_path=False),
+            "/mnt/job_stage/app/subdir/sub_main.py",
+            14,
+        ),
+        (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "/mnt/job_stage/app/sub_main.py", 2),
         # Entrypoint as absolute path
-        (TestAsset("src"), TestAsset("src/main.py"), "main.py", 6),
-        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "subdir/sub_main.py", 6),
-        (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "sub_main.py", 1),
+        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 14),
+        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 14),
+        (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/sub_main.py", 2),
         # Function as payload
-        (function_with_pos_arg, pathlib.Path("function_payload.py"), "function_payload.py", 1),
-        (function_with_pos_arg, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
-        (function_with_pos_arg_free_vars, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
-        (function_with_pos_arg_modules, None, str(constants.DEFAULT_ENTRYPOINT_PATH), 1),
+        (function_with_pos_arg, pathlib.Path("function_payload.py"), "/mnt/job_stage/app/function_payload.py", 1),
+        (function_with_pos_arg, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
+        (function_with_pos_arg_free_vars, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
+        (function_with_pos_arg_modules, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
     )
     def test_upload_payload(
         self,
@@ -127,12 +132,30 @@ class PayloadUtilsTests(parameterized.TestCase):
         )
 
     @parameterized.parameters(
-        (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", f"@{_TEST_STAGE}/main.py", "main.py", 1),
-        (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "main.py", 1),
-        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "main.py", 6),
-        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "main.py", 6),
-        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/subdir/sub_main.py", "subdir/sub_main.py", 6),
-        (TestAsset("src"), f"@{_TEST_STAGE}/subdir", f"@{_TEST_STAGE}/subdir/sub_main.py", "sub_main.py", 1),
+        (
+            TestAsset("src/main.py"),
+            f"@{_TEST_STAGE}/main.py",
+            f"@{_TEST_STAGE}/main.py",
+            "/mnt/job_stage/app/main.py",
+            1,
+        ),
+        (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 1),
+        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 14),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 14),
+        (
+            TestAsset("src"),
+            f"@{_TEST_STAGE}/",
+            f"@{_TEST_STAGE}/subdir/sub_main.py",
+            "/mnt/job_stage/app/subdir/sub_main.py",
+            14,
+        ),
+        (
+            TestAsset("src"),
+            f"@{_TEST_STAGE}/subdir",
+            f"@{_TEST_STAGE}/subdir/sub_main.py",
+            "/mnt/job_stage/app/sub_main.py",
+            2,
+        ),
     )
     def test_copy_payload_positive(
         self,
@@ -184,6 +207,95 @@ class PayloadUtilsTests(parameterized.TestCase):
             expected_file_count,
             self.session.sql(f"LIST {stage_path}").collect(),
         )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (
+            TestAsset("src"),
+            TestAsset("src/third.py"),
+            [(TestAsset("src/subdir/utils").path.as_posix(), "remote.src.utils")],
+            "/mnt/job_stage/app/third.py",
+            15,
+        ),
+    )
+    def test_upload_payload_additional_packages_local(
+        self,
+        source: Union[TestAsset, Callable[..., Any]],
+        entrypoint: Optional[Union[TestAsset, pathlib.Path]],
+        additional_payloads: list[Union[str, tuple[str, str]]],
+        expected_entrypoint: str,
+        expected_file_count: int,
+    ) -> None:
+
+        stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+
+        payload = payload_utils.JobPayload(
+            pathlib.Path(source.path) if isinstance(source, TestAsset) else source,
+            pathlib.Path(entrypoint.path) if isinstance(entrypoint, TestAsset) else entrypoint,
+            additional_payloads=additional_payloads,
+        )
+        uploaded_payload = payload.upload(self.session, stage_path)
+        expected_file_count = expected_file_count + 6
+        actual_entrypoint = next(
+            item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
+        )
+        self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
+        self.assertEqual(
+            self.session.sql(f"LIST {stage_path}").count(),
+            expected_file_count,
+            self.session.sql(f"LIST {stage_path}").collect(),
+        )
+
+    def test_upload_payload_additional_packages_stage(self) -> None:
+        upload_files = TestAsset("src")
+
+        for path in {
+            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+            for p in upload_files.path.resolve().rglob("*")
+            if p.is_file()
+        }:
+            self.session.file.put(
+                str(path),
+                pathlib.Path(_TEST_STAGE).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
+                overwrite=True,
+                auto_compress=False,
+            )
+
+        test_cases = [
+            (
+                f"@{_TEST_STAGE}/",
+                f"@{_TEST_STAGE}/subdir/sub_main.py",
+                [(f"@{_TEST_STAGE}/subdir/utils", "remote.subdir.utils")],
+                "/mnt/job_stage/app/subdir/sub_main.py",
+                15,
+            ),
+            (
+                f"@{_TEST_STAGE}/subdir",
+                f"@{_TEST_STAGE}/subdir/sub_main.py",
+                [(f"@{_TEST_STAGE}/subdir2/", "subdir2")],
+                "/mnt/job_stage/app/sub_main.py",
+                4,
+            ),
+        ]
+        for source, entrypoint, additional_payloads, expected_entrypoint, expected_file_count in test_cases:
+            with self.subTest(source=source, entrypoint=entrypoint, additional_payloads=additional_payloads):
+                stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+                payload = payload_utils.JobPayload(
+                    source=source,
+                    entrypoint=entrypoint,
+                    additional_payloads=additional_payloads,
+                )
+
+                uploaded_payload = payload.upload(self.session, stage_path)
+                expected_file_count = expected_file_count + 6
+                actual_entrypoint = next(
+                    item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
+                )
+                self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
+                self.assertEqual(
+                    self.session.sql(f"LIST {stage_path}").count(),
+                    expected_file_count,
+                    self.session.sql(f"LIST {stage_path}").collect(),
+                )
 
 
 if __name__ == "__main__":

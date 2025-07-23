@@ -5,11 +5,12 @@ import os
 import subprocess
 import sys
 import tempfile
-from typing import Any, Callable, Generator, Optional
+from pathlib import Path, PurePath
+from typing import Any, Callable, Generator, Optional, Union
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import payload_utils, stage_utils
+from snowflake.ml.jobs._utils import payload_utils, stage_utils, types
 from snowflake.ml.jobs._utils.payload_utils_test_helper import dummy_function
 from snowflake.ml.jobs._utils.test_file_helper import resolve_path
 
@@ -122,8 +123,38 @@ class PayloadUtilsTests(parameterized.TestCase):
             resolved_source = payload_utils.resolve_source(payload.source)
             resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
             assert not callable(resolved_source)
-            self.assertEqual(resolved_source.as_posix(), stage_utils.identify_stage_path(source).absolute().as_posix())
+            self.assertEqual(resolved_source.as_posix(), payload_utils.resolve_path(source).absolute().as_posix())
             self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (
+            [(resolve_path("src"), "deep.deep.module")],
+            [(Path(resolve_path("src")), PurePath("deep/deep/module"))],
+        ),
+        (
+            [("@test_stage/src", "deep.deep.module")],
+            [(stage_utils.StagePath("@test_stage/src"), PurePath("deep/deep/module"))],
+        ),
+        (
+            [
+                (resolve_path("src"), "package.subpackage.module"),
+                ("@test_stage/deep/path", "very.deep.nested.module"),
+            ],
+            [
+                (Path(resolve_path("src")), PurePath("package/subpackage/module")),
+                (stage_utils.StagePath("@test_stage/deep/path"), PurePath("very/deep/nested/module")),
+            ],
+        ),
+    )
+    def test_resolve_additional_payloads(
+        self,
+        additional_payloads: list[Union[str, tuple[str, str]]],
+        expected_payloads_specs: list[types.PayloadSpec],
+    ) -> None:
+        with pushd(resolve_path("")):
+            additional_payloads_paths = payload_utils.resolve_additional_payloads(additional_payloads)
+            payload_specs = [(spec.source_path, spec.remote_relative_path) for spec in additional_payloads_paths]
+            self.assertEqual(payload_specs, expected_payloads_specs)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("not_exist", "file1.py", FileNotFoundError),  # not_exist/ does not exist
