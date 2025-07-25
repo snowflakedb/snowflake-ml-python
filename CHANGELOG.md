@@ -5,8 +5,7 @@
 ### Bug Fixes
 
 - DataConnector: Fix `self._session` related errors inside Container Runtime.
-
-### Behavior Changes
+- Registry: Fix a bug when trying to pass `None` to array (`pd.dtype('O')`) in signature and pandas data handler.
 
 ### New Features
 
@@ -44,7 +43,6 @@ with exp.start_run():
 
 - Registry: Fix a bug when trying to set the PAD token the HuggingFace `text-generation` model had multiple EOS tokens.
   The handler picks the first EOS token as PAD token now.
-- Registry: Fix a bug when trying to pass `None` to array (`pd.dtype('O')`) in signature and pandas data handler.
 
 ### New Features
 
