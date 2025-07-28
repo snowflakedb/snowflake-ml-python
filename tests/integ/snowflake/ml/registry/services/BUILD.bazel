@@ -31,6 +31,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_xgboost_model_deployment_pip_test.py"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -42,6 +43,7 @@ py_test(
     srcs = ["registry_sentence_transformers_model_deployment_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -53,6 +55,7 @@ py_test(
     srcs = ["registry_sentence_transformers_model_deployment_gpu_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -64,6 +67,7 @@ py_test(
     srcs = ["registry_huggingface_pipeline_model_deployment_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -75,6 +79,7 @@ py_test(
     srcs = ["registry_huggingface_pipeline_model_deployment_gpu_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -85,6 +90,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_sklearn_model_deployment_test.py"],
     shard_count = 2,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -95,6 +101,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],
     shard_count = 1,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],
@@ -105,6 +112,7 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
     shard_count = 3,
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",
     ],

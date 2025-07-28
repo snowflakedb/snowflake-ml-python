@@ -14,6 +14,10 @@ py_library(
 py_test(
     name = "callback_test",
     srcs = ["callback_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
+    tags = ["feature:observability"],
     deps = [
         ":callback",
         "//snowflake/ml/experiment:experiment_tracking",
@@ -33,6 +37,7 @@ py_test(
     name = "experiment_info_test",
     srcs = ["_experiment_info_test.py"],
     main = "_experiment_info_test.py",
+    tags = ["feature:observability"],
     deps = [":experiment_info"],
 )
 
@@ -48,18 +53,20 @@ py_library(
     ],
 )
 
-py_library(
-    name = "experiment",
-    srcs = ["__init__.py"],
+py_test(
+    name = "experiment_tracking_test",
+    srcs = ["experiment_tracking_test.py"],
+    tags = ["feature:observability"],
     deps = [
         ":experiment_tracking",
     ],
 )
 
-py_test(
-    name = "experiment_tracking_test",
-    srcs = ["experiment_tracking_test.py"],
+py_library(
+    name = "experiment",
+    srcs = ["__init__.py"],
     deps = [
+        ":callback",
         ":experiment_tracking",
     ],
 )
@@ -68,6 +75,6 @@ py_package(
     name = "experiment_pkg",
     packages = ["snowflake.ml"],
     deps = [
-        ":experiment_tracking",
+        ":experiment",
     ],
 )

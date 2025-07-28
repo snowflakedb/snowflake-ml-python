@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     import ray
 
 from snowflake import snowpark
+from snowflake.ml._internal.utils import mixins
 from snowflake.ml.data import data_ingestor, data_source, ingestor_utils
 
 _EMPTY_RECORD_BATCH = pa.RecordBatch.from_arrays([], [])
@@ -44,7 +45,7 @@ class _RecordBatchesBuffer:
         return popped
 
 
-class ArrowIngestor(data_ingestor.DataIngestor):
+class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin):
     """Read and parse the data sources into an Arrow Dataset and yield batched numpy array in dict."""
 
     def __init__(
@@ -71,6 +72,8 @@ class ArrowIngestor(data_ingestor.DataIngestor):
 
     @classmethod
     def from_sources(cls, session: snowpark.Session, sources: Sequence[data_source.DataSource]) -> "ArrowIngestor":
+        if session is None:
+            raise ValueError("Session is required")
         return cls(session, sources)
 
     @classmethod

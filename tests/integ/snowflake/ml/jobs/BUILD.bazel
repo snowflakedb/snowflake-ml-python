@@ -17,6 +17,7 @@ py_library(
         ":reflection_utils",
         ":test_constants",
         ":test_file_helper",
+        "//snowflake/ml/jobs",
     ],
 )
 
@@ -36,6 +37,7 @@ py_library(
 py_test(
     name = "payload_utils_integ_test",
     srcs = ["payload_utils_integ_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":test_file_helper",
         "//snowflake/ml/jobs/_utils:payload_utils",
@@ -49,6 +51,7 @@ py_test(
 py_test(
     name = "spec_utils_integ_test",
     srcs = ["spec_utils_integ_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         "//snowflake/ml/jobs/_utils:spec_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
@@ -61,6 +64,7 @@ py_test(
     timeout = "long",
     srcs = ["jobs_integ_test.py"],
     shard_count = 8,
+    tags = ["feature:jobs"],
     deps = [
         ":test_constants",
         ":test_file_helper",
@@ -78,9 +82,9 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
+    tags = ["feature:jobs"],
     deps = [
         ":modeling_job_test_base",
-        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
@@ -94,9 +98,9 @@ py_test(
         "torch",
         "keras",
     ],
+    tags = ["feature:jobs"],
     deps = [
         ":modeling_job_test_base",
-        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
@@ -109,9 +113,9 @@ py_test(
     optional_dependencies = [
         "keras",
     ],
+    tags = ["feature:jobs"],
     deps = [
         ":modeling_job_test_base",
-        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
@@ -121,6 +125,7 @@ py_test(
     name = "sf_interaction_integ_test",
     timeout = "long",
     srcs = ["sf_interaction_integ_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":test_constants",
         "//snowflake/ml/jobs",
@@ -134,9 +139,9 @@ py_test(
     name = "xgb_distributed_integ_test",
     timeout = "long",
     srcs = ["xgb_distributed_integ_test.py"],
+    tags = ["feature:jobs"],
     deps = [
         ":modeling_job_test_base",
-        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
@@ -149,9 +154,9 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
+    tags = ["feature:jobs"],
     deps = [
         ":modeling_job_test_base",
-        "//snowflake/ml/jobs",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

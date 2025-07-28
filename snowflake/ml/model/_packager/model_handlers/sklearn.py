@@ -1,3 +1,4 @@
+import logging
 import os
 import warnings
 from typing import TYPE_CHECKING, Callable, Optional, Sequence, Union, cast, final
@@ -23,6 +24,8 @@ from snowflake.ml.model._signatures import numpy_handler, utils as model_signatu
 if TYPE_CHECKING:
     import sklearn.base
     import sklearn.pipeline
+
+logger = logging.getLogger(__name__)
 
 
 def _unpack_container_runtime_pipeline(model: "sklearn.pipeline.Pipeline") -> "sklearn.pipeline.Pipeline":
@@ -201,13 +204,13 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 explain_target_method = str(explain_target_method)  # mypy complains if we don't cast to str here
 
                 input_signature = handlers_utils.get_input_signature(model_meta, explain_target_method)
-                transformed_background_data = _apply_transforms_up_to_last_step(
-                    model=model,
-                    data=background_data,
-                    input_feature_names=[spec.name for spec in input_signature],
-                )
 
                 try:
+                    transformed_background_data = _apply_transforms_up_to_last_step(
+                        model=model,
+                        data=background_data,
+                        input_feature_names=[spec.name for spec in input_signature],
+                    )
                     model_meta = handlers_utils.add_inferred_explain_method_signature(
                         model_meta=model_meta,
                         explain_method="explain",
@@ -217,6 +220,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                         output_feature_names=transformed_background_data.columns,
                     )
                 except Exception:
+                    logger.debug("Explainability is disabled due to an exception.", exc_info=True)
                     if kwargs.get("enable_explainability", None):
                         # user explicitly enabled explainability, so we should raise the error
                         raise ValueError(

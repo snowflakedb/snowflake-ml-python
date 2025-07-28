@@ -96,11 +96,13 @@ class ServiceLogMetadata:
         msg: str,
         is_model_build_service_done: bool,
         is_model_logger_service_done: bool,
+        operation_id: str,
         propagate: bool = False,
     ) -> None:
         to_service_logger = service_logger.get_logger(
             f"{to_service.display_service_name}-{to_service.instance_id}",
             to_service.log_color,
+            operation_id=operation_id,
         )
         to_service_logger.propagate = propagate
         self.service_logger = to_service_logger
@@ -195,6 +197,9 @@ class ServiceOperator:
         # hf model
         hf_model_args: Optional[HFModelArgs] = None,
     ) -> Union[str, async_job.AsyncJob]:
+
+        # Generate operation ID for this deployment
+        operation_id = service_logger.get_operation_id()
 
         # Fall back to the registry's database and schema if not provided
         database_name = database_name or self._database_name
@@ -327,6 +332,7 @@ class ServiceOperator:
             model_inference_service=model_inference_service,
             model_inference_service_exists=model_inference_service_exists,
             force_rebuild=force_rebuild,
+            operation_id=operation_id,
             statement_params=statement_params,
         )
 
@@ -347,6 +353,7 @@ class ServiceOperator:
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
+        operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> threading.Thread:
         """Start the service log streaming in a separate thread."""
@@ -360,6 +367,7 @@ class ServiceOperator:
                 model_inference_service,
                 model_inference_service_exists,
                 force_rebuild,
+                operation_id,
                 statement_params,
             ),
         )
@@ -372,6 +380,7 @@ class ServiceOperator:
         service_log_meta: ServiceLogMetadata,
         model_build_service: ServiceLogInfo,
         model_inference_service: ServiceLogInfo,
+        operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Helper function to fetch logs and update the service log metadata if needed.
@@ -386,6 +395,7 @@ class ServiceOperator:
             service_log_meta: The ServiceLogMetadata holds the state of the service log metadata.
             model_build_service: The ServiceLogInfo for the model build service.
             model_inference_service: The ServiceLogInfo for the model inference service.
+            operation_id: The operation ID for the service, e.g. "model_deploy_a1b2c3d4_1703875200"
             statement_params: The statement parameters to use for the service client.
         """
 
@@ -415,6 +425,7 @@ class ServiceOperator:
                     "Model build is not rebuilding the inference image, but using a previously built image.",
                     is_model_build_service_done=True,
                     is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                    operation_id=operation_id,
                 )
 
         try:
@@ -488,6 +499,7 @@ class ServiceOperator:
                     f"Model Logger service {service.display_service_name} complete.",
                     is_model_build_service_done=False,
                     is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                    operation_id=operation_id,
                 )
             # check if model build service is done
             # and transition the service log metadata to the model inference service
@@ -497,6 +509,7 @@ class ServiceOperator:
                     f"Image build service {service.display_service_name} complete.",
                     is_model_build_service_done=True,
                     is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                    operation_id=operation_id,
                 )
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
@@ -509,6 +522,7 @@ class ServiceOperator:
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
+        operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         """Stream service logs while the async job is running."""
@@ -516,14 +530,14 @@ class ServiceOperator:
         model_build_service_logger = service_logger.get_logger(  # BuildJobName
             model_build_service.display_service_name,
             model_build_service.log_color,
+            operation_id=operation_id,
         )
-        model_build_service_logger.propagate = False
         if model_logger_service:
             model_logger_service_logger = service_logger.get_logger(  # ModelLoggerName
                 model_logger_service.display_service_name,
                 model_logger_service.log_color,
+                operation_id=operation_id,
             )
-            model_logger_service_logger.propagate = False
 
             service_log_meta = ServiceLogMetadata(
                 service_logger=model_logger_service_logger,
@@ -557,6 +571,7 @@ class ServiceOperator:
                     force_rebuild=force_rebuild,
                     model_build_service=model_build_service,
                     model_inference_service=model_inference_service,
+                    operation_id=operation_id,
                     statement_params=statement_params,
                 )
             except Exception as ex:

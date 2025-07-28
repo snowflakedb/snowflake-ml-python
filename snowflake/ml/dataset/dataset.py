@@ -177,7 +177,7 @@ class Dataset(lineage_node.LineageNode):
                 original_exception=RuntimeError("No Dataset version selected."),
             )
         if self._reader is None:
-            self._reader = dataset_reader.DatasetReader.from_dataset(self)
+            self._reader = dataset_reader.DatasetReader.from_dataset(self, snowpark_session=self._session)
         return self._reader
 
     @staticmethod

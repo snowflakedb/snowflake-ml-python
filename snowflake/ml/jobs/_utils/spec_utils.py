@@ -181,7 +181,7 @@ def generate_service_spec(
     # TODO: Add hooks for endpoints for integration with TensorBoard etc
 
     env_vars = {
-        constants.PAYLOAD_DIR_ENV_VAR: stage_mount.as_posix(),
+        constants.PAYLOAD_DIR_ENV_VAR: constants.APP_MOUNT_PATH,
         constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
     }
     endpoints: list[dict[str, Any]] = []

@@ -23,6 +23,7 @@ py_library(
 py_test(
     name = "model_deployment_spec_test",
     srcs = ["model_deployment_spec_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_deployment_spec",
         "//snowflake/ml/_internal/utils:sql_identifier",

@@ -7,6 +7,7 @@ py_test(
     timeout = "long",
     srcs = ["grid_search_integ_test.py"],
     shard_count = 5,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
         "//snowflake/ml/modeling/ensemble:isolation_forest",
@@ -24,6 +25,7 @@ py_test(
     timeout = "long",
     srcs = ["randomized_search_integ_test.py"],
     shard_count = 3,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/modeling/decomposition:pca",
         "//snowflake/ml/modeling/ensemble:isolation_forest",
@@ -39,6 +41,7 @@ py_test(
     name = "search_single_node_test",
     srcs = ["search_single_node_test.py"],
     shard_count = 4,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/modeling/_internal:estimator_utils",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
@@ -53,6 +56,7 @@ py_test(
     timeout = "long",
     srcs = ["check_output_hpo_integ_test.py"],
     shard_count = 5,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/modeling/linear_model:linear_regression",
         "//snowflake/ml/modeling/model_selection:grid_search_cv",
@@ -65,6 +69,7 @@ py_test(
     timeout = "long",
     srcs = ["check_sklearn_inference_test.py"],
     shard_count = 2,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/modeling/linear_model:linear_regression",

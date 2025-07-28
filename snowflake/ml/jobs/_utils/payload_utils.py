@@ -2,6 +2,8 @@ import functools
 import inspect
 import io
 import itertools
+import keyword
+import logging
 import pickle
 import sys
 import textwrap
@@ -22,7 +24,10 @@ from snowflake.ml.jobs._utils import (
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 
+logger = logging.getLogger(__name__)
+
 cp.register_pickle_by_value(function_payload_utils)
+
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
 _SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
@@ -31,6 +36,9 @@ _STARTUP_SCRIPT_PATH = PurePath("startup.sh")
 _STARTUP_SCRIPT_CODE = textwrap.dedent(
     f"""
     #!/bin/bash
+
+    ##### Get system scripts directory #####
+    SYSTEM_DIR=$(cd "$(dirname "$0")" && pwd)
 
     ##### Perform common set up steps #####
     set -e # exit if a command fails
@@ -75,12 +83,14 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
     # Check if the local get_instance_ip.py script exists
     HELPER_EXISTS=$(
-        [ -f "get_instance_ip.py" ] && echo "true" || echo "false"
+        [ -f "${{SYSTEM_DIR}}/get_instance_ip.py" ] && echo "true" || echo "false"
     )
+
 
     # Configure IP address and logging directory
     if [ "$HELPER_EXISTS" = "true" ]; then
-        eth0Ip=$(python3 get_instance_ip.py "$SNOWFLAKE_SERVICE_NAME" --instance-index=-1)
+        eth0Ip=$(python3 "${{SYSTEM_DIR}}/get_instance_ip.py" \
+            "$SNOWFLAKE_SERVICE_NAME" --instance-index=-1)
     else
         eth0Ip=$(ifconfig eth0 2>/dev/null | sed -En -e 's/.*inet ([0-9.]+).*/\1/p')
     fi
@@ -103,7 +113,7 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
     # Determine if it should be a worker or a head node for batch jobs
     if [[ "$SNOWFLAKE_JOBS_COUNT" -gt 1 && "$HELPER_EXISTS" = "true" ]]; then
-        head_info=$(python3 get_instance_ip.py "$SNOWFLAKE_SERVICE_NAME" --head)
+        head_info=$(python3 "${{SYSTEM_DIR}}/get_instance_ip.py" "$SNOWFLAKE_SERVICE_NAME" --head)
         if [ $? -eq 0 ]; then
             # Parse the output using read
             read head_index head_ip head_status<<< "$head_info"
@@ -185,7 +195,7 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
         # Start the worker shutdown listener in the background
         echo "Starting worker shutdown listener..."
-        python worker_shutdown_listener.py
+        python "${{SYSTEM_DIR}}/worker_shutdown_listener.py"
         WORKER_EXIT_CODE=$?
 
         echo "Worker shutdown listener exited with code $WORKER_EXIT_CODE"
@@ -218,19 +228,59 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
         # After the user's job completes, signal workers to shut down
         echo "User job completed. Signaling workers to shut down..."
-        python signal_workers.py --wait-time 15
+        python "${{SYSTEM_DIR}}/signal_workers.py" --wait-time 15
         echo "Head node job completed. Exiting."
     fi
     """
 ).strip()
 
 
+def resolve_path(path: str) -> types.PayloadPath:
+    try:
+        stage_path = stage_utils.StagePath(path)
+    except ValueError:
+        return Path(path)
+    return stage_path
+
+
+def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_specs: types.PayloadSpec) -> None:
+    for source_path, remote_relative_path in payload_specs:
+        payload_stage_path = stage_path.joinpath(remote_relative_path) if remote_relative_path else stage_path
+        if isinstance(source_path, stage_utils.StagePath):
+            # only copy files into one stage directory from another stage directory, not from stage file
+            # due to incomplete of StagePath functionality
+            session.sql(f"copy files into {payload_stage_path.as_posix()}/ from {source_path.as_posix()}/").collect()
+        elif isinstance(source_path, Path):
+            if source_path.is_dir():
+                # Manually traverse the directory and upload each file, since Snowflake PUT
+                # can't handle directories. Reduce the number of PUT operations by using
+                # wildcard patterns to batch upload files with the same extension.
+                for path in {
+                    p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+                    for p in source_path.resolve().rglob("*")
+                    if p.is_file()
+                }:
+                    session.file.put(
+                        str(path),
+                        payload_stage_path.joinpath(path.parent.relative_to(source_path)).as_posix(),
+                        overwrite=True,
+                        auto_compress=False,
+                    )
+            else:
+                session.file.put(
+                    str(source_path.resolve()),
+                    payload_stage_path.as_posix(),
+                    overwrite=True,
+                    auto_compress=False,
+                )
+
+
 def resolve_source(
-    source: Union[Path, stage_utils.StagePath, Callable[..., Any]]
-) -> Union[Path, stage_utils.StagePath, Callable[..., Any]]:
+    source: Union[types.PayloadPath, Callable[..., Any]]
+) -> Union[types.PayloadPath, Callable[..., Any]]:
     if callable(source):
         return source
-    elif isinstance(source, (Path, stage_utils.StagePath)):
+    elif isinstance(source, types.PayloadPath):
         if not source.exists():
             raise FileNotFoundError(f"{source} does not exist")
         return source.absolute()
@@ -239,8 +289,8 @@ def resolve_source(
 
 
 def resolve_entrypoint(
-    source: Union[Path, stage_utils.StagePath, Callable[..., Any]],
-    entrypoint: Optional[Union[stage_utils.StagePath, Path]],
+    source: Union[types.PayloadPath, Callable[..., Any]],
+    entrypoint: Optional[types.PayloadPath],
 ) -> types.PayloadEntrypoint:
     if callable(source):
         # Entrypoint is generated for callable payloads
@@ -289,6 +339,73 @@ def resolve_entrypoint(
     )
 
 
+def resolve_additional_payloads(
+    additional_payloads: Optional[list[Union[str, tuple[str, str]]]]
+) -> list[types.PayloadSpec]:
+    """
+    Determine how to stage local packages so that imports continue to work.
+
+    Args:
+        additional_payloads: A list of directory paths, each optionally paired with a dot-separated
+            import path
+            e.g. [("proj/src/utils", "src.utils"), "proj/src/helper"]
+            if there is no import path, the last part of path will be considered as import path
+            e.g. the import path of "proj/src/helper" is "helper"
+
+    Returns:
+        A list of payloadSpec for additional payloads.
+
+    Raises:
+        FileNotFoundError: If any specified package path does not exist.
+        ValueError: If the format of local_packages is invalid.
+
+    """
+    if not additional_payloads:
+        return []
+
+    logger.warning(
+        "When providing a stage path as an additional payload, "
+        "please ensure it points to a directory. "
+        "Files are not currently supported."
+    )
+
+    additional_payloads_paths = []
+    for pkg in additional_payloads:
+        if isinstance(pkg, str):
+            source_path = resolve_path(pkg).absolute()
+            module_path = source_path.name
+        elif isinstance(pkg, tuple):
+            try:
+                source_path_str, module_path = pkg
+            except ValueError:
+                raise ValueError(
+                    f"Invalid format in `additional_payloads`. "
+                    f"Expected a tuple of (source_path, module_path). Got {pkg}"
+                )
+            source_path = resolve_path(source_path_str).absolute()
+        else:
+            raise ValueError("the format of additional payload is not correct")
+
+        if not source_path.exists():
+            raise FileNotFoundError(f"{source_path} does not exist")
+
+        if isinstance(source_path, Path):
+            if source_path.is_file():
+                raise ValueError(f"file is not supported for additional payloads: {source_path}")
+
+        module_parts = module_path.split(".")
+        for part in module_parts:
+            if not part.isidentifier() or keyword.iskeyword(part):
+                raise ValueError(
+                    f"Invalid module import path '{module_path}'. "
+                    f"'{part}' is not a valid Python identifier or is a keyword."
+                )
+
+        dest_path = PurePath(*module_parts)
+        additional_payloads_paths.append(types.PayloadSpec(source_path, dest_path))
+    return additional_payloads_paths
+
+
 class JobPayload:
     def __init__(
         self,
@@ -296,11 +413,13 @@ class JobPayload:
         entrypoint: Optional[Union[str, Path]] = None,
         *,
         pip_requirements: Optional[list[str]] = None,
+        additional_payloads: Optional[list[Union[str, tuple[str, str]]]] = None,
     ) -> None:
         # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
-        self.source = stage_utils.identify_stage_path(source) if isinstance(source, str) else source
-        self.entrypoint = stage_utils.identify_stage_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
+        self.source = resolve_path(source) if isinstance(source, str) else source
+        self.entrypoint = resolve_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
+        self.additional_payloads = additional_payloads
 
     def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
         # Prepare local variables
@@ -308,6 +427,7 @@ class JobPayload:
         source = resolve_source(self.source)
         entrypoint = resolve_entrypoint(source, self.entrypoint)
         pip_requirements = self.pip_requirements or []
+        additional_payload_specs = resolve_additional_payloads(self.additional_payloads)
 
         # Create stage if necessary
         stage_name = stage_path.parts[0].lstrip("@")
@@ -323,12 +443,13 @@ class JobPayload:
                 params=[stage_name],
             )
 
-        # Upload payload to stage
-        if not isinstance(source, (Path, stage_utils.StagePath)):
+        # Upload payload to stage - organize into app/ subdirectory
+        app_stage_path = stage_path.joinpath(constants.APP_STAGE_SUBPATH)
+        if not isinstance(source, types.PayloadPath):
             source_code = generate_python_code(source, source_code_display=True)
             _ = session.file.put_stream(
                 io.BytesIO(source_code.encode()),
-                stage_location=stage_path.joinpath(entrypoint.file_path).as_posix(),
+                stage_location=app_stage_path.joinpath(entrypoint.file_path).as_posix(),
                 auto_compress=False,
                 overwrite=True,
             )
@@ -340,68 +461,48 @@ class JobPayload:
             # copy payload to stage
             if source == entrypoint.file_path:
                 source = source.parent
-            source_path = source.as_posix() + "/"
-            session.sql(f"copy files into {stage_path}/ from {source_path}").collect()
+            upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
 
         elif isinstance(source, Path):
-            if source.is_dir():
-                # Manually traverse the directory and upload each file, since Snowflake PUT
-                # can't handle directories. Reduce the number of PUT operations by using
-                # wildcard patterns to batch upload files with the same extension.
-                for path in {
-                    p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-                    for p in source.resolve().rglob("*")
-                    if p.is_file()
-                }:
-                    session.file.put(
-                        str(path),
-                        stage_path.joinpath(path.parent.relative_to(source)).as_posix(),
-                        overwrite=True,
-                        auto_compress=False,
-                    )
-            else:
-                session.file.put(
-                    str(source.resolve()),
-                    stage_path.as_posix(),
-                    overwrite=True,
-                    auto_compress=False,
-                )
+            upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
+            if source.is_file():
                 source = source.parent
 
-        # Upload requirements
+        upload_payloads(session, app_stage_path, *additional_payload_specs)
+
+        # Upload requirements to app/ directory
         # TODO: Check if payload includes both a requirements.txt file and pip_requirements
         if pip_requirements:
             # Upload requirements.txt to stage
             session.file.put_stream(
                 io.BytesIO("\n".join(pip_requirements).encode()),
-                stage_location=stage_path.joinpath("requirements.txt").as_posix(),
+                stage_location=app_stage_path.joinpath("requirements.txt").as_posix(),
                 auto_compress=False,
                 overwrite=True,
             )
 
-        # Upload startup script
+        # Upload startup script to system/ directory within payload
+        system_stage_path = stage_path.joinpath(constants.SYSTEM_STAGE_SUBPATH)
         # TODO: Make sure payload does not include file with same name
         session.file.put_stream(
             io.BytesIO(_STARTUP_SCRIPT_CODE.encode()),
-            stage_location=stage_path.joinpath(_STARTUP_SCRIPT_PATH).as_posix(),
+            stage_location=system_stage_path.joinpath(_STARTUP_SCRIPT_PATH).as_posix(),
             auto_compress=False,
             overwrite=False,  # FIXME
         )
 
-        # Upload system scripts
         scripts_dir = Path(__file__).parent.joinpath("scripts")
         for script_file in scripts_dir.glob("*"):
             if script_file.is_file():
                 session.file.put(
                     script_file.as_posix(),
-                    stage_path.as_posix(),
+                    system_stage_path.as_posix(),
                     overwrite=True,
                     auto_compress=False,
                 )
-
         python_entrypoint: list[Union[str, PurePath]] = [
-            PurePath("mljob_launcher.py"),
-            entrypoint.file_path.relative_to(source),
+            PurePath(f"{constants.SYSTEM_MOUNT_PATH}/mljob_launcher.py"),
+            PurePath(f"{constants.APP_MOUNT_PATH}/{entrypoint.file_path.relative_to(source).as_posix()}"),
         ]
         if entrypoint.main_func:
             python_entrypoint += ["--script_main_func", entrypoint.main_func]
@@ -410,7 +511,7 @@ class JobPayload:
             stage_path=stage_path,
             entrypoint=[
                 "bash",
-                _STARTUP_SCRIPT_PATH,
+                f"{constants.SYSTEM_MOUNT_PATH}/{_STARTUP_SCRIPT_PATH}",
                 *python_entrypoint,
             ],
         )

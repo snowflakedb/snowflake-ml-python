@@ -2,7 +2,7 @@
 spec:
   containers:
     - args:
-        - /mnt/app/main.py
+        - /mnt/job_stage/app/main.py
       image: dummy_repo/dummy_image:latest
       name: main
       resources:
@@ -21,7 +21,7 @@ spec:
           name: user-logs
         - mountPath: /dev/shm
           name: dshm
-        - mountPath: /mnt/app
+        - mountPath: /mnt/job_stage
           name: stage-volume
   volumes:
     - name: system-logs

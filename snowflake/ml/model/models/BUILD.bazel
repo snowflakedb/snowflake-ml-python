@@ -21,6 +21,7 @@ py_test(
     name = "huggingface_pipeline_test",
     srcs = ["huggingface_pipeline_test.py"],
     optional_dependencies = ["transformers"],
+    tags = ["feature:model_registry"],
     deps = [
         ":huggingface_pipeline",
         "//snowflake/ml/test_utils:mock_session",

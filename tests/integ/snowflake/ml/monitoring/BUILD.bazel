@@ -4,6 +4,7 @@ py_test(
     name = "model_monitor_integ_test",
     timeout = "long",
     srcs = ["model_monitor_integ_test.py"],
+    tags = ["feature:observability"],
     deps = [
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/registry:registry_impl",
@@ -23,6 +24,7 @@ py_test(
         "altair",
         "streamlit",
     ],
+    tags = ["feature:observability"],
     deps = [
         "//snowflake/ml/monitoring:explain_visualize",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",

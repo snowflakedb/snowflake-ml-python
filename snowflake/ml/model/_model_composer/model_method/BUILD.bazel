@@ -40,6 +40,7 @@ py_test(
     data = [
         ":function_fixtures",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":function_generator",
         ":model_method",
@@ -66,6 +67,7 @@ py_test(
     data = [
         ":function_fixtures",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":function_generator",
         ":model_method",

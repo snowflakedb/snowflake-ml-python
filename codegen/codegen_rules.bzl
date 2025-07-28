@@ -148,5 +148,5 @@ def autogen_tests_for_estimators(module, module_root_dir, estimator_info_list):
             legacy_create_init = 0,
             shard_count = 5,
             optional_dependencies = optional_dependencies,
-            tags = ["autogen"],
+            tags = ["autogen", "feature:modeling"],
         )

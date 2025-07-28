@@ -49,6 +49,7 @@ class SFStageFileSystemTest(absltest.TestCase):
         cls.mock_connection = absltest.mock.MagicMock(spec=connection.SnowflakeConnection)
 
         # Setup the backend server
+        assert cls.server._server is not None, "Moto server should be running after start()"
         cls.ENDPOINT_URI = f"http://localhost:{cls.server._server.port}/"
         s3_resource = boto3.resource("s3", "us-east-1", endpoint_url=cls.ENDPOINT_URI)
         s3_client = boto3.client("s3", "us-east-1", endpoint_url=cls.ENDPOINT_URI)

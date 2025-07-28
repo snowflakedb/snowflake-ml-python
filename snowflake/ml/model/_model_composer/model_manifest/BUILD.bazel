@@ -48,6 +48,7 @@ py_test(
         ":manifest_fixtures",
         "//snowflake/ml/model/_model_composer/model_method:function_fixtures",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_manifest",
         "//snowflake/ml/_internal:env_utils",

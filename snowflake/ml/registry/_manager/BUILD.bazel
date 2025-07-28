@@ -32,6 +32,7 @@ py_test(
     srcs = [
         "model_manager_test.py",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_manager",
         "//snowflake/ml/_internal:env",

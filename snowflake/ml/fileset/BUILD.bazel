@@ -16,6 +16,7 @@ py_library(
 py_test(
     name = "stage_fs_test",
     srcs = ["stage_fs_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":stage_fs",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -35,6 +36,7 @@ py_library(
 py_test(
     name = "embedded_stage_fs_test",
     srcs = ["embedded_stage_fs_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":embedded_stage_fs",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -56,6 +58,7 @@ py_library(
 py_test(
     name = "sfcfs_test",
     srcs = ["sfcfs_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":sfcfs",
     ],
@@ -73,6 +76,7 @@ py_library(
 py_test(
     name = "snowfs_test",
     srcs = ["snowfs_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":snowfs",
     ],
@@ -106,6 +110,7 @@ py_library(
 py_test(
     name = "fileset_test",
     srcs = ["fileset_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         ":fileset",
         "//snowflake/ml/_internal/exceptions:fileset_errors",

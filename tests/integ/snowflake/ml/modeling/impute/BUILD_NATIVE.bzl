@@ -14,4 +14,5 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )

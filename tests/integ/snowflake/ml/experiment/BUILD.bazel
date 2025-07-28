@@ -4,6 +4,23 @@ py_test(
     name = "experiment_tracking_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_integ_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        "//snowflake/ml/_internal/utils:snowflake_env",
+        "//snowflake/ml/experiment",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
+    name = "experiment_autolog_integ_test",
+    timeout = "long",
+    srcs = ["experiment_autolog_integ_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
+    tags = ["feature:observability"],
     deps = [
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",

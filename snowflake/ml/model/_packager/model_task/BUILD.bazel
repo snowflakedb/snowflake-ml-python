@@ -18,6 +18,7 @@ py_test(
         "catboost",
         "lightgbm",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_task_utils",
         "//snowflake/ml/model:model_signature",

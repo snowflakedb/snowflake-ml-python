@@ -2,7 +2,7 @@
 spec:
   containers:
     - args:
-        - /mnt/app/main.py
+        - /mnt/job_stage/app/main.py
         - pos_arg
         - --named_arg
         - value
@@ -22,7 +22,7 @@ spec:
           name: user-logs
         - mountPath: /dev/shm
           name: dshm
-        - mountPath: /mnt/app
+        - mountPath: /mnt/job_stage
           name: stage-volume
   volumes:
     - name: system-logs

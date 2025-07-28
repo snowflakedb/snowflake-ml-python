@@ -12,4 +12,4 @@ dependencies:
   - sentencepiece>=0.1.95,<0.2.0
   - tokenizers>=0.15.1,<1
   - torchdata>=0.4,<1
-  - transformers>=4.39.3,<5
+  - transformers>=4.39.3,<5,!=4.51.3

@@ -4,6 +4,7 @@ py_test(
     name = "env_utils_integ_test",
     timeout = "long",
     srcs = ["env_utils_integ_test.py"],
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
@@ -16,6 +17,7 @@ py_test(
     name = "file_utils_integ_test",
     timeout = "long",
     srcs = ["file_utils_integ_test.py"],
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/_internal:file_utils",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
@@ -26,6 +28,7 @@ py_test(
     name = "snowpark_handlers_test",
     timeout = "long",
     srcs = ["snowpark_handlers_test.py"],
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/modeling/_internal:estimator_utils",

@@ -423,6 +423,23 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         ):
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
 
+        df = pd.DataFrame.from_records(
+            [
+                {"a": ["a", "b", "c"]},
+                {"a": ["a", "b", "c", "d"]},
+                {"a": None},
+            ],
+            columns=["a"],
+        )
+        df["a"] = df["a"].astype(np.dtype("O"))
+        pandas_handler.PandasDataFrameHandler.validate(df)
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [
+                core.FeatureSpec("a", core.DataType.STRING, shape=(-1,)),
+            ],
+        )
+
     def test_convert_to_df_pd_DataFrame(self) -> None:
         a = np.array([[2, 5], [6, 8]])
         li = [[2, 5], [6, 8]]

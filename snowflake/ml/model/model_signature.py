@@ -272,6 +272,8 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                     ),
                 )
         else:
+            if utils.check_if_series_is_empty(data_col):
+                continue
             if isinstance(data_col.iloc[0], list):
                 if not ft_shape:
                     raise snowml_exceptions.SnowflakeMLException(

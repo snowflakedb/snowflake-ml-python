@@ -8,6 +8,7 @@ py_test(
     name = "lineage_integ_test",
     testonly = True,
     srcs = ["lineage_integ_test.py"],
+    tags = ["feature:feature_store"],
     deps = [
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/lineage",

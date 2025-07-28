@@ -88,6 +88,7 @@ py_test(
     name = "common_test_base_test",
     timeout = "long",
     srcs = ["common_test_base_test.py"],
+    tags = ["feature:core"],
     deps = [
         ":common_test_base",
     ],

@@ -12,6 +12,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -25,6 +26,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:sparse",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -37,6 +39,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -47,6 +50,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -57,6 +61,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -69,6 +74,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -84,6 +90,7 @@ def get_build_rules_for_native_impl():
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
         data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -96,6 +103,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -108,6 +116,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -118,6 +127,7 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )
 
     py_test(
@@ -140,4 +150,5 @@ def get_build_rules_for_native_impl():
             "//snowflake/ml/utils:connection_params",
             "//tests/integ/snowflake/ml/modeling/framework:utils",
         ],
+        tags = ["feature:modeling"],
     )

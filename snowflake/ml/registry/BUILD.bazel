@@ -37,6 +37,7 @@ py_test(
     srcs = [
         "registry_test.py",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry_impl",
         "//snowflake/ml/_internal:platform_capabilities",
@@ -49,6 +50,7 @@ py_test(
 py_test(
     name = "package_visibility_test",
     srcs = ["package_visibility_test.py"],
+    tags = ["feature:model_registry"],
     deps = [
         ":registry",
     ],

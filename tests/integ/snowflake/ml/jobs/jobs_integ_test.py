@@ -76,7 +76,7 @@ class JobManagerTest(parameterized.TestCase):
         kwargs = {**default_kwargs, **kwargs}
 
         func_source = inspect.getsource(func)
-        payload_str = textwrap.dedent(func_source) + "\n" + func.__name__ + "()\n"
+        payload_str = textwrap.dedent(func_source) + "\n\n__return__ = " + func.__name__ + "()\n"
         with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
             temp_file.write(payload_str.encode("utf-8"))
             temp_file.flush()
@@ -584,6 +584,7 @@ class JobManagerTest(parameterized.TestCase):
     def test_job_data_connector(self) -> None:
         from snowflake.ml._internal.utils import mixins
         from snowflake.ml.data import data_connector
+        from snowflake.ml.data._internal import arrow_ingestor
 
         num_rows = 100
 
@@ -598,21 +599,22 @@ class JobManagerTest(parameterized.TestCase):
             f"SELECT uniform(1, 1000, random()) as random_val FROM table(generator(rowcount => {num_rows}))"
         )
         dc = data_connector.DataConnector.from_dataframe(df)
-        assert "Arrow" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
+        self.assertIsInstance(dc._ingestor, arrow_ingestor.ArrowIngestor)
 
         # TODO(SNOW-2182155): Remove this once headless backend receives updated SnowML with unpickle support
         #       Register key modules to be picklable by value to avoid version desync in this test
         cp.register_pickle_by_value(mixins)
-        cp.register_pickle_by_value(data_connector)
+        cp.register_pickle_by_value(arrow_ingestor)
         try:
             job = runtime_func(dc)
         finally:
             cp.unregister_pickle_by_value(mixins)
-            cp.unregister_pickle_by_value(data_connector)
+            cp.unregister_pickle_by_value(arrow_ingestor)
 
         self.assertEqual(job.wait(), "DONE", job.get_logs())
         dc_unpickled = job.result()
         self.assertIsInstance(dc_unpickled, data_connector.DataConnector)
+        self.assertIsInstance(dc_unpickled._ingestor, arrow_ingestor.ArrowIngestor)
         self.assertEqual(dc.to_pandas().shape, dc_unpickled.to_pandas().shape)
 
     def test_multinode_job_basic(self) -> None:
@@ -658,24 +660,42 @@ class JobManagerTest(parameterized.TestCase):
         self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         self.assertTrue("test succeeded" in job.get_logs())
 
-    def test_multinode_job_wait_for_min_instances(self) -> None:
-        def get_cluster_size() -> None:
+    def test_multinode_job_wait_for_instances(self) -> None:
+        def get_cluster_size() -> int:
             from common_utils import common_util as mlrs_util
 
-            print("num_nodes:", mlrs_util.get_num_ray_nodes())
+            num_nodes = mlrs_util.get_num_ray_nodes()
+            print("num_nodes:", num_nodes)
 
-        job = self._submit_func_as_file(get_cluster_size, target_instances=2, min_instances=2)
-        self.assertEqual(job.target_instances, 2)
-        self.assertEqual(job.min_instances, 2)
-        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        # Verify min_instances met
+        job1 = self._submit_func_as_file(get_cluster_size, target_instances=3, min_instances=2)
+        self.assertEqual(job1.target_instances, 3)
+        self.assertEqual(job1.min_instances, 2)
+        self.assertEqual(job1.wait(), "DONE", job1.get_logs(verbose=True))
         self.assertIsNotNone(
-            match_group := re.search(r"num_nodes: (\d+)", concise_logs := job.get_logs(verbose=False)),
+            match_group := re.search(r"num_nodes: (\d+)", concise_logs := job1.get_logs(verbose=False)),
             concise_logs,
         )
-        self.assertEqual(match_group.group(1), "2", match_group.groups())
+        self.assertBetween(int(match_group.group(1)), 2, 3, match_group.groups())
 
         # Check verbose log to ensure min_instances was checked
-        self.assertTrue("Minimum instance requirement met: 2 instances available" in job.get_logs(verbose=True))
+        self.assertIn("instance requirement met", job1.get_logs(verbose=True))
+
+        # Verify min_wait is respected
+        job2 = self._submit_func_as_file(
+            get_cluster_size,
+            target_instances=2,
+            min_instances=1,
+            env_vars={"MLRS_INSTANCES_MIN_WAIT": 720},
+        )
+        self.assertEqual(job2.target_instances, 2)
+        self.assertEqual(job2.min_instances, 1)
+        self.assertEqual(job2.wait(), "DONE", job2.get_logs(verbose=True))
+        self.assertIsNotNone(
+            match_group := re.search(r"num_nodes: (\d+)", concise_logs := job2.get_logs(verbose=False)),
+            concise_logs,
+        )
+        self.assertEqual(int(match_group.group(1)), 2)
 
     def test_min_instances_exceeding_max_nodes(self) -> None:
         compute_pool_info = self.dbm.show_compute_pools(self.compute_pool).collect()
@@ -1122,6 +1142,76 @@ class JobManagerTest(parameterized.TestCase):
                 0,
                 f"Expected instance 0 to start first, but instance {first_instance['instance_id']} started first",
             )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("src", "src/entry.py", [(TestAsset("src/subdir/utils").path.as_posix(), "src.subdir.utils")]),
+        ("src", "src/nine.py", [(TestAsset("src/subdir/utils").path.as_posix(), "subdir.utils")]),
+        ("src/subdir2", "src/subdir2/eight.py", [(TestAsset("src/subdir3/").path.as_posix(), "subdir3")]),
+    )
+    def test_submit_with_additional_payloads_local(
+        self, source: str, entrypoint: str, additional_payloads: list[tuple[str, str]]
+    ) -> None:
+        job1 = jobs.submit_directory(
+            TestAsset(source).path,
+            self.compute_pool,
+            entrypoint=TestAsset(entrypoint).path,
+            stage_name="payload_stage",
+            session=self.session,
+            additional_payloads=additional_payloads,
+        )
+        self.assertEqual(job1.wait(), "DONE", job1.get_logs())
+
+        job2 = jobs.submit_file(
+            TestAsset(entrypoint).path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            additional_payloads=additional_payloads,
+        )
+        self.assertEqual(job2.wait(), "DONE", job2.get_logs())
+
+    def test_submit_with_additional_payloads_stage(self) -> None:
+        stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+        upload_files = TestAsset("src")
+
+        for path in {
+            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
+            for p in upload_files.path.resolve().rglob("*")
+            if p.is_file()
+        }:
+            self.session.file.put(
+                str(path),
+                pathlib.Path(stage_path).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
+                overwrite=True,
+                auto_compress=False,
+            )
+
+        test_cases = [
+            (f"{stage_path}/", f"{stage_path}/entry.py", [(f"{stage_path}/subdir/utils", "src.subdir.utils")]),
+            (f"{stage_path}", f"{stage_path}/nine.py", [(f"{stage_path}/subdir/utils", "subdir.utils")]),
+        ]
+        for source, entrypoint, additional_payloads in test_cases:
+            with self.subTest(source=source, entrypoint=entrypoint, additional_payloads=additional_payloads):
+                job = jobs.submit_from_stage(
+                    source=source,
+                    entrypoint=entrypoint,
+                    compute_pool=self.compute_pool,
+                    stage_name="payload_stage",
+                    session=self.session,
+                    additional_payloads=additional_payloads,
+                )
+                self.assertEqual(job.wait(), "DONE", job.get_logs())
+
+    def test_submit_directory_with_constants(self) -> None:
+        job = jobs.submit_directory(
+            TestAsset("src/subdir4").path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            entrypoint="main.py",
+            session=self.session,
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertIn("This is something entirely different", job.get_logs())
 
 
 if __name__ == "__main__":

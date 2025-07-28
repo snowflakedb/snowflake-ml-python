@@ -6,10 +6,9 @@ from typing_extensions import deprecated
 
 from snowflake import snowpark
 from snowflake.ml._internal import env, telemetry
-from snowflake.ml._internal.utils import mixins
 from snowflake.ml.data import data_ingestor, data_source
 from snowflake.ml.data._internal.arrow_ingestor import ArrowIngestor
-from snowflake.snowpark import context as sf_context
+from snowflake.snowpark import context as sp_context
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -22,13 +21,11 @@ if TYPE_CHECKING:
     from snowflake.ml import dataset
 
 _PROJECT = "DataConnector"
-_INGESTOR_KEY = "_ingestor"
-_INGESTOR_SOURCES_KEY = "ingestor$sources"
 
 DataConnectorType = TypeVar("DataConnectorType", bound="DataConnector")
 
 
-class DataConnector(mixins.SerializableSessionMixin):
+class DataConnector:
     """Snowflake data reader which provides application integration connectors"""
 
     DEFAULT_INGESTOR_CLASS: type[data_ingestor.DataIngestor] = ArrowIngestor
@@ -36,11 +33,8 @@ class DataConnector(mixins.SerializableSessionMixin):
     def __init__(
         self,
         ingestor: data_ingestor.DataIngestor,
-        *,
-        session: Optional[snowpark.Session] = None,
         **kwargs: Any,
     ) -> None:
-        self._session = session
         self._ingestor = ingestor
         self._kwargs = kwargs
 
@@ -63,7 +57,7 @@ class DataConnector(mixins.SerializableSessionMixin):
         ingestor_class: Optional[type[data_ingestor.DataIngestor]] = None,
         **kwargs: Any,
     ) -> DataConnectorType:
-        session = session or sf_context.get_active_session()
+        session = session or sp_context.get_active_session()
         source = data_source.DataFrameInfo(query)
         return cls.from_sources(session, [source], ingestor_class=ingestor_class, **kwargs)
 
@@ -107,31 +101,7 @@ class DataConnector(mixins.SerializableSessionMixin):
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
         ingestor = ingestor_class.from_sources(session, sources)
-        return cls(ingestor, **kwargs, session=session)
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Customize pickling to exclude non-serializable session and related components."""
-        if hasattr(super(), "__getstate__"):
-            state = super().__getstate__()
-        else:
-            state = self.__dict__.copy()
-
-        ingestor = state.pop(_INGESTOR_KEY)
-        state[_INGESTOR_SOURCES_KEY] = ingestor.data_sources
-
-        return state
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore session from context during unpickling."""
-        data_sources = state.pop(_INGESTOR_SOURCES_KEY)
-
-        if hasattr(super(), "__setstate__"):
-            super().__setstate__(state)
-        else:
-            self.__dict__.update(state)
-
-        assert self._session is not None
-        self._ingestor = self.DEFAULT_INGESTOR_CLASS.from_sources(self._session, data_sources)
+        return cls(ingestor, **kwargs)
 
     @property
     def data_sources(self) -> list[data_source.DataSource]:

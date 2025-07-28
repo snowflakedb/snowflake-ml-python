@@ -11,6 +11,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["pipeline_test.py"],
     shard_count = SHARD_COUNT,
+    tags = ["feature:core"],
     deps = [
         "//snowflake/ml/modeling/ensemble:isolation_forest",
         "//snowflake/ml/modeling/linear_model:linear_regression",

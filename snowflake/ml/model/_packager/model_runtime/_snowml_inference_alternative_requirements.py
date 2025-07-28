@@ -13,6 +13,7 @@ REQUIREMENTS = [
     "numpy>=1.23,<3",
     "packaging>=20.9,<25",
     "pandas>=2.1.4,<3",
+    "platformdirs<5",
     "pyarrow",
     "pydantic>=2.8.2, <3",
     "pyjwt>=2.0.0, <3",

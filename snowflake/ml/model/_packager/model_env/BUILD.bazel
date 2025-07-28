@@ -18,6 +18,7 @@ py_test(
     optional_dependencies = [
         "torch",
     ],
+    tags = ["feature:model_registry"],
     deps = [
         ":model_env",
         "//snowflake/ml/_internal:env",

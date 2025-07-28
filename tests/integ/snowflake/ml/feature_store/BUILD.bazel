@@ -23,6 +23,7 @@ py_test(
         "feature_store_test.py",
     ],
     shard_count = 16,
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -35,6 +36,7 @@ py_test(
     srcs = [
         "feature_store_object_test.py",
     ],
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/_internal/utils:identifier",
@@ -49,6 +51,7 @@ py_test(
         "feature_store_large_scale_test.py",
     ],
     shard_count = 2,
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -64,6 +67,7 @@ py_test(
         "feature_store_case_sensitivity_test.py",
     ],
     shard_count = 8,
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -77,6 +81,7 @@ py_test(
         "feature_store_access_test.py",
     ],
     shard_count = 16,
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -90,6 +95,7 @@ py_test(
         "feature_store_compatibility_test.py",
     ],
     shard_count = 1,
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -102,6 +108,7 @@ py_test(
     srcs = [
         "feature_sharing_test.py",
     ],
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
@@ -114,6 +121,7 @@ py_test(
     srcs = [
         "feature_store_example_helper_test.py",
     ],
+    tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
