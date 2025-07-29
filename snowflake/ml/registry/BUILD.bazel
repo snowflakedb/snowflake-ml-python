@@ -43,6 +43,7 @@ py_test(
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model",
         "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_progress",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

@@ -1,0 +1,62 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "test_base",
+    srcs = ["test/base.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "lightgbm",
+    srcs = ["lightgbm.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "lightgbm_test",
+    srcs = ["test/lightgbm_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
+    tags = ["feature:observability"],
+    deps = [
+        ":lightgbm",
+        ":test_base",
+    ],
+)
+
+py_library(
+    name = "xgboost",
+    srcs = ["xgboost.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/experiment:utils",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "xgboost_test",
+    srcs = ["test/xgboost_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":test_base",
+        ":xgboost",
+    ],
+)
+
+py_library(
+    name = "callback",
+    deps = [
+        ":lightgbm",
+        ":xgboost",
+    ],
+)

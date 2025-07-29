@@ -144,6 +144,58 @@ class TestEventHandlerProtocol(absltest.TestCase):
         handler.update("Test message")
         self.assertEqual(handler.messages, ["Test message"])
 
+    def test_status_with_block_false_returns_noop(self) -> None:
+        """Test that status method returns a no-op context manager when block=False."""
+        with _mock_streamlit_not_available():
+            handler = ModelEventHandler()
+
+            # Test that it returns a no-op context manager
+            with handler.status("Test status", block=False) as status:
+                # Should be a no-op context
+                self.assertEqual(type(status).__name__, "_NoOpStatusContext")
+
+                # These methods should be callable but do nothing
+                status.update("Some update")
+                status.increment()
+
+                # Should not raise any exceptions
+
+    def test_status_with_block_true_returns_active_context(self) -> None:
+        """Test that status method returns an active context manager when block=True."""
+        with _mock_streamlit_not_available():
+            handler = ModelEventHandler()
+
+            # Test that it returns an active context manager (should be tqdm since streamlit is mocked out)
+            with handler.status("Test status", block=True) as status:
+                # Should be a tqdm context
+                self.assertEqual(type(status).__name__, "_TqdmStatusContext")
+
+    def test_status_with_block_true_and_streamlit_returns_streamlit_context(self) -> None:
+        """Test that status method returns streamlit context when streamlit is available and block=True."""
+        mock_st = MagicMock()
+        mock_st.runtime.exists.return_value = True
+        mock_status = MagicMock()
+        mock_st.status.return_value = mock_status
+
+        with patch("builtins.__import__", return_value=mock_st):
+            handler = ModelEventHandler()
+
+            # Test that it returns a streamlit context manager
+            with handler.status("Test status", block=True) as status:
+                # Should be a streamlit context
+                self.assertEqual(type(status).__name__, "_StreamlitStatusContext")
+
+    def test_status_block_parameter_default_true(self) -> None:
+        """Test that the block parameter defaults to True."""
+        with _mock_streamlit_not_available():
+            handler = ModelEventHandler()
+
+            # Test that default behavior is equivalent to block=True
+            with handler.status("Test status") as status_default:
+                with handler.status("Test status", block=True) as status_explicit:
+                    # Both should be the same type (tqdm context)
+                    self.assertEqual(type(status_default).__name__, type(status_explicit).__name__)
+
 
 if __name__ == "__main__":
     absltest.main()

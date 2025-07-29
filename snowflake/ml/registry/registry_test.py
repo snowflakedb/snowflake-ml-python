@@ -5,13 +5,14 @@ from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
-from snowflake.ml.model import target_platform, task, type_hints
+from snowflake.ml.model import task, type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.model.model_version_impl import ModelVersion
 from snowflake.ml.monitoring import model_monitor
 from snowflake.ml.monitoring.entities import model_monitor_config
 from snowflake.ml.registry import registry
 from snowflake.ml.test_utils import mock_session
+from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Row, Session
 
 
@@ -212,7 +213,14 @@ class RegistryTest(absltest.TestCase):
         m_ext_modules = mock.MagicMock()
         m_comment = mock.MagicMock()
         m_metrics = mock.MagicMock()
-        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_r.log_model(
                 model=m_model,
                 model_name="MODEL",
@@ -249,12 +257,19 @@ class RegistryTest(absltest.TestCase):
                 options=m_options,
                 statement_params=mock.ANY,
                 task=task.Task.UNKNOWN,
-                progress_status=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_log_model_from_model_version(self) -> None:
         m_model_version = mock.MagicMock()
-        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_r.log_model(
                 model=m_model_version,
                 model_name="MODEL",
@@ -280,7 +295,7 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=task.Task.UNKNOWN,
-                progress_status=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_log_model_from_model_version_bad_arguments(self) -> None:
@@ -308,7 +323,14 @@ class RegistryTest(absltest.TestCase):
 
     def test_log_model_with_artifact_repo(self) -> None:
         m_model_version = mock.MagicMock()
-        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_r.log_model(
                 model=m_model_version,
                 model_name="MODEL",
@@ -335,12 +357,19 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
-                progress_status=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_log_model_with_resource_constraint(self) -> None:
         m_model_version = mock.MagicMock()
-        with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_r.log_model(
                 model=m_model_version,
                 model_name="MODEL",
@@ -367,7 +396,7 @@ class RegistryTest(absltest.TestCase):
                 options=None,
                 statement_params=mock.ANY,
                 task=type_hints.Task.UNKNOWN,
-                progress_status=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_delete_model(self) -> None:
@@ -379,76 +408,6 @@ class RegistryTest(absltest.TestCase):
                 model_name="MODEL",
                 statement_params=mock.ANY,
             )
-
-    def test_targets_warehouse(self) -> None:
-        self.assertTrue(self.m_r._targets_warehouse(target_platforms=None))
-        self.assertFalse(self.m_r._targets_warehouse(target_platforms=[]))
-        self.assertFalse(
-            self.m_r._targets_warehouse(target_platforms=[target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
-        )
-        self.assertTrue(self.m_r._targets_warehouse(target_platforms=[target_platform.TargetPlatform.WAREHOUSE]))
-        self.assertTrue(
-            self.m_r._targets_warehouse(
-                target_platforms=[
-                    target_platform.TargetPlatform.WAREHOUSE,
-                    target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
-                ]
-            )
-        )
-        self.assertTrue(self.m_r._targets_warehouse(target_platforms=["WAREHOUSE"]))
-        self.assertFalse(self.m_r._targets_warehouse(target_platforms=["SNOWPARK_CONTAINER_SERVICES"]))
-        self.assertTrue(self.m_r._targets_warehouse(target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]))
-
-        m_model = mock.MagicMock()
-        with mock.patch.object(
-            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
-        ) as mock_targets_warehouse:
-            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
-                self.m_r.log_model(
-                    model=m_model,
-                    model_name="MODEL",
-                    version_name="v1",
-                    target_platforms=None,
-                    pip_requirements=["some-package"],
-                )
-                mock_targets_warehouse.assert_called_once_with(None)
-                mock_log_model.assert_called_once()
-
-        with mock.patch.object(
-            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
-        ) as mock_targets_warehouse:
-            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
-                test_platforms_enum: list[type_hints.SupportedTargetPlatformType] = [
-                    target_platform.TargetPlatform.WAREHOUSE,
-                    target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
-                ]
-                self.m_r.log_model(
-                    model=m_model,
-                    model_name="MODEL",
-                    version_name="v1",
-                    target_platforms=test_platforms_enum,
-                    pip_requirements=["some-package"],
-                )
-                mock_targets_warehouse.assert_called_once_with(test_platforms_enum)
-                mock_log_model.assert_called_once()
-
-        with mock.patch.object(
-            self.m_r, "_targets_warehouse", wraps=self.m_r._targets_warehouse
-        ) as mock_targets_warehouse:
-            with mock.patch.object(self.m_r._model_manager, "log_model") as mock_log_model:
-                test_platforms_str: list[type_hints.SupportedTargetPlatformType] = [
-                    "WAREHOUSE",
-                    "SNOWPARK_CONTAINER_SERVICES",
-                ]
-                self.m_r.log_model(
-                    model=m_model,
-                    model_name="MODEL",
-                    version_name="v1",
-                    target_platforms=test_platforms_str,
-                    pip_requirements=["some-package"],
-                )
-                mock_targets_warehouse.assert_called_once_with(test_platforms_str)
-                mock_log_model.assert_called_once()
 
 
 class MonitorRegistryTest(absltest.TestCase):

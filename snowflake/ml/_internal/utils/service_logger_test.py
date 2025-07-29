@@ -17,11 +17,17 @@ class ServiceLoggerTest(absltest.TestCase):
         self.test_logger_name = "test_logger"
         self.test_color = service_logger.LogColor.BLUE
 
+        # Store original root logger level
+        self._original_root_level = logging.getLogger().level
+
         # Clear any existing loggers to avoid test interference
         self._clear_all_loggers()
 
     def tearDown(self) -> None:
         """Clean up test fixtures."""
+        # Restore original root logger level
+        logging.getLogger().setLevel(self._original_root_level)
+
         # Clear loggers created during tests
         self._clear_all_loggers()
 
@@ -45,9 +51,12 @@ class ServiceLoggerTest(absltest.TestCase):
 
     def test_get_logger_without_operation_id(self) -> None:
         """Test that get_logger works without operation_id (backward compatibility)."""
+        # Set root logger to INFO level to ensure handler is added
+        logging.getLogger().setLevel(logging.INFO)
+
         logger = service_logger.get_logger(self.test_logger_name, self.test_color)
 
-        # Should have one handler (StreamHandler)
+        # Should have one handler (StreamHandler) when in verbose mode
         self.assertEqual(len(logger.handlers), 1)
         self.assertIsInstance(logger.handlers[0], logging.StreamHandler)
 
@@ -58,11 +67,24 @@ class ServiceLoggerTest(absltest.TestCase):
         # Should use custom formatter
         self.assertIsInstance(logger.handlers[0].formatter, service_logger.CustomFormatter)
 
+    def test_get_logger_without_operation_id_quiet_mode(self) -> None:
+        """Test that get_logger without operation_id doesn't add handler in quiet mode."""
+        # Set root logger to WARNING level (quiet mode)
+        logging.getLogger().setLevel(logging.WARNING)
+
+        logger = service_logger.get_logger(self.test_logger_name, self.test_color)
+
+        # Should have no handlers in quiet mode
+        self.assertEqual(len(logger.handlers), 0)
+
     def test_get_logger_with_operation_id(self) -> None:
-        """Test that get_logger creates parent logger with operation_id."""
+        """Test that get_logger creates parent logger with operation_id in verbose mode."""
+        # Set root logger to INFO level to ensure handler is added
+        logging.getLogger().setLevel(logging.INFO)
+
         logger = service_logger.get_logger(self.test_logger_name, self.test_color, self.test_operation_id)
 
-        # Should have one handler (StreamHandler)
+        # Should have one handler (StreamHandler) in verbose mode
         self.assertEqual(len(logger.handlers), 1)
         self.assertIsInstance(logger.handlers[0], logging.StreamHandler)
 
@@ -72,6 +94,24 @@ class ServiceLoggerTest(absltest.TestCase):
             self.assertEqual(logger.parent.name, f"snowflake_ml_operation_{self.test_operation_id}")
 
         # Should propagate to parent
+        self.assertTrue(logger.propagate)
+
+    def test_get_logger_with_operation_id_quiet_mode(self) -> None:
+        """Test that get_logger with operation_id doesn't add console handler in quiet mode."""
+        # Set root logger to WARNING level (quiet mode)
+        logging.getLogger().setLevel(logging.WARNING)
+
+        logger = service_logger.get_logger(self.test_logger_name, self.test_color, self.test_operation_id)
+
+        # Should have no console handlers in quiet mode (only file via propagation)
+        self.assertEqual(len(logger.handlers), 0)
+
+        # Should still have parent logger for file output
+        self.assertIsNotNone(logger.parent)
+        if logger.parent:
+            self.assertEqual(logger.parent.name, f"snowflake_ml_operation_{self.test_operation_id}")
+
+        # Should still propagate to parent for file logging
         self.assertTrue(logger.propagate)
 
     def test_parent_logger_creation_with_file(self) -> None:

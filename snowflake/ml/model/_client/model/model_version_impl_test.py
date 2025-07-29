@@ -15,6 +15,7 @@ from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Session
 
 _DUMMY_SIG = {
@@ -759,7 +760,14 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
     def test_create_service(self) -> None:
-        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_mv.create_service(
                 service_name="SERVICE",
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
@@ -785,9 +793,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -799,10 +805,18 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
                 block=True,
                 statement_params=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_create_service_same_pool(self) -> None:
-        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_mv.create_service(
                 service_name="SERVICE",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
@@ -827,9 +841,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -841,10 +853,18 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
                 block=True,
                 statement_params=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_create_service_no_eai(self) -> None:
-        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_mv.create_service(
                 service_name="SERVICE",
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
@@ -869,9 +889,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -883,10 +901,18 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=None,
                 block=True,
                 statement_params=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_create_service_async_job(self) -> None:
-        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+        mock_progress_status = create_mock_progress_status()
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
             self.m_mv.create_service(
                 service_name="SERVICE",
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
@@ -912,9 +938,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -926,6 +950,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 build_external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
                 block=False,
                 statement_params=mock.ANY,
+                progress_status=mock_progress_status,
             )
 
     def test_list_services(self) -> None:
@@ -1070,9 +1095,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
                 warehouse_name="TEST_WAREHOUSE",
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("TEST_IMAGE_REPO"),
+                image_repo="TEST_IMAGE_REPO",
                 output_table_database_name=None,
                 output_table_schema_name=None,
                 output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
@@ -1119,9 +1142,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
                 warehouse_name=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("TEST_IMAGE_REPO"),
+                image_repo="DB.SCHEMA.TEST_IMAGE_REPO",
                 output_table_database_name=sql_identifier.SqlIdentifier("DB"),
                 output_table_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),

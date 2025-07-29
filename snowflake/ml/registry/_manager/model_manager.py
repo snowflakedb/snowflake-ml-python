@@ -14,6 +14,7 @@ from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.registry._manager import model_parameter_reconciler
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -46,6 +47,7 @@ class ModelManager:
         *,
         model: Union[type_hints.SupportedModelType, model_version_impl.ModelVersion],
         model_name: str,
+        progress_status: type_hints.ProgressStatus,
         version_name: Optional[str] = None,
         comment: Optional[str] = None,
         metrics: Optional[dict[str, Any]] = None,
@@ -64,7 +66,6 @@ class ModelManager:
         experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
-        progress_status: Optional[Any] = None,
     ) -> model_version_impl.ModelVersion:
 
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
@@ -158,6 +159,7 @@ class ModelManager:
         *,
         model_name: str,
         version_name: str,
+        progress_status: type_hints.ProgressStatus,
         comment: Optional[str] = None,
         metrics: Optional[dict[str, Any]] = None,
         conda_dependencies: Optional[list[str]] = None,
@@ -175,7 +177,6 @@ class ModelManager:
         experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
-        progress_status: Optional[Any] = None,
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
@@ -250,27 +251,27 @@ class ModelManager:
                 )
                 platforms = [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
 
-        if artifact_repository_map:
-            for channel, artifact_repository_name in artifact_repository_map.items():
-                db_id, schema_id, repo_id = sql_identifier.parse_fully_qualified_name(artifact_repository_name)
+        reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            database_name=self._database_name,
+            schema_name=self._schema_name,
+            conda_dependencies=conda_dependencies,
+            pip_requirements=pip_requirements,
+            target_platforms=target_platforms,
+            artifact_repository_map=artifact_repository_map,
+            options=options,
+        )
 
-                artifact_repository_map[channel] = sql_identifier.get_fully_qualified_name(
-                    db_id,
-                    schema_id,
-                    repo_id,
-                    self._database_name,
-                    self._schema_name,
-                )
+        model_params = reconciler.reconcile()
+
+        # Use reconciled parameters
+        artifact_repository_map = model_params.artifact_repository_map
+        save_location = model_params.save_location
 
         logger.info("Start packaging and uploading your model. It might take some time based on the size of the model.")
-        if progress_status:
-            progress_status.update("packaging model...")
-            progress_status.increment()
+        progress_status.update("packaging model...")
+        progress_status.increment()
 
-        # Extract save_location from options if present
-        save_location = None
-        if options and "save_location" in options:
-            save_location = options.get("save_location")
+        if save_location:
             logger.info(f"Model will be saved to local directory: {save_location}")
 
         mc = model_composer.ModelComposer(
@@ -280,9 +281,8 @@ class ModelManager:
             save_location=save_location,
         )
 
-        if progress_status:
-            progress_status.update("creating model manifest...")
-            progress_status.increment()
+        progress_status.update("creating model manifest...")
+        progress_status.increment()
 
         model_metadata: model_meta.ModelMetadata = mc.save(
             name=model_name_id.resolved(),
@@ -303,9 +303,8 @@ class ModelManager:
             experiment_info=experiment_info,
         )
 
-        if progress_status:
-            progress_status.update("uploading model files...")
-            progress_status.increment()
+        progress_status.update("uploading model files...")
+        progress_status.increment()
         statement_params = telemetry.add_statement_params_custom_tags(
             statement_params, model_metadata.telemetry_metadata()
         )
@@ -313,10 +312,8 @@ class ModelManager:
             statement_params, {"model_version_name": version_name_id}
         )
 
-        logger.info("Start creating MODEL object for you in the Snowflake.")
-        if progress_status:
-            progress_status.update("creating model object in Snowflake...")
-            progress_status.increment()
+        progress_status.update("creating model object in Snowflake...")
+        progress_status.increment()
 
         self._model_ops.create_from_stage(
             composed_model=mc,
@@ -343,9 +340,8 @@ class ModelManager:
             version_name=version_name_id,
         )
 
-        if progress_status:
-            progress_status.update("setting model metadata...")
-            progress_status.increment()
+        progress_status.update("setting model metadata...")
+        progress_status.increment()
 
         if comment:
             mv.comment = comment
@@ -360,8 +356,7 @@ class ModelManager:
                 statement_params=statement_params,
             )
 
-        if progress_status:
-            progress_status.update("model logged successfully!")
+        progress_status.update("model logged successfully!")
 
         return mv
 

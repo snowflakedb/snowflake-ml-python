@@ -299,6 +299,7 @@ class HuggingFacePipelineModel:
         Raises:
             ValueError: if database and schema name is not provided and session doesn't have a
             database and schema name.
+            exceptions.SnowparkSQLException: if service already exists.
 
         Returns:
             The service ID or an async job object.
@@ -327,7 +328,6 @@ class HuggingFacePipelineModel:
             version_name = name_generator.generate()[1]
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
-        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
 
         service_operator = service_ops.ServiceOperator(
             session=session,
@@ -336,51 +336,73 @@ class HuggingFacePipelineModel:
         )
         logger.info(f"A service job is going to register the hf model as: {model_name}.{version_name}")
 
-        return service_operator.create_service(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            model_name=model_name_id,
-            version_name=sql_identifier.SqlIdentifier(version_name),
-            service_database_name=service_db_id,
-            service_schema_name=service_schema_id,
-            service_name=service_id,
-            image_build_compute_pool_name=(
-                sql_identifier.SqlIdentifier(image_build_compute_pool)
-                if image_build_compute_pool
-                else sql_identifier.SqlIdentifier(service_compute_pool)
-            ),
-            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-            image_repo_database_name=image_repo_db_id,
-            image_repo_schema_name=image_repo_schema_id,
-            image_repo_name=image_repo_id,
-            ingress_enabled=ingress_enabled,
-            max_instances=max_instances,
-            cpu_requests=cpu_requests,
-            memory_requests=memory_requests,
-            gpu_requests=gpu_requests,
-            num_workers=num_workers,
-            max_batch_rows=max_batch_rows,
-            force_rebuild=force_rebuild,
-            build_external_access_integrations=(
-                None
-                if build_external_access_integrations is None
-                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
-            ),
-            block=block,
-            statement_params=statement_params,
-            # hf model
-            hf_model_args=service_ops.HFModelArgs(
-                hf_model_name=self.model,
-                hf_task=self.task,
-                hf_tokenizer=self.tokenizer,
-                hf_revision=self.revision,
-                hf_token=self.token,
-                hf_trust_remote_code=bool(self.trust_remote_code),
-                hf_model_kwargs=self.model_kwargs,
-                pip_requirements=pip_requirements,
-                conda_dependencies=conda_dependencies,
-                comment=comment,
-                # TODO: remove warehouse in the next release
-                warehouse=session.get_current_warehouse(),
-            ),
-        )
+        from snowflake.ml.model import event_handler
+        from snowflake.snowpark import exceptions
+
+        hf_event_handler = event_handler.ModelEventHandler()
+        with hf_event_handler.status("Creating HuggingFace model service", total=6, block=block) as status:
+            try:
+                result = service_operator.create_service(
+                    database_name=database_name_id,
+                    schema_name=schema_name_id,
+                    model_name=model_name_id,
+                    version_name=sql_identifier.SqlIdentifier(version_name),
+                    service_database_name=service_db_id,
+                    service_schema_name=service_schema_id,
+                    service_name=service_id,
+                    image_build_compute_pool_name=(
+                        sql_identifier.SqlIdentifier(image_build_compute_pool)
+                        if image_build_compute_pool
+                        else sql_identifier.SqlIdentifier(service_compute_pool)
+                    ),
+                    service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+                    image_repo=image_repo,
+                    ingress_enabled=ingress_enabled,
+                    max_instances=max_instances,
+                    cpu_requests=cpu_requests,
+                    memory_requests=memory_requests,
+                    gpu_requests=gpu_requests,
+                    num_workers=num_workers,
+                    max_batch_rows=max_batch_rows,
+                    force_rebuild=force_rebuild,
+                    build_external_access_integrations=(
+                        None
+                        if build_external_access_integrations is None
+                        else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
+                    ),
+                    block=block,
+                    progress_status=status,
+                    statement_params=statement_params,
+                    # hf model
+                    hf_model_args=service_ops.HFModelArgs(
+                        hf_model_name=self.model,
+                        hf_task=self.task,
+                        hf_tokenizer=self.tokenizer,
+                        hf_revision=self.revision,
+                        hf_token=self.token,
+                        hf_trust_remote_code=bool(self.trust_remote_code),
+                        hf_model_kwargs=self.model_kwargs,
+                        pip_requirements=pip_requirements,
+                        conda_dependencies=conda_dependencies,
+                        comment=comment,
+                        # TODO: remove warehouse in the next release
+                        warehouse=session.get_current_warehouse(),
+                    ),
+                )
+                status.update(label="HuggingFace model service created successfully", state="complete", expanded=False)
+                return result
+            except exceptions.SnowparkSQLException as e:
+                # Check if the error is because the service already exists
+                if "already exists" in str(e).lower() or "100132" in str(
+                    e
+                ):  # 100132 is Snowflake error code for object already exists
+                    # Update progress to show service already exists (preserve exception behavior)
+                    status.update("service already exists")
+                    status.complete()  # Complete progress to full state
+                    status.update(label="Service already exists", state="error", expanded=False)
+                    # Re-raise the exception to preserve existing API behavior
+                    raise
+                else:
+                    # Re-raise other SQL exceptions
+                    status.update(label="Service creation failed", state="error", expanded=False)
+                    raise

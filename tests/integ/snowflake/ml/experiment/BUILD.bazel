@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 py_test(
     name = "experiment_tracking_integ_test",
@@ -13,20 +13,39 @@ py_test(
     ],
 )
 
+py_library(
+    name = "autolog_integ_test_base",
+    srcs = ["autolog_integ_test_base.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:snowflake_env",
+        "//snowflake/ml/experiment",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
 py_test(
-    name = "experiment_autolog_integ_test",
+    name = "autolog_lightgbm_integ_test",
     timeout = "long",
-    srcs = ["experiment_autolog_integ_test.py"],
+    srcs = ["autolog_lightgbm_integ_test.py"],
     optional_dependencies = [
         "lightgbm",
     ],
     tags = ["feature:observability"],
     deps = [
-        "//snowflake/ml/_internal/utils:snowflake_env",
-        "//snowflake/ml/experiment",
-        "//snowflake/ml/experiment:callback",
-        "//snowflake/ml/model:model_signature",
-        "//snowflake/ml/utils:connection_params",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        ":autolog_integ_test_base",
+        "//snowflake/ml/experiment/callback:lightgbm",
+    ],
+)
+
+py_test(
+    name = "autolog_xgboost_integ_test",
+    timeout = "long",
+    srcs = ["autolog_xgboost_integ_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":autolog_integ_test_base",
+        "//snowflake/ml/experiment/callback:xgboost",
     ],
 )
