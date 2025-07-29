@@ -10,6 +10,7 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",

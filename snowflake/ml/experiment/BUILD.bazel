@@ -3,29 +3,6 @@ load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "callback",
-    srcs = ["callback.py"],
-    deps = [
-        "//snowflake/ml/experiment:experiment_tracking",
-        "//snowflake/ml/model:model_signature",
-    ],
-)
-
-py_test(
-    name = "callback_test",
-    srcs = ["callback_test.py"],
-    optional_dependencies = [
-        "lightgbm",
-    ],
-    tags = ["feature:observability"],
-    deps = [
-        ":callback",
-        "//snowflake/ml/experiment:experiment_tracking",
-        "//snowflake/ml/model:model_signature",
-    ],
-)
-
-py_library(
     name = "experiment_info",
     srcs = ["_experiment_info.py"],
     deps = [
@@ -38,7 +15,10 @@ py_test(
     srcs = ["_experiment_info_test.py"],
     main = "_experiment_info_test.py",
     tags = ["feature:observability"],
-    deps = [":experiment_info"],
+    deps = [
+        ":experiment_info",
+        "//snowflake/ml/test_utils:mock_progress",
+    ],
 )
 
 py_library(
@@ -63,11 +43,23 @@ py_test(
 )
 
 py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+)
+
+py_test(
+    name = "utils_test",
+    srcs = ["utils_test.py"],
+    tags = ["feature:observability"],
+    deps = [":utils"],
+)
+
+py_library(
     name = "experiment",
     srcs = ["__init__.py"],
     deps = [
-        ":callback",
         ":experiment_tracking",
+        "//snowflake/ml/experiment/callback",
     ],
 )
 

@@ -4,6 +4,7 @@ from absl.testing import absltest
 
 from snowflake.ml.experiment import _experiment_info as experiment_info
 from snowflake.ml.registry._manager.model_manager import ModelManager
+from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 
 
 class ExperimentInfoPatcherTest(absltest.TestCase):
@@ -89,6 +90,7 @@ class ExperimentInfoPatcherTest(absltest.TestCase):
         experiment_info.ExperimentInfoPatcher._original_log_model = mock_original
 
         mock_manager = mock.MagicMock(spec=ModelManager)
+        mock_progress_status = create_mock_progress_status()
 
         with experiment_info.ExperimentInfoPatcher(self.experiment_info):
             # Call with various arguments
@@ -99,6 +101,7 @@ class ExperimentInfoPatcherTest(absltest.TestCase):
                 version_name="v1.0",
                 comment="test comment",
                 metrics={"accuracy": 0.95},
+                progress_status=mock_progress_status,
             )
 
             # Verify all arguments are passed through with experiment_info added
@@ -109,6 +112,7 @@ class ExperimentInfoPatcherTest(absltest.TestCase):
                 version_name="v1.0",
                 comment="test comment",
                 metrics={"accuracy": 0.95},
+                progress_status=mock_progress_status,
                 experiment_info=self.experiment_info,
             )
 

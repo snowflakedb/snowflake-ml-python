@@ -5,7 +5,6 @@ import pandas as pd
 import xgboost as xgb
 from absl.testing import absltest
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.experiment import ExperimentTracking
 from snowflake.ml.experiment._entities.run_metadata import RunStatus
 from snowflake.ml.utils import connection_params
@@ -21,7 +20,6 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self.skip_if_version_less_than((9, 19, 0))
         self.run_id = uuid.uuid4().hex
         self._db_manager = db_manager.DBManager(self._session)
         self._schema_name = "PUBLIC"
@@ -39,12 +37,6 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._db_name)
         super().tearDown()
-
-    def skip_if_version_less_than(self, version: tuple[int, int, int]) -> None:
-        """Skip test if current Snowflake version is less than the given version."""
-        current_version = snowflake_env.get_current_snowflake_version(self._session)
-        if current_version.release < version:
-            self.skipTest(f"Skipping test because current Snowflake version is less than {version}.")
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -259,8 +251,6 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
     def test_log_model(self) -> None:
         """Test that log_model works with experiment tracking (attaches experiment info to model version)"""
-        self.skip_if_version_less_than((9, 20, 0))  # experiment-model lineage only supported in >=9.20.x
-
         experiment_name = "TEST_EXPERIMENT_LOG_MODEL"
         run_name = "TEST_RUN_LOG_MODEL"
         model_name = "TEST_MODEL"

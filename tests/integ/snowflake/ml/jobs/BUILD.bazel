@@ -18,6 +18,7 @@ py_library(
         ":test_constants",
         ":test_file_helper",
         "//snowflake/ml/jobs",
+        "//snowflake/ml/utils:sql_client",
     ],
 )
 

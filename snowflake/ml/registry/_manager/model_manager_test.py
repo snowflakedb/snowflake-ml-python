@@ -14,6 +14,7 @@ from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.registry._manager import model_manager
 from snowflake.ml.test_utils import mock_session
+from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Row, Session
 
 
@@ -206,6 +207,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_validate_existence.assert_called_with(
                 database_name=None,
@@ -288,6 +290,7 @@ class ModelManagerTest(parameterized.TestCase):
                 conda_dependencies=m_conda_dependency,
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_validate_existence.assert_called_with(
                 database_name=None,
@@ -362,6 +365,7 @@ class ModelManagerTest(parameterized.TestCase):
                 signatures=m_signatures,
                 options=m_options,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -433,6 +437,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -502,6 +507,7 @@ class ModelManagerTest(parameterized.TestCase):
                 comment="this is comment",
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=None,
@@ -568,6 +574,7 @@ class ModelManagerTest(parameterized.TestCase):
                     model_name="MODEL",
                     version_name="V1",
                     statement_params=self.base_statement_params,
+                    progress_status=create_mock_progress_status(),
                 )
             mock_validate_existence.assert_has_calls(
                 [
@@ -607,6 +614,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 version_name="V1",
                 target_platforms=["UNSUPPORTED_PLATFORM"],
+                progress_status=create_mock_progress_status(),
             )
             self.assertIn("is not a valid TargetPlatform", str(ex.exception))
 
@@ -641,6 +649,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
                 target_platforms=target_platforms,
             )
             mock_save.assert_called_with(
@@ -695,6 +704,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
                 target_platforms=target_platform_constant,
             )
             mock_save.assert_called_with(
@@ -747,6 +757,7 @@ class ModelManagerTest(parameterized.TestCase):
                 comment="this is comment",
                 metrics={"a": 1},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_prepare_model_temp_stage_path.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("FOO"),
@@ -828,6 +839,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 version_name="V1",
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_create_from_model_version.assert_called_once_with(
                 source_database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -885,6 +897,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             self.assertEqual(mock_hrid_generate.call_count, 2)
 
@@ -914,6 +927,7 @@ class ModelManagerTest(parameterized.TestCase):
                 model_name="MODEL",
                 sample_input_data=m_sample_input_data,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_once_with(
                 name="MODEL",
@@ -971,6 +985,7 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=m_sample_input_data,
                 options=options,
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_once_with(
                 name="MODEL",
@@ -1040,6 +1055,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "myrepo"},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1068,6 +1084,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "sch.myrepo"},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1096,6 +1113,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 artifact_repository_map={"mychannel": "db.sch.myrepo"},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_with(
                 name="MODEL",
@@ -1141,6 +1159,7 @@ class ModelManagerTest(parameterized.TestCase):
                 metrics={"a": 1},
                 resource_constraint={"architecture": "x86"},
                 statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
             )
             mock_save.assert_called_with(
                 name="MODEL",

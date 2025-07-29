@@ -7,11 +7,23 @@ package(default_visibility = [
 ])
 
 py_library(
+    name = "model_parameter_reconciler",
+    srcs = [
+        "model_parameter_reconciler.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:type_hints",
+    ],
+)
+
+py_library(
     name = "model_manager",
     srcs = [
         "model_manager.py",
     ],
     deps = [
+        ":model_parameter_reconciler",
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
@@ -24,6 +36,19 @@ py_library(
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_model_composer:model_composer",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+    ],
+)
+
+py_test(
+    name = "model_parameter_reconciler_test",
+    srcs = [
+        "model_parameter_reconciler_test.py",
+    ],
+    tags = ["feature:model_registry"],
+    deps = [
+        ":model_parameter_reconciler",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:type_hints",
     ],
 )
 
@@ -41,6 +66,7 @@ py_test(
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_model_composer:model_composer",
         "//snowflake/ml/test_utils:mock_data_frame",
+        "//snowflake/ml/test_utils:mock_progress",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

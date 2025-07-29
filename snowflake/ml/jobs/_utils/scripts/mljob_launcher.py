@@ -191,7 +191,7 @@ def wait_for_instances(
             logger.info(f"Minimum instance requirement met: {total_nodes} instances available after {elapsed:.1f}s")
             return
 
-        logger.debug(
+        logger.info(
             f"Waiting for instances: current_instances={total_nodes}, min_instances={min_instances}, "
             f"target_instances={target_instances}, elapsed={elapsed:.1f}s, next check in {current_interval:.1f}s"
         )
@@ -199,7 +199,7 @@ def wait_for_instances(
         current_interval = min(current_interval * 2, check_interval)  # Exponential backoff
 
     raise TimeoutError(
-        f"Timed out after {timeout}s waiting for {min_instances} instances, only " f"{total_nodes} available"
+        f"Timed out after {elapsed}s waiting for {min_instances} instances, only " f"{total_nodes} available"
     )
 
 
