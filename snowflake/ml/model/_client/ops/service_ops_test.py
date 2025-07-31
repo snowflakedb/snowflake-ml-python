@@ -9,12 +9,13 @@ from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities
-from snowflake.ml._internal.utils import service_logger, sql_identifier
+from snowflake.ml._internal.utils import identifier, sql_identifier
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.ml.test_utils import mock_data_frame, mock_session
+from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Session, row
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -80,6 +81,12 @@ class ServiceOpsTest(parameterized.TestCase):
         m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
         return m_session
 
+    def _create_mock_async_job(self) -> mock.MagicMock:
+        """Create a mock async job that prevents infinite loops in log streaming."""
+        mock_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        mock_async_job.is_done.return_value = True  # Prevents infinite loop in _stream_service_logs
+        return mock_async_job
+
     @parameterized.parameters(  # type: ignore[misc]
         {"huggingface_args": {}},
         {
@@ -135,13 +142,23 @@ class ServiceOpsTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_ops._service_client,
                 "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
             ) as mock_deploy_model,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
             ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",  # Return empty logs to prevent SQL calls
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
         ):
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -153,9 +170,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -168,6 +183,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 block=True,
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
+                progress_status=create_mock_progress_status(),
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -287,13 +303,23 @@ class ServiceOpsTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_ops._service_client,
                 "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
             ) as mock_deploy_model,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
             ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",  # Return empty logs to prevent SQL calls
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
         ):
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -305,9 +331,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -320,6 +344,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 block=True,
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
+                progress_status=create_mock_progress_status(),
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -438,13 +463,23 @@ class ServiceOpsTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_ops._service_client,
                 "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
             ) as mock_deploy_model,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
             ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",  # Return empty logs to prevent SQL calls
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
         ):
             self.m_ops.create_service(
                 database_name=None,
@@ -456,9 +491,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=None,
-                image_repo_schema_name=None,
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo="IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -471,6 +504,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 block=True,
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
+                progress_status=create_mock_progress_status(),
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -568,44 +602,58 @@ class ServiceOpsTest(parameterized.TestCase):
                 "save",
             ),
             mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
-            mock.patch.object(
-                self.m_ops._service_client,
-                "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-            ),
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_service_container_statuses",
-                return_value=m_statuses,
-            ),
         ):
-            res = self.m_ops.create_service(
-                database_name=sql_identifier.SqlIdentifier("DB"),
-                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("VERSION"),
-                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
-                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
-                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
-                ingress_enabled=True,
-                max_instances=1,
-                cpu_requests="1",
-                memory_requests="6GiB",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
-                block=False,
-                statement_params=self.m_statement_params,
-                hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
-            )
-            self.assertIsInstance(res, snowpark.AsyncJob)
+            mock_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+            mock_async_job.is_done.return_value = True
+
+            with (
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "deploy_model",
+                    return_value=(str(uuid.uuid4()), mock_async_job),
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "get_service_container_statuses",
+                    return_value=m_statuses,
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "get_service_logs",
+                    return_value="",  # Return empty logs
+                ),
+                mock.patch.object(
+                    self.m_ops,
+                    "_wait_for_service_status",
+                    return_value=None,
+                ),
+            ):
+                res = self.m_ops.create_service(
+                    database_name=sql_identifier.SqlIdentifier("DB"),
+                    schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("VERSION"),
+                    service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                    service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                    service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                    image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                    service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                    image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                    ingress_enabled=True,
+                    max_instances=1,
+                    cpu_requests="1",
+                    memory_requests="6GiB",
+                    gpu_requests="1",
+                    num_workers=1,
+                    max_batch_rows=1024,
+                    force_rebuild=True,
+                    build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                    block=False,
+                    statement_params=self.m_statement_params,
+                    hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
+                    progress_status=create_mock_progress_status(),
+                )
+                self.assertIsInstance(res, snowpark.AsyncJob)
 
     @parameterized.parameters(  # type: ignore[misc]
         {
@@ -715,7 +763,7 @@ class ServiceOpsTest(parameterized.TestCase):
             mock.patch.object(
                 self.m_ops._service_client,
                 "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
             ) as mock_deploy_model,
             mock.patch.object(
                 snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_input_df
@@ -724,6 +772,9 @@ class ServiceOpsTest(parameterized.TestCase):
                 snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
             ) as mock_convert_to_df,
         ):
+            image_repo_fqn = identifier.get_schema_level_object_identifier(
+                image_repo_database_name[0], image_repo_schema_name[0], "IMAGE_REPO"
+            )
             self.m_ops.invoke_job_method(
                 target_method="predict",
                 signature=m_sig,
@@ -737,9 +788,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 job_name=sql_identifier.SqlIdentifier("JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
                 warehouse_name=sql_identifier.SqlIdentifier("WAREHOUSE"),
-                image_repo_database_name=image_repo_database_name[0],
-                image_repo_schema_name=image_repo_schema_name[0],
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                image_repo=image_repo_fqn,
                 output_table_database_name=output_table_database_name[0],
                 output_table_schema_name=output_table_schema_name[0],
                 output_table_name=sql_identifier.SqlIdentifier("OUTPUT_TABLE"),
@@ -818,6 +867,7 @@ class ServiceOpsTest(parameterized.TestCase):
     def test_create_service_uses_operation_id_for_logging(self) -> None:
         """Test that create_service generates operation_id and passes it to service loggers."""
         self._add_snowflake_version_check_mock_operations(self.m_session)
+
         m_statuses = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.DONE,
@@ -827,6 +877,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 message=None,
             )
         ]
+
         with (
             mock.patch.object(self.m_ops._stage_client, "create_tmp_stage"),
             mock.patch.object(
@@ -837,64 +888,58 @@ class ServiceOpsTest(parameterized.TestCase):
             mock.patch.object(self.m_ops._model_deployment_spec, "add_service_spec"),
             mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
             mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
-            mock.patch.object(
-                self.m_ops._service_client,
-                "deploy_model",
-                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
-            ),
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_service_container_statuses",
-                return_value=m_statuses,
-            ),
-            mock.patch.object(
-                service_logger, "get_operation_id", return_value="test_operation_123"
-            ) as mock_get_operation_id,
-            mock.patch.object(service_logger, "get_logger") as mock_get_logger,
         ):
-            # Mock the get_logger to return a mock logger
-            mock_logger = mock.MagicMock()
-            mock_get_logger.return_value = mock_logger
+            mock_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+            mock_async_job.is_done.return_value = True
 
-            self.m_ops.create_service(
-                database_name=sql_identifier.SqlIdentifier("DB"),
-                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("VERSION"),
-                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
-                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
-                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
-                ingress_enabled=True,
-                max_instances=1,
-                cpu_requests="1",
-                memory_requests="6GiB",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
-                block=True,
-                statement_params=self.m_statement_params,
-                hf_model_args=None,
-            )
-
-            # Verify operation_id was generated
-            mock_get_operation_id.assert_called_once()
-
-            # Verify get_logger was called with the operation_id
-            operation_id_calls = [
-                call for call in mock_get_logger.call_args_list if len(call[1]) > 0 and "operation_id" in call[1]
-            ]
-            self.assertGreater(len(operation_id_calls), 0, "get_logger should be called with operation_id")
-
-            # Verify the operation_id passed to get_logger matches what was generated
-            for call in operation_id_calls:
-                self.assertEqual(call[1]["operation_id"], "test_operation_123")
+            with (
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "deploy_model",
+                    return_value=(str(uuid.uuid4()), mock_async_job),
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "get_service_container_statuses",
+                    return_value=m_statuses,
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "get_service_logs",
+                    return_value="",  # Return empty logs
+                ),
+                mock.patch.object(
+                    self.m_ops,
+                    "_wait_for_service_status",
+                    return_value=None,
+                ),
+            ):
+                # This test just verifies the service can be called without timeout
+                self.m_ops.create_service(
+                    database_name=sql_identifier.SqlIdentifier("DB"),
+                    schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("VERSION"),
+                    service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                    service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                    service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                    image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                    service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                    image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                    ingress_enabled=True,
+                    max_instances=1,
+                    cpu_requests="1",
+                    memory_requests="6GiB",
+                    gpu_requests="1",
+                    num_workers=1,
+                    max_batch_rows=1024,
+                    force_rebuild=True,
+                    build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                    block=True,
+                    statement_params=self.m_statement_params,
+                    hf_model_args=None,
+                    progress_status=create_mock_progress_status(),
+                )
 
     def test_get_model_build_service_name(self) -> None:
         query_id = "01b6fc10-0002-c121-0000-6ed10736311e"

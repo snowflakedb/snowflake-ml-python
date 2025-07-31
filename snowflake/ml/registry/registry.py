@@ -1,4 +1,3 @@
-import warnings
 from types import ModuleType
 from typing import Any, Optional, Union, overload
 
@@ -442,15 +441,6 @@ class Registry:
             if task is not type_hints.Task.UNKNOWN:
                 raise ValueError("`task` cannot be specified when calling log_model with a ModelVersion.")
 
-        if pip_requirements and not artifact_repository_map and self._targets_warehouse(target_platforms):
-            warnings.warn(
-                "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse "
-                "without specifying `artifact_repository_map`. This model can be run in Snowpark Container "
-                "Services. See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container.",
-                category=UserWarning,
-                stacklevel=1,
-            )
-
         registry_event_handler = event_handler.ModelEventHandler()
         with registry_event_handler.status("Logging model", total=6) as status:
             # Step 1: Validation and setup
@@ -662,12 +652,3 @@ class Registry:
         if not self.enable_monitoring:
             raise ValueError(_MODEL_MONITORING_DISABLED_ERROR)
         self._model_monitor_manager.delete_monitor(name)
-
-    @staticmethod
-    def _targets_warehouse(target_platforms: Optional[list[type_hints.SupportedTargetPlatformType]]) -> bool:
-        """Returns True if warehouse is a target platform (None defaults to True)."""
-        return (
-            target_platforms is None
-            or type_hints.TargetPlatform.WAREHOUSE in target_platforms
-            or "WAREHOUSE" in target_platforms
-        )

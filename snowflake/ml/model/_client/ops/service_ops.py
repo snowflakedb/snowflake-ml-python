@@ -180,9 +180,7 @@ class ServiceOperator:
         service_name: sql_identifier.SqlIdentifier,
         image_build_compute_pool_name: sql_identifier.SqlIdentifier,
         service_compute_pool_name: sql_identifier.SqlIdentifier,
-        image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_name: sql_identifier.SqlIdentifier,
+        image_repo: str,
         ingress_enabled: bool,
         max_instances: int,
         cpu_requests: Optional[str],
@@ -193,6 +191,7 @@ class ServiceOperator:
         force_rebuild: bool,
         build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
         block: bool,
+        progress_status: type_hints.ProgressStatus,
         statement_params: Optional[dict[str, Any]] = None,
         # hf model
         hf_model_args: Optional[HFModelArgs] = None,
@@ -209,8 +208,17 @@ class ServiceOperator:
         service_database_name = service_database_name or database_name or self._database_name
         service_schema_name = service_schema_name or schema_name or self._schema_name
 
+        # Parse image repo
+        image_repo_database_name, image_repo_schema_name, image_repo_name = sql_identifier.parse_fully_qualified_name(
+            image_repo
+        )
         image_repo_database_name = image_repo_database_name or database_name or self._database_name
         image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
+
+        # Step 1: Preparing deployment artifacts
+        progress_status.update("preparing deployment artifacts...")
+        progress_status.increment()
+
         if self._workspace:
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
         else:
@@ -259,6 +267,11 @@ class ServiceOperator:
                 **(hf_model_args.hf_model_kwargs if hf_model_args.hf_model_kwargs else {}),
             )
         spec_yaml_str_or_path = self._model_deployment_spec.save()
+
+        # Step 2: Uploading deployment artifacts
+        progress_status.update("uploading deployment artifacts...")
+        progress_status.increment()
+
         if self._workspace:
             assert stage_path is not None
             file_utils.upload_directory_to_stage(
@@ -280,6 +293,10 @@ class ServiceOperator:
             ],
             statement_params=statement_params,
         )
+
+        # Step 3: Initiating model deployment
+        progress_status.update("initiating model deployment...")
+        progress_status.increment()
 
         # deploy the model service
         query_id, async_job = self._service_client.deploy_model(
@@ -337,13 +354,63 @@ class ServiceOperator:
         )
 
         if block:
-            log_thread.join()
+            try:
+                # Step 4: Starting model build: waits for build to start
+                progress_status.update("starting model image build...")
+                progress_status.increment()
 
-            res = cast(str, cast(list[row.Row], async_job.result())[0][0])
-            module_logger.info(f"Inference service {service_name} deployment complete: {res}")
-            return res
-        else:
-            return async_job
+                # Poll for model build to start if not using existing service
+                if not model_inference_service_exists:
+                    self._wait_for_service_status(
+                        model_build_service_name,
+                        service_sql.ServiceStatus.RUNNING,
+                        service_database_name,
+                        service_schema_name,
+                        async_job,
+                        statement_params,
+                    )
+
+                # Step 5: Building model image
+                progress_status.update("building model image...")
+                progress_status.increment()
+
+                # Poll for model build completion
+                if not model_inference_service_exists:
+                    self._wait_for_service_status(
+                        model_build_service_name,
+                        service_sql.ServiceStatus.DONE,
+                        service_database_name,
+                        service_schema_name,
+                        async_job,
+                        statement_params,
+                    )
+
+                # Step 6: Deploying model service (push complete, starting inference service)
+                progress_status.update("deploying model service...")
+                progress_status.increment()
+
+                log_thread.join()
+
+                res = cast(str, cast(list[row.Row], async_job.result())[0][0])
+                module_logger.info(f"Inference service {service_name} deployment complete: {res}")
+                return res
+
+            except RuntimeError as e:
+                # Handle service creation/deployment failures
+                error_msg = f"Model service deployment failed: {str(e)}"
+                module_logger.error(error_msg)
+
+                # Update progress status to show failure
+                progress_status.update(error_msg, state="error")
+
+                # Stop the log thread if it's running
+                if "log_thread" in locals() and log_thread.is_alive():
+                    log_thread.join(timeout=5)  # Give it a few seconds to finish gracefully
+
+                # Re-raise the exception to propagate the error
+                raise RuntimeError(error_msg) from e
+
+        return async_job
 
     def _start_service_log_streaming(
         self,
@@ -579,6 +646,7 @@ class ServiceOperator:
                 is_snowpark_sql_exception = isinstance(ex, exceptions.SnowparkSQLException)
                 contains_msg = any(msg in str(ex) for msg in ["Pending scheduling", "Waiting to start"])
                 matches_pattern = service_log_meta.service_status is None and re.search(pattern, str(ex)) is not None
+
                 if not (is_snowpark_sql_exception and (contains_msg or matches_pattern)):
                     module_logger.warning(f"Caught an exception when logging: {repr(ex)}")
                 time.sleep(5)
@@ -617,6 +685,101 @@ class ServiceOperator:
                 service_logger.info(service_logs[offset:])
         except Exception as ex:
             module_logger.warning(f"Caught an exception when logging: {repr(ex)}")
+
+    def _wait_for_service_status(
+        self,
+        service_name: sql_identifier.SqlIdentifier,
+        target_status: service_sql.ServiceStatus,
+        service_database_name: Optional[sql_identifier.SqlIdentifier],
+        service_schema_name: Optional[sql_identifier.SqlIdentifier],
+        async_job: snowpark.AsyncJob,
+        statement_params: Optional[dict[str, Any]] = None,
+        timeout_minutes: int = 30,
+    ) -> None:
+        """Wait for service to reach the specified status while monitoring async job for failures.
+
+        Args:
+            service_name: The service to monitor
+            target_status: The target status to wait for
+            service_database_name: Database containing the service
+            service_schema_name: Schema containing the service
+            async_job: The async job to monitor for completion/failure
+            statement_params: SQL statement parameters
+            timeout_minutes: Maximum time to wait before timing out
+
+        Raises:
+            RuntimeError: If service fails, times out, or enters an error state
+        """
+        start_time = time.time()
+        timeout_seconds = timeout_minutes * 60
+        service_seen_before = False
+
+        while True:
+            # Check if async job has failed (but don't return on success - we need specific service status)
+            if async_job.is_done():
+                try:
+                    async_job.result()
+                    # Async job completed successfully, but we're waiting for a specific service status
+                    # This might mean the service completed and was cleaned up
+                    module_logger.debug(
+                        f"Async job completed but we're still waiting for {service_name} to reach {target_status.value}"
+                    )
+                except Exception as e:
+                    raise RuntimeError(f"Service deployment failed: {e}")
+
+            try:
+                statuses = self._service_client.get_service_container_statuses(
+                    database_name=service_database_name,
+                    schema_name=service_schema_name,
+                    service_name=service_name,
+                    include_message=True,
+                    statement_params=statement_params,
+                )
+
+                if statuses:
+                    service_seen_before = True
+                    current_status = statuses[0].service_status
+
+                    # Check if we've reached the target status
+                    if current_status == target_status:
+                        return
+
+                    # Check for failure states
+                    if current_status in [service_sql.ServiceStatus.FAILED, service_sql.ServiceStatus.INTERNAL_ERROR]:
+                        error_msg = f"Service {service_name} failed with status {current_status.value}"
+                        if statuses[0].message:
+                            error_msg += f": {statuses[0].message}"
+                        raise RuntimeError(error_msg)
+
+            except exceptions.SnowparkSQLException as e:
+                # Service might not exist yet - this is expected during initial deployment
+                if "does not exist" in str(e) or "002003" in str(e):
+                    # If we're waiting for DONE status and we've seen the service before,
+                    # it likely completed and was cleaned up
+                    if target_status == service_sql.ServiceStatus.DONE and service_seen_before:
+                        module_logger.debug(
+                            f"Service {service_name} disappeared after being seen, "
+                            f"assuming it reached {target_status.value} and was cleaned up"
+                        )
+                        return
+
+                    module_logger.debug(f"Service {service_name} not found yet, continuing to wait...")
+                else:
+                    # Re-raise unexpected SQL exceptions
+                    raise RuntimeError(f"Error checking service status: {e}")
+            except Exception as e:
+                # Re-raise unexpected exceptions instead of masking them
+                raise RuntimeError(f"Unexpected error while waiting for service status: {e}")
+
+            # Check timeout
+            elapsed_time = time.time() - start_time
+            if elapsed_time > timeout_seconds:
+                raise RuntimeError(
+                    f"Timeout waiting for service {service_name} to reach status {target_status.value} "
+                    f"after {timeout_minutes} minutes"
+                )
+
+            time.sleep(2)  # Poll every 2 seconds
 
     @staticmethod
     def _get_service_id_from_deployment_step(query_id: str, deployment_step: DeploymentStep) -> str:
@@ -675,9 +838,7 @@ class ServiceOperator:
         job_name: sql_identifier.SqlIdentifier,
         compute_pool_name: sql_identifier.SqlIdentifier,
         warehouse_name: sql_identifier.SqlIdentifier,
-        image_repo_database_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_schema_name: Optional[sql_identifier.SqlIdentifier],
-        image_repo_name: sql_identifier.SqlIdentifier,
+        image_repo: str,
         output_table_database_name: Optional[sql_identifier.SqlIdentifier],
         output_table_schema_name: Optional[sql_identifier.SqlIdentifier],
         output_table_name: sql_identifier.SqlIdentifier,
@@ -698,6 +859,10 @@ class ServiceOperator:
         job_database_name = job_database_name or database_name or self._database_name
         job_schema_name = job_schema_name or schema_name or self._schema_name
 
+        # Parse image repo
+        image_repo_database_name, image_repo_schema_name, image_repo_name = sql_identifier.parse_fully_qualified_name(
+            image_repo
+        )
         image_repo_database_name = image_repo_database_name or database_name or self._database_name
         image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
 

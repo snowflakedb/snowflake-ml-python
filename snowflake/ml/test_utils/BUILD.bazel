@@ -70,3 +70,9 @@ py_library(
     testonly = True,
     srcs = ["pytest_driver.py"],
 )
+
+py_library(
+    name = "mock_progress",
+    testonly = True,
+    srcs = ["mock_progress.py"],
+)

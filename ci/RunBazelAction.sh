@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [--tags <tags>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -17,6 +17,7 @@
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
+#   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
 #
 
 set -o pipefail
@@ -28,13 +29,21 @@ mode="continuous_run"
 target=""
 SF_ENV="prod3"
 WITH_SPCS_IMAGE=false
+TAG_FILTERS=""
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [--with-spcs-image]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [--tags <tags>] [--with-spcs-image]"
+    echo ""
+    echo "Options:"
+    echo "  --tags <tags>       Specify bazel tag filters (comma-separated)"
+    echo ""
+    echo "Examples:"
+    echo "  ${PROG} test --tags 'feature:jobs'"
+    echo "  ${PROG} test --tags 'feature:jobs,feature:data'"
     exit "${exit_code}"
 }
 
@@ -72,6 +81,10 @@ while (($#)); do
         shift
         SF_ENV=$1
         ;;
+    --tags)
+        shift
+        TAG_FILTERS="$1"
+        ;;
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
@@ -98,13 +111,20 @@ action_env=()
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     export SKIP_GRYPE=true
     source model_container_services_deployment/ci/build_and_push_images.sh
-    action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}" "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}")
+    action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}" "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}" "--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}")
 fi
 
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
-tag_filter="--test_tag_filters="
+# Set up tag filtering
+if [[ -n "${TAG_FILTERS:-}" ]]; then
+    tag_filter="--test_tag_filters=${TAG_FILTERS}"
+    echo "Running with tag filters: ${TAG_FILTERS}"
+else
+    tag_filter="--test_tag_filters="
+fi
+
 cache_test_results="--cache_test_results=no"
 
 case "${mode}" in

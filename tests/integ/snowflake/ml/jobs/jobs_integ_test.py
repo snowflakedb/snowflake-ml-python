@@ -778,7 +778,7 @@ class JobManagerTest(parameterized.TestCase):
 
         # Job with valid requirements and EAI should succeed
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
-        self.assertIn("Successfully installed tabulate", job_logs)
+        self.assertRegex(job_logs, r"Successfully installed\s+.*\btabulate[-\d\.]*\b")
         self.assertIn("[foo] Job complete", job_logs)
 
         # Job with conflicting requirement should prefer the user specified package
@@ -1212,6 +1212,22 @@ class JobManagerTest(parameterized.TestCase):
         )
         self.assertEqual(job.wait(), "DONE", job.get_logs())
         self.assertIn("This is something entirely different", job.get_logs())
+
+    def test_requirements_non_overwrite(self) -> None:
+        rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'PYPI%'").collect()
+        if not rows:
+            self.fail("No PyPI EAI found in environment.")
+        pypi_eais = [r["name"] for r in rows]
+        job = jobs.submit_directory(
+            TestAsset("src/subdir5").path,
+            self.compute_pool,
+            entrypoint="main.py",
+            stage_name="payload_stage",
+            external_access_integrations=pypi_eais,
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertIn("Numpy version: 1.23", job.get_logs())
+        self.assertIn(f"Cloudpickle version: {version.parse(cp.__version__).major}.", job.get_logs())
 
 
 if __name__ == "__main__":

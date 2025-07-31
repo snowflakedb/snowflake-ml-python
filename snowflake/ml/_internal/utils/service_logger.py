@@ -9,6 +9,15 @@ from typing import Optional
 
 import platformdirs
 
+# Module-level logger for operational messages that should appear on console
+stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+
+console_logger = logging.getLogger(__name__)
+console_logger.addHandler(stdout_handler)
+console_logger.setLevel(logging.INFO)
+console_logger.propagate = False
+
 
 class LogColor(enum.Enum):
     GREY = "\x1b[38;20m"
@@ -109,48 +118,53 @@ def _get_or_create_parent_logger(operation_id: str) -> logging.Logger:
     """Get or create a parent logger with FileHandler for the operation."""
     parent_logger_name = f"snowflake_ml_operation_{operation_id}"
     parent_logger = logging.getLogger(parent_logger_name)
+    parent_logger.setLevel(logging.DEBUG)
+    parent_logger.propagate = False
 
-    # Only add handler if it doesn't exist yet
     if not parent_logger.handlers:
         log_file_path = _get_log_file_path(operation_id)
 
         if log_file_path:
-            # Successfully found a writable location
             try:
                 file_handler = logging.FileHandler(log_file_path)
                 file_handler.setFormatter(logging.Formatter("%(name)s [%(asctime)s] [%(levelname)s] %(message)s"))
                 parent_logger.addHandler(file_handler)
-                parent_logger.setLevel(logging.DEBUG)
-                parent_logger.propagate = False  # Don't propagate to root logger
 
-                # Log the file location
-                parent_logger.warning(f"Operation logs saved to: {log_file_path}")
+                console_logger.info(f"create_service logs saved to: {log_file_path}")
             except OSError as e:
-                # Even though we found a path, file creation failed
-                # Fall back to console-only logging
-                parent_logger.setLevel(logging.DEBUG)
-                parent_logger.propagate = False
-                parent_logger.warning(f"Could not create log file at {log_file_path}: {e}. Using console-only logging.")
+                console_logger.warning(f"Could not create log file at {log_file_path}: {e}.")
         else:
             # No writable location found, use console-only logging
-            parent_logger.setLevel(logging.DEBUG)
-            parent_logger.propagate = False
-            parent_logger.warning("Filesystem appears to be readonly. Using console-only logging.")
+            console_logger.warning("No writable location found for create_service log file.")
+
+        if logging.getLogger().level > logging.INFO:
+            console_logger.info(
+                "To see logs in console, set log level to INFO: logging.getLogger().setLevel(logging.INFO)"
+            )
 
     return parent_logger
 
 
 def get_logger(logger_name: str, info_color: LogColor, operation_id: Optional[str] = None) -> logging.Logger:
     logger = logging.getLogger(logger_name)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(CustomFormatter(info_color))
-    logger.addHandler(handler)
+    root_logger = logging.getLogger()
 
     # If operation_id provided, set up parent logger with file handler
     if operation_id:
         parent_logger = _get_or_create_parent_logger(operation_id)
         logger.parent = parent_logger
         logger.propagate = True
+
+        if root_logger.level <= logging.INFO:
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(CustomFormatter(info_color))
+            logger.addHandler(handler)
+    else:
+        # No operation_id - add console handler only if user wants verbose logging
+        if root_logger.level <= logging.INFO and not logger.handlers:
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(CustomFormatter(info_color))
+            logger.addHandler(handler)
 
     return logger
 

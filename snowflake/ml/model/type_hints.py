@@ -1,5 +1,14 @@
 # mypy: disable-error-code="import"
-from typing import TYPE_CHECKING, Literal, Sequence, TypedDict, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    Sequence,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 
 import numpy.typing as npt
 from typing_extensions import NotRequired
@@ -324,6 +333,22 @@ ModelLoadOption = Union[
 
 
 SupportedTargetPlatformType = Union[TargetPlatform, str]
+
+
+class ProgressStatus(Protocol):
+    """Protocol for tracking progress during long-running operations."""
+
+    def update(self, message: str, *, state: str = "running", expanded: bool = True, **kwargs: Any) -> None:
+        """Update the progress status with a new message."""
+        ...
+
+    def increment(self) -> None:
+        """Increment the progress by one step."""
+        ...
+
+    def complete(self) -> None:
+        """Complete the progress bar to full state."""
+        ...
 
 
 __all__ = ["TargetPlatform", "Task"]

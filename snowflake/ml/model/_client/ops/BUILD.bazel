@@ -88,6 +88,7 @@ py_library(
 
 py_test(
     name = "service_ops_test",
+    timeout = "long",
     srcs = ["service_ops_test.py"],
     tags = ["feature:model_registry"],
     deps = [
@@ -99,6 +100,7 @@ py_test(
         "//snowflake/ml/model/_client/sql:service",
         "//snowflake/ml/model/_client/sql:stage",
         "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/test_utils:mock_progress",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

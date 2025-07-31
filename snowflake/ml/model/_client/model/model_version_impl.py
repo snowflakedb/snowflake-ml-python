@@ -1,5 +1,4 @@
 import enum
-import logging
 import pathlib
 import tempfile
 import warnings
@@ -881,6 +880,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         Raises:
             ValueError: Illegal external access integration arguments.
+            exceptions.SnowparkSQLException: if service already exists.
 
         Returns:
             If `block=True`, return result information about service creation from server.
@@ -890,16 +890,6 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
-
-        # Check root logger level and emit warning if needed
-        root_logger = logging.getLogger()
-        if root_logger.level in (logging.WARNING, logging.ERROR):
-            warnings.warn(
-                "Suppressing service logs. Set the log level to INFO if you would like "
-                "verbose service logs (e.g., logging.getLogger().setLevel(logging.INFO)).",
-                UserWarning,
-                stacklevel=2,
-            )
 
         if build_external_access_integration is not None:
             msg = (
@@ -917,39 +907,60 @@ class ModelVersion(lineage_node.LineageNode):
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
         image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
-        return self._service_ops.create_service(
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            service_database_name=service_db_id,
-            service_schema_name=service_schema_id,
-            service_name=service_id,
-            image_build_compute_pool_name=(
-                sql_identifier.SqlIdentifier(image_build_compute_pool)
-                if image_build_compute_pool
-                else sql_identifier.SqlIdentifier(service_compute_pool)
-            ),
-            service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-            image_repo_database_name=image_repo_db_id,
-            image_repo_schema_name=image_repo_schema_id,
-            image_repo_name=image_repo_id,
-            ingress_enabled=ingress_enabled,
-            max_instances=max_instances,
-            cpu_requests=cpu_requests,
-            memory_requests=memory_requests,
-            gpu_requests=gpu_requests,
-            num_workers=num_workers,
-            max_batch_rows=max_batch_rows,
-            force_rebuild=force_rebuild,
-            build_external_access_integrations=(
-                None
-                if build_external_access_integrations is None
-                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
-            ),
-            block=block,
-            statement_params=statement_params,
-        )
+
+        from snowflake.ml.model import event_handler
+        from snowflake.snowpark import exceptions
+
+        model_event_handler = event_handler.ModelEventHandler()
+
+        with model_event_handler.status("Creating model inference service", total=6, block=block) as status:
+            try:
+                result = self._service_ops.create_service(
+                    database_name=None,
+                    schema_name=None,
+                    model_name=self._model_name,
+                    version_name=self._version_name,
+                    service_database_name=service_db_id,
+                    service_schema_name=service_schema_id,
+                    service_name=service_id,
+                    image_build_compute_pool_name=(
+                        sql_identifier.SqlIdentifier(image_build_compute_pool)
+                        if image_build_compute_pool
+                        else sql_identifier.SqlIdentifier(service_compute_pool)
+                    ),
+                    service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
+                    image_repo=image_repo,
+                    ingress_enabled=ingress_enabled,
+                    max_instances=max_instances,
+                    cpu_requests=cpu_requests,
+                    memory_requests=memory_requests,
+                    gpu_requests=gpu_requests,
+                    num_workers=num_workers,
+                    max_batch_rows=max_batch_rows,
+                    force_rebuild=force_rebuild,
+                    build_external_access_integrations=(
+                        None
+                        if build_external_access_integrations is None
+                        else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
+                    ),
+                    block=block,
+                    statement_params=statement_params,
+                    progress_status=status,
+                )
+                status.update(label="Model service created successfully", state="complete", expanded=False)
+                return result
+            except exceptions.SnowparkSQLException as e:
+                # Check if the error is because the service already exists
+                if "already exists" in str(e).lower() or "100132" in str(
+                    e
+                ):  # 100132 is Snowflake error code for object already exists
+                    status.update("service already exists")
+                    status.complete()
+                    status.update(label="Service already exists", state="error", expanded=False)
+                    raise
+                else:
+                    status.update(label="Service creation failed", state="error", expanded=False)
+                    raise
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -1045,7 +1056,6 @@ class ModelVersion(lineage_node.LineageNode):
         )
         target_function_info = self._get_function_info(function_name=function_name)
         job_db_id, job_schema_id, job_id = sql_identifier.parse_fully_qualified_name(job_name)
-        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
         output_table_db_id, output_table_schema_id, output_table_id = sql_identifier.parse_fully_qualified_name(
             output_table_name
         )
@@ -1064,9 +1074,7 @@ class ModelVersion(lineage_node.LineageNode):
             job_name=job_id,
             compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
             warehouse_name=sql_identifier.SqlIdentifier(warehouse),
-            image_repo_database_name=image_repo_db_id,
-            image_repo_schema_name=image_repo_schema_id,
-            image_repo_name=image_repo_id,
+            image_repo=image_repo,
             output_table_database_name=output_table_db_id,
             output_table_schema_name=output_table_schema_id,
             output_table_name=output_table_id,
