@@ -4,15 +4,14 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 import pandas as pd
 from absl.logging import logging
 
-from snowflake.ml._internal import env, platform_capabilities, telemetry
+from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import model_signature, target_platform, task, type_hints
+from snowflake.ml.model import model_signature, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
-from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.registry._manager import model_parameter_reconciler
 from snowflake.snowpark import exceptions as snowpark_exceptions, session
@@ -221,37 +220,8 @@ class ModelManager:
                 statement_params=statement_params,
             )
 
-        platforms = None
-        # User specified target platforms are defaulted to None and will not show up in the generated manifest.
-        if target_platforms:
-            # Convert any string target platforms to TargetPlatform objects
-            platforms = [type_hints.TargetPlatform(platform) for platform in target_platforms]
-        else:
-            # Default the target platform to warehouse if not specified and any table function exists
-            if options and (
-                options.get("function_type") == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
-                or (
-                    any(
-                        opt.get("function_type") == "TABLE_FUNCTION"
-                        for opt in options.get("method_options", {}).values()
-                    )
-                )
-            ):
-                logger.info(
-                    "Logging a partitioned model with a table function without specifying `target_platforms`. "
-                    'Default to `target_platforms=["WAREHOUSE"]`.'
-                )
-                platforms = [target_platform.TargetPlatform.WAREHOUSE]
-
-            # Default the target platform to SPCS if not specified when running in ML runtime
-            if not platforms and env.IN_ML_RUNTIME:
-                logger.info(
-                    "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
-                    'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
-                )
-                platforms = [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
-
         reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            session=self._model_ops._session,
             database_name=self._database_name,
             schema_name=self._schema_name,
             conda_dependencies=conda_dependencies,
@@ -259,6 +229,8 @@ class ModelManager:
             target_platforms=target_platforms,
             artifact_repository_map=artifact_repository_map,
             options=options,
+            python_version=python_version,
+            statement_params=statement_params,
         )
 
         model_params = reconciler.reconcile()
@@ -293,12 +265,12 @@ class ModelManager:
             pip_requirements=pip_requirements,
             artifact_repository_map=artifact_repository_map,
             resource_constraint=resource_constraint,
-            target_platforms=platforms,
+            target_platforms=model_params.target_platforms,
             python_version=python_version,
             user_files=user_files,
             code_paths=code_paths,
             ext_modules=ext_modules,
-            options=options,
+            options=model_params.options,
             task=task,
             experiment_info=experiment_info,
         )

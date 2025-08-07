@@ -25,16 +25,20 @@ class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCa
             raise ValueError(f"Unsupported model class: {model_class}")
 
     @parameterized.parameters(
-        (lgb.LGBMClassifier, "training:binary_logloss"),
-        (lgb.LGBMRegressor, "training:l2"),
-        (lgb.Booster, "training:l2"),
+        (lgb.LGBMClassifier, "training:binary_logloss", 1),
+        (lgb.LGBMRegressor, "training:l2", 2),
+        (lgb.Booster, "training:l2", 1),
+        (lgb.Booster, "training:l2", 3),
     )  # type: ignore[misc]
-    def test_autolog(self, model_class: type[Union[lgb.LGBMModel, lgb.Booster]], metric_name: str) -> None:
+    def test_autolog(
+        self, model_class: type[Union[lgb.LGBMModel, lgb.Booster]], metric_name: str, log_every_n_epochs: int
+    ) -> None:
         """Test that autologging works for LightGBM models."""
         self._test_autolog(
             model_class=model_class,
             callback_class=SnowflakeLightgbmCallback,
             metric_name=metric_name,
+            log_every_n_epochs=log_every_n_epochs,
         )
 
 

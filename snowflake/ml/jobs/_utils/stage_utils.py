@@ -121,15 +121,28 @@ class StagePath:
         return self._compose_path(self._path)
 
     def joinpath(self, *args: Union[str, PathLike[str]]) -> "StagePath":
+        """
+        Joins the given path arguments to the current path,
+        mimicking the behavior of pathlib.Path.joinpath.
+        If the argument is a stage path (i.e., an absolute path),
+        it overrides the current path and is returned as the final path.
+        If the argument is a normal path, it is joined with the current relative path
+        using self._path.joinpath(arg).
+
+        Args:
+            *args: Path components to join.
+
+        Returns:
+            A new StagePath with the joined path.
+
+        Raises:
+            NotImplementedError: the argument is a stage path.
+        """
         path = self
         for arg in args:
-            path = path._make_child(arg)
+            if isinstance(arg, StagePath):
+                raise NotImplementedError
+            else:
+                # the arg might be an absolute path, so we need to remove the leading '/'
+                path = StagePath(f"{path.root}/{path._path.joinpath(arg).as_posix().lstrip('/')}")
         return path
-
-    def _make_child(self, path: Union[str, PathLike[str]]) -> "StagePath":
-        stage_path = path if isinstance(path, StagePath) else StagePath(os.fspath(path))
-        if self.root == stage_path.root:
-            child_path = self._path.joinpath(stage_path._path)
-            return StagePath(self._compose_path(child_path))
-        else:
-            return stage_path

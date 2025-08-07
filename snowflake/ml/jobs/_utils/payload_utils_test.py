@@ -100,6 +100,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         ("@test_stage/main.py", None, "@test_stage/main.py"),
         ("@test_stage/main.py", "@test_stage/main.py", "@test_stage/main.py"),
         ("@test_stage/src/dir", "@test_stage/src/dir/dir1/main.py", "@test_stage/src/dir/dir1/main.py"),
+        ("@test_stage/src/dir/", "dir1/main.py", "@test_stage/src/dir/dir1/main.py"),
         ("snow://headless/abc/versions/v9.8.7/main.py", None, "snow://headless/abc/versions/v9.8.7/main.py"),
         (
             "snow://headless/abc/versions/v9.8.7/main.py",
@@ -114,6 +115,11 @@ class PayloadUtilsTests(parameterized.TestCase):
         (
             "snow://headless/abc/versions/v9.8.7/src",
             "snow://headless/abc/versions/v9.8.7/src/main.py",
+            "snow://headless/abc/versions/v9.8.7/src/main.py",
+        ),
+        (
+            "snow://headless/abc/versions/v9.8.7/src",
+            "main.py",
             "snow://headless/abc/versions/v9.8.7/src/main.py",
         ),
     )

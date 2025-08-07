@@ -28,7 +28,7 @@ OUTPUT_MOUNT_PATH = f"{STAGE_VOLUME_MOUNT_PATH}/{OUTPUT_STAGE_SUBPATH}"
 DEFAULT_IMAGE_REPO = "/snowflake/images/snowflake_images"
 DEFAULT_IMAGE_CPU = "st_plat/runtime/x86/runtime_image/snowbooks"
 DEFAULT_IMAGE_GPU = "st_plat/runtime/x86/generic_gpu/runtime_image/snowbooks"
-DEFAULT_IMAGE_TAG = "1.5.0"
+DEFAULT_IMAGE_TAG = "1.6.2"
 DEFAULT_ENTRYPOINT_PATH = "func.py"
 
 # Percent of container memory to allocate for /dev/shm volume
@@ -98,3 +98,6 @@ CLOUD_INSTANCE_FAMILIES = {
     SnowflakeCloudType.AWS: AWS_INSTANCE_FAMILIES,
     SnowflakeCloudType.AZURE: AZURE_INSTANCE_FAMILIES,
 }
+
+# runtime version environment variable
+ENABLE_IMAGE_VERSION_ENV_VAR = "MLRS_ENABLE_RUNTIME_VERSIONS"

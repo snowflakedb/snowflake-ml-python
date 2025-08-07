@@ -1,3 +1,4 @@
+import math
 from typing import Any, Optional
 from unittest.mock import ANY, MagicMock
 
@@ -17,7 +18,7 @@ class SnowflakeCallbackTest(parameterized.TestCase):
         # Create training data and parameters
         self.X = np.array([[1, 2], [3, 4]])
         self.y = np.array([0, 1])
-        self.num_steps = 2
+        self.num_steps = 3
         self.model_signature = ModelSignature(
             inputs=[
                 FeatureSpec(name="feature1", dtype=DataType.FLOAT),
@@ -32,17 +33,22 @@ class SnowflakeCallbackTest(parameterized.TestCase):
     def _get_callback(self, **kwargs: Any) -> Any:
         pass
 
-    def _log_metrics(self, model_class: type[Any]) -> None:
+    def _log_metrics(self, model_class: type[Any], log_every_n_epochs: int) -> None:
         """Test that metrics are autologged."""
         callback = self._get_callback(
             experiment_tracking=self.experiment_tracking,
             log_model=False,
             log_metrics=True,
             log_params=False,
+            log_every_n_epochs=log_every_n_epochs,
         )
         self._train_model(model_class=model_class, callback=callback)
 
-        self.assertEqual(self.experiment_tracking.log_metric.call_count, self.num_steps)
+        # Expected call count is rounded up to the next integer because we always log at epoch 0.
+        expected_call_count = math.ceil(self.num_steps / log_every_n_epochs)
+        self.assertEqual(self.experiment_tracking.log_metric.call_count, expected_call_count)
+        for epoch in range(0, self.num_steps, log_every_n_epochs):
+            self.experiment_tracking.log_metric.assert_any_call(key=ANY, value=ANY, step=epoch)
 
     def _log_model(self, model_class: type[Any], model_name: Optional[str]) -> None:
         """Test that model is autologged."""

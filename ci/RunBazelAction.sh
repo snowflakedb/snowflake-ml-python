@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [--tags <tags>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [--tags <tags>] [--with-spcs-image]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -18,6 +18,7 @@
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
+#   --with-spcs-image: use spcs image for testing.
 #
 
 set -o pipefail
@@ -40,6 +41,7 @@ help() {
     echo ""
     echo "Options:"
     echo "  --tags <tags>       Specify bazel tag filters (comma-separated)"
+    echo "  --with-spcs-image   Use spcs image for testing."
     echo ""
     echo "Examples:"
     echo "  ${PROG} test --tags 'feature:jobs'"
@@ -109,7 +111,7 @@ fi
 action_env=()
 
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
-    export SKIP_GRYPE=true
+    export RUN_GRYPE=false
     source model_container_services_deployment/ci/build_and_push_images.sh
     action_env=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}" "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}" "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}" "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}" "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}" "--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}")
 fi

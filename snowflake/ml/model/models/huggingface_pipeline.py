@@ -258,7 +258,7 @@ class HuggingFacePipelineModel:
         # model_version_impl.create_service parameters
         service_name: str,
         service_compute_pool: str,
-        image_repo: str,
+        image_repo: Optional[str] = None,
         image_build_compute_pool: Optional[str] = None,
         ingress_enabled: bool = False,
         max_instances: int = 1,
@@ -282,7 +282,8 @@ class HuggingFacePipelineModel:
             comment: Comment for the model. Defaults to None.
             service_name: The name of the service to create.
             service_compute_pool: The compute pool for the service.
-            image_repo: The name of the image repository.
+            image_repo: The name of the image repository. This can be None, in that case a default hidden image
+                repository will be used.
             image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
             the service compute pool if None.
             ingress_enabled: Whether ingress is enabled. Defaults to False.
@@ -356,7 +357,7 @@ class HuggingFacePipelineModel:
                         else sql_identifier.SqlIdentifier(service_compute_pool)
                     ),
                     service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-                    image_repo=image_repo,
+                    image_repo_name=image_repo,
                     ingress_enabled=ingress_enabled,
                     max_instances=max_instances,
                     cpu_requests=cpu_requests,

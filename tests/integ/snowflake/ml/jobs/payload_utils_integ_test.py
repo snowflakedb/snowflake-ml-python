@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import constants, payload_utils
+from snowflake.ml.jobs._utils import constants, payload_utils, types
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
@@ -83,17 +83,17 @@ class PayloadUtilsTests(parameterized.TestCase):
         (TestAsset("src/main.py"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 1),
         (TestAsset("src/main.py"), None, "/mnt/job_stage/app/main.py", 1),
         # Entrypoint as relative path inside payload directory
-        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 16),
+        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 20),
         (
             TestAsset("src"),
             TestAsset("subdir/sub_main.py", resolve_path=False),
             "/mnt/job_stage/app/subdir/sub_main.py",
-            16,
+            20,
         ),
         (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "/mnt/job_stage/app/sub_main.py", 2),
         # Entrypoint as absolute path
-        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 16),
-        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 16),
+        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 20),
+        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 20),
         (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/sub_main.py", 2),
         # Function as payload
         (function_with_pos_arg, pathlib.Path("function_payload.py"), "/mnt/job_stage/app/function_payload.py", 1),
@@ -135,14 +135,14 @@ class PayloadUtilsTests(parameterized.TestCase):
             1,
         ),
         (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 1),
-        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 16),
-        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 16),
+        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 20),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 20),
         (
             TestAsset("src"),
             f"@{_TEST_STAGE}/",
             f"@{_TEST_STAGE}/subdir/sub_main.py",
             "/mnt/job_stage/app/subdir/sub_main.py",
-            16,
+            20,
         ),
         (
             TestAsset("src"),
@@ -161,25 +161,9 @@ class PayloadUtilsTests(parameterized.TestCase):
         expected_file_count: int,
     ) -> None:
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
-        if upload_files.path.is_dir():
-            for path in {
-                p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-                for p in upload_files.path.resolve().rglob("*")
-                if p.is_file()
-            }:
-                self.session.file.put(
-                    str(path),
-                    pathlib.Path(_TEST_STAGE).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
-                    overwrite=True,
-                    auto_compress=False,
-                )
-        else:
-            self.session.file.put(
-                str(upload_files.path.resolve()),
-                f"{_TEST_STAGE}",
-                overwrite=True,
-                auto_compress=False,
-            )
+        payload_utils.upload_payloads(
+            self.session, pathlib.Path(_TEST_STAGE), types.PayloadSpec(upload_files.path, None)
+        )
         payload = payload_utils.JobPayload(
             source=source,
             entrypoint=entrypoint,
@@ -204,7 +188,7 @@ class PayloadUtilsTests(parameterized.TestCase):
             TestAsset("src/third.py"),
             [(TestAsset("src/subdir/utils").path.as_posix(), "remote.src.utils")],
             "/mnt/job_stage/app/third.py",
-            17,
+            21,
         ),
     )
     def test_upload_payload_additional_packages_local(
@@ -236,18 +220,9 @@ class PayloadUtilsTests(parameterized.TestCase):
 
     def test_upload_payload_additional_packages_stage(self) -> None:
         upload_files = TestAsset("src")
-
-        for path in {
-            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-            for p in upload_files.path.resolve().rglob("*")
-            if p.is_file()
-        }:
-            self.session.file.put(
-                str(path),
-                pathlib.Path(_TEST_STAGE).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
-                overwrite=True,
-                auto_compress=False,
-            )
+        payload_utils.upload_payloads(
+            self.session, pathlib.Path(_TEST_STAGE), types.PayloadSpec(upload_files.path, None)
+        )
 
         test_cases = [
             (
@@ -255,7 +230,7 @@ class PayloadUtilsTests(parameterized.TestCase):
                 f"@{_TEST_STAGE}/subdir/sub_main.py",
                 [(f"@{_TEST_STAGE}/subdir/utils", "remote.subdir.utils")],
                 "/mnt/job_stage/app/subdir/sub_main.py",
-                17,
+                21,
             ),
             (
                 f"@{_TEST_STAGE}/subdir",

@@ -10,7 +10,7 @@ from absl.testing import absltest, parameterized
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import identifier, sql_identifier
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.model._signatures import snowpark_handler
@@ -159,6 +159,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 "_wait_for_service_status",
                 return_value=None,
             ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
         ):
             self.m_ops.create_service(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -170,7 +174,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -184,6 +188,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
+                inference_engine_args=None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -212,9 +217,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("IMAGE_REPO_DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("IMAGE_REPO_SCHEMA"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
@@ -247,6 +250,9 @@ class ServiceOpsTest(parameterized.TestCase):
                 include_message=False,
                 statement_params=self.m_statement_params,
             )
+
+            # by default, no inference engine spec is added
+            mock_add_inference_engine_spec.assert_not_called()
 
     @parameterized.parameters(  # type: ignore[misc]
         {"huggingface_args": {}},
@@ -331,7 +337,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -345,6 +351,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
+                inference_engine_args=None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -374,10 +381,8 @@ class ServiceOpsTest(parameterized.TestCase):
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
                 force_rebuild=True,
-                image_repo_database_name=sql_identifier.SqlIdentifier("DB"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
             if huggingface_args:
@@ -491,7 +496,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=True,
                 max_instances=1,
                 cpu_requests="1",
@@ -505,6 +510,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
+                inference_engine_args=None,
             )
             mock_create_stage.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -533,9 +539,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("TEMP"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                fully_qualified_image_repo_name='TEMP."test".IMAGE_REPO',
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
@@ -638,7 +642,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                     image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                     service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                    image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                    image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                     ingress_enabled=True,
                     max_instances=1,
                     cpu_requests="1",
@@ -652,6 +656,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     statement_params=self.m_statement_params,
                     hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                     progress_status=create_mock_progress_status(),
+                    inference_engine_args=None,
                 )
                 self.assertIsInstance(res, snowpark.AsyncJob)
 
@@ -788,7 +793,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 job_name=sql_identifier.SqlIdentifier("JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
                 warehouse_name=sql_identifier.SqlIdentifier("WAREHOUSE"),
-                image_repo=image_repo_fqn,
+                image_repo_name=image_repo_fqn,
                 output_table_database_name=output_table_database_name[0],
                 output_table_schema_name=output_table_schema_name[0],
                 output_table_name=sql_identifier.SqlIdentifier("OUTPUT_TABLE"),
@@ -833,11 +838,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 output_table_schema_name=output_table_schema_name[1],
                 output_table_name=sql_identifier.SqlIdentifier("OUTPUT_TABLE"),
             )
+            image_repo_fqn = identifier.get_schema_level_object_identifier(
+                image_repo_database_name[1], image_repo_schema_name[1], "IMAGE_REPO"
+            )
             mock_add_image_build_spec.assert_called_once_with(
-                image_repo_database_name=image_repo_database_name[1],
-                image_repo_schema_name=image_repo_schema_name[1],
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
-                image_repo_name=sql_identifier.SqlIdentifier("IMAGE_REPO"),
+                fully_qualified_image_repo_name=image_repo_fqn,
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("EAI")],
             )
@@ -925,7 +931,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
                     image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                     service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                    image_repo="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                    image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                     ingress_enabled=True,
                     max_instances=1,
                     cpu_requests="1",
@@ -939,6 +945,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     statement_params=self.m_statement_params,
                     hf_model_args=None,
                     progress_status=create_mock_progress_status(),
+                    inference_engine_args=None,
                 )
 
     def test_get_model_build_service_name(self) -> None:
@@ -962,6 +969,335 @@ class ServiceOpsTest(parameterized.TestCase):
             ),
             expected,
         )
+
+    def test_create_service_custom_inference_engine(self) -> None:
+        """Test create_service with custom inference engine parameters."""
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+
+        # Define test inference engine kwargs
+        test_inference_engine_args = [
+            "--model=model/DB.SCHEMA.MODEL/versions/VERSION/",
+            "--tensor-parallel-size=2",
+            "--max_tokens=1000",
+            "--temperature=0.8",
+        ]
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
+        ):
+            # Call create_service with inference engine parameters
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="2",  # This should match tensor-parallel-size
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
+                statement_params=self.m_statement_params,
+                inference_engine_args=service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=test_inference_engine_args,
+                ),
+                progress_status=create_mock_progress_status(),
+            )
+
+            # Verify all the standard method calls
+            mock_create_stage.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
+                statement_params=self.m_statement_params,
+            )
+            mock_add_model_spec.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+            mock_add_service_spec.assert_called_once_with(
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                ingress_enabled=True,
+                max_instances=1,
+                cpu="1",
+                memory="6GiB",
+                gpu="2",
+                num_workers=1,
+                max_batch_rows=1024,
+            )
+
+            # This is the key assertion - verify add_inference_engine_spec was called
+            mock_add_inference_engine_spec.assert_called_once_with(
+                inference_engine=inference_engine.InferenceEngine.VLLM, inference_engine_args=test_inference_engine_args
+            )
+
+            mock_add_image_build_spec.assert_not_called()
+            mock_save.assert_called_once()
+
+            mock_upload_directory_to_stage.assert_called_once_with(
+                self.c_session,
+                local_path=self.m_ops._model_deployment_spec.workspace_path,
+                stage_path=pathlib.PurePosixPath(
+                    self.m_ops._stage_client.fully_qualified_object_name(
+                        sql_identifier.SqlIdentifier("DB"),
+                        sql_identifier.SqlIdentifier("SCHEMA"),
+                        sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
+                    )
+                ),
+                statement_params=self.m_statement_params,
+            )
+            mock_deploy_model.assert_called_once_with(
+                stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+                model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
+                model_deployment_spec_yaml_str=None,
+                statement_params=self.m_statement_params,
+            )
+            mock_get_service_container_statuses.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                include_message=False,
+                statement_params=self.m_statement_params,
+            )
+
+    def test_create_service_with_inference_engine_and_no_image_build(self) -> None:
+        """Test create_service with custom inference engine parameters and no image build."""
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status=service_sql.InstanceStatus.PENDING,
+                container_status=service_sql.ContainerStatus.PENDING,
+                message=None,
+            )
+        ]
+
+        # Define test inference engine kwargs
+        test_inference_engine_args = [
+            "--model=model/DB.SCHEMA.MODEL/versions/VERSION/",
+            "--tensor-parallel-size=2",
+            "--max_tokens=1000",
+            "--temperature=0.8",
+        ]
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as mock_create_stage,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as mock_upload_directory_to_stage,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock.MagicMock(spec=snowpark.AsyncJob)),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",  # Return empty logs to prevent SQL calls
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
+        ):
+            # Call create_service with inference engine parameters
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="2",  # This should match tensor-parallel-size
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=True,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
+                statement_params=self.m_statement_params,
+                inference_engine_args=service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=test_inference_engine_args,
+                ),
+                progress_status=create_mock_progress_status(),
+            )
+
+            # Verify all the standard method calls
+            mock_create_stage.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
+                statement_params=self.m_statement_params,
+            )
+            mock_add_model_spec.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+            mock_add_service_spec.assert_called_once_with(
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                ingress_enabled=True,
+                max_instances=1,
+                cpu="1",
+                memory="6GiB",
+                gpu="2",
+                num_workers=1,
+                max_batch_rows=1024,
+            )
+
+            # key assertions -- image build is not called and inference engine model is called
+            # when inference engine is specified
+            mock_add_image_build_spec.assert_not_called()
+            mock_add_inference_engine_spec.assert_called_once_with(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=test_inference_engine_args,
+            )
+
+            mock_save.assert_called_once()
+            mock_upload_directory_to_stage.assert_called_once_with(
+                self.c_session,
+                local_path=self.m_ops._model_deployment_spec.workspace_path,
+                stage_path=pathlib.PurePosixPath(
+                    self.m_ops._stage_client.fully_qualified_object_name(
+                        sql_identifier.SqlIdentifier("DB"),
+                        sql_identifier.SqlIdentifier("SCHEMA"),
+                        sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
+                    )
+                ),
+                statement_params=self.m_statement_params,
+            )
+            mock_deploy_model.assert_called_once_with(
+                stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+                model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
+                model_deployment_spec_yaml_str=None,
+                statement_params=self.m_statement_params,
+            )
+            mock_get_service_container_statuses.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                include_message=False,
+                statement_params=self.m_statement_params,
+            )
 
 
 if __name__ == "__main__":

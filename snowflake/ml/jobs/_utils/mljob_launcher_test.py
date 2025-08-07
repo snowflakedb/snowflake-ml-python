@@ -296,7 +296,7 @@ class MLJobLauncherTests(parameterized.TestCase):
             with self.assertRaises(TimeoutError) as cm:
                 mljob_launcher.wait_for_instances(2, 5, timeout=5, check_interval=10)
 
-            self.assertIn("Timed out after 5s waiting for 2 instances", str(cm.exception))
+            self.assertIn("Timed out after 6s waiting for 2 instances", str(cm.exception))
             self.assertIn("only 1 available", str(cm.exception))
 
 

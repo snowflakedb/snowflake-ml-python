@@ -5,6 +5,7 @@ import yaml
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model import inference_engine
 from snowflake.ml.model._client.service import model_deployment_spec
 
 
@@ -20,7 +21,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
             )
             mds.add_service_spec(
                 service_name=sql_identifier.SqlIdentifier("service"),
@@ -61,7 +62,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         )
         mds.add_image_build_spec(
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-            image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+            fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
         )
         mds.add_service_spec(
             service_name=sql_identifier.SqlIdentifier("service"),
@@ -104,7 +105,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier(
                     "image_build_compute_pool", case_sensitive=True
                 ),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo", case_sensitive=True),
+                fully_qualified_image_repo_name='"db"."schema"."image_repo"',
             )
             mds.add_service_spec(
                 service_name=sql_identifier.SqlIdentifier("service", case_sensitive=True),
@@ -161,9 +162,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("image_repo_db"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("image_repo_schema"),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                 force_rebuild=force_rebuild,
                 external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
@@ -221,7 +220,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
                 external_access_integrations=None,  # Explicitly None
             )
             mds.add_service_spec(
@@ -266,9 +265,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                image_repo_database_name=sql_identifier.SqlIdentifier("image_repo_db"),
-                image_repo_schema_name=sql_identifier.SqlIdentifier("image_repo_schema"),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
                 force_rebuild=True,
                 external_access_integrations=[sql_identifier.SqlIdentifier("external_access_integration")],
             )
@@ -334,7 +331,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             )
             mds.add_image_build_spec(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-                image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
             )
             mds.add_service_spec(
                 service_name=sql_identifier.SqlIdentifier("service"),
@@ -409,7 +406,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         )
         mds.add_image_build_spec(
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
-            image_repo_name=sql_identifier.SqlIdentifier("image_repo"),
+            fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
         )
         mds.add_service_spec(
             service_name=sql_identifier.SqlIdentifier("service"),
@@ -430,9 +427,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         mds = model_deployment_spec.ModelDeploymentSpec()
         mds.add_image_build_spec(
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-            image_repo_name=sql_identifier.SqlIdentifier("repo"),
-            image_repo_database_name=sql_identifier.SqlIdentifier("db"),
-            image_repo_schema_name=sql_identifier.SqlIdentifier("schema"),
+            fully_qualified_image_repo_name="db.schema.repo",
         )
         mds.add_service_spec(
             service_name=sql_identifier.SqlIdentifier("service"),
@@ -444,19 +439,36 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             mds.save()
 
     def test_missing_image_build_spec_raises(self) -> None:
-        mds = model_deployment_spec.ModelDeploymentSpec()
-        mds.add_model_spec(
-            database_name=sql_identifier.SqlIdentifier("db"),
-            schema_name=sql_identifier.SqlIdentifier("schema"),
-            model_name=sql_identifier.SqlIdentifier("model"),
-            version_name=sql_identifier.SqlIdentifier("version"),
-        )
-        mds.add_service_spec(
-            service_name=sql_identifier.SqlIdentifier("service"),
-            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-        )
-        with self.assertRaisesRegex(ValueError, "Image build specification is required"):
-            mds.save()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "service": {
+                            "name": "DB.SCHEMA.SERVICE",
+                            "compute_pool": "POOL",
+                            "ingress_enabled": True,
+                            "max_instances": 1,
+                        },
+                    },
+                )
 
     def test_missing_service_or_job_spec_raises(self) -> None:
         mds = model_deployment_spec.ModelDeploymentSpec()
@@ -468,7 +480,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         )
         mds.add_image_build_spec(
             image_build_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
-            image_repo_name=sql_identifier.SqlIdentifier("repo"),
+            fully_qualified_image_repo_name=sql_identifier.SqlIdentifier("repo"),
         )
         with self.assertRaisesRegex(ValueError, "Either service or job specification is required"):
             mds.save()
@@ -528,6 +540,200 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             self.assertLen(mds._models, 1)
             mds.clear()
             self.assertLen(mds._models, 0)
+
+    def test_image_build_spec_minimal_params(self) -> None:
+        """Test add_image_build_spec with only required parameter and all optional parameters as None/default."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=None,  # Explicitly None
+                fully_qualified_image_repo_name=None,  # Explicitly None
+                force_rebuild=False,  # Default value
+                external_access_integrations=None,  # Explicitly None
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                max_instances=1,
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "service": {
+                            "name": "DB.SCHEMA.SERVICE",
+                            "compute_pool": "SERVICE_COMPUTE_POOL",
+                            "ingress_enabled": True,
+                            "max_instances": 1,
+                        },
+                    },
+                )
+
+    def test_experimental_options_minimal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+            )
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=[
+                    "--some_vllm_arg=0.8",
+                    "--model=model",
+                    "--tensor_parallel_size=2",
+                ],
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "image_build": {
+                            "compute_pool": "POOL",
+                            "force_rebuild": False,
+                            "image_repo": "DB.SCHEMA.REPO",
+                        },
+                        "service": {
+                            "name": "DB.SCHEMA.SERVICE",
+                            "compute_pool": "POOL",
+                            "ingress_enabled": True,
+                            "max_instances": 1,
+                            "inference_engine_spec": {
+                                "inference_engine_name": "vllm",
+                                "inference_engine_args": [
+                                    "--some_vllm_arg=0.8",
+                                    "--model=model",
+                                    "--tensor_parallel_size=2",
+                                ],
+                            },
+                        },
+                    },
+                )
+        mds.clear()
+
+    def test_experimental_options_minimal_with_blocklist_args(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+            )
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=[
+                    "--some_vllm_arg=0.8",
+                    "--host=host",
+                    "--port=8000",
+                ],
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "image_build": {
+                            "compute_pool": "POOL",
+                            "force_rebuild": False,
+                            "image_repo": "DB.SCHEMA.REPO",
+                        },
+                        "service": {
+                            "name": "DB.SCHEMA.SERVICE",
+                            "compute_pool": "POOL",
+                            "ingress_enabled": True,
+                            "max_instances": 1,
+                            "inference_engine_spec": {
+                                "inference_engine_name": "vllm",
+                                "inference_engine_args": ["--some_vllm_arg=0.8"],
+                            },
+                        },
+                    },
+                )
+        mds.clear()
+
+    def test_skip_image_build_with_inference_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+            )
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=["--some_vllm_arg=0.8", "--host=host", "--port=8000"],
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "service": {
+                            "name": "DB.SCHEMA.SERVICE",
+                            "compute_pool": "POOL",
+                            "ingress_enabled": True,
+                            "max_instances": 1,
+                            "inference_engine_spec": {
+                                "inference_engine_name": "vllm",
+                                "inference_engine_args": ["--some_vllm_arg=0.8"],
+                            },
+                        },
+                    },
+                )
+        mds.clear()
 
 
 if __name__ == "__main__":

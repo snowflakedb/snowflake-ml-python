@@ -1,4 +1,5 @@
 import functools
+import importlib
 import inspect
 import io
 import itertools
@@ -7,6 +8,7 @@ import logging
 import pickle
 import sys
 import textwrap
+from importlib.abc import Traversable
 from pathlib import Path, PurePath
 from typing import Any, Callable, Optional, Union, cast, get_args, get_origin
 
@@ -262,11 +264,24 @@ def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_sp
                 # Manually traverse the directory and upload each file, since Snowflake PUT
                 # can't handle directories. Reduce the number of PUT operations by using
                 # wildcard patterns to batch upload files with the same extension.
-                for path in {
-                    p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-                    for p in source_path.resolve().rglob("*")
-                    if p.is_file()
-                }:
+                upload_path_patterns = set()
+                for p in source_path.resolve().rglob("*"):
+                    if p.is_dir():
+                        continue
+                    if p.name.startswith("."):
+                        # Hidden files: use .* pattern for batch upload
+                        if p.suffix:
+                            upload_path_patterns.add(p.parent.joinpath(f".*{p.suffix}"))
+                        else:
+                            upload_path_patterns.add(p.parent.joinpath(".*"))
+                    else:
+                        # Regular files: use * pattern for batch upload
+                        if p.suffix:
+                            upload_path_patterns.add(p.parent.joinpath(f"*{p.suffix}"))
+                        else:
+                            upload_path_patterns.add(p)
+
+                for path in upload_path_patterns:
                     session.file.put(
                         str(path),
                         payload_stage_path.joinpath(path.parent.relative_to(source_path)).as_posix(),
@@ -280,6 +295,27 @@ def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_sp
                     overwrite=True,
                     auto_compress=False,
                 )
+
+
+def upload_system_resources(session: snowpark.Session, stage_path: PurePath) -> None:
+    resource_ref = importlib.resources.files(__package__).joinpath("scripts")
+
+    def upload_dir(ref: Traversable, relative_path: str = "") -> None:
+        for item in ref.iterdir():
+            current_path = Path(relative_path) / item.name if relative_path else Path(item.name)
+            if item.is_dir():
+                # Recursively process subdirectories
+                upload_dir(item, str(current_path))
+            elif item.is_file():
+                content = item.read_bytes()
+                session.file.put_stream(
+                    io.BytesIO(content),
+                    stage_path.joinpath(current_path).as_posix(),
+                    auto_compress=False,
+                    overwrite=True,
+                )
+
+    upload_dir(resource_ref)
 
 
 def resolve_source(
@@ -497,15 +533,7 @@ class JobPayload:
             overwrite=False,  # FIXME
         )
 
-        scripts_dir = Path(__file__).parent.joinpath("scripts")
-        for script_file in scripts_dir.glob("*"):
-            if script_file.is_file():
-                session.file.put(
-                    script_file.as_posix(),
-                    system_stage_path.as_posix(),
-                    overwrite=True,
-                    auto_compress=False,
-                )
+        upload_system_resources(session, system_stage_path)
         python_entrypoint: list[Union[str, PurePath]] = [
             PurePath(f"{constants.SYSTEM_MOUNT_PATH}/mljob_launcher.py"),
             PurePath(f"{constants.APP_MOUNT_PATH}/{entrypoint.file_path.relative_to(source).as_posix()}"),

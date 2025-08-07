@@ -199,7 +199,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
             elapsed = time.monotonic() - start_time
             if elapsed >= timeout >= 0:
                 raise TimeoutError(f"Job {self.name} did not complete within {timeout} seconds")
-            elif status == "PENDING" and not warning_shown and elapsed >= 2:  # Only show warning after 2s
+            elif status == "PENDING" and not warning_shown and elapsed >= 5:  # Only show warning after 5s
                 pool_info = _get_compute_pool_info(self._session, self._compute_pool)
                 if (pool_info.max_nodes - pool_info.active_nodes) < self.min_instances:
                     logger.warning(

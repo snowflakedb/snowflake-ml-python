@@ -63,6 +63,12 @@ py_library(
 )
 
 py_library(
+    name = "inference_engine",
+    srcs = ["inference_engine.py"],
+    deps = [],
+)
+
+py_library(
     name = "model",
     srcs = ["__init__.py"],
     deps = [

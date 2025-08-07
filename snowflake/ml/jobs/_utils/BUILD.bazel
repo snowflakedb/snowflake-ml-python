@@ -34,6 +34,7 @@ py_library(
     deps = [
         ":constants",
         ":query_helper",
+        ":runtime_env_utils",
         ":types",
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
@@ -62,13 +63,26 @@ py_library(
     ],
 )
 
+py_test(
+    name = "stage_utils_test",
+    srcs = ["stage_utils_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":payload_utils",
+    ],
+)
+
 py_library(
     name = "payload_utils",
-    srcs = ["payload_utils.py"],
+    srcs = [
+        "__init__.py",
+        "payload_utils.py",
+    ],
     deps = [
         ":constants",
         ":function_payload_utils",
         ":payload_scripts",
+        ":query_helper",
         ":stage_utils",
         ":types",
     ],
@@ -83,18 +97,7 @@ py_test(
     tags = ["feature:jobs"],
     deps = [
         ":payload_utils",
-        ":query_helper",
-        ":stage_utils",
         ":test_file_helper",
-    ],
-)
-
-py_test(
-    name = "stage_utils_test",
-    srcs = ["stage_utils_test.py"],
-    tags = ["feature:jobs"],
-    deps = [
-        ":stage_utils",
     ],
 )
 
@@ -111,6 +114,11 @@ py_library(
 py_library(
     name = "function_payload_utils",
     srcs = ["function_payload_utils.py"],
+)
+
+py_library(
+    name = "runtime_env_utils",
+    srcs = ["runtime_env_utils.py"],
 )
 
 py_test(
@@ -137,7 +145,9 @@ py_test(
 
 py_library(
     name = "job_utils",
-    srcs = [],
+    srcs = [
+        "__init__.py",
+    ],
     deps = [
         ":interop_utils",
         ":payload_utils",

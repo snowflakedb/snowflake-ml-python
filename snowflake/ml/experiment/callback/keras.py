@@ -2,7 +2,7 @@ import json
 from typing import TYPE_CHECKING, Any, Optional
 from warnings import warn
 
-import xgboost as xgb
+import keras
 
 from snowflake.ml.experiment import utils
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from snowflake.ml.model.model_signature import ModelSignature
 
 
-class SnowflakeXgboostCallback(xgb.callback.TrainingCallback):
+class SnowflakeKerasCallback(keras.callbacks.Callback):
     def __init__(
         self,
         experiment_tracking: "ExperimentTracking",
@@ -32,36 +32,32 @@ class SnowflakeXgboostCallback(xgb.callback.TrainingCallback):
         self.model_name = model_name
         self.model_signature = model_signature
 
-    def before_training(self, model: xgb.Booster) -> xgb.Booster:
+    def on_train_begin(self, logs: Optional[dict[str, Any]] = None) -> None:
         if self.log_params:
-            params = json.loads(model.save_config())
+            params = json.loads(self.model.to_json())
             self._experiment_tracking.log_params(utils.flatten_nested_params(params))
 
-        return model
+    def on_epoch_end(self, epoch: int, logs: Optional[dict[str, Any]] = None) -> None:
+        if self.log_metrics and logs and epoch % self.log_every_n_epochs == 0:
+            for key, value in logs.items():
+                try:
+                    value = float(value)
+                except Exception:
+                    pass
+                else:
+                    self._experiment_tracking.log_metric(key=key, value=value, step=epoch)
 
-    def after_iteration(self, model: Any, epoch: int, evals_log: dict[str, dict[str, Any]]) -> bool:
-        if self.log_metrics and epoch % self.log_every_n_epochs == 0:
-            for dataset_name, metrics in evals_log.items():
-                for metric_name, log in metrics.items():
-                    metric_key = dataset_name + ":" + metric_name
-                    self._experiment_tracking.log_metric(key=metric_key, value=log[-1], step=epoch)
-
-        return False
-
-    def after_training(self, model: xgb.Booster) -> xgb.Booster:
+    def on_train_end(self, logs: Optional[dict[str, Any]] = None) -> None:
         if self.log_model:
             if not self.model_signature:
                 warn(
                     "Model will not be logged because model signature is missing. "
-                    "To autolog the model, please specify `model_signature` when constructing SnowflakeXgboostCallback."
+                    "To autolog the model, please specify `model_signature` when constructing SnowflakeKerasCallback."
                 )
-                return model
-
+                return
             model_name = self.model_name or self._experiment_tracking._get_or_set_experiment().name + "_model"
             self._experiment_tracking.log_model(  # type: ignore[call-arg]
-                model=model,
+                model=self.model,
                 model_name=model_name,
                 signatures={"predict": self.model_signature},
             )
-
-        return model

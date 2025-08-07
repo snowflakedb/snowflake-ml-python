@@ -41,6 +41,13 @@ class AutologIntegrationTest:
         self.X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
         self.y = [0, 1, 0]
         self.num_steps = 5
+        self.model_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(name="a", dtype=model_signature.DataType.FLOAT),
+                model_signature.FeatureSpec(name="b", dtype=model_signature.DataType.FLOAT),
+            ],
+            outputs=[model_signature.FeatureSpec(name="target", dtype=model_signature.DataType.INT8)],
+        )
 
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._db_name)
@@ -49,26 +56,21 @@ class AutologIntegrationTest:
     def _train_model(self, model_class: type[Any], callback: Any) -> None:
         pass
 
-    def _test_autolog(self, model_class: type[Any], callback_class: type[Any], metric_name: str) -> None:
+    def _test_autolog(
+        self, model_class: type[Any], callback_class: type[Any], metric_name: str, log_every_n_epochs: int
+    ) -> None:
         """Test that autologging works."""
         experiment_name = "TEST_EXPERIMENT_AUTOLOG"
         model_name = "TEST_AUTOLOG_MODEL"
-
-        model_sig = model_signature.ModelSignature(
-            inputs=[
-                model_signature.FeatureSpec(name="a", dtype=model_signature.DataType.FLOAT),
-                model_signature.FeatureSpec(name="b", dtype=model_signature.DataType.FLOAT),
-            ],
-            outputs=[model_signature.FeatureSpec(name="target", dtype=model_signature.DataType.INT8)],
-        )
 
         callback = callback_class(
             self.exp,
             log_model=True,
             log_metrics=True,
             log_params=True,
+            log_every_n_epochs=log_every_n_epochs,
             model_name=model_name,
-            model_signature=model_sig,
+            model_signature=self.model_sig,
         )
         self.exp.set_experiment(experiment_name=experiment_name)
         self._train_model(model_class, callback)
@@ -82,13 +84,18 @@ class AutologIntegrationTest:
         # Parse and verify metadata
         metadata = json.loads(runs[0]["metadata"])
         self.assertIn("metrics", metadata)
-        metric_dict = {f"{m['name']}_step_{m['step']}": m for m in metadata["metrics"]}
-        # Verify that the expected metric was logged for each step
-        for step in range(self.num_steps):
-            self.assertIn(f"{metric_name}_step_{step}", metric_dict)
+        metric_set = {f"{m['name']}_step_{m['step']}" for m in metadata["metrics"]}
+        # Verify that the specified metric was logged at all expected epochs
+        for epoch in range(0, self.num_steps, log_every_n_epochs):
+            self.assertIn(f"{metric_name}_step_{epoch}", metric_set)
+        # Verify that no metrics were logged at epochs that are not multiples of `log_every_n_epochs`
+        for metric in metadata["metrics"]:
+            self.assertIn(metric["step"], range(0, self.num_steps, log_every_n_epochs))
+
         # Verify that params were logged
         self.assertIn("parameters", metadata)
         self.assertGreater(len(metadata["parameters"]), 0)
+
         # Verify that the model was logged
         models = self._session.sql(f"SHOW MODELS LIKE '{model_name}'").collect()
         self.assertEqual(len(models), 1)

@@ -426,7 +426,6 @@ def _submit_job(
 
     Raises:
         ValueError: If database or schema value(s) are invalid
-        SnowparkSQLException: If there is an error submitting the job.
     """
     session = session or get_active_session()
 
@@ -504,18 +503,7 @@ def _submit_job(
     query_text, params = _generate_submission_query(
         spec, external_access_integrations, query_warehouse, target_instances, session, compute_pool, job_id
     )
-    try:
-        _ = query_helper.run_query(session, query_text, params=params)
-    except SnowparkSQLException as e:
-        if "Invalid spec: unknown option 'resourceManagement' for 'spec'." in e.message:
-            logger.warning("Dropping 'resourceManagement' from spec because control policy is not enabled.")
-            spec["spec"].pop("resourceManagement", None)
-            query_text, params = _generate_submission_query(
-                spec, external_access_integrations, query_warehouse, target_instances, session, compute_pool, job_id
-            )
-            _ = query_helper.run_query(session, query_text, params=params)
-        else:
-            raise
+    _ = query_helper.run_query(session, query_text, params=params)
     return get_job(job_id, session=session)
 
 

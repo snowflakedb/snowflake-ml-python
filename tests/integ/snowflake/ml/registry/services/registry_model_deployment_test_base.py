@@ -123,11 +123,12 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             version_name=mv._version_name,
         )
 
+        image_repo_fqn = identifier.get_schema_level_object_identifier(
+            database_name_id.identifier(), schema_name_id.identifier(), image_repo_name.identifier()
+        )
         mv._service_ops._model_deployment_spec.add_image_build_spec(
-            image_repo_database_name=database_name_id,
-            image_repo_schema_name=schema_name_id,
-            image_repo_name=image_repo_name,
             image_build_compute_pool_name=build_compute_pool,
+            fully_qualified_image_repo_name=image_repo_fqn,
             force_rebuild=force_rebuild,
             external_access_integrations=None,
         )

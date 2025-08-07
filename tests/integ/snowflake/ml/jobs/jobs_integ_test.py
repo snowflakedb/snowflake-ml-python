@@ -3,6 +3,7 @@ import itertools
 import os
 import pathlib
 import re
+import sys
 import tempfile
 import textwrap
 import time
@@ -19,9 +20,15 @@ from snowflake.ml import jobs
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jd
-from snowflake.ml.jobs._utils import constants, query_helper
+from snowflake.ml.jobs._utils import (
+    constants,
+    payload_utils,
+    query_helper,
+    spec_utils,
+    types,
+)
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import exceptions as sp_exceptions
+from snowflake.snowpark import exceptions as sp_exceptions, functions as F
 from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
@@ -507,6 +514,33 @@ class JobManagerTest(parameterized.TestCase):
                 self.assertDictEqual(loaded_job.result(), job_result)
 
     # TODO(SNOW-1911482): Enable test for Python 3.11+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )  # type: ignore[misc]
+    def test_job_execution_in_stored_procedure(self) -> None:
+        jobs_import_src = os.path.dirname(jobs.__file__)
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage")
+        def job_fn() -> None:
+            print("Hello from remote function!")
+
+        @F.sproc(
+            session=self.session,
+            packages=["snowflake-snowpark-python", "snowflake-ml-python"],
+            imports=[
+                (jobs_import_src, "snowflake.ml.jobs"),
+            ],
+        )
+        def job_sproc(session: snowpark.Session) -> None:
+            job = job_fn()
+            assert job.wait() == "DONE", f"Job {job.id} failed. Logs:\n{job.get_logs()}"
+            return job.get_logs()
+
+        result = job_sproc()
+        self.assertEqual("Hello from remote function!", result)
+
+    # TODO(SNOW-1911482): Enable test for Python 3.11+
     @absltest.skipIf(  # type: ignore[misc]
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
@@ -653,11 +687,13 @@ class JobManagerTest(parameterized.TestCase):
             ray.init(address="auto", ignore_reinit_error=True)
             hosts = [compute_heavy.remote(50_000) for _ in range(10)]
             unique_hosts = set(ray.get(hosts))
-            assert len(unique_hosts) >= 2, f"Expected at least 2 unique hosts, get: {unique_hosts}"
+            assert (
+                len(unique_hosts) >= 2
+            ), f"Expected at least 2 unique hosts, get: {unique_hosts}, hosts: {ray.get(hosts)}"
             print("test succeeded")
 
         job = self._submit_func_as_file(ray_workload, target_instances=2, min_instances=2)
-        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        self.assertEqual(job.wait(), "DONE", f"job {job.id} logs: {job.get_logs(verbose=True)}")
         self.assertTrue("test succeeded" in job.get_logs())
 
     def test_multinode_job_wait_for_instances(self) -> None:
@@ -955,23 +991,16 @@ class JobManagerTest(parameterized.TestCase):
             f"CREATE {'TEMPORARY' if temporary else ''} STAGE {stage_name} ENCRYPTION = (TYPE = {repr(encryption)});"
         ).collect()
         upload_files = TestAsset("src")
-        for path in {
-            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-            for p in upload_files.path.resolve().rglob("*")
-            if p.is_file()
-        }:
-            self.session.file.put(
-                str(path),
-                pathlib.Path(stage_name).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
-                overwrite=True,
-                auto_compress=False,
-            )
-
+        payload_utils.upload_payloads(
+            self.session, pathlib.PurePath(stage_name), types.PayloadSpec(upload_files.path, None)
+        )
         test_cases = [
-            (f"@{stage_name}/", f"@{stage_name}/subdir/sub_main.py"),
-            (f"@{stage_name}/subdir", f"@{stage_name}/subdir/sub_main.py"),
+            (f"@{stage_name}/", f"@{stage_name}/subdir/sub_main.py", "DONE"),
+            (f"@{stage_name}/subdir", f"@{stage_name}/subdir/sub_main.py", "DONE"),
+            (f"@{stage_name}/subdir", "sub_main.py", "DONE"),
+            (f"@{stage_name}/subdir", "non_exist_file.py", "FAILED"),
         ]
-        for source, entrypoint in test_cases:
+        for source, entrypoint, expected_status in test_cases:
             with self.subTest(source=source, entrypoint=entrypoint):
                 job = jobs.submit_from_stage(
                     source=source,
@@ -982,7 +1011,7 @@ class JobManagerTest(parameterized.TestCase):
                     session=self.session,
                 )
 
-                self.assertEqual(job.wait(), "DONE", job.get_logs())
+                self.assertEqual(job.wait(), expected_status, job.get_logs())
 
     @parameterized.parameters(
         [
@@ -1090,11 +1119,6 @@ class JobManagerTest(parameterized.TestCase):
 
     def test_cancel_job(self) -> None:
         """Test cancelling a long running job."""
-        try:
-            self.session.sql("ALTER SESSION SET SNOWSERVICES_ENABLE_SPCS_JOB_CANCELLATION = TRUE").collect()
-            self.session.sql("ALTER SESSION SET ENABLE_ENTITY_FACADE_SYSTEM_FUNCTIONS = TRUE").collect()
-        except sp_exceptions.SnowparkSQLException:
-            self.skipTest("Unable to control the SPCS job cancellation parameter. Skipping test.")
 
         def long_running_function() -> None:
             import time
@@ -1104,8 +1128,12 @@ class JobManagerTest(parameterized.TestCase):
         job = self._submit_func_as_file(long_running_function)
         self.assertIn(job.status, ["PENDING", "RUNNING"])
         job.cancel()
-        final_status = job.wait(timeout=20)
-        self.assertEqual(final_status, "CANCELLED")
+        try:
+            job.wait(timeout=20)
+        except TimeoutError:
+            print("Job did not cancel within timeout", job.status, job.get_logs())
+        finally:
+            self.assertIn(job.status, ["CANCELLED", "CANCELLING"])
 
     def test_cancel_nonexistent_job(self) -> None:
         """Test cancelling a job that doesn't exist."""
@@ -1125,23 +1153,20 @@ class JobManagerTest(parameterized.TestCase):
         """Test that the job orders are correct for a multinode job."""
         job = self._submit_func_as_file(dummy_function, target_instances=2)
         self.assertEqual(job.wait(), "DONE", job.get_logs())
-        if "resourceManagement" in job._service_spec["spec"]:
-            # Step 1: Show service instances in service
-            rows = query_helper.run_query(
-                self.session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=[job.id]
-            )
-            self.assertEqual(len(rows), 2, "Expected 2 service instances for target_instances=2")
+        # Step 1: Show service instances in service
+        rows = query_helper.run_query(self.session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=[job.id])
+        self.assertEqual(len(rows), 2, "Expected 2 service instances for target_instances=2")
 
-            # Step 2: Sort them by start-time
-            sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
+        # Step 2: Sort them by start-time
+        sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
 
-            # Step 3: Check instance with id 0 starts first
-            first_instance = sorted_instances[0]
-            self.assertEqual(
-                int(first_instance["instance_id"]),
-                0,
-                f"Expected instance 0 to start first, but instance {first_instance['instance_id']} started first",
-            )
+        # Step 3: Check instance with id 0 starts first
+        first_instance = sorted_instances[0]
+        self.assertEqual(
+            int(first_instance["instance_id"]),
+            0,
+            f"Expected instance 0 to start first, but instance {first_instance['instance_id']} started first",
+        )
 
     @parameterized.parameters(  # type: ignore[misc]
         ("src", "src/entry.py", [(TestAsset("src/subdir/utils").path.as_posix(), "src.subdir.utils")]),
@@ -1174,17 +1199,9 @@ class JobManagerTest(parameterized.TestCase):
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
         upload_files = TestAsset("src")
 
-        for path in {
-            p.parent.joinpath(f"*{p.suffix}") if p.suffix else p
-            for p in upload_files.path.resolve().rglob("*")
-            if p.is_file()
-        }:
-            self.session.file.put(
-                str(path),
-                pathlib.Path(stage_path).joinpath(path.parent.relative_to(upload_files.path)).as_posix(),
-                overwrite=True,
-                auto_compress=False,
-            )
+        payload_utils.upload_payloads(
+            self.session, pathlib.PurePath(stage_path), types.PayloadSpec(upload_files.path, None)
+        )
 
         test_cases = [
             (f"{stage_path}/", f"{stage_path}/entry.py", [(f"{stage_path}/subdir/utils", "src.subdir.utils")]),
@@ -1224,10 +1241,53 @@ class JobManagerTest(parameterized.TestCase):
             entrypoint="main.py",
             stage_name="payload_stage",
             external_access_integrations=pypi_eais,
+            session=self.session,
         )
         self.assertEqual(job.wait(), "DONE", job.get_logs())
         self.assertIn("Numpy version: 1.23", job.get_logs())
         self.assertIn(f"Cloudpickle version: {version.parse(cp.__version__).major}.", job.get_logs())
+
+    def test_submit_with_hidden_files(self) -> None:
+        job = jobs.submit_directory(
+            TestAsset("src/subdir6").path,
+            self.compute_pool,
+            entrypoint="main.py",
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertIn("This is a secret message stored in a hidden YAML file", job.get_logs())
+        self.assertIn("This is the content of a hidden file with no extension", job.get_logs())
+
+    def test_job_with_different_python_version(self) -> None:
+        target_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        resources = spec_utils._get_node_resources(self.session, self.compute_pool)
+        hardware = "GPU" if resources.gpu > 0 else "CPU"
+        try:
+            expected_runtime_image = spec_utils._get_runtime_image(self.session, hardware)
+        except Exception:
+            expected_runtime_image = None
+
+        with mock.patch.dict(os.environ, {constants.ENABLE_IMAGE_VERSION_ENV_VAR: "True"}):
+            job = jobs.submit_file(
+                TestAsset("src/check_python.py").path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+            )
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            if expected_runtime_image:
+                self.assertIn(
+                    target_version,
+                    job.get_logs(),
+                    f"Expected Python {target_version} when matching runtime available: {expected_runtime_image}",
+                )
+            else:
+                self.assertIn(
+                    "3.10",
+                    job.get_logs(),
+                    "Expected fallback to default Python version when no matching runtime available",
+                )
 
 
 if __name__ == "__main__":

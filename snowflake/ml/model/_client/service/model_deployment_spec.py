@@ -1,10 +1,12 @@
 import json
 import pathlib
+import warnings
 from typing import Any, Optional, Union
 
 import yaml
 
 from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml.model import inference_engine as inference_engine_module
 from snowflake.ml.model._client.service import model_deployment_spec_schema
 
 
@@ -24,6 +26,8 @@ class ModelDeploymentSpec:
         self._service: Optional[model_deployment_spec_schema.Service] = None
         self._job: Optional[model_deployment_spec_schema.Job] = None
         self._model_loggings: Optional[list[model_deployment_spec_schema.ModelLogging]] = None
+        # this is referring to custom inference engine spec (vllm, sglang, etc)
+        self._inference_engine_spec: Optional[model_deployment_spec_schema.InferenceEngineSpec] = None
         self._inference_spec: dict[str, Any] = {}  # Common inference spec for service/job
 
         self.database: Optional[sql_identifier.SqlIdentifier] = None
@@ -71,10 +75,8 @@ class ModelDeploymentSpec:
 
     def add_image_build_spec(
         self,
-        image_build_compute_pool_name: sql_identifier.SqlIdentifier,
-        image_repo_name: sql_identifier.SqlIdentifier,
-        image_repo_database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        image_repo_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
+        image_build_compute_pool_name: Optional[sql_identifier.SqlIdentifier] = None,
+        fully_qualified_image_repo_name: Optional[str] = None,
         force_rebuild: bool = False,
         external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]] = None,
     ) -> "ModelDeploymentSpec":
@@ -82,33 +84,29 @@ class ModelDeploymentSpec:
 
         Args:
             image_build_compute_pool_name: Compute pool for image building.
-            image_repo_name: Name of the image repository.
-            image_repo_database_name: Database name for the image repository.
-            image_repo_schema_name: Schema name for the image repository.
+            fully_qualified_image_repo_name: Fully qualified name of the image repository.
             force_rebuild: Whether to force rebuilding the image.
             external_access_integrations: List of external access integrations.
 
         Returns:
             Self for chaining.
         """
-        saved_image_repo_database = image_repo_database_name or self.database
-        saved_image_repo_schema = image_repo_schema_name or self.schema
-        assert saved_image_repo_database is not None
-        assert saved_image_repo_schema is not None
-        fq_image_repo_name = identifier.get_schema_level_object_identifier(
-            db=saved_image_repo_database.identifier(),
-            schema=saved_image_repo_schema.identifier(),
-            object_name=image_repo_name.identifier(),
-        )
-
-        self._image_build = model_deployment_spec_schema.ImageBuild(
-            compute_pool=image_build_compute_pool_name.identifier(),
-            image_repo=fq_image_repo_name,
-            force_rebuild=force_rebuild,
-            external_access_integrations=(
-                [eai.identifier() for eai in external_access_integrations] if external_access_integrations else None
-            ),
-        )
+        if (
+            image_build_compute_pool_name is not None
+            or fully_qualified_image_repo_name is not None
+            or force_rebuild is True
+            or external_access_integrations is not None
+        ):
+            self._image_build = model_deployment_spec_schema.ImageBuild(
+                compute_pool=(
+                    None if image_build_compute_pool_name is None else image_build_compute_pool_name.identifier()
+                ),
+                image_repo=fully_qualified_image_repo_name,
+                force_rebuild=force_rebuild,
+                external_access_integrations=(
+                    [eai.identifier() for eai in external_access_integrations] if external_access_integrations else None
+                ),
+            )
         return self
 
     def _add_inference_spec(
@@ -363,6 +361,86 @@ class ModelDeploymentSpec:
             self._model_loggings.append(model_logging)
         return self
 
+    def add_inference_engine_spec(
+        self,
+        inference_engine: inference_engine_module.InferenceEngine,
+        inference_engine_args: Optional[list[str]] = None,
+    ) -> "ModelDeploymentSpec":
+        """Add inference engine specification. This must be called after self.add_service_spec().
+
+        Args:
+            inference_engine: Inference engine.
+            inference_engine_args: Inference engine arguments.
+
+        Returns:
+            Self for chaining.
+
+        Raises:
+            ValueError: If inference engine specification is called before add_service_spec().
+            ValueError: If the argument does not have a '--' prefix.
+        """
+        # TODO: needs to eventually support job deployment spec
+        if self._service is None:
+            raise ValueError("Inference engine specification must be called after add_service_spec().")
+
+        if inference_engine_args is None:
+            inference_engine_args = []
+
+        # Validate inference engine
+        if inference_engine == inference_engine_module.InferenceEngine.VLLM:
+            # Block list for VLLM args that should not be user-configurable
+            # make this a set for faster lookup
+            block_list = {
+                "--host",
+                "--port",
+                "--allowed-headers",
+                "--api-key",
+                "--lora-modules",
+                "--prompt-adapter",
+                "--ssl-keyfile",
+                "--ssl-certfile",
+                "--ssl-ca-certs",
+                "--enable-ssl-refresh",
+                "--ssl-cert-reqs",
+                "--root-path",
+                "--middleware",
+                "--disable-frontend-multiprocessing",
+                "--enable-request-id-headers",
+                "--enable-auto-tool-choice",
+                "--tool-call-parser",
+                "--tool-parser-plugin",
+                "--log-config-file",
+            }
+
+            filtered_args = []
+            for arg in inference_engine_args:
+                # Check if the argument has a '--' prefix
+                if not arg.startswith("--"):
+                    raise ValueError(
+                        f"""The argument {arg} is not allowed for configuration in Snowflake ML's
+                        {inference_engine.value} inference engine. Maybe you forgot to add '--' prefix?""",
+                    )
+
+                # Filter out blocked args and warn user
+                if arg.split("=")[0] in block_list:
+                    warnings.warn(
+                        f"""The argument {arg} is not allowed for configuration in Snowflake ML's
+                        {inference_engine.value} inference engine. It will be ignored.""",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                else:
+                    filtered_args.append(arg)
+
+            inference_engine_args = filtered_args
+
+        self._service.inference_engine_spec = model_deployment_spec_schema.InferenceEngineSpec(
+            # convert to string to be saved in the deployment spec
+            inference_engine_name=inference_engine.value,
+            inference_engine_args=inference_engine_args,
+        )
+        return self
+
     def save(self) -> str:
         """Constructs the final deployment spec from added components and saves it.
 
@@ -377,8 +455,6 @@ class ModelDeploymentSpec:
         # Validations
         if not self._models:
             raise ValueError("Model specification is required. Call add_model_spec().")
-        if not self._image_build:
-            raise ValueError("Image build specification is required. Call add_image_build_spec().")
         if not self._service and not self._job:
             raise ValueError(
                 "Either service or job specification is required. Call add_service_spec() or add_job_spec()."
