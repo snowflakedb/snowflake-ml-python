@@ -84,7 +84,7 @@
 - name: boto3
   dev_version: 1.34.69
 - name: catboost
-  dev_version: 1.2.0
+  dev_version: 1.2.8
   version_requirements: '>=1.2.0, <2'
   requirements_extra_tags:
     - catboost

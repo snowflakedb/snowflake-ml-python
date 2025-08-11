@@ -25,16 +25,20 @@ class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCa
             raise ValueError(f"Unsupported model class: {model_class}")
 
     @parameterized.parameters(
-        (xgb.XGBClassifier, "validation_0:logloss"),
-        (xgb.XGBRegressor, "validation_0:rmse"),
-        (xgb.Booster, "train:rmse"),
+        (xgb.XGBClassifier, "validation_0:logloss", 1),
+        (xgb.XGBRegressor, "validation_0:rmse", 2),
+        (xgb.Booster, "train:rmse", 1),
+        (xgb.Booster, "train:rmse", 3),
     )  # type: ignore[misc]
-    def test_autolog(self, model_class: type[Union[xgb.XGBModel, xgb.Booster]], metric_name: str) -> None:
+    def test_autolog(
+        self, model_class: type[Union[xgb.XGBModel, xgb.Booster]], metric_name: str, log_every_n_epochs: int
+    ) -> None:
         """Test that autologging works for XGBoost models."""
         self._test_autolog(
             model_class=model_class,
             callback_class=SnowflakeXgboostCallback,
             metric_name=metric_name,
+            log_every_n_epochs=log_every_n_epochs,
         )
 
 

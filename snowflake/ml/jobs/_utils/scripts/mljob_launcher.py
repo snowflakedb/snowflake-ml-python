@@ -173,10 +173,10 @@ def wait_for_instances(
 
     start_time = time.time()
     current_interval = max(min(1, check_interval), 0.1)  # Default 1s, minimum 0.1s
-    logger.debug(
+    logger.info(
         "Waiting for instances to be ready "
-        "(min_instances={}, target_instances={}, timeout={}s, max_check_interval={}s)".format(
-            min_instances, target_instances, timeout, check_interval
+        "(min_instances={}, target_instances={}, min_wait_time={}s, timeout={}s, max_check_interval={}s)".format(
+            min_instances, target_instances, min_wait_time, timeout, check_interval
         )
     )
 

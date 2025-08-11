@@ -1,12 +1,14 @@
 import logging
 import os
+import sys
 from math import ceil
 from pathlib import PurePath
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.jobs._utils import constants, query_helper, types
+from snowflake.ml.jobs._utils.runtime_env_utils import RuntimeEnvironmentsDict
 
 
 def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.ComputeResources:
@@ -28,22 +30,53 @@ def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.C
     )
 
 
+def _get_runtime_image(session: snowpark.Session, target_hardware: Literal["CPU", "GPU"]) -> Optional[str]:
+    rows = query_helper.run_query(session, "CALL SYSTEM$NOTEBOOKS_FIND_LABELED_RUNTIMES()")
+    if not rows:
+        return None
+    try:
+        runtime_envs = RuntimeEnvironmentsDict.model_validate_json(rows[0][0])
+        spcs_container_runtimes = runtime_envs.get_spcs_container_runtimes()
+    except Exception as e:
+        logging.warning(f"Failed to parse runtime image name from {rows[0][0]}, error: {e}")
+        return None
+
+    selected_runtime = next(
+        (
+            runtime
+            for runtime in spcs_container_runtimes
+            if (
+                runtime.hardware_type.lower() == target_hardware.lower()
+                and runtime.python_version.major == sys.version_info.major
+                and runtime.python_version.minor == sys.version_info.minor
+            )
+        ),
+        None,
+    )
+    return selected_runtime.runtime_container_image if selected_runtime else None
+
+
 def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.ImageSpec:
     # Retrieve compute pool node resources
     resources = _get_node_resources(session, compute_pool=compute_pool)
 
     # Use MLRuntime image
-    image_repo = constants.DEFAULT_IMAGE_REPO
-    image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
-    image_tag = _get_runtime_image_tag()
+    hardware = "GPU" if resources.gpu > 0 else "CPU"
+    container_image = None
+    if os.environ.get(constants.ENABLE_IMAGE_VERSION_ENV_VAR, "").lower() == "true":
+        container_image = _get_runtime_image(session, hardware)  # type: ignore[arg-type]
+
+    if not container_image:
+        image_repo = constants.DEFAULT_IMAGE_REPO
+        image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
+        image_tag = _get_runtime_image_tag()
+        container_image = f"{image_repo}/{image_name}:{image_tag}"
 
     # TODO: Should each instance consume the entire pod?
     return types.ImageSpec(
-        repo=image_repo,
-        image_name=image_name,
-        image_tag=image_tag,
         resource_requests=resources,
         resource_limits=resources,
+        container_image=container_image,
     )
 
 
@@ -220,7 +253,7 @@ def generate_service_spec(
         "containers": [
             {
                 "name": constants.DEFAULT_CONTAINER_NAME,
-                "image": image_spec.full_name,
+                "image": image_spec.container_image,
                 "command": ["/usr/local/bin/_entrypoint.sh"],
                 "args": [
                     (stage_mount.joinpath(v).as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint

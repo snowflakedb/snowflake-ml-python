@@ -707,6 +707,128 @@ class ModelVersion(lineage_node.LineageNode):
             version_name=sql_identifier.SqlIdentifier(version),
         )
 
+    def _get_inference_engine_args(
+        self, experimental_options: Optional[dict[str, Any]]
+    ) -> Optional[service_ops.InferenceEngineArgs]:
+
+        if not experimental_options:
+            return None
+
+        if "inference_engine" not in experimental_options:
+            raise ValueError("inference_engine is required in experimental_options")
+
+        return service_ops.InferenceEngineArgs(
+            inference_engine=experimental_options["inference_engine"],
+            inference_engine_args_override=experimental_options.get("inference_engine_args_override"),
+        )
+
+    def _enrich_inference_engine_args(
+        self,
+        inference_engine_args: service_ops.InferenceEngineArgs,
+        gpu_requests: Optional[Union[str, int]] = None,
+    ) -> Optional[service_ops.InferenceEngineArgs]:
+        """Enrich inference engine args with model path and tensor parallelism settings.
+
+        Args:
+            inference_engine_args: The original inference engine args
+            gpu_requests: The number of GPUs requested
+
+        Returns:
+            Enriched inference engine args
+
+        Raises:
+            ValueError: Invalid gpu_requests
+        """
+        if inference_engine_args.inference_engine_args_override is None:
+            inference_engine_args.inference_engine_args_override = []
+
+        # Get model stage path and strip off "snow://" prefix
+        model_stage_path = self._model_ops.get_model_version_stage_path(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+        )
+
+        # Strip "snow://" prefix
+        if model_stage_path.startswith("snow://"):
+            model_stage_path = model_stage_path.replace("snow://", "", 1)
+
+        # Always overwrite the model key by appending
+        inference_engine_args.inference_engine_args_override.append(f"--model={model_stage_path}")
+
+        gpu_count = None
+
+        # Set tensor-parallelism if gpu_requests is specified
+        if gpu_requests is not None:
+            # assert gpu_requests is a string or an integer before casting to int
+            if isinstance(gpu_requests, str) or isinstance(gpu_requests, int):
+                try:
+                    gpu_count = int(gpu_requests)
+                except ValueError:
+                    raise ValueError(f"Invalid gpu_requests: {gpu_requests}")
+
+        if gpu_count is not None:
+            if gpu_count > 0:
+                inference_engine_args.inference_engine_args_override.append(f"--tensor-parallel-size={gpu_count}")
+            else:
+                raise ValueError(f"Invalid gpu_requests: {gpu_requests}")
+
+        return inference_engine_args
+
+    def _check_huggingface_text_generation_model(
+        self,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Check if the model is a HuggingFace pipeline with text-generation task.
+
+        Args:
+            statement_params: Optional dictionary of statement parameters to include
+                in the SQL command to fetch model spec.
+
+        Raises:
+            ValueError: If the model is not a HuggingFace text-generation model.
+        """
+        # Fetch model spec
+        model_spec = self._model_ops._fetch_model_spec(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            statement_params=statement_params,
+        )
+
+        # Check if model_type is huggingface_pipeline
+        model_type = model_spec.get("model_type")
+        if model_type != "huggingface_pipeline":
+            raise ValueError(
+                f"Inference engine is only supported for HuggingFace text-generation models. "
+                f"Found model_type: {model_type}"
+            )
+
+        # Check if model supports text-generation task
+        # There should only be one model in the list because we don't support multiple models in a single model spec
+        models = model_spec.get("models", {})
+        is_text_generation = False
+        found_tasks: list[str] = []
+
+        # As long as the model supports text-generation task, we can use it
+        for _, model_info in models.items():
+            options = model_info.get("options", {})
+            task = options.get("task")
+            if task:
+                found_tasks.append(str(task))
+                if task == "text-generation":
+                    is_text_generation = True
+                    break
+
+        if not is_text_generation:
+            tasks_str = ", ".join(found_tasks)
+            found_tasks_str = (
+                f"Found task(s): {tasks_str} in model spec." if found_tasks else "No task found in model spec."
+            )
+            raise ValueError(f"Inference engine is only supported for task 'text-generation'. {found_tasks_str}")
+
     @overload
     def create_service(
         self,
@@ -714,7 +836,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_name: str,
         image_build_compute_pool: Optional[str] = None,
         service_compute_pool: str,
-        image_repo: str,
+        image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
@@ -725,6 +847,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
         block: bool = True,
+        experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -735,7 +858,8 @@ class ModelVersion(lineage_node.LineageNode):
                 the service compute pool if None.
             service_compute_pool: The name of the compute pool used to run the inference service.
             image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+                or schema of the model will be used. This can be None, in that case a default hidden image repository
+                will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
             max_instances: The maximum number of inference service instances to run. The same value it set to
@@ -756,6 +880,10 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
+            experimental_options: Experimental options for the service creation with custom inference engine.
+                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                `inference_engine` is the name of the inference engine to use.
+                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
         """
         ...
 
@@ -766,7 +894,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_name: str,
         image_build_compute_pool: Optional[str] = None,
         service_compute_pool: str,
-        image_repo: str,
+        image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
@@ -777,6 +905,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -787,7 +916,8 @@ class ModelVersion(lineage_node.LineageNode):
                 the service compute pool if None.
             service_compute_pool: The name of the compute pool used to run the inference service.
             image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+                or schema of the model will be used. This can be None, in that case a default hidden image repository
+                will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
             max_instances: The maximum number of inference service instances to run. The same value it set to
@@ -808,6 +938,10 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
+            experimental_options: Experimental options for the service creation with custom inference engine.
+                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                `inference_engine` is the name of the inference engine to use.
+                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
         """
         ...
 
@@ -832,7 +966,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_name: str,
         image_build_compute_pool: Optional[str] = None,
         service_compute_pool: str,
-        image_repo: str,
+        image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
@@ -844,6 +978,7 @@ class ModelVersion(lineage_node.LineageNode):
         build_external_access_integration: Optional[str] = None,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -854,7 +989,8 @@ class ModelVersion(lineage_node.LineageNode):
                 the service compute pool if None.
             service_compute_pool: The name of the compute pool used to run the inference service.
             image_repo: The name of the image repository, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+                or schema of the model will be used. This can be None, in that case a default hidden image repository
+                will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
             max_instances: The maximum number of inference service instances to run. The same value it set to
@@ -877,6 +1013,11 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is False, this function executes the underlying service creation asynchronously
                 and returns an AsyncJob.
+            experimental_options: Experimental options for the service creation with custom inference engine.
+                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                `inference_engine` is the name of the inference engine to use.
+                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+
 
         Raises:
             ValueError: Illegal external access integration arguments.
@@ -885,6 +1026,9 @@ class ModelVersion(lineage_node.LineageNode):
         Returns:
             If `block=True`, return result information about service creation from server.
             Otherwise, return the service creation AsyncJob.
+
+        Raises:
+            ValueError: Illegal external access integration arguments.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -906,7 +1050,18 @@ class ModelVersion(lineage_node.LineageNode):
             build_external_access_integrations = [build_external_access_integration]
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
-        image_repo_db_id, image_repo_schema_id, image_repo_id = sql_identifier.parse_fully_qualified_name(image_repo)
+
+        # Check if model is HuggingFace text-generation before doing inference engine checks
+        if experimental_options:
+            self._check_huggingface_text_generation_model(statement_params)
+
+        inference_engine_args: Optional[service_ops.InferenceEngineArgs] = self._get_inference_engine_args(
+            experimental_options
+        )
+
+        # Enrich inference engine args if inference engine is specified
+        if inference_engine_args is not None:
+            inference_engine_args = self._enrich_inference_engine_args(inference_engine_args, gpu_requests)
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions
@@ -929,7 +1084,7 @@ class ModelVersion(lineage_node.LineageNode):
                         else sql_identifier.SqlIdentifier(service_compute_pool)
                     ),
                     service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-                    image_repo=image_repo,
+                    image_repo_name=image_repo,
                     ingress_enabled=ingress_enabled,
                     max_instances=max_instances,
                     cpu_requests=cpu_requests,
@@ -946,6 +1101,7 @@ class ModelVersion(lineage_node.LineageNode):
                     block=block,
                     statement_params=statement_params,
                     progress_status=status,
+                    inference_engine_args=inference_engine_args,
                 )
                 status.update(label="Model service created successfully", state="complete", expanded=False)
                 return result
@@ -1039,7 +1195,7 @@ class ModelVersion(lineage_node.LineageNode):
         *,
         job_name: str,
         compute_pool: str,
-        image_repo: str,
+        image_repo: Optional[str] = None,
         output_table_name: str,
         function_name: Optional[str] = None,
         cpu_requests: Optional[str] = None,
@@ -1074,7 +1230,7 @@ class ModelVersion(lineage_node.LineageNode):
             job_name=job_id,
             compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
             warehouse_name=sql_identifier.SqlIdentifier(warehouse),
-            image_repo=image_repo,
+            image_repo_name=image_repo,
             output_table_database_name=output_table_db_id,
             output_table_schema_name=output_table_schema_id,
             output_table_name=output_table_id,

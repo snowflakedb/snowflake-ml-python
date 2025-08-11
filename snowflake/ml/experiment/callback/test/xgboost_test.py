@@ -29,9 +29,9 @@ class SnowflakeXgboostCallbackTest(SnowflakeCallbackTest, parameterized.TestCase
     def _get_callback(self, **kwargs: Any) -> SnowflakeXgboostCallback:
         return SnowflakeXgboostCallback(**kwargs)
 
-    @parameterized.parameters(*supported_model_classes)  # type: ignore[misc]
-    def test_log_metrics(self, model_class: type[ModelClass]) -> None:
-        super()._log_metrics(model_class)
+    @parameterized.product(model_class=supported_model_classes, log_every_n_epochs=[1, 2])  # type: ignore[misc]
+    def test_log_metrics(self, model_class: type[ModelClass], log_every_n_epochs: int) -> None:
+        super()._log_metrics(model_class, log_every_n_epochs=log_every_n_epochs)
 
     @parameterized.product(
         model_class=supported_model_classes,

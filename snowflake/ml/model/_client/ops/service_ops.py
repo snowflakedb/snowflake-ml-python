@@ -12,7 +12,11 @@ from typing import Any, Optional, Union, cast
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
-from snowflake.ml.model import model_signature, type_hints
+from snowflake.ml.model import (
+    inference_engine as inference_engine_module,
+    model_signature,
+    type_hints,
+)
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.ml.model._signatures import snowpark_handler
@@ -131,6 +135,12 @@ class HFModelArgs:
     warehouse: Optional[str] = None
 
 
+@dataclasses.dataclass
+class InferenceEngineArgs:
+    inference_engine: inference_engine_module.InferenceEngine
+    inference_engine_args_override: Optional[list[str]] = None
+
+
 class ServiceOperator:
     """Service operator for container services logic."""
 
@@ -180,7 +190,7 @@ class ServiceOperator:
         service_name: sql_identifier.SqlIdentifier,
         image_build_compute_pool_name: sql_identifier.SqlIdentifier,
         service_compute_pool_name: sql_identifier.SqlIdentifier,
-        image_repo: str,
+        image_repo_name: Optional[str],
         ingress_enabled: bool,
         max_instances: int,
         cpu_requests: Optional[str],
@@ -195,6 +205,8 @@ class ServiceOperator:
         statement_params: Optional[dict[str, Any]] = None,
         # hf model
         hf_model_args: Optional[HFModelArgs] = None,
+        # inference engine model
+        inference_engine_args: Optional[InferenceEngineArgs] = None,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Generate operation ID for this deployment
@@ -205,15 +217,14 @@ class ServiceOperator:
         schema_name = schema_name or self._schema_name
 
         # Fall back to the model's database and schema if not provided then to the registry's database and schema
-        service_database_name = service_database_name or database_name or self._database_name
-        service_schema_name = service_schema_name or schema_name or self._schema_name
+        service_database_name = service_database_name or database_name
+        service_schema_name = service_schema_name or schema_name
 
-        # Parse image repo
-        image_repo_database_name, image_repo_schema_name, image_repo_name = sql_identifier.parse_fully_qualified_name(
-            image_repo
-        )
-        image_repo_database_name = image_repo_database_name or database_name or self._database_name
-        image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
+        image_repo_fqn = ServiceOperator._get_image_repo_fqn(image_repo_name, database_name, schema_name)
+
+        # There may be more conditions to enable image build in the future
+        # For now, we only enable image build if inference engine is not specified
+        is_enable_image_build = inference_engine_args is None
 
         # Step 1: Preparing deployment artifacts
         progress_status.update("preparing deployment artifacts...")
@@ -230,14 +241,15 @@ class ServiceOperator:
             model_name=model_name,
             version_name=version_name,
         )
-        self._model_deployment_spec.add_image_build_spec(
-            image_build_compute_pool_name=image_build_compute_pool_name,
-            image_repo_database_name=image_repo_database_name,
-            image_repo_schema_name=image_repo_schema_name,
-            image_repo_name=image_repo_name,
-            force_rebuild=force_rebuild,
-            external_access_integrations=build_external_access_integrations,
-        )
+
+        if is_enable_image_build:
+            self._model_deployment_spec.add_image_build_spec(
+                image_build_compute_pool_name=image_build_compute_pool_name,
+                fully_qualified_image_repo_name=image_repo_fqn,
+                force_rebuild=force_rebuild,
+                external_access_integrations=build_external_access_integrations,
+            )
+
         self._model_deployment_spec.add_service_spec(
             service_database_name=service_database_name,
             service_schema_name=service_schema_name,
@@ -266,6 +278,13 @@ class ServiceOperator:
                 warehouse=hf_model_args.warehouse,
                 **(hf_model_args.hf_model_kwargs if hf_model_args.hf_model_kwargs else {}),
             )
+
+        if inference_engine_args:
+            self._model_deployment_spec.add_inference_engine_spec(
+                inference_engine=inference_engine_args.inference_engine,
+                inference_engine_args=inference_engine_args.inference_engine_args_override,
+            )
+
         spec_yaml_str_or_path = self._model_deployment_spec.save()
 
         # Step 2: Uploading deployment artifacts
@@ -411,6 +430,29 @@ class ServiceOperator:
                 raise RuntimeError(error_msg) from e
 
         return async_job
+
+    @staticmethod
+    def _get_image_repo_fqn(
+        image_repo_name: Optional[str],
+        database_name: sql_identifier.SqlIdentifier,
+        schema_name: sql_identifier.SqlIdentifier,
+    ) -> Optional[str]:
+        """Get the fully qualified name of the image repository."""
+        if image_repo_name is None or image_repo_name.strip() == "":
+            return None
+        # Parse image repo
+        (
+            image_repo_database_name,
+            image_repo_schema_name,
+            image_repo_name,
+        ) = sql_identifier.parse_fully_qualified_name(image_repo_name)
+        image_repo_database_name = image_repo_database_name or database_name
+        image_repo_schema_name = image_repo_schema_name or schema_name
+        return identifier.get_schema_level_object_identifier(
+            db=image_repo_database_name.identifier(),
+            schema=image_repo_schema_name.identifier(),
+            object_name=image_repo_name.identifier(),
+        )
 
     def _start_service_log_streaming(
         self,
@@ -838,7 +880,7 @@ class ServiceOperator:
         job_name: sql_identifier.SqlIdentifier,
         compute_pool_name: sql_identifier.SqlIdentifier,
         warehouse_name: sql_identifier.SqlIdentifier,
-        image_repo: str,
+        image_repo_name: Optional[str],
         output_table_database_name: Optional[sql_identifier.SqlIdentifier],
         output_table_schema_name: Optional[sql_identifier.SqlIdentifier],
         output_table_name: sql_identifier.SqlIdentifier,
@@ -859,12 +901,7 @@ class ServiceOperator:
         job_database_name = job_database_name or database_name or self._database_name
         job_schema_name = job_schema_name or schema_name or self._schema_name
 
-        # Parse image repo
-        image_repo_database_name, image_repo_schema_name, image_repo_name = sql_identifier.parse_fully_qualified_name(
-            image_repo
-        )
-        image_repo_database_name = image_repo_database_name or database_name or self._database_name
-        image_repo_schema_name = image_repo_schema_name or schema_name or self._schema_name
+        image_repo_fqn = self._get_image_repo_fqn(image_repo_name, database_name, schema_name)
 
         input_table_database_name = job_database_name
         input_table_schema_name = job_schema_name
@@ -948,9 +985,7 @@ class ServiceOperator:
 
             self._model_deployment_spec.add_image_build_spec(
                 image_build_compute_pool_name=compute_pool_name,
-                image_repo_database_name=image_repo_database_name,
-                image_repo_schema_name=image_repo_schema_name,
-                image_repo_name=image_repo_name,
+                fully_qualified_image_repo_name=image_repo_fqn,
                 force_rebuild=force_rebuild,
                 external_access_integrations=build_external_access_integrations,
             )

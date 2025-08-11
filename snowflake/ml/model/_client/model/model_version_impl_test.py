@@ -1,7 +1,7 @@
 import os
 import pathlib
 import tempfile
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
 import pandas as pd
@@ -9,7 +9,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import model_signature, task, type_hints
+from snowflake.ml.model import inference_engine, model_signature, task, type_hints
 from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
@@ -793,7 +793,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -806,6 +806,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 block=True,
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
+                inference_engine_args=None,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -841,7 +842,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -854,6 +855,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 block=True,
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
+                inference_engine_args=None,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -889,7 +891,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -902,6 +904,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 block=True,
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
+                inference_engine_args=None,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -938,7 +941,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
-                image_repo="IMAGE_REPO",
+                image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
                 max_instances=3,
                 cpu_requests="CPU",
@@ -951,6 +954,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 block=False,
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
+                inference_engine_args=None,
             )
 
     def test_list_services(self) -> None:
@@ -1005,6 +1009,86 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("c"),
                 statement_params=mock.ANY,
             )
+
+    def test_create_service_with_experimental_options(self) -> None:
+        """Test create_service with experimental options for inference engine."""
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch.object(
+                self.m_mv, "_check_huggingface_text_generation_model"
+            ) as mock_check_huggingface_text_generation_model,
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_version_stage_path",
+                return_value="snow://model/DB.SCHEMA.MODEL/versions/v1/",
+            ),
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec",
+                return_value={
+                    "model_type": "huggingface_pipeline",
+                    "models": {
+                        "model1": {
+                            "model_type": "huggingface_pipeline",
+                            "options": {"task": "text-generation"},
+                        }
+                    },
+                },
+            ),
+        ):
+            # Test with inference engine and GPU
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                gpu_requests="4",
+                experimental_options={
+                    "inference_engine": inference_engine.InferenceEngine.VLLM,
+                    "inference_engine_args_override": ["--max_tokens=1000", "--temperature=0.8"],
+                },
+            )
+
+            # This check should happen when experimental_options is provided
+            mock_check_huggingface_text_generation_model.assert_called_once()
+
+            # Verify that the enriched kwargs were passed to create_service
+            mock_create_service.assert_called_once()
+            call_args = mock_create_service.call_args
+
+            # Check that inference_engine is passed correctly
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine, inference_engine.InferenceEngine.VLLM
+            )
+
+            # Check that inference_engine_args is enriched correctly
+            expected_args = [
+                "--max_tokens=1000",
+                "--temperature=0.8",
+                "--model=model/DB.SCHEMA.MODEL/versions/v1/",
+                "--tensor-parallel-size=4",
+            ]
+
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine_args_override,
+                expected_args,
+            )
+
+    def test_create_service_without_experimental_options(self) -> None:
+        """Test create_service without experimental options to ensure existing behavior is preserved."""
+        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+            # Test without experimental_options
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                gpu_requests="2",
+            )
+
+            # Verify that None is passed for inference engine parameters
+            mock_create_service.assert_called_once()
+            call_args = mock_create_service.call_args
+
+            self.assertIsNone(call_args.kwargs["inference_engine_args"])
 
     def test_run_job(self) -> None:
         m_df = mock_data_frame.MockDataFrame()
@@ -1095,7 +1179,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
                 warehouse_name="TEST_WAREHOUSE",
-                image_repo="TEST_IMAGE_REPO",
+                image_repo_name="TEST_IMAGE_REPO",
                 output_table_database_name=None,
                 output_table_schema_name=None,
                 output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
@@ -1142,7 +1226,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
                 compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
                 warehouse_name=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                image_repo="DB.SCHEMA.TEST_IMAGE_REPO",
+                image_repo_name="DB.SCHEMA.TEST_IMAGE_REPO",
                 output_table_database_name=sql_identifier.SqlIdentifier("DB"),
                 output_table_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
                 output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
@@ -1366,6 +1450,243 @@ class ModelVersionImplTest(absltest.TestCase):
             # Verify collapsible structure
             self.assertIn("<details", html)
             self.assertIn("<summary", html)
+
+    def test_get_inference_engine_args(self) -> None:
+        # Test with None
+        inference_engine_args = self.m_mv._get_inference_engine_args(None)
+        self.assertIsNone(inference_engine_args)
+
+        # Test with empty experimental_options
+        inference_engine_args = self.m_mv._get_inference_engine_args({})
+        self.assertIsNone(inference_engine_args)
+
+        # Test with experimental_options missing inference_engine key
+        with self.assertRaises(ValueError) as cm:
+            self.m_mv._get_inference_engine_args({"other_key": "value"})
+        self.assertEqual(str(cm.exception), "inference_engine is required in experimental_options")
+
+        # Test with only inference_engine (no args_override)
+        experimental_options: dict[str, Any] = {"inference_engine": inference_engine.InferenceEngine.VLLM}
+        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        assert inference_engine_args is not None
+        self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
+        self.assertIsNone(inference_engine_args.inference_engine_args_override)
+
+        # Test with inference_engine and args_override
+        experimental_options = {
+            "inference_engine": inference_engine.InferenceEngine.VLLM,
+            "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
+        }
+        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        assert inference_engine_args is not None
+        self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
+        self.assertEqual(
+            inference_engine_args.inference_engine_args_override, ["--max_tokens=100", "--temperature=0.7"]
+        )
+
+        # Test with inference_engine and empty args_override
+        experimental_options = {
+            "inference_engine": inference_engine.InferenceEngine.VLLM,
+            "inference_engine_args_override": [],
+        }
+        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        assert inference_engine_args is not None
+        self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
+        self.assertEqual(inference_engine_args.inference_engine_args_override, [])
+
+    def test_enrich_inference_engine_args(self) -> None:
+        """Test _enrich_inference_engine_args method with various inputs."""
+        # Mock get_model_version_stage_path to return a predictable path
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "get_model_version_stage_path",
+            return_value="snow://model/TEMP.test.MODEL/versions/v1/",
+        ) as mock_get_path:
+            # Test with args=None and no GPU
+            enriched = self.m_mv._enrich_inference_engine_args(
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=None,
+                ),
+                gpu_requests=None,
+            )
+            assert enriched is not None
+            self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
+            self.assertEqual(enriched.inference_engine_args_override, ["--model=model/TEMP.test.MODEL/versions/v1/"])
+            mock_get_path.assert_called_with(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            )
+
+            # Test with empty args and GPU count
+            enriched = self.m_mv._enrich_inference_engine_args(
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=None,
+                ),
+                gpu_requests=2,
+            )
+            assert enriched is not None
+            self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
+
+            # Test with args and string GPU count
+            original_args = ["--max_tokens=100", "--temperature=0.7"]
+            enriched = self.m_mv._enrich_inference_engine_args(
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=original_args,
+                ),
+                gpu_requests="4",
+            )
+            assert enriched is not None
+            self.assertEqual(
+                enriched,
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=[
+                        "--max_tokens=100",
+                        "--temperature=0.7",
+                        "--model=model/TEMP.test.MODEL/versions/v1/",
+                        "--tensor-parallel-size=4",
+                    ],
+                ),
+            )
+
+            # Test overwriting existing model key with new model key by appending to the list
+            enriched = self.m_mv._enrich_inference_engine_args(
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=[
+                        "--max_tokens=100",
+                        "--temperature=0.7",
+                        "--model=old/path",
+                    ],
+                ),
+            )
+            self.assertEqual(
+                enriched,
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=[
+                        "--max_tokens=100",
+                        "--temperature=0.7",
+                        "--model=old/path",
+                        "--model=model/TEMP.test.MODEL/versions/v1/",
+                    ],
+                ),
+            )
+
+            # Test with invalid GPU string
+            with self.assertRaises(ValueError):
+                self.m_mv._enrich_inference_engine_args(
+                    service_ops.InferenceEngineArgs(
+                        inference_engine=inference_engine.InferenceEngine.VLLM,
+                        inference_engine_args_override=None,
+                    ),
+                    gpu_requests="invalid",
+                )
+
+            # Test with zero GPU (should not set tensor-parallel-size)
+            with self.assertRaises(ValueError):
+                self.m_mv._enrich_inference_engine_args(
+                    service_ops.InferenceEngineArgs(
+                        inference_engine=inference_engine.InferenceEngine.VLLM,
+                        inference_engine_args_override=None,
+                    ),
+                    gpu_requests=0,
+                )
+
+            # Test with negative GPU (should not set tensor-parallel-size)
+            with self.assertRaises(ValueError):
+                self.m_mv._enrich_inference_engine_args(
+                    service_ops.InferenceEngineArgs(
+                        inference_engine=inference_engine.InferenceEngine.VLLM,
+                        inference_engine_args_override=None,
+                    ),
+                    gpu_requests=-1,
+                )
+
+    def test_check_huggingface_text_generation_model(self) -> None:
+        """Test _check_huggingface_text_generation_model method."""
+        # Test successful case - HuggingFace text-generation model
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "models": {
+                    "model1": {
+                        "model_type": "huggingface_pipeline",
+                        "options": {"task": "text-generation"},
+                    }
+                },
+            },
+        ) as mock_fetch:
+            # Should not raise any exception
+            self.m_mv._check_huggingface_text_generation_model()
+            mock_fetch.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=self.m_mv._model_name,
+                version_name=self.m_mv._version_name,
+                statement_params=None,
+            )
+
+        # Test failure case - not a HuggingFace model
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "sklearn",
+                "models": {"model1": {"model_type": "sklearn"}},
+            },
+        ):
+            with self.assertRaises(ValueError) as cm:
+                self.m_mv._check_huggingface_text_generation_model()
+            self.assertIn(
+                "Inference engine is only supported for HuggingFace text-generation models", str(cm.exception)
+            )
+            self.assertIn("Found model_type: sklearn", str(cm.exception))
+
+        # Test failure case - HuggingFace model but wrong task
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "models": {
+                    "model1": {
+                        "model_type": "huggingface_pipeline",
+                        "options": {"task": "image-classification"},
+                    }
+                },
+            },
+        ):
+            with self.assertRaises(ValueError) as cm:
+                self.m_mv._check_huggingface_text_generation_model()
+            self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
+            self.assertIn("Found task(s): image-classification", str(cm.exception))
+
+        # Test failure case - HuggingFace model with no task
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "models": {
+                    "model1": {
+                        "model_type": "huggingface_pipeline",
+                        "options": {},
+                    }
+                },
+            },
+        ):
+            with self.assertRaises(ValueError) as cm:
+                self.m_mv._check_huggingface_text_generation_model()
+            self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
+            self.assertIn("No task found in model spec.", str(cm.exception))
 
 
 if __name__ == "__main__":

@@ -30,6 +30,10 @@ class PayloadPath(Protocol):
     def parent(self) -> "PayloadPath":
         ...
 
+    @property
+    def root(self) -> str:
+        ...
+
     def exists(self) -> bool:
         ...
 
@@ -98,12 +102,6 @@ class ComputeResources:
 
 @dataclass(frozen=True)
 class ImageSpec:
-    repo: str
-    image_name: str
-    image_tag: str
     resource_requests: ComputeResources
     resource_limits: ComputeResources
-
-    @property
-    def full_name(self) -> str:
-        return f"{self.repo}/{self.image_name}:{self.image_tag}"
+    container_image: str

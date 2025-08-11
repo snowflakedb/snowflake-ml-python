@@ -10,10 +10,15 @@ class Model(BaseModel):
     version: str
 
 
+class InferenceEngineSpec(BaseModel):
+    inference_engine_name: str
+    inference_engine_args: Optional[list[str]] = None
+
+
 class ImageBuild(BaseModel):
-    compute_pool: str
-    image_repo: str
-    force_rebuild: bool
+    compute_pool: Optional[str] = None
+    image_repo: Optional[str] = None
+    force_rebuild: Optional[bool] = None
     external_access_integrations: Optional[list[str]] = None
 
 
@@ -27,6 +32,7 @@ class Service(BaseModel):
     gpu: Optional[str] = None
     num_workers: Optional[int] = None
     max_batch_rows: Optional[int] = None
+    inference_engine_spec: Optional[InferenceEngineSpec] = None
 
 
 class Job(BaseModel):
@@ -68,13 +74,13 @@ class ModelLogging(BaseModel):
 
 class ModelServiceDeploymentSpec(BaseModel):
     models: list[Model]
-    image_build: ImageBuild
+    image_build: Optional[ImageBuild] = None
     service: Service
     model_loggings: Optional[list[ModelLogging]] = None
 
 
 class ModelJobDeploymentSpec(BaseModel):
     models: list[Model]
-    image_build: ImageBuild
+    image_build: Optional[ImageBuild] = None
     job: Job
     model_loggings: Optional[list[ModelLogging]] = None

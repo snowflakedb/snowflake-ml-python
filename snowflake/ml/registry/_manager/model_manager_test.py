@@ -4,7 +4,7 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml._internal import platform_capabilities, telemetry
+from snowflake.ml._internal import env_utils, platform_capabilities, telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import target_platform, task, type_hints
 from snowflake.ml.model._client.model import model_impl, model_version_impl
@@ -198,6 +198,11 @@ class ModelManagerTest(parameterized.TestCase):
                 self.m_r._hrid_generator, "generate", return_value=(1, "angry_yeti_1")
             ) as mock_hrid_generate,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -234,7 +239,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -279,6 +284,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -317,7 +327,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -340,7 +350,7 @@ class ModelManagerTest(parameterized.TestCase):
         m_model = mock.MagicMock()
         m_pip_requirements = mock.MagicMock()
         m_signatures = mock.MagicMock()
-        m_options = mock.MagicMock()
+        m_options = type_hints.BaseModelSaveOption(enable_explainability=False)
         m_stage_path = "@TEMP.TEST.MODEL/V1"
         m_model_metadata = mock.MagicMock()
         m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
@@ -353,6 +363,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -386,7 +401,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=m_options,
+                options={"enable_explainability": False, "embed_local_ml_library": True, "relax_version": False},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -425,6 +440,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -458,7 +478,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -496,6 +516,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(ModelOperator, "set_comment") as mock_set_comment,
             mock.patch.object(self.m_r._model_ops._metadata_ops, "save") as mock_metadata_save,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -528,7 +553,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -640,6 +665,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -666,7 +696,10 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"enable_explainability": False, "relax_version": False}
+                if target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
+                or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                else {"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -695,6 +728,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -721,7 +759,9 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"enable_explainability": False, "relax_version": False}
+                if target_platform_constant == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                else {"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -746,6 +786,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(ModelOperator, "set_comment") as mock_set_comment,
             mock.patch.object(self.m_r._model_ops._metadata_ops, "save") as mock_metadata_save,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -778,7 +823,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -888,6 +933,11 @@ class ModelManagerTest(parameterized.TestCase):
                 self.m_r._hrid_generator, "generate", side_effect=[(1, "angry_yeti_1"), (2, "angry_yeti_2")]
             ) as mock_hrid_generate,
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -918,6 +968,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -943,7 +998,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"enable_explainability": False, "relax_version": False},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -975,6 +1030,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
             mock.patch.object(self.m_r._model_ops, "create_from_stage"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: True}
             ),
@@ -987,6 +1047,9 @@ class ModelManagerTest(parameterized.TestCase):
                 statement_params=self.base_statement_params,
                 progress_status=create_mock_progress_status(),
             )
+            expected_options = options.copy()
+            expected_options["embed_local_ml_library"] = True
+            expected_options["relax_version"] = True
             mock_save.assert_called_once_with(
                 name="MODEL",
                 model=m_model,
@@ -1001,7 +1064,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=options,
+                options=expected_options,
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1043,6 +1106,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(ModelOperator, "set_comment"),
             mock.patch.object(self.m_r._model_ops._metadata_ops, "save"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
             ),
@@ -1071,7 +1139,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1100,7 +1168,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1129,7 +1197,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1147,6 +1215,11 @@ class ModelManagerTest(parameterized.TestCase):
             mock.patch.object(ModelOperator, "set_comment"),
             mock.patch.object(self.m_r._model_ops._metadata_ops, "save"),
             mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
             platform_capabilities.PlatformCapabilities.mock_features(
                 {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
             ),
@@ -1175,7 +1248,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options=None,
+                options={"embed_local_ml_library": True, "relax_version": True},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )

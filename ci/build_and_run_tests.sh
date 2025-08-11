@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--report <report_path>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--run-grype] [--report <report_path>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -15,6 +15,7 @@
 #   quarantined: run all quarantined tests.
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
 # with-spcs-image: Build and test with spcs-image in spcs-image directory in the workspace.
+# run-grype: Run grype security scanning on SPCS images. Only valid with --with-spcs-image.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 #
@@ -30,7 +31,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--snowflake-env <sf_env>] [--report <report_path>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--run-grype] [--snowflake-env <sf_env>] [--report <report_path>]"
     exit "${exit_code}"
 }
 
@@ -39,6 +40,7 @@ BAZEL="bazel"
 ENV="pip"
 WITH_SNOWPARK=false
 WITH_SPCS_IMAGE=false
+RUN_GRYPE=false
 MODE="continuous_run"
 PYTHON_VERSION=3.9
 PYTHON_ENABLE_SCRIPT="bin/activate"
@@ -91,6 +93,9 @@ while (($#)); do
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
+    --run-grype)
+        RUN_GRYPE=true
+        ;;
     -h | --help)
         help 0
         ;;
@@ -100,6 +105,12 @@ while (($#)); do
     esac
     shift
 done
+
+# Validate flag combinations
+if [ "${RUN_GRYPE}" = true ] && [ "${WITH_SPCS_IMAGE}" = false ]; then
+    echo "Error: --run-grype flag requires --with-spcs-image to be set"
+    help 1
+fi
 
 echo "Running build_and_run_tests with PYTHON_VERSION ${PYTHON_VERSION}"
 
@@ -180,6 +191,25 @@ trap 'rm -rf "${TEMP_BIN}"' EXIT
 # Install micromamba
 _MICROMAMBA_BIN="micromamba${EXT}"
 if [ "${ENV}" = "conda" ]; then
+    CONDA="/mnt/jenkins/home/jenkins/miniforge3/condabin/conda"
+
+    # Check if miniforge is already installed
+    if [ -x "${CONDA}" ]; then
+        echo "Miniforge exists at ${CONDA}."
+    else
+        echo "Downloading miniforge ..."
+        curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+
+        echo "Installing miniforge ..."
+        /bin/bash "Miniforge3-$(uname)-$(uname -m).sh" -b -u
+    fi
+
+    echo "Using ${CONDA} ..."
+
+    echo "Installing conda-build ..."
+    ${CONDA} install conda-build --yes
+
+    echo "Installing micromamba ..."
     if ! command -v "${_MICROMAMBA_BIN}" &>/dev/null; then
         curl -Lsv "https://github.com/mamba-org/micromamba-releases/releases/latest/download/micromamba-${MICROMAMBA_PLATFORM}-${MICROMAMBA_ARCH}" -o "${TEMP_BIN}/micromamba${EXT}" && chmod +x "${TEMP_BIN}/micromamba${EXT}"
         _MICROMAMBA_BIN="${TEMP_BIN}/micromamba${EXT}"
@@ -264,30 +294,31 @@ if [ "${ENV}" = "pip" ]; then
     cp "$("${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" info bazel-bin)/dist/snowflake_ml_python-${VERSION}-py3-none-any.whl" "${WORKSPACE}"
     popd
 else
-    # Clean conda cache
-    conda clean --all --force-pkgs-dirs -y
+    echo "Cleaning conda cache ..."
+    ${CONDA} clean --all --force-pkgs-dirs -y
 
-    # Clean conda build workspace
+    echo "Cleaning conda build workspace ..."
     rm -rf "${WORKSPACE}/conda-bld"
 
-    # Build Snowpark
+    echo "Building snowpark-python conda package ..."
     if [ "${WITH_SNOWPARK}" = true ]; then
         pushd ${SNOWPARK_DIR}
-        conda build recipe/ --python=${PYTHON_VERSION} --numpy=1.16 --croot "${WORKSPACE}/conda-bld"
+        ${CONDA} build recipe/ --python=${PYTHON_VERSION} --numpy=1.16 --croot "${WORKSPACE}/conda-bld"
         popd
     fi
 
-    # Build SnowML
     pushd ${SNOWML_DIR}
-    # Build conda package
-    conda build -c conda-forge --override-channels --prefix-length 50 --python=${PYTHON_VERSION} --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
-    conda build purge
+
+    echo "Building snowflake-ml-python conda package ..."
+    ${CONDA} build -c conda-forge --override-channels --prefix-length 50 --python=${PYTHON_VERSION} --croot "${WORKSPACE}/conda-bld" ci/conda_recipe
+    ${CONDA} build purge
     popd
 fi
 
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     pushd ${SNOWML_DIR}
-    # Build SPCS Image
+    echo "Building SPCS Image ..."
+    export RUN_GRYPE
     source model_container_services_deployment/ci/build_and_push_images.sh
     popd
 fi
@@ -361,7 +392,7 @@ for i in "${!groups[@]}"; do
             COMMON_PYTEST_FLAG+=(-m "not conda_incompatible")
         fi
         # Create local conda channel
-        conda index "${WORKSPACE}/conda-bld"
+        ${CONDA} index "${WORKSPACE}/conda-bld"
 
         # Clean conda cache
         "${_MICROMAMBA_BIN}" clean --all --force-pkgs-dirs -y
@@ -384,7 +415,7 @@ for i in "${!groups[@]}"; do
 
         # Run integration tests
         set +e
-        TEST_SRCDIR="${TEMP_TEST_DIR}" conda run -p ./testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
+        TEST_SRCDIR="${TEMP_TEST_DIR}" ${CONDA} run -p ./testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
         group_exit_codes[$i]=$?
         set -e
 

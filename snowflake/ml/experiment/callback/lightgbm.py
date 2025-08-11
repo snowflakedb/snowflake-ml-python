@@ -15,6 +15,7 @@ class SnowflakeLightgbmCallback(lgb.callback._RecordEvaluationCallback):
         log_model: bool = True,
         log_metrics: bool = True,
         log_params: bool = True,
+        log_every_n_epochs: int = 1,
         model_name: Optional[str] = None,
         model_signature: Optional["ModelSignature"] = None,
     ) -> None:
@@ -22,6 +23,9 @@ class SnowflakeLightgbmCallback(lgb.callback._RecordEvaluationCallback):
         self.log_model = log_model
         self.log_metrics = log_metrics
         self.log_params = log_params
+        if log_every_n_epochs < 1:
+            raise ValueError("`log_every_n_epochs` must be positive.")
+        self.log_every_n_epochs = log_every_n_epochs
         self.model_name = model_name
         self.model_signature = model_signature
 
@@ -32,7 +36,7 @@ class SnowflakeLightgbmCallback(lgb.callback._RecordEvaluationCallback):
             if env.iteration == env.begin_iteration:  # Log params only at the first iteration
                 self._experiment_tracking.log_params(env.params)
 
-        if self.log_metrics:
+        if self.log_metrics and env.iteration % self.log_every_n_epochs == 0:
             super().__call__(env)
             for dataset_name, metrics in self.eval_result.items():
                 for metric_name, log in metrics.items():

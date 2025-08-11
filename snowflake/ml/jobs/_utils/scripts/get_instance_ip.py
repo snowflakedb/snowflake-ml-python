@@ -47,8 +47,8 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
     if not result:
         return None
 
-    # Sort by start_time first, then by instance_id
-    sorted_instances = sorted(result, key=lambda x: (x["start_time"], int(x["instance_id"])))
+    # Sort by start_time first, then by instance_id. If start_time is null/empty, it will be sorted to the end.
+    sorted_instances = sorted(result, key=lambda x: (not bool(x["start_time"]), x["start_time"], int(x["instance_id"])))
     head_instance = sorted_instances[0]
     if not head_instance["instance_id"] or not head_instance["ip_address"]:
         return None

@@ -1,10 +1,30 @@
 # Release History
 
-## 1.10.0
+## 1.11.0
 
 ### Bug Fixes
 
+* ML Job: Fix `Error: Unable to retrieve head IP address` if not all instances start within the timeout.
+* ML Job: Fix `TypeError: SnowflakeCursor.execute() got an unexpected keyword argument '_force_qmark_paramstyle'`
+  when running inside Stored Procedures.
+
 ### Behavior Changes
+
+### New Features
+
+* `ModelVersion.create_service()`: Made `image_repo` argument optional. By
+  default it will use a default image repo, which is
+  being rolled out in server version 9.22+.
+* Experiment Tracking (PrPr): Automatically log the model, metrics, and parameters while training Keras models with
+  `snowflake.ml.experiment.callback.keras.SnowflakeKerasCallback`.
+
+## 1.10.0
+
+### Behavior Changes
+
+* Experiment Tracking (PrPr): The import paths for the auto-logging callbacks have changed to
+  `snowflake.ml.experiment.callback.xgboost.SnowflakeXgboostCallback` and
+  `snowflake.ml.experiment.callback.lightgbm.SnowflakeLightgbmCallback`.
 
 ### New Features
 
@@ -26,13 +46,13 @@
 
 ```python
 from snowflake.ml.experiment import ExperimentTracking
+from snowflake.ml.experiment.callback import SnowflakeXgboostCallback, SnowflakeLightgbmCallback
 
 exp = ExperimentTracking(session=sp_session, database_name="ML", schema_name="PUBLIC")
 
 exp.set_experiment("MY_EXPERIMENT")
 
 # XGBoost
-from snowflake.ml.experiment.callback.xgboost import SnowflakeXgboostCallback
 callback = SnowflakeXgboostCallback(
   exp, log_model=True, log_metrics=True, log_params=True, model_name="model_name", model_signature=sig
 )
@@ -41,7 +61,6 @@ with exp.start_run():
   model.fit(X, y, eval_set=[(X_test, y_test)])
 
 # LightGBM
-from snowflake.ml.experiment.callback.lightgbm import SnowflakeLightgbmCallback
 callback = SnowflakeLightgbmCallback(
   exp, log_model=True, log_metrics=True, log_params=True, model_name="model_name", model_signature=sig
 )

@@ -1,17 +1,12 @@
 import pathlib
 import tempfile
 import uuid
-import warnings
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Optional, Union
 from urllib import parse
 
-from absl import logging
-from packaging import requirements
-
 from snowflake import snowpark
-from snowflake.ml import version as snowml_version
-from snowflake.ml._internal import env as snowml_env, env_utils, file_utils
+from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_source
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -19,7 +14,6 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.snowpark import Session
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     from snowflake.ml.experiment._experiment_info import ExperimentInfo
@@ -142,72 +136,9 @@ class ModelComposer:
         experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
-        # set enable_explainability=False if the model is not runnable in WH or the target platforms include SPCS
-        conda_dep_dict = env_utils.validate_conda_dependency_string_list(
-            conda_dependencies if conda_dependencies else []
-        )
-
-        enable_explainability = None
-
-        if options:
-            enable_explainability = options.get("enable_explainability", None)
-
-        # skip everything if user said False explicitly
-        if enable_explainability is None or enable_explainability is True:
-            is_warehouse_runnable = (
-                not conda_dep_dict
-                or all(
-                    chan == env_utils.DEFAULT_CHANNEL_NAME or chan == env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
-                    for chan in conda_dep_dict
-                )
-            ) and (not pip_requirements)
-
-            only_spcs = (
-                target_platforms
-                and len(target_platforms) == 1
-                and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
-            )
-            if only_spcs or (not is_warehouse_runnable):
-                # if only SPCS and user asked for explainability we fail
-                if enable_explainability is True:
-                    raise ValueError(
-                        "`enable_explainability` cannot be set to True when the model is not runnable in WH "
-                        "or the target platforms include SPCS."
-                    )
-                elif not options:  # explicitly set flag to false in these cases if not specified
-                    options = model_types.BaseModelSaveOption()
-                    options["enable_explainability"] = False
-            elif (
-                target_platforms
-                and len(target_platforms) > 1
-                and model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES in target_platforms
-            ):  # if both then only available for WH
-                if enable_explainability is True:
-                    warnings.warn(
-                        ("Explain function will only be available for model deployed to warehouse."),
-                        category=UserWarning,
-                        stacklevel=2,
-                    )
 
         if not options:
             options = model_types.BaseModelSaveOption()
-
-        if not snowpark_utils.is_in_stored_procedure() and target_platforms != [  # type: ignore[no-untyped-call]
-            model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES  # no information schema check for SPCS-only models
-        ]:
-            snowml_matched_versions = env_utils.get_matched_package_versions_in_information_schema(
-                self.session,
-                reqs=[requirements.Requirement(f"{env_utils.SNOWPARK_ML_PKG_NAME}=={snowml_version.VERSION}")],
-                python_version=python_version or snowml_env.PYTHON_VERSION,
-                statement_params=self._statement_params,
-            ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
-
-            if len(snowml_matched_versions) < 1 and options.get("embed_local_ml_library", False) is False:
-                logging.info(
-                    f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
-                    " which is not available in the Snowflake server, embedding local ML library automatically."
-                )
-                options["embed_local_ml_library"] = True
 
         model_metadata: model_meta.ModelMetadata = self.packager.save(
             name=name,
