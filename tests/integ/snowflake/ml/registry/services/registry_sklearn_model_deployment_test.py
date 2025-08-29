@@ -41,7 +41,6 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             options={"enable_explainability": False},
         )
 
-    @absltest.skipIf(True, "Temporarily quarantined until Inference server release")
     def test_sklearn_pipeline_wide_input_1(self) -> None:
         n_samples = 10
         n_features = 650
@@ -93,7 +92,6 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             options={"enable_explainability": False},
         )
 
-    @absltest.skipIf(True, "Temporarily quarantined until Inference server release")
     def test_sklearn_pipeline_wide_input_2(self) -> None:
         n_samples = 10
         numerical_cols = [f"num_{i:03d}" for i in range(500)]

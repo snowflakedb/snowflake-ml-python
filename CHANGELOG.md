@@ -1,6 +1,67 @@
 # Release History
 
-## 1.11.0
+## 1.12.0
+
+### Bug Fixes
+
+* Registry: Fixed an issue where the string representation of dictionary-type output columns was being incorrectly
+  created during structured output deserialization. Now, the original data type is properly preserved.
+
+### Behavior Changes
+
+### New Features
+
+* Registry: Add OpenAI chat completion compatible signature option for `text-generation` models.
+
+```python
+from snowflake.ml.model import openai_signatures
+import pandas as pd
+
+mv = snowflake_registry.log_model(
+    model=generator,
+    model_name=...,
+    ...,
+    signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+)
+
+# create a pd.DataFrame with openai.client.chat.completions arguments like below:
+x_df = pd.DataFrame.from_records(
+    [
+        {
+            "messages": [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                },
+            ],
+            "max_completion_tokens": 250,
+            "temperature": 0.9,
+            "stop": None,
+            "n": 3,
+            "stream": False,
+            "top_p": 1.0,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.2,
+        }
+    ],
+)
+
+# OpenAI Chat Completion compatible output
+output_df = mv.run(X=x_df)
+```
+
+* Model Monitoring: Added support for segment columns to enable filtered analysis.
+  * Added `segment_columns` parameter to `ModelMonitorSourceConfig` to specify columns for segmenting monitoring data
+  * Segment columns must be of STRING type and exist in the source table
+  * Added methods to dynamically manage segments:
+    * `add_segment_column()`: Add a new segment column to an existing monitor
+    * `drop_segment_column()`: Remove a segment column from an existing monitor
+* Experiment Tracking (PrPr): Support for logging artifacts (files and directories) with `log_artifact`
+* Experiment Tracking (PrPr): Support for listing artifacts in a run with `list_artifacts`
+* Experiment Tracking (PrPr): Support for downloading artifacts in a run with `download_artifacts`
+
+## 1.11.0 (08-12-2025)
 
 ### Bug Fixes
 

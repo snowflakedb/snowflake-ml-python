@@ -3,6 +3,12 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "batch_inference_specs",
+    srcs = ["batch_inference_specs.py"],
+    deps = [],
+)
+
+py_library(
     name = "model_impl",
     srcs = ["model_impl.py"],
     deps = [
@@ -34,8 +40,10 @@ py_library(
     name = "model_version_impl",
     srcs = ["model_version_impl.py"],
     deps = [
+        ":batch_inference_specs",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/jobs",
         "//snowflake/ml/lineage",
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:type_hints",
@@ -51,6 +59,7 @@ py_test(
     srcs = ["model_version_impl_test.py"],
     tags = ["feature:model_registry"],
     deps = [
+        ":batch_inference_specs",
         ":model_version_impl",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",

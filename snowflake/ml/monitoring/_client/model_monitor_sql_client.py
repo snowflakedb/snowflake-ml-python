@@ -1,3 +1,4 @@
+from enum import Enum, auto
 from typing import Any, Mapping, Optional
 
 from snowflake import snowpark
@@ -13,6 +14,25 @@ from snowflake.snowpark import session, types
 MODEL_JSON_COL_NAME = "model"
 MODEL_JSON_MODEL_NAME_FIELD = "model_name"
 MODEL_JSON_VERSION_NAME_FIELD = "version_name"
+
+
+class MonitorOperation(Enum):
+    SUSPEND = auto()
+    RESUME = auto()
+    ADD = auto()
+    DROP = auto()
+
+    @property
+    def supported_target_properties(self) -> frozenset[str]:
+        return _OPERATION_SUPPORTED_PROPS[self]
+
+
+_OPERATION_SUPPORTED_PROPS: dict[MonitorOperation, frozenset[str]] = {
+    MonitorOperation.SUSPEND: frozenset(),
+    MonitorOperation.RESUME: frozenset(),
+    MonitorOperation.ADD: frozenset({"SEGMENT_COLUMN"}),
+    MonitorOperation.DROP: frozenset({"SEGMENT_COLUMN"}),
+}
 
 
 def _build_sql_list_from_columns(columns: list[sql_identifier.SqlIdentifier]) -> str:
@@ -70,11 +90,17 @@ class ModelMonitorSQLClient:
         baseline_database: Optional[sql_identifier.SqlIdentifier] = None,
         baseline_schema: Optional[sql_identifier.SqlIdentifier] = None,
         baseline: Optional[sql_identifier.SqlIdentifier] = None,
+        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         baseline_sql = ""
         if baseline:
             baseline_sql = f"""BASELINE={self._infer_qualified_schema(baseline_database, baseline_schema)}.{baseline}"""
+
+        segment_columns_sql = ""
+        if segment_columns:
+            segment_columns_sql = f"SEGMENT_COLUMNS={_build_sql_list_from_columns(segment_columns)}"
+
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
             f"""
@@ -93,6 +119,7 @@ class ModelMonitorSQLClient:
                     TIMESTAMP_COLUMN='{timestamp_column}'
                     REFRESH_INTERVAL='{refresh_interval}'
                     AGGREGATION_WINDOW='{aggregation_window}'
+                    {segment_columns_sql}
                     {baseline_sql}""",
             statement_params=statement_params,
         ).has_column("status").has_dimensions(1, 1).validate()
@@ -182,6 +209,7 @@ class ModelMonitorSQLClient:
         actual_score_columns: list[sql_identifier.SqlIdentifier],
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
+        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
     ) -> None:
         """Ensures all columns exist in the source table.
 
@@ -193,10 +221,13 @@ class ModelMonitorSQLClient:
             actual_score_columns: List of actual score column names.
             actual_class_columns: List of actual class column names.
             id_columns: List of id column names.
+            segment_columns: List of segment column names.
 
         Raises:
             ValueError: If any of the columns do not exist in the source.
         """
+
+        segment_columns = [] if segment_columns is None else segment_columns
 
         if timestamp_column not in source_column_schema:
             raise ValueError(f"Timestamp column {timestamp_column} does not exist in source.")
@@ -214,6 +245,9 @@ class ModelMonitorSQLClient:
         if not all([column_name in source_column_schema for column_name in id_columns]):
             raise ValueError(f"ID column(s): {id_columns} do not exist in source.")
 
+        if not all([column_name in source_column_schema for column_name in segment_columns]):
+            raise ValueError(f"Segment column(s): {segment_columns} do not exist in source.")
+
     def validate_source(
         self,
         *,
@@ -226,7 +260,9 @@ class ModelMonitorSQLClient:
         actual_score_columns: list[sql_identifier.SqlIdentifier],
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
+        segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
     ) -> None:
+
         source_database = source_database or self._database_name
         source_schema = source_schema or self._schema_name
         # Get Schema of the source. Implicitly validates that the source exists.
@@ -244,19 +280,38 @@ class ModelMonitorSQLClient:
             actual_score_columns=actual_score_columns,
             actual_class_columns=actual_class_columns,
             id_columns=id_columns,
+            segment_columns=segment_columns,
         )
 
     def _alter_monitor(
         self,
-        operation: str,
+        operation: MonitorOperation,
         monitor_name: sql_identifier.SqlIdentifier,
+        target_property: Optional[str] = None,
+        target_value: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
-        if operation not in {"SUSPEND", "RESUME"}:
-            raise ValueError(f"Operation {operation} not supported for altering Dynamic Tables")
+        supported_target_properties = operation.supported_target_properties
+
+        if supported_target_properties:
+            if target_property is None or target_value is None:
+                raise ValueError(f"Target property and value must be provided for {operation.name} operation")
+
+            if target_property not in supported_target_properties:
+                raise ValueError(
+                    f"Only {', '.join(supported_target_properties)} supported as target property "
+                    f"for {operation.name} operation"
+                )
+
+        property_clause = f"{target_property}={target_value}" if target_property and target_value else ""
+        alter_momo_sql = (
+            f"""ALTER MODEL MONITOR {self._database_name}.{self._schema_name}.{monitor_name} """
+            f"""{operation.name} {property_clause}"""
+        )
+
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
-            f"""ALTER MODEL MONITOR {self._database_name}.{self._schema_name}.{monitor_name} {operation}""",
+            alter_momo_sql,
             statement_params=statement_params,
         ).has_column("status").has_dimensions(1, 1).validate()
 
@@ -266,7 +321,7 @@ class ModelMonitorSQLClient:
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._alter_monitor(
-            operation="SUSPEND",
+            operation=MonitorOperation.SUSPEND,
             monitor_name=monitor_name,
             statement_params=statement_params,
         )
@@ -277,7 +332,37 @@ class ModelMonitorSQLClient:
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         self._alter_monitor(
-            operation="RESUME",
+            operation=MonitorOperation.RESUME,
             monitor_name=monitor_name,
+            statement_params=statement_params,
+        )
+
+    def add_segment_column(
+        self,
+        monitor_name: sql_identifier.SqlIdentifier,
+        segment_column: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Add a segment column to the Model Monitor"""
+        self._alter_monitor(
+            operation=MonitorOperation.ADD,
+            monitor_name=monitor_name,
+            target_property="SEGMENT_COLUMN",
+            target_value=segment_column,
+            statement_params=statement_params,
+        )
+
+    def drop_segment_column(
+        self,
+        monitor_name: sql_identifier.SqlIdentifier,
+        segment_column: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Drop a segment column from the Model Monitor"""
+        self._alter_monitor(
+            operation=MonitorOperation.DROP,
+            monitor_name=monitor_name,
+            target_property="SEGMENT_COLUMN",
+            target_value=segment_column,
             statement_params=statement_params,
         )

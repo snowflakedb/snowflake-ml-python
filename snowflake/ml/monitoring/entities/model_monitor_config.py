@@ -33,6 +33,9 @@ class ModelMonitorSourceConfig:
     baseline: Optional[str] = None
     """Name of table containing the baseline data."""
 
+    segment_columns: Optional[list[str]] = None
+    """List of columns in the source containing segment information for grouped monitoring."""
+
 
 @dataclass
 class ModelMonitorConfig:

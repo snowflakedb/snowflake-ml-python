@@ -386,7 +386,9 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             predictor = model[-1] if isinstance(model, sklearn.pipeline.Pipeline) else model
             try:
                 explainer = shap.Explainer(predictor, transformed_bg_data)
-                return handlers_utils.convert_explanations_to_2D_df(model, explainer(transformed_data).values)
+                return handlers_utils.convert_explanations_to_2D_df(model, explainer(transformed_data).values).astype(
+                    np.float64, errors="ignore"
+                )
             except TypeError:
                 if isinstance(data, pd.DataFrame):
                     dtype_map = {spec.name: spec.as_dtype(force_numpy_dtype=True) for spec in input_specs}

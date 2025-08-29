@@ -5,6 +5,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.monitoring._client import model_monitor_sql_client
+from snowflake.ml.monitoring._client.model_monitor_sql_client import MonitorOperation
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Row, Session, types
 
@@ -219,6 +220,211 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
             result=mock_data_frame.MockDataFrame([Row(status="Success")]),
         )
         self.monitor_sql_client.drop_model_monitor(monitor_name=self.test_monitor_name)
+        self.m_session.finalize()
+
+    def test_add_segment_column(self) -> None:
+        test_segment_column = sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT")
+        self.m_session.add_mock_sql(
+            (
+                f"""ALTER MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name} """
+                f"""ADD SEGMENT_COLUMN={test_segment_column}"""
+            ),
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+        self.monitor_sql_client.add_segment_column(
+            monitor_name=self.test_monitor_name, segment_column=test_segment_column
+        )
+        self.m_session.finalize()
+
+    def test_drop_segment_column(self) -> None:
+        test_segment_column = sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT")
+        self.m_session.add_mock_sql(
+            (
+                f"""ALTER MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name} """
+                f"""DROP SEGMENT_COLUMN={test_segment_column}"""
+            ),
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+        self.monitor_sql_client.drop_segment_column(
+            monitor_name=self.test_monitor_name, segment_column=test_segment_column
+        )
+        self.m_session.finalize()
+
+    def test_alter_monitor_validation(self) -> None:
+        """Test validation logic in _alter_monitor method"""
+        # Test missing target property and value for ADD operation
+        with self.assertRaisesRegex(ValueError, "Target property and value must be provided for ADD operation"):
+            self.monitor_sql_client._alter_monitor(
+                operation=MonitorOperation.ADD,
+                monitor_name=self.test_monitor_name,
+                target_property=None,
+                target_value=None,
+            )
+
+        # Test missing target property and value for DROP operation
+        with self.assertRaisesRegex(ValueError, "Target property and value must be provided for DROP operation"):
+            self.monitor_sql_client._alter_monitor(
+                operation=MonitorOperation.DROP,
+                monitor_name=self.test_monitor_name,
+                target_property=None,
+                target_value=None,
+            )
+
+        # Test invalid target property for ADD operation
+        with self.assertRaisesRegex(ValueError, "Only SEGMENT_COLUMN supported as target property for ADD operation"):
+            self.monitor_sql_client._alter_monitor(
+                operation=MonitorOperation.ADD,
+                monitor_name=self.test_monitor_name,
+                target_property="INVALID_PROPERTY",
+                target_value=sql_identifier.SqlIdentifier("test_column"),
+            )
+
+        # Test invalid target property for DROP operation
+        with self.assertRaisesRegex(ValueError, "Only SEGMENT_COLUMN supported as target property for DROP operation"):
+            self.monitor_sql_client._alter_monitor(
+                operation=MonitorOperation.DROP,
+                monitor_name=self.test_monitor_name,
+                target_property="INVALID_PROPERTY",
+                target_value=sql_identifier.SqlIdentifier("test_column"),
+            )
+
+    def test_validate_segment_columns_exist_in_source(self) -> None:
+        """Test validation of segment columns in source table"""
+        # Test successful validation with segment columns
+        table_schema = {
+            "TIMESTAMP": types.TimestampType(),
+            "PREDICTION": types.DoubleType(),
+            "LABEL": types.DoubleType(),
+            "ID": types.StringType(),
+            "CUSTOMER_SEGMENT": types.StringType(),
+            "REGION": types.StringType(),
+        }
+        self.monitor_sql_client._validate_columns_exist_in_source(
+            source_column_schema=table_schema,
+            timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
+            prediction_score_columns=[sql_identifier.SqlIdentifier("PREDICTION")],
+            prediction_class_columns=[],
+            actual_score_columns=[sql_identifier.SqlIdentifier("LABEL")],
+            actual_class_columns=[],
+            id_columns=[sql_identifier.SqlIdentifier("ID")],
+            segment_columns=[sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT"), sql_identifier.SqlIdentifier("REGION")],
+        )
+
+        # Test missing segment column validation
+        table_schema_missing_segment = {
+            "TIMESTAMP": types.TimestampType(),
+            "PREDICTION": types.DoubleType(),
+            "LABEL": types.DoubleType(),
+            "ID": types.StringType(),
+        }
+        with self.assertRaisesRegex(ValueError, r"Segment column\(s\): \['CUSTOMER_SEGMENT'\] do not exist in source."):
+            self.monitor_sql_client._validate_columns_exist_in_source(
+                source_column_schema=table_schema_missing_segment,
+                timestamp_column=sql_identifier.SqlIdentifier("TIMESTAMP"),
+                prediction_score_columns=[sql_identifier.SqlIdentifier("PREDICTION")],
+                prediction_class_columns=[],
+                actual_score_columns=[sql_identifier.SqlIdentifier("LABEL")],
+                actual_class_columns=[],
+                id_columns=[sql_identifier.SqlIdentifier("ID")],
+                segment_columns=[sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT")],
+            )
+
+    def test_create_model_monitor_with_segment_columns(self) -> None:
+        """Test creating model monitor with segment columns"""
+        self.m_session.add_mock_sql(
+            f"""
+            CREATE MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}
+                WITH
+                    MODEL={self.test_db_name}.{self.test_schema_name}.{self.test_model_name}
+                    VERSION='{self.test_model_version_name}'
+                    FUNCTION='predict'
+                    WAREHOUSE='{self.test_wh_name}'
+                    SOURCE={self.test_db_name}.{self.test_schema_name}.{self.test_source_table_name}
+                    ID_COLUMNS=('ID')
+                    PREDICTION_SCORE_COLUMNS=('PREDICTION')
+                    PREDICTION_CLASS_COLUMNS=()
+                    ACTUAL_SCORE_COLUMNS=('LABEL')
+                    ACTUAL_CLASS_COLUMNS=()
+                    TIMESTAMP_COLUMN='TIMESTAMP'
+                    REFRESH_INTERVAL='1 hour'
+                    AGGREGATION_WINDOW='1 day'
+                    SEGMENT_COLUMNS=('CUSTOMER_SEGMENT', 'REGION')
+                    """,
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+
+        self.monitor_sql_client.create_model_monitor(
+            monitor_database=self.test_db_name,
+            monitor_schema=self.test_schema_name,
+            monitor_name=self.test_monitor_name,
+            source_database=self.test_db_name,
+            source_schema=self.test_schema_name,
+            source=self.test_source_table_name,
+            model_database=self.test_db_name,
+            model_schema=self.test_schema_name,
+            model_name=self.test_model_name,
+            version_name=self.test_model_version_name,
+            function_name="predict",
+            warehouse_name=self.test_wh_name,
+            timestamp_column=self.test_timestamp_column,
+            id_columns=[self.test_id_column_name],
+            prediction_score_columns=[self.test_prediction_column_name],
+            prediction_class_columns=[],
+            actual_score_columns=[self.test_label_column_name],
+            actual_class_columns=[],
+            refresh_interval="1 hour",
+            aggregation_window="1 day",
+            segment_columns=[sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT"), sql_identifier.SqlIdentifier("REGION")],
+        )
+        self.m_session.finalize()
+
+    def test_create_model_monitor_without_segment_columns(self) -> None:
+        """Test creating model monitor without segment columns (empty list)"""
+        self.m_session.add_mock_sql(
+            f"""
+            CREATE MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}
+                WITH
+                    MODEL={self.test_db_name}.{self.test_schema_name}.{self.test_model_name}
+                    VERSION='{self.test_model_version_name}'
+                    FUNCTION='predict'
+                    WAREHOUSE='{self.test_wh_name}'
+                    SOURCE={self.test_db_name}.{self.test_schema_name}.{self.test_source_table_name}
+                    ID_COLUMNS=('ID')
+                    PREDICTION_SCORE_COLUMNS=('PREDICTION')
+                    PREDICTION_CLASS_COLUMNS=()
+                    ACTUAL_SCORE_COLUMNS=('LABEL')
+                    ACTUAL_CLASS_COLUMNS=()
+                    TIMESTAMP_COLUMN='TIMESTAMP'
+                    REFRESH_INTERVAL='1 hour'
+                    AGGREGATION_WINDOW='1 day'
+                    """,
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+
+        # Test with empty segment_columns list (should not include SEGMENT_COLUMNS in SQL)
+        self.monitor_sql_client.create_model_monitor(
+            monitor_database=self.test_db_name,
+            monitor_schema=self.test_schema_name,
+            monitor_name=self.test_monitor_name,
+            source_database=self.test_db_name,
+            source_schema=self.test_schema_name,
+            source=self.test_source_table_name,
+            model_database=self.test_db_name,
+            model_schema=self.test_schema_name,
+            model_name=self.test_model_name,
+            version_name=self.test_model_version_name,
+            function_name="predict",
+            warehouse_name=self.test_wh_name,
+            timestamp_column=self.test_timestamp_column,
+            id_columns=[self.test_id_column_name],
+            prediction_score_columns=[self.test_prediction_column_name],
+            prediction_class_columns=[],
+            actual_score_columns=[self.test_label_column_name],
+            actual_class_columns=[],
+            refresh_interval="1 hour",
+            aggregation_window="1 day",
+            segment_columns=[],  # Empty list
+        )
         self.m_session.finalize()
 
 

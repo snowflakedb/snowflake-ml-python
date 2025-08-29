@@ -88,7 +88,7 @@ class MidStreamException(Exception):
             message = reason
         if http_resp:
             message = f"Error in stream (HTTP Response: {http_resp.status}) - {http_resp.reason}"
-        if request_id != "":
+        if request_id is not None and request_id != "":
             # add request_id to error message
             message += f" (Request ID: {request_id})"
         super().__init__(message)
@@ -327,7 +327,8 @@ def _return_stream_response(
             # This is the case of midstream errors which were introduced specifically for structured output.
             # TODO: discuss during code review
             if parsed_resp.get("error"):
-                raise MidStreamException(reason=response.text, request_id=request_id)
+                error_info = parsed_resp["error"]
+                raise MidStreamException(reason=str(error_info), request_id=request_id)
             else:
                 pass
 

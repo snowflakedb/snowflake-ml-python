@@ -7,7 +7,10 @@ package(default_visibility = [
 
 py_library(
     name = "experiment_tracking_sql_client",
-    srcs = ["experiment_tracking_sql_client.py"],
+    srcs = [
+        "artifact.py",
+        "experiment_tracking_sql_client.py",
+    ],
     deps = [
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -25,5 +28,14 @@ py_test(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
+py_test(
+    name = "artifact_test",
+    srcs = ["artifact_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":experiment_tracking_sql_client",
     ],
 )

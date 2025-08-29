@@ -10,6 +10,7 @@ import pandas as pd
 import shap
 from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, linear_model, multioutput
+from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
@@ -431,6 +432,87 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 assert callable(explain_method)
                 np.testing.assert_allclose(np.array([[-0.08254936]]), predict_method(iris_X[:1]))
                 np.testing.assert_allclose(explain_method(iris_X), explanations)
+
+    def test_skl_default_explain_sklearn_logr_bug(self) -> None:
+        np.random.seed(42)
+
+        # Number of samples
+        n_samples = 1000
+
+        # Generate features
+        data = {
+            "Age": np.random.randint(18, 70, n_samples),
+            "MonthlyCharges": np.random.uniform(20, 150, n_samples),
+            "TotalCharges": np.random.uniform(50, 5000, n_samples),
+            "Gender": np.random.choice(["Male", "Female"], n_samples),
+            "HasDependents": np.random.choice([0, 1], n_samples),
+            "ContractType": np.random.choice(["Month_to_month", "One_year", "Two_year"], n_samples),
+            "TechSupport": np.random.choice(["Yes", "No", "No_internet_service"], n_samples),
+            "InternetService": np.random.choice(["DSL", "Fiber_optic", "No"], n_samples),
+            "PaymentMethod": np.random.choice(
+                ["Electronic_check", "Mailed_check", "Bank_transfer_(automatic)", "Credit_card_automatic"], n_samples
+            ),
+        }
+
+        df = pd.DataFrame(data)
+
+        # Introduce some correlation and create a target variable (Churn)
+        # Customers with higher monthly charges, shorter contracts, and no tech support are more likely to churn
+        df["Churn"] = 0
+        df.loc[(df["MonthlyCharges"] > 100) & (df["ContractType"] == "Month-to-month"), "Churn"] = 1
+        df.loc[(df["TechSupport"] == "No") & (df["InternetService"] != "No") & (df["MonthlyCharges"] > 70), "Churn"] = 1
+        df.loc[(df["Age"] < 30) & (df["MonthlyCharges"] > 90), "Churn"] = 1
+        df.loc[np.random.rand(n_samples) < 0.05, "Churn"] = 1  # Add some random churn
+
+        # Ensure a good mix of churn/no-churn
+        # For demonstration purposes, let's adjust churn rate
+        churn_rate = df["Churn"].mean()
+
+        # If churn rate is too low, add more churn randomly
+        if churn_rate < 0.2:
+            num_to_add = int(n_samples * 0.2 - df["Churn"].sum())
+            churn_indices = df[df["Churn"] == 0].sample(n=num_to_add, random_state=42).index
+            df.loc[churn_indices, "Churn"] = 1
+
+        X = df.drop("Churn", axis=1)
+        y = df["Churn"]
+
+        # Convert categorical features to numerical using one-hot encoding
+        X = pd.get_dummies(X, drop_first=True)  # drop_first=True to avoid multicollinearity
+
+        # Create train and test dataframes
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+        regr = linear_model.LogisticRegression(max_iter=1000, solver="saga")
+        # pipe = Pipeline([("regr", regr)])
+
+        regr.fit(X_train, y_train)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save fails with "Explainability for this model is not supported."
+            # Issue: Data Validation Error: Unsupported type confronted in
+            # 0    -1.31159 1   -0.793175 2     0.07085 3   -1.138785 4   -0.677972
+            # I think this is because the output (explain values) are float, not [str, bytes, dict, list]
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=regr,
+                sample_input_data=X_train,
+                metadata={"author": "halu", "version": "1"},
+                task=model_types.Task.TABULAR_BINARY_CLASSIFICATION,
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "predict", None)
+                explain_method = getattr(pk.model, "explain", None)
+                assert callable(predict_method)
+                assert callable(explain_method)
 
     def test_skl_object_no_explainable_method(self) -> None:
         iris_X, _ = datasets.load_iris(return_X_y=True)

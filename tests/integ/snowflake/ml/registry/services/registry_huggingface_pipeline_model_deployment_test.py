@@ -5,6 +5,7 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.model import openai_signatures
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -41,24 +42,40 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             max_length=200,
         )
 
-        x = [
+        NUM_CHOICES = 3
+        x_df = pd.DataFrame.from_records(
             [
-                {"role": "system", "content": "Complete the sentence."},
                 {
-                    "role": "user",
-                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
-                },
+                    "messages": [
+                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "user",
+                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                        },
+                    ],
+                    "max_completion_tokens": 250,
+                    "temperature": 0.9,
+                    "stop": None,
+                    "n": NUM_CHOICES,
+                    "stream": False,
+                    "top_p": 0.9,
+                    "frequency_penalty": 0.2,
+                    "presence_penalty": 0.1,
+                }
             ]
-        ]
-
-        x_df = pd.DataFrame([x], columns=["inputs"])
+        )
 
         def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+            )
 
-            for row in res["outputs"]:
+            for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("generated_text", row[0])
+                self.assertEqual(len(row), NUM_CHOICES)
+                self.assertIn("message", row[0])
+                self.assertIn("content", row[0]["message"])
 
         self._test_registry_model_deployment(
             model=model,
@@ -70,6 +87,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             },
             options={},
             pip_requirements=pip_requirements,
+            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )
 
 

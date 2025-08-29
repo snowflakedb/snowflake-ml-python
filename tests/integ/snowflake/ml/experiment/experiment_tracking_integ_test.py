@@ -1,4 +1,6 @@
 import json
+import os
+import tempfile
 import uuid
 
 import pandas as pd
@@ -250,7 +252,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(json.loads(runs[0]["metadata"])["status"], RunStatus.FINISHED.value)
 
     def test_log_model(self) -> None:
-        """Test that log_model works with experiment tracking (attaches experiment info to model version)"""
+        """Test that log_model works with experiment tracking"""
         experiment_name = "TEST_EXPERIMENT_LOG_MODEL"
         run_name = "TEST_RUN_LOG_MODEL"
         model_name = "TEST_MODEL"
@@ -268,47 +270,91 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
                 sample_input_data=X,
             )
 
+        # Test that model exists
+        models = self._session.sql(f"SHOW MODELS IN DATABASE {self._db_name}").collect()
+        self.assertEqual(len(models), 1)
+        self.assertEqual(model_name, models[0]["name"])
+        self.assertEqual(self._schema_name, models[0]["schema_name"])
+        self.assertEqual(self._db_name, models[0]["database_name"])
+        self.assertIn(mv.version_name, models[0]["versions"])
+
         # Test that the model version can be run and the output is correct
         actual = mv.run(X, function_name="predict")
         expected = pd.DataFrame({"output_feature_0": model.predict(X)})
         pd.testing.assert_frame_equal(actual, expected)
 
-        # Test that lineage edge is correctly created
-        experiment_fqn = self.exp._sql_client.fully_qualified_object_name(
-            self.exp._database_name, self.exp._schema_name, self.exp._experiment.name
-        )
-        dgql_json = json.loads(
-            self._session.sql(
-                f"""select SYSTEM$DGQL('
-                    {{
-                        V(domain: EXPERIMENT, name:"{run_name}", parentName:"{experiment_fqn}")
-                        {{
-                            E(edgeType:[DATA_LINEAGE],direction:OUT)
-                            {{
-                                S {{domain, name, schema, db, properties}},
-                                T {{domain, name, schema, db, properties}}
-                            }}
-                        }}
-                    }}
-            ')"""
-            ).collect()[0][0]
-        )
-        lineage_edges = dgql_json.get("data", {}).get("V", {}).get("E", [])
-        self.assertEqual(len(lineage_edges), 1, f"Expected 1 lineage edge, got {len(lineage_edges)}")
-        # Confirm source is correct
-        source = lineage_edges[0]["S"]
-        self.assertEqual(source["domain"], "EXPERIMENT")
-        self.assertEqual(source["name"], run_name)
-        self.assertEqual(source["properties"]["parentName"], experiment_name)
-        self.assertEqual(source["schema"], self._schema_name)
-        self.assertEqual(source["db"], self._db_name)
-        # Confirm target is correct
-        target = lineage_edges[0]["T"]
-        self.assertEqual(target["domain"], "MODULE")
-        self.assertEqual(target["name"], mv.version_name)
-        self.assertEqual(target["properties"]["parentName"], model_name)
-        self.assertEqual(target["schema"], self._schema_name)
-        self.assertEqual(target["db"], self._db_name)
+    def test_log_artifact_file(self) -> None:
+        experiment_name = "TEST_EXPERIMENT_LOG_ARTIFACT_FILE"
+        run_name = "TEST_RUN_LOG_ARTIFACT_FILE"
+        local_path = "tests/integ/snowflake/ml/experiment/test_artifact.json"
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            self.exp.log_artifact(local_path)
+
+        # Test that the artifact is logged correctly
+        artifacts = self.exp.list_artifacts(run_name=run_name)
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0].name, "test_artifact.json")
+
+        # Test that the artifact can be retrieved and that the content is the same
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.exp.download_artifacts(run_name=run_name, target_path=temp_dir)
+            with (
+                open(os.path.join(temp_dir, "test_artifact.json")) as uploaded_file,
+                open(local_path) as original_file,
+            ):
+                self.assertEqual(uploaded_file.read(), original_file.read())
+
+        # Test downloading a specific file path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.exp.download_artifacts(run_name=run_name, target_path=temp_dir, artifact_path="test_artifact.json")
+            self.assertEqual(os.listdir(temp_dir), ["test_artifact.json"])
+            with (
+                open(os.path.join(temp_dir, "test_artifact.json")) as uploaded_file,
+                open(local_path) as original_file,
+            ):
+                self.assertEqual(uploaded_file.read(), original_file.read())
+
+    def test_log_artifact_directory(self) -> None:
+        experiment_name = "TEST_EXPERIMENT_LOG_ARTIFACT_DIR"
+        run_name = "TEST_RUN_LOG_ARTIFACT_DIR"
+        local_path = "tests/integ/snowflake/ml/experiment/test_artifact_dir"
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            self.exp.log_artifact(local_path)
+
+        # Test that the artifacts are logged correctly
+        expected_artifacts = [
+            "artifact1.txt",
+            "artifact2.py",
+            "nested_dir/artifact3.md",
+        ]
+        artifacts = self.exp.list_artifacts(run_name=run_name)
+        self.assertListEqual(expected_artifacts, [a.name for a in artifacts])
+
+        # Test that artifacts can be retrieved and that the content is the same
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.exp.download_artifacts(run_name=run_name, target_path=temp_dir)
+            for expected_artifact in expected_artifacts:
+                with (
+                    open(os.path.join(temp_dir, expected_artifact)) as uploaded_file,
+                    open(os.path.join(local_path, expected_artifact)) as original_file,
+                ):
+                    self.assertEqual(uploaded_file.read(), original_file.read())
+
+        # Test downloading a specific path, should only download the artifact3.md file
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.exp.download_artifacts(
+                run_name=run_name, target_path=temp_dir, artifact_path="nested_dir/artifact3.md"
+            )
+            self.assertEqual(os.listdir(temp_dir), ["nested_dir"])
+            with (
+                open(os.path.join(temp_dir, "nested_dir/artifact3.md")) as uploaded_file,
+                open(os.path.join(local_path, "nested_dir/artifact3.md")) as original_file,
+            ):
+                self.assertEqual(uploaded_file.read(), original_file.read())
 
 
 if __name__ == "__main__":

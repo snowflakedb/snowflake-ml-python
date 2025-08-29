@@ -5,14 +5,17 @@ from typing import Any, Optional, Union
 from urllib.parse import quote
 
 import snowflake.snowpark._internal.utils as snowpark_utils
-from snowflake.ml import model, registry
+from snowflake.ml import model as ml_model, registry
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import (
     _entities as entities,
     _experiment_info as experiment_info,
 )
-from snowflake.ml.experiment._client import experiment_tracking_sql_client as sql_client
+from snowflake.ml.experiment._client import (
+    artifact,
+    experiment_tracking_sql_client as sql_client,
+)
 from snowflake.ml.model import type_hints
 from snowflake.ml.utils import sql_client as sql_client_utils
 from snowflake.snowpark import session
@@ -118,11 +121,11 @@ class ExperimentTracking:
     @functools.wraps(registry.Registry.log_model)
     def log_model(
         self,
-        model: Union[type_hints.SupportedModelType, model.ModelVersion],
+        model: Union[type_hints.SupportedModelType, ml_model.ModelVersion],
         *,
         model_name: str,
         **kwargs: Any,
-    ) -> model.ModelVersion:
+    ) -> ml_model.ModelVersion:
         run = self._get_or_start_run()
         with experiment_info.ExperimentInfoPatcher(experiment_info=run._get_experiment_info()):
             return self._registry.log_model(model, model_name=model_name, **kwargs)
@@ -279,6 +282,88 @@ class ExperimentTracking:
             run_name=run.name,
             run_metadata=json.dumps(metadata.to_dict()),
         )
+
+    def log_artifact(
+        self,
+        local_path: str,
+        artifact_path: Optional[str] = None,
+    ) -> None:
+        """
+        Log an artifact or a directory of artifacts under the current run. If no run is active, this method will create
+        a new run.
+
+        Args:
+            local_path: The path to the local file or directory to write.
+            artifact_path: The directory within the run directory to write the artifacts to. If None, the artifacts will
+                be logged in the root directory of the run.
+        """
+        run = self._get_or_start_run()
+        for file_path, dest_artifact_path in artifact.get_put_path_pairs(local_path, artifact_path or ""):
+            self._sql_client.put_artifact(
+                experiment_name=run.experiment_name,
+                run_name=run.name,
+                artifact_path=dest_artifact_path,
+                file_path=file_path,
+            )
+
+    def list_artifacts(
+        self,
+        run_name: str,
+        artifact_path: Optional[str] = None,
+    ) -> list[artifact.ArtifactInfo]:
+        """
+        List artifacts for a given run within the current experiment.
+
+        Args:
+            run_name: Name of the run to list artifacts from.
+            artifact_path: Optional subdirectory within the run's artifact directory to scope the listing.
+                If None, lists from the root of the run's artifact directory.
+
+        Returns:
+            A list of artifact entries under the specified path.
+
+        Raises:
+            RuntimeError: If no experiment is currently set.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please set an experiment before listing artifacts.")
+
+        return self._sql_client.list_artifacts(
+            experiment_name=self._experiment.name,
+            run_name=sql_identifier.SqlIdentifier(run_name),
+            artifact_path=artifact_path or "",
+        )
+
+    def download_artifacts(
+        self,
+        run_name: str,
+        artifact_path: Optional[str] = None,
+        target_path: Optional[str] = None,
+    ) -> None:
+        """
+        Download artifacts from a run to a local directory.
+
+        Args:
+            run_name: Name of the run to download artifacts from.
+            artifact_path: Optional path to file or subdirectory within the run's artifact directory to download.
+                If None, downloads all artifacts from the root of the run's artifact directory.
+            target_path: Optional local directory to download files into. If None, downloads into the
+                current working directory.
+
+        Raises:
+            RuntimeError: If no experiment is currently set.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please set an experiment before downloading artifacts.")
+
+        artifacts = self.list_artifacts(run_name=run_name, artifact_path=artifact_path or "")
+        for relative_path, local_dir in artifact.get_download_path_pairs(artifacts, target_path or ""):
+            self._sql_client.get_artifact(
+                experiment_name=self._experiment.name,
+                run_name=sql_identifier.SqlIdentifier(run_name),
+                artifact_path=relative_path,
+                target_path=local_dir,
+            )
 
     def _get_or_set_experiment(self) -> entities.Experiment:
         if self._experiment:

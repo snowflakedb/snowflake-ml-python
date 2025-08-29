@@ -3,7 +3,10 @@ from typing import Optional
 
 import pandas as pd
 
-from snowflake.ml.modeling._internal.estimator_utils import handle_inference_result
+from snowflake.ml.modeling._internal.estimator_utils import (
+    handle_inference_result,
+    is_multi_task_estimator,
+)
 
 
 class PandasModelTrainer:
@@ -48,7 +51,11 @@ class PandasModelTrainer:
 
         if self.label_cols:
             label_arg_name = "Y" if "Y" in params else "y"
-            args[label_arg_name] = self.dataset[self.label_cols].squeeze()
+            # For multi-task estimators, avoid squeezing to maintain 2D shape
+            if is_multi_task_estimator(self.estimator):
+                args[label_arg_name] = self.dataset[self.label_cols]
+            else:
+                args[label_arg_name] = self.dataset[self.label_cols].squeeze()
 
         if self.sample_weight_col is not None and "sample_weight" in params:
             args["sample_weight"] = self.dataset[self.sample_weight_col].squeeze()
@@ -115,7 +122,11 @@ class PandasModelTrainer:
         args = {"X": self.dataset[self.input_cols]}
         if self.label_cols:
             label_arg_name = "Y" if "Y" in params else "y"
-            args[label_arg_name] = self.dataset[self.label_cols].squeeze()
+            # For multi-task estimators, avoid squeezing to maintain 2D shape
+            if is_multi_task_estimator(self.estimator):
+                args[label_arg_name] = self.dataset[self.label_cols]
+            else:
+                args[label_arg_name] = self.dataset[self.label_cols].squeeze()
 
         if self.sample_weight_col is not None and "sample_weight" in params:
             args["sample_weight"] = self.dataset[self.sample_weight_col].squeeze()

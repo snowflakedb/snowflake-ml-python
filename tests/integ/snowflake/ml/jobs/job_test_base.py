@@ -1,5 +1,8 @@
+import inspect
 import os
-from typing import Any, Optional
+import tempfile
+import textwrap
+from typing import Any, Callable, Optional
 
 import numpy as np
 from absl.testing import absltest, parameterized
@@ -24,7 +27,7 @@ _PREDICT_FUNC = "predict_result"
     or region["cloud"] not in test_constants._SUPPORTED_CLOUDS,
     "Test only for SPCS supported clouds",
 )
-class BaseModelTest(parameterized.TestCase):
+class JobTestBase(parameterized.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
@@ -47,6 +50,26 @@ class BaseModelTest(parameterized.TestCase):
     def tearDownClass(cls) -> None:
         cls.dbm.drop_schema(cls.schema, if_exists=True)
         super().tearDownClass()
+
+    def _submit_func_as_file(self, func: Callable[[], None], **kwargs: Any) -> jobs.MLJob[None]:
+        # Insert default kwargs
+        default_kwargs = dict(
+            compute_pool=self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        kwargs = {**default_kwargs, **kwargs}
+
+        func_source = inspect.getsource(func)
+        payload_str = textwrap.dedent(func_source) + "\n\n__return__ = " + func.__name__ + "()\n"
+        with tempfile.NamedTemporaryFile(suffix=".py") as temp_file:
+            temp_file.write(payload_str.encode("utf-8"))
+            temp_file.flush()
+            job: jobs.MLJob[None] = jobs.submit_file(
+                temp_file.name,
+                **kwargs,
+            )
+            return job
 
     def get_inference(self, model: Any, module_path: str) -> Any:
         return reflection_utils.run_reflected_func(module_path, _PREDICT_FUNC, model)

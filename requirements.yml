@@ -164,7 +164,10 @@
     - build_test_env
 - name: pyarrow
   dev_version: 16.1.0
-  version_requirements: ''
+  # pyarrow 19.0.0 is broken https://github.com/apache/arrow/issues/45283.
+  # Setting the restriction to <19.0.0 because Snowpark doesn't support != and
+  # v19.0.1 is not available in Snowflake conda channel yet.
+  version_requirements: <19.0.0
 - name: pydantic
   dev_version: 2.8.2
   version_requirements: '>=2.8.2, <3'
@@ -189,7 +192,7 @@
     - build_test_env
 - name_pypi: torch
   name_conda: pytorch
-  dev_version: 2.3.1
+  dev_version: 2.5.1
   version_requirements: '>=2.0.1,<3'
   requirements_extra_tags:
     - torch
@@ -214,7 +217,7 @@
   version_requirements: '>=2024.6.1,<2026'
 - name: scikit-learn
   dev_version: 1.5.1
-  version_requirements: <1.6
+  version_requirements: <1.7
   tags:
     - build_essential
 - name: scipy
@@ -232,8 +235,8 @@
     - transformers
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.15.0
-  version_requirements: '>=3.15.0,<4'
+  dev_version: 3.16.0
+  version_requirements: '>=3.16.0,<4'
 - name: snowflake.core
   dev_version: 1.0.5
   version_requirements: '>=1.0.2,<2'
@@ -292,7 +295,7 @@
   dev_version: 4.11.0
   version_requirements: '>=4.1.0,<5'
 - name: xgboost
-  dev_version: 2.1.1
+  dev_version: 2.1.4
   version_requirements: '>=1.7.3,<3'
   tags:
     - build_essential

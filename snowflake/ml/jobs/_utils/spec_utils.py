@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
-from snowflake.ml.jobs._utils import constants, query_helper, types
+from snowflake.ml.jobs._utils import constants, feature_flags, query_helper, types
 from snowflake.ml.jobs._utils.runtime_env_utils import RuntimeEnvironmentsDict
 
 
@@ -63,7 +63,7 @@ def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.Image
     # Use MLRuntime image
     hardware = "GPU" if resources.gpu > 0 else "CPU"
     container_image = None
-    if os.environ.get(constants.ENABLE_IMAGE_VERSION_ENV_VAR, "").lower() == "true":
+    if feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
         container_image = _get_runtime_image(session, hardware)  # type: ignore[arg-type]
 
     if not container_image:
@@ -98,6 +98,7 @@ def generate_spec_overrides(
     container_spec: dict[str, Any] = {
         "name": constants.DEFAULT_CONTAINER_NAME,
     }
+
     if environment_vars:
         # TODO: Validate environment variables
         container_spec["env"] = environment_vars
@@ -213,10 +214,7 @@ def generate_service_spec(
 
     # TODO: Add hooks for endpoints for integration with TensorBoard etc
 
-    env_vars = {
-        constants.PAYLOAD_DIR_ENV_VAR: constants.APP_MOUNT_PATH,
-        constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
-    }
+    env_vars = payload.env_vars
     endpoints: list[dict[str, Any]] = []
 
     if target_instances > 1:

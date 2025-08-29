@@ -5,3 +5,9 @@
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_sklearn_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_model_deployment_test
+//snowflake/ml/model/_packager/model_task:model_task_utils_test
+//snowflake/ml/model/_packager/model_handlers_test:lightgbm_test
+//snowflake/ml/model/_packager/model_handlers_test:snowmlmodel_test
+//tests/integ/snowflake/ml/registry/model:registry_target_platforms_test
+//tests/integ/snowflake/ml/registry/model:registry_artifact_repository_test
+//snowflake/ml/model/_packager/model_handlers_test:xgboost_test

@@ -41,18 +41,29 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
     from snowflake.runtime.utils import session_utils
 
     session = session_utils.get_session()
-    df = session.sql(f"show service instances in service {service_name}")
-    result = df.select('"instance_id"', '"ip_address"', '"start_time"', '"status"').collect()
+    result = session.sql(f"show service instances in service {service_name}").collect()
 
     if not result:
         return None
-
-    # Sort by start_time first, then by instance_id. If start_time is null/empty, it will be sorted to the end.
-    sorted_instances = sorted(result, key=lambda x: (not bool(x["start_time"]), x["start_time"], int(x["instance_id"])))
-    head_instance = sorted_instances[0]
+    # we have already integrated with first_instance startup policy,
+    # the instance 0 is guaranteed to be the head instance
+    head_instance = next(
+        (
+            row
+            for row in result
+            if "instance_id" in row and row["instance_id"] is not None and int(row["instance_id"]) == 0
+        ),
+        None,
+    )
+    # fallback to find the first instance if the instance 0 is not found
+    if not head_instance:
+        # Sort by start_time first, then by instance_id. If start_time is null/empty, it will be sorted to the end.
+        sorted_instances = sorted(
+            result, key=lambda x: (not bool(x["start_time"]), x["start_time"], int(x["instance_id"]))
+        )
+        head_instance = sorted_instances[0]
     if not head_instance["instance_id"] or not head_instance["ip_address"]:
         return None
-
     # Validate head instance IP
     ip_address = head_instance["ip_address"]
     try:

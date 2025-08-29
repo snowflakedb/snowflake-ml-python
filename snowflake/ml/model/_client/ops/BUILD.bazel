@@ -78,6 +78,7 @@ py_library(
         "//snowflake/ml/_internal/utils:service_logger",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/jobs",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",

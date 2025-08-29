@@ -9,8 +9,33 @@ from typing import Optional
 
 import platformdirs
 
+
+class ProgressBarAwareConsoleHandler(logging.StreamHandler):  # type: ignore[type-arg]
+    """A logging handler that adapts to different progress bar systems to avoid interfering with display."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+
+            # Check if tqdm progress bars are active - use tqdm.write() to avoid interference
+            try:
+                import tqdm
+
+                if hasattr(tqdm.tqdm, "_instances") and tqdm.tqdm._instances:
+                    tqdm.tqdm.write(msg, file=self.stream)
+                    return
+            except (ImportError, AttributeError):
+                pass
+
+            # Fallback to regular stream writing (works for all contexts including Streamlit)
+            self.stream.write(msg + "\n")
+            self.flush()
+        except Exception:
+            self.handleError(record)
+
+
 # Module-level logger for operational messages that should appear on console
-stdout_handler = logging.StreamHandler(sys.stdout)
+stdout_handler = ProgressBarAwareConsoleHandler(sys.stdout)
 stdout_handler.setFormatter(logging.Formatter("%(message)s"))
 
 console_logger = logging.getLogger(__name__)

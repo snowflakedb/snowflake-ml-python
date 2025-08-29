@@ -39,6 +39,25 @@ class DemoModelArray(custom_model.CustomModel):
         return pd.DataFrame({"output": input.values.tolist()})
 
 
+class DemoModelMultipleStructured(custom_model.CustomModel):
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        result = []
+        for _, row in input_df.iterrows():
+            result.append(
+                {
+                    "simple_dict": row.to_dict(),
+                    "nested_dict": {"level1": {"level2": row.to_dict()}},
+                    "array_data": [row["a"], row["b"]],
+                    "metadata_array": [{"key": "value"}, {"another": "dict"}],
+                }
+            )
+        return pd.DataFrame(result)
+
+
 class AsyncComposeModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
@@ -327,6 +346,47 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                         res,
                         pd.DataFrame(data={"output": [[1, 2, 3], [4, 2, 5]]}),
                     ),
+                )
+            },
+        )
+
+    def test_custom_demo_model_structured(self) -> None:
+        lm = DemoModelMultipleStructured(custom_model.ModelContext())
+        input_data = [
+            {"a": 1, "b": 2.8, "c": "a string"},
+            {"a": 4, "b": 5.3, "c": "another string"},
+        ]
+        pd_df = pd.DataFrame(input_data)
+
+        def _validate(res: pd.DataFrame) -> None:
+            for _, row in res.iterrows():
+                row_dict = row.to_dict()
+                self.assertIn("simple_dict", row_dict)
+                self.assertIn("nested_dict", row_dict)
+                self.assertIn("array_data", row_dict)
+                self.assertIn("metadata_array", row_dict)
+                self.assertIn("a", row_dict["simple_dict"])
+                self.assertIn("b", row_dict["simple_dict"])
+                self.assertIn("c", row_dict["simple_dict"])
+                self.assertIn("level1", row_dict["nested_dict"])
+                self.assertIn("level2", row_dict["nested_dict"]["level1"])
+                self.assertIn("a", row_dict["nested_dict"]["level1"]["level2"])
+                self.assertIn("b", row_dict["nested_dict"]["level1"]["level2"])
+                self.assertIn("c", row_dict["nested_dict"]["level1"]["level2"])
+                self.assertIsInstance(row_dict["array_data"], list)
+                self.assertIsInstance(row_dict["metadata_array"], list)
+                self.assertIsInstance(row_dict["metadata_array"][0], dict)
+                self.assertIsInstance(row_dict["metadata_array"][1], dict)
+                self.assertIn("key", row_dict["metadata_array"][0])
+                self.assertIn("another", row_dict["metadata_array"][1])
+
+        self._test_registry_model(
+            model=lm,
+            sample_input_data=pd_df,
+            prediction_assert_fns={
+                "predict": (
+                    pd_df,
+                    _validate,
                 )
             },
         )

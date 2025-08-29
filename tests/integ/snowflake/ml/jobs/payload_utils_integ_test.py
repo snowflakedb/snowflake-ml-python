@@ -97,9 +97,9 @@ class PayloadUtilsTests(parameterized.TestCase):
         (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/sub_main.py", 2),
         # Function as payload
         (function_with_pos_arg, pathlib.Path("function_payload.py"), "/mnt/job_stage/app/function_payload.py", 1),
-        (function_with_pos_arg, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
-        (function_with_pos_arg_free_vars, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
-        (function_with_pos_arg_modules, None, f"{constants.APP_MOUNT_PATH}/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
+        (function_with_pos_arg, None, f"/mnt/job_stage/app/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
+        (function_with_pos_arg_free_vars, None, f"/mnt/job_stage/app/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
+        (function_with_pos_arg_modules, None, f"/mnt/job_stage/app/{constants.DEFAULT_ENTRYPOINT_PATH}", 1),
     )
     def test_upload_payload(
         self,

@@ -101,16 +101,25 @@ class {transform.test_class_name}(TestCase):
 
         reg = {transform.original_class_name}({transform.test_estimator_input_args})
         reg.set_input_cols(input_cols)
-        output_cols = ["OUTPUT_" + c for c in label_col]
+        # SparsePCA and MiniBatchSparsePCA are unsupervised transformers, output cols should match n_components
+        if "{transform.original_class_name}" in ["MiniBatchSparsePCA", "SparsePCA"]:
+            n_components = len(cols)  # Should match the n_components parameter set above
+            output_cols = [f"OUTPUT_{{i}}" for i in range(n_components)]
+        else:
+            output_cols = ["OUTPUT_" + c for c in label_col]
         reg.set_output_cols(output_cols)
         reg.set_label_cols(label_col)
 
         # Assert that we will filter on the correct columns
         self.assertCountEqual(reg._get_active_columns(), input_cols + label_col)
 
+        # Check if this is a multi-task estimator that requires 2D targets
+        multi_task_estimators = {{"MultiTaskElasticNet", "MultiTaskElasticNetCV", "MultiTaskLasso", "MultiTaskLassoCV"}}
+        is_multi_task = "{transform.original_class_name}" in multi_task_estimators
+        
         args = {{
             'X':input_df_pandas[input_cols],
-            'y':input_df_pandas[label_col].squeeze()
+            'y':input_df_pandas[label_col] if is_multi_task else input_df_pandas[label_col].squeeze()
         }}
         if use_weighted_dataset:
             reg.set_sample_weight_col("SAMPLE_WEIGHT")
@@ -137,7 +146,7 @@ class {transform.test_class_name}(TestCase):
                     if (
                         len(output_df_pandas.shape) == 2
                         and output_df_pandas.shape[1] == 1
-                        and (output_df_pandas.dtypes[0] == object or output_df_pandas.dtypes[0] == pd.StringDtype)
+                        and (output_df_pandas.dtypes.iloc[0] == object or output_df_pandas.dtypes.iloc[0] == pd.StringDtype)
                     ):
                         # transform() method of HeterogeneousEnsemble estimators return responses of varying 
                         # shapes from (n_samples, n_estimators) to (n_samples, n_estimators * n_classes)
@@ -146,7 +155,7 @@ class {transform.test_class_name}(TestCase):
                         #
                         # We need to flatten the response from (n_samples, 1) to original 
                         # dimensions (n_samples, n_original_columns) by flattening list objects.
-                        output_df_pandas = output_df_pandas.apply(lambda row: pd.Series(json.loads(row[0])), axis=1)
+                        output_df_pandas = output_df_pandas.apply(lambda row: pd.Series(json.loads(row.iloc[0])), axis=1)
 
                     # TODO(snandamuri): Implement type inference for transform and predict methods to return results with
                     # correct datatype.

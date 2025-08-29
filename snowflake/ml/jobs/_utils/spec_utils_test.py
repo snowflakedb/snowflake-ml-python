@@ -324,7 +324,7 @@ class SpecUtilsTests(parameterized.TestCase):
             )
             payload = types.UploadedPayload(
                 Path("@dummy_stage"),
-                [PurePath(f"{constants.APP_MOUNT_PATH}/{entrypoint}")],
+                [PurePath(f"/mnt/job_stage/app/{entrypoint}")],
             )
             spec = spec_utils.generate_service_spec(
                 None,  # type: ignore[arg-type] # (Don't need session since we mock out _get_image_spec)

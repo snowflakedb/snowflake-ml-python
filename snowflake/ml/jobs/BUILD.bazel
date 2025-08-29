@@ -26,6 +26,7 @@ py_library(
         ":ml_job",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:job_utils",
     ],
 )

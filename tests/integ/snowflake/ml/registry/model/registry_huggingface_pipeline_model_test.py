@@ -8,7 +8,7 @@ from absl.testing import absltest, parameterized
 from packaging import requirements, version
 
 from snowflake.ml._internal import env_utils
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import model_signature, openai_signatures
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
@@ -449,24 +449,38 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             max_length=200,
         )
 
-        x = [
+        x_df = pd.DataFrame.from_records(
             [
-                {"role": "system", "content": "Complete the sentence."},
                 {
-                    "role": "user",
-                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
-                },
-            ]
-        ]
-
-        x_df = pd.DataFrame([x], columns=["inputs"])
+                    "messages": [
+                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "user",
+                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                        },
+                    ],
+                    "max_completion_tokens": 250,
+                    "temperature": 0.9,
+                    "stop": None,
+                    "n": 3,
+                    "stream": False,
+                    "top_p": 1.0,
+                    "frequency_penalty": 0.1,
+                    "presence_penalty": 0.2,
+                }
+            ],
+        )
 
         def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+            )
 
-            for row in res["outputs"]:
+            for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("generated_text", row[0])
+                self.assertIn("message", row[0])
+                self.assertIn("content", row[0]["message"])
 
         getattr(self, registry_test_fn)(
             model=model,
@@ -476,6 +490,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
+            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )
 
     def test_hf_pipeline_text2text_generation(self) -> None:

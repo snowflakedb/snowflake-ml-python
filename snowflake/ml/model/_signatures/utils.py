@@ -104,7 +104,10 @@ def rename_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec
     return data
 
 
-def huggingface_pipeline_signature_auto_infer(task: str, params: dict[str, Any]) -> Optional[core.ModelSignature]:
+def huggingface_pipeline_signature_auto_infer(
+    task: str,
+    params: dict[str, Any],
+) -> Optional[core.ModelSignature]:
     # Text
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ConversationalPipeline
@@ -297,7 +300,6 @@ def huggingface_pipeline_signature_auto_infer(task: str, params: dict[str, Any])
                 )
             ],
         )
-
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.Text2TextGenerationPipeline
     if task == "text2text-generation":
         if params.get("return_tensors", False):

@@ -1,6 +1,8 @@
+import json
 import logging
 import pathlib
 import textwrap
+from pathlib import PurePath
 from typing import Any, Callable, Optional, TypeVar, Union, cast, overload
 from uuid import uuid4
 
@@ -11,7 +13,13 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jb
-from snowflake.ml.jobs._utils import payload_utils, query_helper, spec_utils
+from snowflake.ml.jobs._utils import (
+    feature_flags,
+    payload_utils,
+    query_helper,
+    spec_utils,
+    types,
+)
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.functions import coalesce, col, lit, when
@@ -445,7 +453,7 @@ def _submit_job(
     env_vars = kwargs.pop("env_vars", None)
     spec_overrides = kwargs.pop("spec_overrides", None)
     enable_metrics = kwargs.pop("enable_metrics", True)
-    query_warehouse = kwargs.pop("query_warehouse", None)
+    query_warehouse = kwargs.pop("query_warehouse", session.get_current_warehouse())
     additional_payloads = kwargs.pop("additional_payloads", None)
 
     if additional_payloads:
@@ -483,6 +491,27 @@ def _submit_job(
         source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=additional_payloads
     ).upload(session, stage_path)
 
+    if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled():
+        # Add default env vars (extracted from spec_utils.generate_service_spec)
+        combined_env_vars = {**uploaded_payload.env_vars, **(env_vars or {})}
+
+        return _do_submit_job_v2(
+            session=session,
+            payload=uploaded_payload,
+            args=args,
+            env_vars=combined_env_vars,
+            spec_overrides=spec_overrides,
+            compute_pool=compute_pool,
+            job_id=job_id,
+            external_access_integrations=external_access_integrations,
+            query_warehouse=query_warehouse,
+            target_instances=target_instances,
+            min_instances=min_instances,
+            enable_metrics=enable_metrics,
+            use_async=True,
+        )
+
+    # Fall back to v1
     # Generate service spec
     spec = spec_utils.generate_service_spec(
         session,
@@ -493,6 +522,8 @@ def _submit_job(
         min_instances=min_instances,
         enable_metrics=enable_metrics,
     )
+
+    # Generate spec overrides
     spec_overrides = spec_utils.generate_spec_overrides(
         environment_vars=env_vars,
         custom_overrides=spec_overrides,
@@ -500,26 +531,25 @@ def _submit_job(
     if spec_overrides:
         spec = spec_utils.merge_patch(spec, spec_overrides, display_name="spec_overrides")
 
-    query_text, params = _generate_submission_query(
-        spec, external_access_integrations, query_warehouse, target_instances, session, compute_pool, job_id
+    return _do_submit_job_v1(
+        session, spec, external_access_integrations, query_warehouse, target_instances, compute_pool, job_id
     )
-    _ = query_helper.run_query(session, query_text, params=params)
-    return get_job(job_id, session=session)
 
 
-def _generate_submission_query(
+def _do_submit_job_v1(
+    session: snowpark.Session,
     spec: dict[str, Any],
     external_access_integrations: list[str],
     query_warehouse: Optional[str],
     target_instances: int,
-    session: snowpark.Session,
     compute_pool: str,
     job_id: str,
-) -> tuple[str, list[Any]]:
+) -> jb.MLJob[Any]:
     """
     Generate the SQL query for job submission.
 
     Args:
+        session: The Snowpark session to use.
         spec: The service spec for the job.
         external_access_integrations: The external access integrations for the job.
         query_warehouse: The query warehouse for the job.
@@ -529,7 +559,7 @@ def _generate_submission_query(
         job_id: The ID of the job.
 
     Returns:
-        A tuple containing the SQL query text and the parameters for the query.
+        The job object.
     """
     query_template = textwrap.dedent(
         """\
@@ -547,12 +577,77 @@ def _generate_submission_query(
     if external_access_integrations:
         external_access_integration_list = ",".join(f"{e}" for e in external_access_integrations)
         query.append(f"EXTERNAL_ACCESS_INTEGRATIONS = ({external_access_integration_list})")
-    query_warehouse = query_warehouse or session.get_current_warehouse()
     if query_warehouse:
         query.append("QUERY_WAREHOUSE = IDENTIFIER(?)")
         params.append(query_warehouse)
     if target_instances > 1:
         query.append("REPLICAS = ?")
         params.append(target_instances)
+
     query_text = "\n".join(line for line in query if line)
-    return query_text, params
+    _ = query_helper.run_query(session, query_text, params=params)
+
+    return get_job(job_id, session=session)
+
+
+def _do_submit_job_v2(
+    session: snowpark.Session,
+    payload: types.UploadedPayload,
+    args: Optional[list[str]],
+    env_vars: dict[str, str],
+    spec_overrides: dict[str, Any],
+    compute_pool: str,
+    job_id: Optional[str] = None,
+    external_access_integrations: Optional[list[str]] = None,
+    query_warehouse: Optional[str] = None,
+    target_instances: int = 1,
+    min_instances: int = 1,
+    enable_metrics: bool = True,
+    use_async: bool = True,
+) -> jb.MLJob[Any]:
+    """
+    Generate the SQL query for job submission.
+
+    Args:
+        session: The Snowpark session to use.
+        payload: The uploaded job payload.
+        args: Arguments to pass to the entrypoint script.
+        env_vars: Environment variables to set in the job container.
+        spec_overrides: Custom service specification overrides.
+        compute_pool: The compute pool to use for job execution.
+        job_id: The ID of the job.
+        external_access_integrations: Optional list of external access integrations.
+        query_warehouse: Optional query warehouse to use.
+        target_instances: Number of instances for multi-node job.
+        min_instances: Minimum number of instances required to start the job.
+        enable_metrics: Whether to enable platform metrics for the job.
+        use_async: Whether to run the job asynchronously.
+
+    Returns:
+        The job object.
+    """
+    args = [
+        (payload.stage_path.joinpath(v).as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint
+    ] + (args or [])
+    spec_options = {
+        "STAGE_PATH": payload.stage_path.as_posix(),
+        "ENTRYPOINT": ["/usr/local/bin/_entrypoint.sh"],
+        "ARGS": args,
+        "ENV_VARS": env_vars,
+        "ENABLE_METRICS": enable_metrics,
+        "SPEC_OVERRIDES": spec_overrides,
+    }
+    job_options = {
+        "EXTERNAL_ACCESS_INTEGRATIONS": external_access_integrations,
+        "QUERY_WAREHOUSE": query_warehouse,
+        "TARGET_INSTANCES": target_instances,
+        "MIN_INSTANCES": min_instances,
+        "ASYNC": use_async,
+    }
+    job_options = {k: v for k, v in job_options.items() if v is not None}
+
+    query_template = "CALL SYSTEM$EXECUTE_ML_JOB(?, ?, ?, ?)"
+    params = [job_id, compute_pool, json.dumps(spec_options), json.dumps(job_options)]
+    actual_job_id = query_helper.run_query(session, query_template, params=params)[0][0]
+
+    return get_job(actual_job_id, session=session)

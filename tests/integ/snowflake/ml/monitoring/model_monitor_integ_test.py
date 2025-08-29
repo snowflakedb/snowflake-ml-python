@@ -1,3 +1,4 @@
+import json
 import uuid
 
 from absl.testing import absltest, parameterized
@@ -15,21 +16,52 @@ INPUT_FEATURE_COLUMNS_NAMES = [f"input_feature_{i}" for i in range(64)]
 
 
 class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
-    def _create_test_table(self, fully_qualified_table_name: str, id_column_type: str = "STRING") -> None:
+    def _get_monitor_segment_columns(self, monitor_name: str) -> list[str]:
+        """Helper method to get segment columns from DESCRIBE MODEL MONITOR."""
+        describe_result = self._session.sql(
+            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
+        ).collect()
+
+        # Access the columns column from the first row
+        if not describe_result:
+            raise AssertionError("DESCRIBE MODEL MONITOR returned empty result")
+
+        columns_json_str = describe_result[0]["columns"]
+        columns_json = json.loads(columns_json_str)
+        return columns_json.get("segment_columns", [])
+
+    def _create_test_table(
+        self, fully_qualified_table_name: str, id_column_type: str = "STRING", segment_columns: list = None
+    ) -> None:
+        """Create a test table with optional segment columns for testing."""
+
         s = ", ".join([f"{i} FLOAT" for i in INPUT_FEATURE_COLUMNS_NAMES])
+
+        # Build the segment columns part of the table definition
+        segment_columns_def = ""
+        if segment_columns:
+            segment_columns_def = ", " + ", ".join([f"{col} STRING" for col in segment_columns])
+
         self._session.sql(
             f"""CREATE OR REPLACE TABLE {fully_qualified_table_name}
             (label FLOAT, prediction FLOAT,
-            {s}, id {id_column_type}, timestamp TIMESTAMP)"""
+            {s}, id {id_column_type}, timestamp TIMESTAMP_NTZ{segment_columns_def})"""
         ).collect()
 
         # Needed to create DT against this table
         self._session.sql(f"ALTER TABLE {fully_qualified_table_name} SET CHANGE_TRACKING=TRUE").collect()
 
+        # Build the segment columns part of the INSERT statement
+        segment_columns_insert = ""
+        segment_values_insert = ""
+        if segment_columns:
+            segment_columns_insert = ", " + ", ".join(segment_columns)
+            segment_values_insert = ", " + ", ".join([f"'{col}_value'" for col in segment_columns])
+
         self._session.sql(
             f"""INSERT INTO {fully_qualified_table_name}
-            (label, prediction, {", ".join(INPUT_FEATURE_COLUMNS_NAMES)}, id, timestamp)
-            VALUES (1, 1, {", ".join(["1"] * 64)}, '1', CURRENT_TIMESTAMP())"""
+            (label, prediction, {", ".join(INPUT_FEATURE_COLUMNS_NAMES)}, id, timestamp{segment_columns_insert})
+            VALUES (1, 1, {", ".join(["1"] * 64)}, '1', CURRENT_TIMESTAMP(){segment_values_insert})"""
         ).collect()
 
     @classmethod
@@ -76,7 +108,7 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         )
 
     def _add_sample_monitor(
-        self, monitor_name: str, source: str, model_version: model_version_impl.ModelVersion
+        self, monitor_name: str, source: str, model_version: model_version_impl.ModelVersion, segment_columns=None
     ) -> model_monitor.ModelMonitor:
         return self.registry.add_monitor(
             name=monitor_name,
@@ -86,6 +118,7 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
                 actual_class_columns=["label"],
                 id_columns=["id"],
                 timestamp_column="timestamp",
+                segment_columns=segment_columns,
             ),
             model_monitor_config=model_monitor_config.ModelMonitorConfig(
                 model_version=model_version,
@@ -212,6 +245,110 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         res = self.registry.show_model_monitors()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["name"], "MONITOR")
+
+    def test_add_and_drop_segment_column(self):
+        """Test adding and dropping a segment column, including duplicate add validation."""
+        # Create table, model, and monitor
+        source_table_name = "source_table_segment_drop"
+        model_name = "model_segment_drop"
+        monitor_name = "monitor_segment_drop"
+
+        self._create_test_table(
+            f"{self._db_name}.{self._schema_name}.{source_table_name}", segment_columns=["customer_segment"]
+        )
+        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
+        monitor = self._add_sample_monitor(monitor_name=monitor_name, source=source_table_name, model_version=mv)
+
+        # First add a segment column, then drop it
+        monitor.add_segment_column("customer_segment")
+
+        # Validate the segment column was added
+        segment_columns = self._get_monitor_segment_columns(monitor_name)
+        self.assertIn("CUSTOMER_SEGMENT", segment_columns, f"CUSTOMER_SEGMENT not found after add: {segment_columns}")
+
+        # Test that adding the same segment column again should fail
+        with self.assertRaisesRegex(SnowparkSQLException, ".*already exists.*"):
+            monitor.add_segment_column("customer_segment")  # Should fail since already present
+
+        # Now drop the segment column
+        monitor.drop_segment_column("customer_segment")
+
+        # Validate the segment column was removed
+        segment_columns = self._get_monitor_segment_columns(monitor_name)
+        self.assertNotIn(
+            "CUSTOMER_SEGMENT", segment_columns, f"CUSTOMER_SEGMENT still found after drop: {segment_columns}"
+        )
+
+    def test_create_monitor_with_segment_columns_happy_path(self):
+        """Test creating a monitor with valid segment_columns."""
+
+        source_table_name = "source_table_with_segments"
+        model_name = "model_with_segments"
+        monitor_name = "monitor_with_segments"
+
+        # Create table with segment columns
+        self._create_test_table(
+            f"{self._db_name}.{self._schema_name}.{source_table_name}", segment_columns=["customer_segment"]
+        )
+
+        # Add additional segment column for testing multiple segments
+        self._session.sql(
+            f"ALTER TABLE {self._db_name}.{self._schema_name}.{source_table_name} ADD COLUMN region STRING"
+        ).collect()
+        self._session.sql(
+            f"UPDATE {self._db_name}.{self._schema_name}.{source_table_name} SET region = 'us-west'"
+        ).collect()
+
+        # Create model version
+        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
+
+        # Create monitor with segment columns - this should succeed
+        monitor = self._add_sample_monitor(
+            monitor_name=monitor_name,
+            source=source_table_name,
+            model_version=mv,
+            segment_columns=["customer_segment", "region"],
+        )
+
+        # Verify monitor was created successfully
+        self.assertEqual(monitor.name, monitor_name.upper())
+
+        # Verify it appears in the list of monitors
+        monitors = self.registry.show_model_monitors()
+        monitor_names = [m["name"] for m in monitors]
+        self.assertIn(monitor_name.upper(), monitor_names)
+
+    def test_create_monitor_with_segment_columns_missing_in_source(self):
+        """Test creating a monitor with invalid segment_columns should fail."""
+
+        source_table_name = "source_table_invalid_segments"
+        model_name = "model_invalid_segments"
+        monitor_name = "monitor_invalid_segments"
+
+        # Create table with segment columns
+        self._create_test_table(
+            f"{self._db_name}.{self._schema_name}.{source_table_name}", segment_columns=["customer_segment"]
+        )
+
+        # Create model version
+        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
+
+        # Try to create monitor with invalid segment columns - this should fail
+        with self.assertRaisesRegex(
+            ValueError,
+            "Segment column\\(s\\): \\['NONEXISTENT_COLUMN', 'ANOTHER_INVALID_COLUMN'\\] do not exist in source\\.",
+        ):
+            self._add_sample_monitor(
+                monitor_name=monitor_name,
+                source=source_table_name,
+                model_version=mv,
+                segment_columns=["nonexistent_column", "another_invalid_column"],
+            )
+
+        # Verify monitor was NOT created
+        monitors = self.registry.show_model_monitors()
+        monitor_names = [m["name"] for m in monitors]
+        self.assertNotIn(monitor_name.upper(), monitor_names)
 
 
 if __name__ == "__main__":

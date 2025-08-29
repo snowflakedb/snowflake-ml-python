@@ -3,26 +3,23 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 
 # SPCS specification constants
 DEFAULT_CONTAINER_NAME = "main"
+MEMORY_VOLUME_NAME = "dshm"
+STAGE_VOLUME_NAME = "stage-volume"
+
+# Environment variables
+STAGE_MOUNT_PATH_ENV_VAR = "MLRS_STAGE_MOUNT_PATH"
 PAYLOAD_DIR_ENV_VAR = "MLRS_PAYLOAD_DIR"
 RESULT_PATH_ENV_VAR = "MLRS_RESULT_PATH"
 MIN_INSTANCES_ENV_VAR = "MLRS_MIN_INSTANCES"
 TARGET_INSTANCES_ENV_VAR = "SNOWFLAKE_JOBS_COUNT"
 RUNTIME_IMAGE_TAG_ENV_VAR = "MLRS_CONTAINER_IMAGE_TAG"
-MEMORY_VOLUME_NAME = "dshm"
-STAGE_VOLUME_NAME = "stage-volume"
-# Base mount path
-STAGE_VOLUME_MOUNT_PATH = "/mnt/job_stage"
 
-# Stage subdirectory paths
+# Stage mount paths
+STAGE_VOLUME_MOUNT_PATH = "/mnt/job_stage"
 APP_STAGE_SUBPATH = "app"
 SYSTEM_STAGE_SUBPATH = "system"
 OUTPUT_STAGE_SUBPATH = "output"
-
-# Complete mount paths (automatically generated from base + subpath)
-APP_MOUNT_PATH = f"{STAGE_VOLUME_MOUNT_PATH}/{APP_STAGE_SUBPATH}"
-SYSTEM_MOUNT_PATH = f"{STAGE_VOLUME_MOUNT_PATH}/{SYSTEM_STAGE_SUBPATH}"
-OUTPUT_MOUNT_PATH = f"{STAGE_VOLUME_MOUNT_PATH}/{OUTPUT_STAGE_SUBPATH}"
-
+RESULT_PATH_DEFAULT_VALUE = f"{OUTPUT_STAGE_SUBPATH}/mljob_result.pkl"
 
 # Default container image information
 DEFAULT_IMAGE_REPO = "/snowflake/images/snowflake_images"
@@ -58,8 +55,6 @@ ENABLE_HEALTH_CHECKS = "false"
 # Job status polling constants
 JOB_POLL_INITIAL_DELAY_SECONDS = 0.1
 JOB_POLL_MAX_DELAY_SECONDS = 30
-
-RESULT_PATH_DEFAULT_VALUE = f"{OUTPUT_MOUNT_PATH}/mljob_result.pkl"
 
 # Log start and end messages
 LOG_START_MSG = "--------------------------------\nML job started\n--------------------------------"
@@ -98,6 +93,3 @@ CLOUD_INSTANCE_FAMILIES = {
     SnowflakeCloudType.AWS: AWS_INSTANCE_FAMILIES,
     SnowflakeCloudType.AZURE: AZURE_INSTANCE_FAMILIES,
 }
-
-# runtime version environment variable
-ENABLE_IMAGE_VERSION_ENV_VAR = "MLRS_ENABLE_RUNTIME_VERSIONS"

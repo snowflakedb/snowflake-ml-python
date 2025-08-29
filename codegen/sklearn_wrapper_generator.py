@@ -1095,6 +1095,9 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
             elif self._is_cross_decomposition_module_obj:
                 # For cross decomposition, the default n_components need to be set into 1
                 self.test_estimator_input_args_list.append("n_components=1")
+            elif self.original_class_name in ["MiniBatchSparsePCA", "SparsePCA"]:
+                # SparsePCA and MiniBatchSparsePCA need n_components to match input features
+                self.test_estimator_input_args_list.append("n_components=len(cols)")
 
         if self._is_heterogeneous_ensemble:
             if self._is_regressor:
@@ -1150,6 +1153,11 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
 
         if self._is_hist_gradient_boosting_regressor:
             self.test_estimator_input_args_list.extend(["min_samples_leaf=1", "max_leaf_nodes=100"])
+
+        # EllipticEnvelope requires a minimum number of support samples for the MCD algorithm
+        # Setting support_fraction to 0.8 and assume_centered=True for better handling of test datasets
+        if self.original_class_name == "EllipticEnvelope":
+            self.test_estimator_input_args_list.extend(["support_fraction=0.8", "assume_centered=True"])
 
         self.deps = (
             "f'numpy=={np.__version__}', f'scikit-learn=={sklearn.__version__}', f'cloudpickle=={cp.__version__}'"

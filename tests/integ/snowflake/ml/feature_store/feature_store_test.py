@@ -1,4 +1,5 @@
 import datetime
+import json as _json
 import random
 import string
 from typing import Optional, Union, cast
@@ -501,8 +502,22 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": [None, None],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER"],
+            exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG"],
         )
+
+        # Validate ONLINE_CONFIG column separately: it may be None or a disabled JSON
+        df_online_cfg = (
+            fs.list_feature_views(entity_name="FOO")
+            .select("NAME", "VERSION", "ONLINE_CONFIG")
+            .to_pandas()
+            .sort_values(by=["NAME"])
+            .reset_index(drop=True)
+        )
+        for val in df_online_cfg["ONLINE_CONFIG"].tolist():
+            if isinstance(val, str):
+                cfg = _json.loads(val)
+                assert "enable" in cfg and cfg["enable"] is False
+                assert "target_lag" in cfg and isinstance(cfg["target_lag"], str)
 
         # generate data on multiple feature views
         spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
@@ -646,7 +661,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["AID", "UID"]', '["AID", "UID", "TS"]', '["AID", "UID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         # delete feature view
@@ -671,7 +686,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["AID", "UID", "TS"]', '["AID", "UID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         # test get feature view obj
@@ -772,7 +787,7 @@ class FeatureStoreTest(parameterized.TestCase):
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
             config=self._session_config,
         )
-        with self.assertRaisesRegex(RuntimeError, "Failed to update feature view"):
+        with self.assertRaisesRegex(RuntimeError, "(Failed to update feature view|SUSPEND failed)"):
             my_fv = fs.suspend_feature_view(my_fv)
 
         fs._session = original_session
@@ -783,7 +798,7 @@ class FeatureStoreTest(parameterized.TestCase):
             snowpark_exceptions.SnowparkClientException("Intentional Integ Test Error"),
             config=self._session_config,
         )
-        with self.assertRaisesRegex(RuntimeError, "Failed to update feature view.*"):
+        with self.assertRaisesRegex(RuntimeError, "(Failed to update feature view|RESUME failed).*"):
             my_fv = fs.resume_feature_view(my_fv)
 
         fs._session = original_session
@@ -1168,6 +1183,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": [],
                 "WAREHOUSE": [],
                 "CLUSTER_BY": [],
+                "ONLINE_CONFIG": [],
             },
             sort_cols=["NAME"],
         )
@@ -1217,7 +1233,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1235,7 +1251,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1253,7 +1269,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1271,7 +1287,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1289,7 +1305,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1308,6 +1324,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 "SCHEDULING_STATE": [],
                 "WAREHOUSE": [],
                 "CLUSTER_BY": [],
+                "ONLINE_CONFIG": [],
             },
             sort_cols=["NAME"],
         )

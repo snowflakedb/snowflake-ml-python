@@ -133,7 +133,7 @@ class CommonTestBase(parameterized.TestCase):
                         except ModuleNotFoundError:
                             pass
                         packages = additional_packages or []
-                        offending_list = ["snowflake-connector-python", "pyarrow"]
+                        offending_list = ["snowflake-connector-python"]
                         if any([p.startswith("scikit-learn") for p in packages]):
                             offending_list.append("scikit-learn")
                         for req_str in _snowml_requirements.REQUIREMENTS:

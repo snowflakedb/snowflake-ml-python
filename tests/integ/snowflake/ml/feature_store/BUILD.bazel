@@ -129,3 +129,48 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "feature_store_online_management_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_online_management_test.py",
+    ],
+    shard_count = 8,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_online_read_refresh_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_online_read_refresh_test.py",
+    ],
+    shard_count = 8,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_rollback_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_rollback_test.py",
+    ],
+    shard_count = 1,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

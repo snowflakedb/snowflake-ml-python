@@ -22,6 +22,7 @@ from snowflake.ml._internal.utils import (
 from snowflake.ml.modeling._internal import estimator_utils
 from snowflake.ml.modeling._internal.estimator_utils import (
     handle_inference_result,
+    is_multi_task_estimator,
     should_include_sample_weight,
 )
 from snowflake.ml.modeling._internal.model_specifications import (
@@ -178,7 +179,11 @@ class SnowparkModelTrainer:
                 args = {"X": df[input_cols]}
                 if label_cols:
                     label_arg_name = "Y" if "Y" in params else "y"
-                    args[label_arg_name] = df[label_cols].squeeze()
+                    # For multi-task estimators, avoid squeezing to maintain 2D shape
+                    if is_multi_task_estimator(estimator):
+                        args[label_arg_name] = df[label_cols]
+                    else:
+                        args[label_arg_name] = df[label_cols].squeeze()
 
                 # Sample weight is not included in search estimators parameters, check the underlying estimator.
                 if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
@@ -416,7 +421,11 @@ class SnowparkModelTrainer:
             args = {"X": df[input_cols]}
             if label_cols:
                 label_arg_name = "Y" if "Y" in params else "y"
-                args[label_arg_name] = df[label_cols].squeeze()
+                # For multi-task estimators, avoid squeezing to maintain 2D shape
+                if is_multi_task_estimator(estimator):
+                    args[label_arg_name] = df[label_cols]
+                else:
+                    args[label_arg_name] = df[label_cols].squeeze()
 
             if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                 args["sample_weight"] = df[sample_weight_col].squeeze()
@@ -734,12 +743,14 @@ class SnowparkModelTrainer:
         # Create a temp table in advance to store the output
         # This would allow us to use the same table outside the stored procedure
         df_one_line = dataset.limit(1).to_pandas(statement_params=statement_params)
-        df_one_line[
-            expected_output_cols_list[0]
-        ] = "[0]"  # Add one column as the output_col; this is a dummy value to represent the OBJECT type
+        # Pre-create ALL expected output columns so subsequent writes can target the same schema.
+        # Use a simple dummy string value to represent OBJECT-typed payloads.
+        for out_col in expected_output_cols_list:
+            df_one_line[out_col] = "[0]"
         if drop_input_cols:
+            # When input columns are dropped, the table should only contain the output columns.
             self.session.write_pandas(
-                df_one_line[expected_output_cols_list[0]],
+                df_one_line[expected_output_cols_list],
                 fit_transform_result_name,
                 auto_create_table=True,
                 table_type="temp",

@@ -2,14 +2,14 @@ from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake.ml._internal import env
-from tests.integ.snowflake.ml.jobs import modeling_job_test_base
+from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
 
 """
 this integration test is only for classic models, like XGBoost and lightgbm.
 """
 
 
-class ClassicalModelTest(modeling_job_test_base.BaseModelTest):
+class ClassicalModelTest(JobTestBase):
     @parameterized.parameters("xgboost", "lightgbm", "sklearn")
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),

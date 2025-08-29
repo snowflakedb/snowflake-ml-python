@@ -48,14 +48,17 @@ MIN_INSTANCES_ENV_VAR = getattr(constants, "MIN_INSTANCES_ENV_VAR", "MLRS_MIN_IN
 TARGET_INSTANCES_ENV_VAR = getattr(constants, "TARGET_INSTANCES_ENV_VAR", "SNOWFLAKE_JOBS_COUNT")
 
 # Fallbacks in case of SnowML version mismatch
+STAGE_MOUNT_PATH_ENV_VAR = getattr(constants, "STAGE_MOUNT_PATH_ENV_VAR", "MLRS_STAGE_MOUNT_PATH")
 RESULT_PATH_ENV_VAR = getattr(constants, "RESULT_PATH_ENV_VAR", "MLRS_RESULT_PATH")
-JOB_RESULT_PATH = os.environ.get(RESULT_PATH_ENV_VAR, "/mnt/job_stage/output/mljob_result.pkl")
 PAYLOAD_DIR_ENV_VAR = getattr(constants, "PAYLOAD_DIR_ENV_VAR", "MLRS_PAYLOAD_DIR")
 
 # Constants for the wait_for_instances function
 MIN_WAIT_TIME = float(os.getenv("MLRS_INSTANCES_MIN_WAIT") or -1)  # seconds
 TIMEOUT = float(os.getenv("MLRS_INSTANCES_TIMEOUT") or 720)  # seconds
 CHECK_INTERVAL = float(os.getenv("MLRS_INSTANCES_CHECK_INTERVAL") or 10)  # seconds
+
+STAGE_MOUNT_PATH = os.environ.get(STAGE_MOUNT_PATH_ENV_VAR, "/mnt/job_stage")
+JOB_RESULT_PATH = os.environ.get(RESULT_PATH_ENV_VAR, "output/mljob_result.pkl")
 
 
 try:
@@ -226,6 +229,8 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
     # This is needed because mljob_launcher.py is now in /mnt/job_stage/system
     # but user scripts are in the payload directory and may import from each other
     payload_dir = os.environ.get(PAYLOAD_DIR_ENV_VAR)
+    if payload_dir and not os.path.isabs(payload_dir):
+        payload_dir = os.path.join(STAGE_MOUNT_PATH, payload_dir)
     if payload_dir and payload_dir not in sys.path:
         sys.path.insert(0, payload_dir)
 
@@ -276,7 +281,10 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         Exception: Re-raises any exception caught during script execution.
     """
     # Ensure the output directory exists before trying to write result files.
-    output_dir = os.path.dirname(JOB_RESULT_PATH)
+    result_abs_path = (
+        JOB_RESULT_PATH if os.path.isabs(JOB_RESULT_PATH) else os.path.join(STAGE_MOUNT_PATH, JOB_RESULT_PATH)
+    )
+    output_dir = os.path.dirname(result_abs_path)
     os.makedirs(output_dir, exist_ok=True)
 
     try:
@@ -317,7 +325,7 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         result_dict = result_obj.to_dict()
         try:
             # Serialize result using cloudpickle
-            result_pickle_path = JOB_RESULT_PATH
+            result_pickle_path = result_abs_path
             with open(result_pickle_path, "wb") as f:
                 cloudpickle.dump(result_dict, f)  # Pickle dictionary form for compatibility
         except Exception as pkl_exc:
@@ -326,7 +334,7 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         try:
             # Serialize result to JSON as fallback path in case of cross version incompatibility
             # TODO: Manually convert non-serializable types to strings
-            result_json_path = os.path.splitext(JOB_RESULT_PATH)[0] + ".json"
+            result_json_path = os.path.splitext(result_abs_path)[0] + ".json"
             with open(result_json_path, "w") as f:
                 json.dump(result_dict, f, indent=2, cls=SimpleJSONEncoder)
         except Exception as json_exc:

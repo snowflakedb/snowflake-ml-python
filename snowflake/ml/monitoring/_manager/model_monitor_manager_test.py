@@ -181,6 +181,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 actual_score_columns=["LABEL"],
                 actual_class_columns=[],
                 id_columns=["ID"],
+                segment_columns=[],
             )
             mock_get_model_task.assert_called_once()
             mock_create_model_monitor.assert_called_once_with(
@@ -202,6 +203,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 prediction_class_columns=[],
                 actual_score_columns=["LABEL"],
                 actual_class_columns=[],
+                segment_columns=[],
                 refresh_interval="1 hour",
                 aggregation_window="1 day",
                 baseline_database=None,
@@ -246,6 +248,7 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 prediction_class_columns=[],
                 actual_score_columns=["LABEL"],
                 actual_class_columns=[],
+                segment_columns=[],
                 refresh_interval="1 hour",
                 aggregation_window="1 day",
                 baseline_database=None,
@@ -308,12 +311,112 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 prediction_class_columns=[],
                 actual_score_columns=["LABEL"],
                 actual_class_columns=[],
+                segment_columns=[],
                 refresh_interval="1 hour",
                 aggregation_window="1 day",
                 baseline_database=sql_identifier.SqlIdentifier("BASELINE_DB"),
                 baseline_schema=sql_identifier.SqlIdentifier("BASELINE_SCHEMA"),
                 baseline=sql_identifier.SqlIdentifier("BASELINE"),
                 statement_params=None,
+            )
+
+    def test_add_monitor_with_segment_columns_happy_path(self) -> None:
+        """Test that segment_columns are correctly passed through when provided."""
+        source_config = model_monitor_config.ModelMonitorSourceConfig(
+            prediction_score_columns=["PREDICTION"],
+            actual_score_columns=["LABEL"],
+            id_columns=["ID"],
+            timestamp_column="TS",
+            source=self.test_source_table_name,
+            segment_columns=["CUSTOMER_SEGMENT", "REGION"],
+        )
+        with mock.patch.object(
+            self.mm._model_monitor_client, "validate_source"
+        ) as mock_validate_source, mock.patch.object(
+            self.mv, "get_model_task", return_value=type_hints.Task.TABULAR_REGRESSION
+        ) as mock_get_model_task, mock.patch.object(
+            self.mm._model_monitor_client, "create_model_monitor", return_value=None
+        ) as mock_create_model_monitor:
+            self.mm.add_monitor("TEST", source_config, self.test_monitor_config)
+
+            # Verify validate_source was called with segment_columns
+            mock_validate_source.assert_called_once_with(
+                source_database=None,
+                source_schema=None,
+                source=self.test_source_table_name,
+                timestamp_column="TS",
+                prediction_score_columns=["PREDICTION"],
+                prediction_class_columns=[],
+                actual_score_columns=["LABEL"],
+                actual_class_columns=[],
+                id_columns=["ID"],
+                segment_columns=["CUSTOMER_SEGMENT", "REGION"],
+            )
+            mock_get_model_task.assert_called_once()
+
+            # Verify create_model_monitor was called with segment_columns
+            mock_create_model_monitor.assert_called_once_with(
+                monitor_database=None,
+                monitor_schema=None,
+                monitor_name=sql_identifier.SqlIdentifier("TEST"),
+                source_database=None,
+                source_schema=None,
+                source=sql_identifier.SqlIdentifier(self.test_source_table_name),
+                model_database=sql_identifier.SqlIdentifier("MODEL_DB"),
+                model_schema=sql_identifier.SqlIdentifier("MODEL_SCHEMA"),
+                model_name=self.test_model,
+                version_name=sql_identifier.SqlIdentifier(self.test_model_version),
+                function_name="predict",
+                warehouse_name=sql_identifier.SqlIdentifier(self.test_warehouse),
+                timestamp_column="TS",
+                id_columns=["ID"],
+                prediction_score_columns=["PREDICTION"],
+                prediction_class_columns=[],
+                actual_score_columns=["LABEL"],
+                actual_class_columns=[],
+                segment_columns=["CUSTOMER_SEGMENT", "REGION"],
+                refresh_interval="1 hour",
+                aggregation_window="1 day",
+                baseline_database=None,
+                baseline_schema=None,
+                baseline=None,
+                statement_params=None,
+            )
+
+    def test_add_monitor_with_segment_columns_validation_failure(self) -> None:
+        """Test that add_monitor fails when segment_columns don't exist in source."""
+        source_config = model_monitor_config.ModelMonitorSourceConfig(
+            prediction_score_columns=["PREDICTION"],
+            actual_score_columns=["LABEL"],
+            id_columns=["ID"],
+            timestamp_column="TS",
+            source=self.test_source_table_name,
+            segment_columns=["NONEXISTENT_COLUMN"],
+        )
+
+        with mock.patch.object(
+            self.mm._model_monitor_client,
+            "validate_source",
+            side_effect=ValueError("Segment column(s): ['NONEXISTENT_COLUMN'] do not exist in source."),
+        ) as mock_validate_source, mock.patch.object(
+            self.mv, "get_model_task", return_value=type_hints.Task.TABULAR_REGRESSION
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "Segment column\\(s\\): \\['NONEXISTENT_COLUMN'\\] do not exist in source\\."
+            ):
+                self.mm.add_monitor("TEST", source_config, self.test_monitor_config)
+
+            mock_validate_source.assert_called_once_with(
+                source_database=None,
+                source_schema=None,
+                source=self.test_source_table_name,
+                timestamp_column="TS",
+                prediction_score_columns=["PREDICTION"],
+                prediction_class_columns=[],
+                actual_score_columns=["LABEL"],
+                actual_class_columns=[],
+                id_columns=["ID"],
+                segment_columns=["NONEXISTENT_COLUMN"],
             )
 
 

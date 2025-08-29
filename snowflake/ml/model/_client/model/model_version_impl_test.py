@@ -7,10 +7,11 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml import jobs
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import inference_engine, model_signature, task, type_hints
-from snowflake.ml.model._client.model import model_version_impl
+from snowflake.ml.model._client.model import batch_inference_specs, model_version_impl
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -1090,156 +1091,6 @@ class ModelVersionImplTest(absltest.TestCase):
 
             self.assertIsNone(call_args.kwargs["inference_engine_args"])
 
-    def test_run_job(self) -> None:
-        m_df = mock_data_frame.MockDataFrame()
-        m_methods = [
-            model_manifest_schema.ModelFunctionInfo(
-                {
-                    "name": '"predict"',
-                    "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                }
-            ),
-            model_manifest_schema.ModelFunctionInfo(
-                {
-                    "name": "__CALL__",
-                    "target_method": "__call__",
-                    "target_method_function_type": "FUNCTION",
-                    "signature": _DUMMY_SIG["predict"],
-                    "is_partitioned": False,
-                }
-            ),
-        ]
-        self.m_mv._functions = m_methods
-
-        with self.assertRaisesRegex(ValueError, "There is no method with name PREDICT available in the model"):
-            self.m_mv._run_job(
-                X=m_df,
-                job_name="TEST_JOB",
-                compute_pool="TEST_COMPUTE_POOL",
-                image_repo="TEST_IMAGE_REPO",
-                output_table_name="TEST_OUTPUT_TABLE",
-                function_name="PREDICT",
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=["TEST_EAI"],
-            )
-
-        with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
-            self.m_mv._run_job(
-                X=m_df,
-                job_name="TEST_JOB",
-                compute_pool="TEST_COMPUTE_POOL",
-                image_repo="TEST_IMAGE_REPO",
-                output_table_name="TEST_OUTPUT_TABLE",
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=["TEST_EAI"],
-            )
-
-        with (
-            mock.patch.object(self.m_mv._service_ops, "invoke_job_method", return_value=m_df) as mock_invoke_job_method,
-            mock.patch.object(self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"),
-        ):
-            self.m_mv._run_job(
-                X=m_df,
-                job_name="TEST_JOB",
-                compute_pool="TEST_COMPUTE_POOL",
-                image_repo="TEST_IMAGE_REPO",
-                output_table_name="TEST_OUTPUT_TABLE",
-                function_name='"predict"',
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=["TEST_EAI"],
-            )
-            mock_invoke_job_method.assert_called_once_with(
-                target_method="predict",
-                signature=_DUMMY_SIG["predict"],
-                X=m_df,
-                database_name=None,
-                schema_name=None,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                job_database_name=None,
-                job_schema_name=None,
-                job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
-                warehouse_name="TEST_WAREHOUSE",
-                image_repo_name="TEST_IMAGE_REPO",
-                output_table_database_name=None,
-                output_table_schema_name=None,
-                output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=[sql_identifier.SqlIdentifier("TEST_EAI")],
-                statement_params=mock.ANY,
-            )
-
-        with (
-            mock.patch.object(self.m_mv._service_ops, "invoke_job_method", return_value=m_df) as mock_invoke_job_method,
-            mock.patch.object(self.m_session, "get_current_warehouse", return_value="TEST_WAREHOUSE"),
-        ):
-            # fully qualified names
-            self.m_mv._run_job(
-                X=m_df,
-                job_name="DB.SCHEMA.TEST_JOB",
-                compute_pool="TEST_COMPUTE_POOL",
-                image_repo="DB.SCHEMA.TEST_IMAGE_REPO",
-                output_table_name="DB.SCHEMA.TEST_OUTPUT_TABLE",
-                function_name='"predict"',
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=["TEST_EAI"],
-            )
-            mock_invoke_job_method.assert_called_once_with(
-                target_method="predict",
-                signature=_DUMMY_SIG["predict"],
-                X=m_df,
-                database_name=None,
-                schema_name=None,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                job_database_name=sql_identifier.SqlIdentifier("DB"),
-                job_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                job_name=sql_identifier.SqlIdentifier("TEST_JOB"),
-                compute_pool_name=sql_identifier.SqlIdentifier("TEST_COMPUTE_POOL"),
-                warehouse_name=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
-                image_repo_name="DB.SCHEMA.TEST_IMAGE_REPO",
-                output_table_database_name=sql_identifier.SqlIdentifier("DB"),
-                output_table_schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                output_table_name=sql_identifier.SqlIdentifier("TEST_OUTPUT_TABLE"),
-                cpu_requests="1",
-                memory_requests="6Gi",
-                gpu_requests="1",
-                num_workers=1,
-                max_batch_rows=1024,
-                force_rebuild=True,
-                build_external_access_integrations=[sql_identifier.SqlIdentifier("TEST_EAI")],
-                statement_params=mock.ANY,
-            )
-
     def test_repr_html_happy_path_with_functions_and_metrics(self) -> None:
         """Test _repr_html_ method with functions and metrics present."""
         # Mock model signature with _repr_html_ method
@@ -1687,6 +1538,222 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._check_huggingface_text_generation_model()
             self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
             self.assertIn("No task found in model spec.", str(cm.exception))
+
+    def test_run_batch_all_parameters(self) -> None:
+        """Test _run_batch with all possible parameters to ensure they're passed correctly."""
+        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage", input_file_pattern="custom_*")
+        output_spec = batch_inference_specs.OutputSpec(
+            output_stage_location="@output_stage", completion_filename="CUSTOM_COMPLETE"
+        )
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="CUSTOM_JOB_NAME",
+            warehouse="CUSTOM_WAREHOUSE",
+            force_rebuild=True,
+            image_repo="custom_repo",
+            num_workers=4,
+            max_batch_rows=2000,
+            cpu_requests="4",
+            memory_requests="8Gi",
+        )
+
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv._run_batch(
+                compute_pool="CUSTOM_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+            )
+
+            # Verify all parameters are passed correctly
+            mock_invoke_batch_job.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                function_name="predict",
+                compute_pool_name=sql_identifier.SqlIdentifier("CUSTOM_POOL"),
+                force_rebuild=True,
+                image_repo_name="custom_repo",
+                num_workers=4,
+                max_batch_rows=2000,
+                warehouse=sql_identifier.SqlIdentifier("CUSTOM_WAREHOUSE"),
+                cpu_requests="4",
+                memory_requests="8Gi",
+                job_name="CUSTOM_JOB_NAME",
+                input_stage_location="@input_stage",
+                input_file_pattern="custom_*",
+                output_stage_location="@output_stage",
+                completion_filename="CUSTOM_COMPLETE",
+                statement_params=mock.ANY,
+            )
+
+            self.assertEqual(result, mock_job)
+
+    def test_run_batch_with_generated_job_name(self) -> None:
+        """Test _run_batch with job_name generated when None."""
+        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage", input_file_pattern="*")
+        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name=None,  # This will trigger job name generation
+            warehouse="TEST_WAREHOUSE",
+            force_rebuild=False,
+            image_repo="test_repo",
+            num_workers=1,
+            max_batch_rows=500,
+            cpu_requests="1",
+            memory_requests="2Gi",
+        )
+
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+            mock.patch("uuid.uuid4") as mock_uuid,
+        ):
+            # Setup the UUID mock to return a predictable value
+            mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
+
+            result = self.m_mv._run_batch(
+                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+            )
+
+            # Verify result
+            self.assertEqual(result, mock_job)
+
+            # Verify the generated job name uses the mocked UUID
+            call_args = mock_invoke_batch_job.call_args
+            job_name = call_args.kwargs["job_name"]
+            self.assertEqual(job_name, "BATCH_INFERENCE_12345678_1234_5678_9ABC_123456789012")
+
+    def test_run_batch_with_warehouse_from_session(self) -> None:
+        """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
+        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse=None,  # Will use session warehouse
+            force_rebuild=False,
+            image_repo="test_repo",
+            num_workers=1,
+            max_batch_rows=500,
+            cpu_requests="1",
+            memory_requests="2Gi",
+        )
+
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+            mock.patch.object(
+                self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
+            ) as mock_get_warehouse,
+        ):
+            result = self.m_mv._run_batch(
+                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+            )
+
+            # Verify result
+            self.assertEqual(result, mock_job)
+
+            # Verify session warehouse was called
+            mock_get_warehouse.assert_called_once()
+
+            # Verify the session warehouse is used
+            call_args = mock_invoke_batch_job.call_args
+            self.assertEqual(call_args.kwargs["warehouse"], sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"))
+
+    def test_run_batch_no_warehouse_error(self) -> None:
+        """Test _run_batch raises ValueError when no warehouse is available."""
+        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse=None,  # No warehouse in job_spec
+            force_rebuild=False,
+            image_repo="test_repo",
+            num_workers=1,
+            max_batch_rows=500,
+            cpu_requests="1",
+            memory_requests="2Gi",
+        )
+
+        with (
+            mock.patch.object(
+                self.m_mv._service_ops._session, "get_current_warehouse", return_value=None
+            ) as mock_get_warehouse,
+        ):
+            with self.assertRaisesRegex(
+                ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
+            ):
+                self.m_mv._run_batch(
+                    compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+                )
+
+            # Verify session warehouse was called
+            mock_get_warehouse.assert_called_once()
+
+    def test_run_batch_with_none_job_spec(self) -> None:
+        """Test _run_batch with job_spec=None uses default JobSpec values."""
+        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+            mock.patch.object(
+                self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
+            ) as mock_get_warehouse,
+            mock.patch("uuid.uuid4") as mock_uuid,
+        ):
+            # Setup the UUID mock to return a predictable value
+            mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
+
+            result = self.m_mv._run_batch(
+                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=None
+            )
+
+            # Verify result
+            self.assertEqual(result, mock_job)
+
+            # Verify session warehouse was called since job_spec.warehouse defaults to None
+            mock_get_warehouse.assert_called_once()
+
+            # Verify the method was called with default JobSpec values
+            mock_invoke_batch_job.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                function_name="predict",  # from _get_function_info with default function_name=None
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
+                force_rebuild=False,  # JobSpec default
+                image_repo_name=None,  # JobSpec default
+                num_workers=None,  # JobSpec default
+                max_batch_rows=1024,  # JobSpec default
+                warehouse=sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"),  # from session since warehouse=None
+                cpu_requests=None,  # JobSpec default
+                memory_requests=None,  # JobSpec default
+                job_name="BATCH_INFERENCE_DEFAULT_UUID_1234_5678_ABCD",  # generated since job_name=None
+                input_stage_location="@input_stage",
+                input_file_pattern="*",  # InputSpec default
+                output_stage_location="@output_stage",
+                completion_filename="_SUCCESS",  # OutputSpec default
+                statement_params=mock.ANY,
+            )
 
 
 if __name__ == "__main__":

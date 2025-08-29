@@ -115,7 +115,6 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
             },
         )
 
-    @absltest.skipIf(True, "Temporarily quarantined until Inference server release")
     def test_custom_model_wide_input(self) -> None:
         n_samples = 10
         n_features = 600

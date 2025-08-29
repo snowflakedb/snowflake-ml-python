@@ -2,10 +2,8 @@ import inflection
 import pandas as pd
 import xgboost
 from absl.testing import absltest, parameterized
-from packaging import version
 from sklearn import datasets, model_selection
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -32,56 +30,30 @@ class TestRegistryModelDeploymentInteg(registry_model_deployment_test_base.Regis
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
 
-        if snowflake_env.get_current_snowflake_version(self.session, statement_params=None) > version.parse("9.3.0"):
-            # CPU and memory argument is only supported in Snowflake > 9.3.0.
-            # Remove this if-else condition when Snowflake version is upgraded to 9.3.0.
-            mv = self._test_registry_model_deployment(
-                model=regressor,
-                sample_input_data=cal_X_test,
-                prediction_assert_fns={
-                    "predict": (
-                        cal_X_test,
-                        lambda res: pd.testing.assert_frame_equal(
-                            res,
-                            pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
-                            rtol=1e-3,
-                            atol=1e-3,
-                            check_dtype=False,
-                        ),
+        mv = self._test_registry_model_deployment(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
+                        rtol=1e-3,
+                        atol=1e-3,
+                        check_dtype=False,
                     ),
-                },
-                options=(
-                    {"cuda_version": model_env.DEFAULT_CUDA_VERSION, "enable_explainability": False}
-                    if gpu_requests
-                    else {"enable_explainability": False}
                 ),
-                gpu_requests=gpu_requests,
-                cpu_requests=cpu_requests,
-                memory_requests=memory_requests,
-            )
-        else:
-            mv = self._test_registry_model_deployment(
-                model=regressor,
-                sample_input_data=cal_X_test,
-                prediction_assert_fns={
-                    "predict": (
-                        cal_X_test,
-                        lambda res: pd.testing.assert_frame_equal(
-                            res,
-                            pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
-                            rtol=1e-3,
-                            atol=1e-3,
-                            check_dtype=False,
-                        ),
-                    ),
-                },
-                options=(
-                    {"cuda_version": model_env.DEFAULT_CUDA_VERSION, "enable_explainability": False}
-                    if gpu_requests
-                    else {"enable_explainability": False}
-                ),
-                gpu_requests=gpu_requests,
-            )
+            },
+            options=(
+                {"cuda_version": model_env.DEFAULT_CUDA_VERSION, "enable_explainability": False}
+                if gpu_requests
+                else {"enable_explainability": False}
+            ),
+            gpu_requests=gpu_requests,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
+        )
 
         services_df = mv.list_services()
         services = services_df["name"]
