@@ -14,6 +14,7 @@ import packaging.version as pkg_version
 from pytimeparse.timeparse import timeparse
 from typing_extensions import Concatenate, ParamSpec
 
+import snowflake.ml.feature_store.feature_view as fv_mod
 import snowflake.ml.version as snowml_version
 from snowflake.ml import dataset
 from snowflake.ml._internal import telemetry
@@ -89,6 +90,7 @@ class _FeatureStoreObjTypes(Enum):
     EXTERNAL_FEATURE_VIEW = "EXTERNAL_FEATURE_VIEW"
     FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
     TRAINING_DATA = "TRAINING_DATA"
+    ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
 
     @classmethod
     def parse(cls, val: str) -> _FeatureStoreObjTypes:
@@ -133,6 +135,7 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("scheduling_state", StringType()),
         StructField("warehouse", StringType()),
         StructField("cluster_by", StringType()),
+        StructField("online_config", StringType()),
     ]
 )
 
@@ -268,6 +271,7 @@ class FeatureStore:
             "DATASETS": (self._config.full_schema_path, "DATASET"),
             "DYNAMIC TABLES": (self._config.full_schema_path, "TABLE"),
             "VIEWS": (self._config.full_schema_path, "TABLE"),
+            "ONLINE FEATURE TABLES": (self._config.full_schema_path, "TABLE"),
             "SCHEMAS": (f"DATABASE {self._config.database}", "SCHEMA"),
             "TAGS": (self._config.full_schema_path, None),
             "TASKS": (self._config.full_schema_path, "TASK"),
@@ -484,6 +488,7 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Warehouse or default warehouse is not specified.
             SnowflakeMLException: [RuntimeError] Failed to create dynamic table, task, or view.
             SnowflakeMLException: [RuntimeError] Failed to find resources.
+            Exception: Unexpected error during registration.
 
         Example::
 
@@ -542,65 +547,72 @@ class FeatureStore:
             except Exception:
                 pass
 
-        fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
-        refresh_freq = feature_view.refresh_freq
+        created_resources = []
+        try:
+            fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
+            refresh_freq = feature_view.refresh_freq
 
-        if refresh_freq is not None:
-            obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, snowml_version.VERSION)
-        else:
-            obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, snowml_version.VERSION)
+            if refresh_freq is None:
+                obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, snowml_version.VERSION)
+            else:
+                obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, snowml_version.VERSION)
 
-        tagging_clause = [
-            f"{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{obj_info.to_json()}'",
-            f"{self._get_fully_qualified_name(_FEATURE_VIEW_METADATA_TAG)} = '{feature_view._metadata().to_json()}'",
-        ]
-        for e in feature_view.entities:
-            join_keys = [f"{key.resolved()}" for key in e.join_keys]
-            tagging_clause.append(
-                f"{self._get_fully_qualified_name(self._get_entity_name(e.name))} = '{','.join(join_keys)}'"
+            tagging_clause = [
+                f"{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{obj_info.to_json()}'",
+                f"{self._get_fully_qualified_name(_FEATURE_VIEW_METADATA_TAG)} = '"
+                f"{feature_view._metadata().to_json()}'",
+            ]
+            for e in feature_view.entities:
+                join_keys = [f"{key.resolved()}" for key in e.join_keys]
+                tagging_clause.append(
+                    f"{self._get_fully_qualified_name(self._get_entity_name(e.name))} = '{','.join(join_keys)}'"
+                )
+            tagging_clause_str = ",\n".join(tagging_clause)
+
+            def create_col_desc(col: StructField) -> str:
+                desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
+                desc = "" if desc is None else f"COMMENT '{desc}'"
+                return f"{col.name} {desc}"
+
+            column_descs = (
+                ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+                if feature_view.feature_descs is not None
+                else ""
             )
-        tagging_clause_str = ",\n".join(tagging_clause)
 
-        def create_col_desc(col: StructField) -> str:
-            desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
-            desc = "" if desc is None else f"COMMENT '{desc}'"
-            return f"{col.name} {desc}"
-
-        column_descs = (
-            ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
-            if feature_view.feature_descs is not None
-            else ""
-        )
-
-        if refresh_freq is not None:
-            schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
-            self._create_dynamic_table(
-                feature_view_name,
-                feature_view,
-                fully_qualified_name,
-                column_descs,
-                tagging_clause_str,
-                schedule_task,
-                feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse,
-                block,
-                overwrite,
+            # Step 1: Create offline feature view (Dynamic Table or View)
+            created_resources.extend(
+                self._create_offline_feature_view(
+                    feature_view=feature_view,
+                    feature_view_name=feature_view_name,
+                    fully_qualified_name=fully_qualified_name,
+                    column_descs=column_descs,
+                    tagging_clause_str=tagging_clause_str,
+                    block=block,
+                    overwrite=overwrite,
+                )
             )
-        else:
-            try:
-                overwrite_clause = " OR REPLACE" if overwrite else ""
-                query = f"""CREATE{overwrite_clause} VIEW {fully_qualified_name} ({column_descs})
-                    COMMENT = '{feature_view.desc}'
-                    TAG (
-                        {tagging_clause_str}
-                    )
-                    AS {feature_view.query}
-                """
-                self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-            except Exception as e:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(f"Create view {fully_qualified_name} [\n{query}\n] failed: {e}"),
-                ) from e
+
+            # Step 2: Create online feature table if requested
+            if feature_view.online:
+                online_table_name = self._create_online_feature_table(
+                    feature_view, feature_view_name, overwrite=overwrite
+                )
+                created_resources.append(
+                    (_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, self._get_fully_qualified_name(online_table_name))
+                )
+
+        except Exception as e:
+            # We can't rollback in case of overwrite.
+            if not overwrite:
+                self._rollback_created_resources(created_resources)
+
+            if isinstance(e, snowml_exceptions.SnowflakeMLException):
+                raise
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to register feature view {feature_view.name}/{version}: {e}"),
+            ) from e
 
         logger.info(f"Registered FeatureView {feature_view.name}/{version} successfully.")
         return self.get_feature_view(feature_view.name, str(version))
@@ -614,6 +626,7 @@ class FeatureStore:
         refresh_freq: Optional[str] = None,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
+        online_config: Optional[fv_mod.OnlineConfig] = None,
     ) -> FeatureView:
         ...
 
@@ -626,6 +639,7 @@ class FeatureStore:
         refresh_freq: Optional[str] = None,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
+        online_config: Optional[fv_mod.OnlineConfig] = None,
     ) -> FeatureView:
         ...
 
@@ -638,6 +652,7 @@ class FeatureStore:
         refresh_freq: Optional[str] = None,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
+        online_config: Optional[fv_mod.OnlineConfig] = None,
     ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
@@ -648,6 +663,11 @@ class FeatureStore:
             refresh_freq: updated refresh frequency.
             warehouse: updated warehouse.
             desc: description of feature view.
+            online_config: updated online configuration for the online feature table.
+                If provided with enable=True, creates online feature table if absent.
+                If provided with enable=False, drops online feature table if present.
+                If None (default), no change to online status.
+                During update, only explicitly set fields in the OnlineConfig will be updated.
 
         Returns:
             Updated FeatureView.
@@ -681,78 +701,117 @@ class FeatureStore:
             ------------------------------------------------
             |FOO     |v1         |THAT IS NEW DESCRIPTION  |
             ------------------------------------------------
+            <BLANKLINE>
+            >>> # Enable online storage with custom configuration
+            >>> config = OnlineConfig(enable=True, target_lag='15s')
+            >>> online_fv = fs.update_feature_view(
+            ...     name='foo',
+            ...     version='v1',
+            ...     online_config=config,
+            ... )
+            >>> print(online_fv.online)
+            True
 
         Raises:
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
+        if online_config is not None:
+            logging.warning("'online_config' is in private preview since 1.12.0. Do not use it in production.")
+
+        # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
         new_desc = desc if desc is not None else feature_view.desc
 
-        if feature_view.status == FeatureViewStatus.STATIC:
-            if refresh_freq is not None or warehouse is not None:
-                full_name = f"{feature_view.name}/{feature_view.version}"
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INVALID_ARGUMENT,
-                    original_exception=RuntimeError(
-                        f"Static feature view '{full_name}' does not support refresh_freq and warehouse."
-                    ),
-                )
-            new_query = f"""
-                ALTER VIEW {feature_view.fully_qualified_name()} SET
-                COMMENT = '{new_desc}'
-            """
-        else:
-            warehouse = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
-            # TODO(@wezhou): we need to properly handle cron expr
-            new_query = f"""
-                ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
-                TARGET_LAG = '{refresh_freq or feature_view.refresh_freq}'
-                WAREHOUSE = {warehouse}
-                COMMENT = '{new_desc}'
-            """
-
-        try:
-            self._session.sql(new_query).collect(statement_params=self._telemetry_stmp)
-        except Exception as e:
+        # Validate static feature view constraints
+        if feature_view.status == FeatureViewStatus.STATIC and (refresh_freq or warehouse):
+            full_name = f"{feature_view.name}/{feature_view.version}"
             raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=RuntimeError(
-                    f"Update feature view {feature_view.name}/{feature_view.version} failed: {e}"
+                    f"Static feature view '{full_name}' does not support refresh_freq and warehouse."
                 ),
-            ) from e
+            )
+
+        # Step 2: Plan all operations
+        rollback_operations: list[Any] = []
+        try:
+            operations, rollback_operations = self._plan_feature_view_update_operations(
+                feature_view, refresh_freq, warehouse, new_desc, online_config
+            )
+
+            # Step 3: Execute atomically
+            self._execute_atomic_operations(operations)
+
+        except Exception as e:
+            # Step 4: Rollback on failure
+            self._handle_update_failure(e, rollback_operations, feature_view)
+
         return self.get_feature_view(name=feature_view.name, version=str(feature_view.version))
 
     @overload
-    def read_feature_view(self, feature_view: str, version: str) -> DataFrame:
+    def read_feature_view(
+        self,
+        feature_view: str,
+        version: str,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> DataFrame:
         ...
 
     @overload
-    def read_feature_view(self, feature_view: FeatureView) -> DataFrame:
+    def read_feature_view(
+        self,
+        feature_view: FeatureView,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> DataFrame:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
-    def read_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> DataFrame:
+    def read_feature_view(
+        self,
+        feature_view: Union[FeatureView, str],
+        version: Optional[str] = None,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> DataFrame:
         """
-        Read values from a FeatureView.
+        Read values from a FeatureView from either offline or online store.
 
         Args:
             feature_view: A FeatureView object to read from, or the name of feature view.
                 If name is provided then version also must be provided.
             version: Optional version of feature view. Must set when argument feature_view is a str.
+            keys: Optional list of primary key value lists to filter by. Each inner list should contain
+                values in the same order as the entity join_keys. Works for both offline and online stores.
+                Example: [["user1"], ["user2"]] for single key,
+                [["user1", "item1"], ["user2", "item2"]] for composite keys.
+                If None, returns all data.
+            feature_names: Optional list of feature names to return. If None, returns all features.
+                Works consistently for both offline and online stores.
+            store_type: Store to read from - StoreType.ONLINE or StoreType.OFFLINE (default).
 
         Returns:
-            Snowpark DataFrame(lazy mode) containing the FeatureView data.
+            Snowpark DataFrame containing the FeatureView data.
 
         Raises:
             SnowflakeMLException: [ValueError] version argument is missing when argument feature_view is a str.
             SnowflakeMLException: [ValueError] FeatureView is not registered.
+            SnowflakeMLException: [ValueError] Online store is not enabled for this feature view.
+            SnowflakeMLException: [ValueError] Invalid store type.
 
         Example::
 
             >>> fs = FeatureStore(...)
-            >>> # Read from feature view name and version.
-            >>> fs.read_feature_view('foo', 'v1').show()
+            >>> # Read all data from offline store
+            >>> fs.read_feature_view('foo', 'v1', store_type=StoreType.OFFLINE).show()
             ------------------------------------------
             |"NAME"  |"ID"  |"TITLE"  |"AGE"  |"TS"  |
             ------------------------------------------
@@ -760,15 +819,31 @@ class FeatureStore:
             |porter  |2     |manager  |30     |200   |
             ------------------------------------------
             <BLANKLINE>
-            >>> # Read from feature view object.
-            >>> fv = fs.get_feature_view('foo', 'v1')
-            >>> fs.read_feature_view(fv).show()
+            >>> # Filter by keys in offline store
+            >>> fs.read_feature_view('foo', 'v1', keys=[["1"], ["2"]], store_type=StoreType.OFFLINE).show()
             ------------------------------------------
             |"NAME"  |"ID"  |"TITLE"  |"AGE"  |"TS"  |
             ------------------------------------------
             |jonh    |1     |boss     |20     |100   |
             |porter  |2     |manager  |30     |200   |
             ------------------------------------------
+            <BLANKLINE>
+            >>> # Read from online store with specific keys (same API)
+            >>> fs.read_feature_view('foo', 'v1', keys=[["1"], ["2"]], store_type=StoreType.ONLINE).show()
+            --------------------------------
+            |"ID"  |"TITLE"  |"AGE"       |
+            --------------------------------
+            |1     |boss     |20          |
+            |2     |manager  |30          |
+            --------------------------------
+            <BLANKLINE>
+            >>> # Select specific features (works for both stores)
+            >>> fs.read_feature_view('foo', 'v1', keys=[["1"]], feature_names=["TITLE", "AGE"]).show()
+            ----------------------
+            |"TITLE"  |"AGE"    |
+            ----------------------
+            |boss     |20       |
+            ----------------------
 
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
@@ -779,7 +854,17 @@ class FeatureStore:
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
-        return self._session.sql(f"SELECT * FROM {feature_view.fully_qualified_name()}")
+        store_type = self._get_store_type(store_type)
+
+        if store_type == fv_mod.StoreType.ONLINE:
+            return self._read_from_online_store(feature_view, keys, feature_names)
+        elif store_type == fv_mod.StoreType.OFFLINE:
+            return self._read_from_offline_store(feature_view, keys, feature_names)
+        else:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Invalid store type: {store_type}"),
+            )
 
     @dispatch_decorator()
     def list_feature_views(
@@ -884,20 +969,42 @@ class FeatureStore:
         )
 
     @overload
-    def refresh_feature_view(self, feature_view: FeatureView) -> None:
+    def refresh_feature_view(
+        self, feature_view: str, version: str, *, store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE
+    ) -> None:
         ...
 
     @overload
-    def refresh_feature_view(self, feature_view: str, version: str) -> None:
+    def refresh_feature_view(
+        self,
+        feature_view: FeatureView,
+        version: Optional[str] = None,
+        *,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> None:
         ...
 
     @dispatch_decorator()  # type: ignore[misc]
-    def refresh_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> None:
+    def refresh_feature_view(
+        self,
+        feature_view: Union[FeatureView, str],
+        version: Optional[str] = None,
+        *,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> None:
         """Manually refresh a feature view.
 
         Args:
             feature_view: A registered feature view object, or the name of feature view.
             version: Optional version of feature view. Must set when argument feature_view is a str.
+            store_type: Specify which storage to refresh. Can be StoreType.OFFLINE or StoreType.ONLINE.
+                - StoreType.OFFLINE (default): Refreshes the offline feature view.
+                - StoreType.ONLINE: Refreshes the online feature table for real-time serving.
+                  Only available for feature views with online=True.
+                Defaults to StoreType.OFFLINE.
+
+        Raises:
+            SnowflakeMLException: [ValueError] Invalid store type.
 
         Example::
 
@@ -926,43 +1033,89 @@ class FeatureStore:
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
 
-        if feature_view.status == FeatureViewStatus.STATIC:
-            warnings.warn(
-                "Static feature view can't be refreshed. You must set refresh_freq when register_feature_view().",
-                stacklevel=2,
-                category=UserWarning,
+        store_type = self._get_store_type(store_type)
+
+        if store_type == fv_mod.StoreType.ONLINE:
+            # Refresh online feature table only
+            if not feature_view.online:
+                warnings.warn(
+                    f"Feature view {feature_view.name}/{feature_view.version} does not have online storage enabled.",
+                    stacklevel=2,
+                    category=UserWarning,
+                )
+                return
+
+            # Use the unified method but specify online-only refresh
+            self._update_feature_view_status(feature_view, "REFRESH", store_type=fv_mod.StoreType.ONLINE)
+        elif store_type == fv_mod.StoreType.OFFLINE:
+            # Refresh offline feature view only
+            if feature_view.status == FeatureViewStatus.STATIC:
+                warnings.warn(
+                    "Static feature view can't be refreshed. You must set refresh_freq when register_feature_view().",
+                    stacklevel=2,
+                    category=UserWarning,
+                )
+                return
+            self._update_feature_view_status(feature_view, "REFRESH", store_type=fv_mod.StoreType.OFFLINE)
+        else:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Invalid store type: {store_type}"),
             )
-            return
-        self._update_feature_view_status(feature_view, "REFRESH")
 
     @overload
     def get_refresh_history(
-        self, feature_view: FeatureView, version: Optional[str] = None, *, verbose: bool = False
+        self,
+        feature_view: FeatureView,
+        version: Optional[str] = None,
+        *,
+        verbose: bool = False,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
     ) -> DataFrame:
         ...
 
     @overload
-    def get_refresh_history(self, feature_view: str, version: str, *, verbose: bool = False) -> DataFrame:
+    def get_refresh_history(
+        self,
+        feature_view: str,
+        version: str,
+        *,
+        verbose: bool = False,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+    ) -> DataFrame:
         ...
 
     def get_refresh_history(
-        self, feature_view: Union[FeatureView, str], version: Optional[str] = None, *, verbose: bool = False
+        self,
+        feature_view: Union[FeatureView, str],
+        version: Optional[str] = None,
+        *,
+        verbose: bool = False,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
     ) -> DataFrame:
-        """Get refresh hisotry statistics about a feature view.
+        """Get refresh history statistics about a feature view.
 
         Args:
             feature_view: A registered feature view object, or the name of feature view.
             version: Optional version of feature view. Must set when argument feature_view is a str.
             verbose: Return more detailed history when set true.
+            store_type: Store to get refresh history from - StoreType.ONLINE or StoreType.OFFLINE (default).
+                - StoreType.OFFLINE (default): Returns refresh history for the offline feature view (dynamic table).
+                - StoreType.ONLINE: Returns refresh history for the online feature table.
+                  Only available for feature views with online=True.
 
         Returns:
             A dataframe contains the refresh history information.
+
+        Raises:
+            SnowflakeMLException: [ValueError]
+                If store_type is ONLINE but feature view doesn't have online storage enabled.
 
         Example::
 
             >>> fs = FeatureStore(...)
             >>> fv = fs.get_feature_view(name='MY_FV', version='v1')
-            >>> # refresh with name and version
+            >>> # Get offline refresh history (default)
             >>> fs.refresh_feature_view('MY_FV', 'v1')
             >>> fs.get_refresh_history('MY_FV', 'v1').show()
             -----------------------------------------------------------------------------------------------------
@@ -971,18 +1124,22 @@ class FeatureStore:
             |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
             -----------------------------------------------------------------------------------------------------
             <BLANKLINE>
-            >>> # refresh with feature view object
-            >>> fs.refresh_feature_view(fv)
-            >>> fs.get_refresh_history(fv).show()
+            >>> # Get online refresh history (for feature views with online storage)
+            >>> fs.get_refresh_history('MY_FV', 'v1', store_type=StoreType.ONLINE).show()
             -----------------------------------------------------------------------------------------------------
-            |"NAME"    |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
+            |"NAME"          |"STATE"    |"REFRESH_START_TIME"        |"REFRESH_END_TIME"          |"REFRESH_ACTION"  |
             -----------------------------------------------------------------------------------------------------
-            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:54:06.680000  |2024-07-10 14:54:07.226000  |INCREMENTAL       |
-            |MY_FV$v1  |SUCCEEDED  |2024-07-10 14:53:58.504000  |2024-07-10 14:53:59.088000  |INCREMENTAL       |
+            |MY_FV$v1$ONLINE |SUCCEEDED  |2024-07-10 14:54:01.200000  |2024-07-10 14:54:02.100000  |INCREMENTAL       |
             -----------------------------------------------------------------------------------------------------
+            <BLANKLINE>
+            >>> # Verbose mode works for both storage types
+            >>> fs.get_refresh_history(fv, verbose=True, store_type=StoreType.OFFLINE).show()
+            >>> fs.get_refresh_history(fv, verbose=True, store_type=StoreType.ONLINE).show()
 
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
+
+        store_type = self._get_store_type(store_type)
 
         if feature_view.status == FeatureViewStatus.STATIC:
             warnings.warn(
@@ -1000,6 +1157,27 @@ class FeatureStore:
             )
             return self._session.create_dataframe([Row()])
 
+        # Validate online store request
+        if store_type == fv_mod.StoreType.ONLINE:
+            if not feature_view.online:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Feature view '{feature_view.name}' version '{feature_view.version}' "
+                        "does not have online storage enabled. Cannot retrieve online refresh history."
+                    ),
+                )
+            return self._get_online_refresh_history(feature_view, verbose)
+        elif store_type == fv_mod.StoreType.OFFLINE:
+            return self._get_offline_refresh_history(feature_view, verbose)
+        else:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Invalid store type: {store_type}"),
+            )
+
+    def _get_offline_refresh_history(self, feature_view: FeatureView, verbose: bool) -> DataFrame:
+        """Get refresh history for offline feature view (dynamic table)."""
         fv_resolved_name = FeatureView._get_physical_name(
             feature_view.name,
             feature_view.version,  # type: ignore[arg-type]
@@ -1010,10 +1188,32 @@ class FeatureStore:
             SELECT
                 {select_cols}
             FROM TABLE (
-                {self._config.database}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY ()
+                {self._config.database}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY (RESULT_LIMIT => 10000)
             )
             WHERE NAME = '{fv_resolved_name}'
             AND SCHEMA_NAME = '{self._config.schema}'
+            """
+        )
+
+    def _get_online_refresh_history(self, feature_view: FeatureView, verbose: bool) -> DataFrame:
+        """Get refresh history for online feature table."""
+        online_table_name = FeatureView._get_online_table_name(feature_view.name, feature_view.version)
+        select_cols = "*" if verbose else "name, state, refresh_start_time, refresh_end_time, refresh_action"
+        prefix = (
+            f"{self._config.database.resolved()}."
+            f"{self._config.schema.resolved()}."
+            f"{online_table_name.resolved()}"
+        )
+        return self._session.sql(
+            f"""
+            SELECT
+                {select_cols}
+            FROM TABLE (
+                {self._config.database}.INFORMATION_SCHEMA.ONLINE_FEATURE_TABLE_REFRESH_HISTORY (
+                    NAME_PREFIX => '{prefix}'
+                )
+
+            )
             """
         )
 
@@ -1029,6 +1229,9 @@ class FeatureStore:
     def resume_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
         """
         Resume a previously suspended FeatureView.
+
+        This operation resumes both the offline feature view (dynamic table and associated task)
+        and the online feature table (if it exists) to ensure consistent state across all storage types.
 
         Args:
             feature_view: FeatureView object or name to resume.
@@ -1060,7 +1263,19 @@ class FeatureStore:
 
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
-        return self._update_feature_view_status(feature_view, "RESUME")
+
+        # Plan atomic resume operations
+        operations, rollback_operations = self._plan_feature_view_status_operations(feature_view, "RESUME")
+
+        try:
+            # Execute all operations atomically
+            self._execute_atomic_operations(operations)
+            logger.info(f"Successfully RESUME FeatureView {feature_view.name}/{feature_view.version}.")
+        except Exception as e:
+            # Handle failure with rollback
+            self._handle_status_operation_failure(e, rollback_operations, feature_view, "RESUME")
+
+        return self.get_feature_view(feature_view.name, str(feature_view.version))
 
     @overload
     def suspend_feature_view(self, feature_view: FeatureView) -> FeatureView:
@@ -1074,6 +1289,9 @@ class FeatureStore:
     def suspend_feature_view(self, feature_view: Union[FeatureView, str], version: Optional[str] = None) -> FeatureView:
         """
         Suspend an active FeatureView.
+
+        This operation suspends both the offline feature view (dynamic table and associated task)
+        and the online feature table (if it exists).
 
         Args:
             feature_view: FeatureView object or name to suspend.
@@ -1105,7 +1323,19 @@ class FeatureStore:
 
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
-        return self._update_feature_view_status(feature_view, "SUSPEND")
+
+        # Plan atomic suspend operations
+        operations, rollback_operations = self._plan_feature_view_status_operations(feature_view, "SUSPEND")
+
+        try:
+            # Execute all operations atomically
+            self._execute_atomic_operations(operations)
+            logger.info(f"Successfully suspended FeatureView {feature_view.name}/{feature_view.version}.")
+        except Exception as e:
+            # Handle failure with rollback
+            self._handle_status_operation_failure(e, rollback_operations, feature_view, "SUSPEND")
+
+        return self.get_feature_view(feature_view.name, str(feature_view.version))
 
     @overload
     def delete_feature_view(self, feature_view: FeatureView) -> None:
@@ -1182,6 +1412,21 @@ class FeatureStore:
             if feature_view.refresh_freq == "DOWNSTREAM":
                 self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
                     statement_params=self._telemetry_stmp
+                )
+
+        # Delete online feature table if it exists
+        if feature_view.online:
+            fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
+            try:
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(
+                        f"Failed to delete online feature table {fully_qualified_online_name}: {e}"
+                    ),
                 )
 
         logger.info(f"Deleted FeatureView {feature_view.name}/{feature_view.version}.")
@@ -1732,6 +1977,393 @@ class FeatureStore:
         else:
             return self._load_compact_feature_views(properties.compact_feature_views)  # type: ignore[arg-type]
 
+    def _rollback_created_resources(self, created_resources: list[tuple[_FeatureStoreObjTypes, str]]) -> None:
+        """Rollback created resources in reverse order.
+
+        Args:
+            created_resources: List of (resource_type, resource_name) tuples to clean up
+        """
+        for resource_type, resource_name in reversed(created_resources):
+            try:
+                if resource_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
+                    self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                elif resource_type == _FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW:
+                    self._session.sql(f"DROP VIEW IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                elif resource_type == _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK:
+                    self._session.sql(f"DROP TASK IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                elif resource_type == _FeatureStoreObjTypes.ONLINE_FEATURE_TABLE:
+                    self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                logger.info(f"Rollback: Successfully dropped {resource_type.value} {resource_name}")
+            except Exception as rollback_error:
+                # Log but don't fail the rollback process
+                logger.warning(f"Rollback: Failed to drop {resource_type.value} {resource_name}: {rollback_error}")
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def _create_updated_feature_view(
+        self, base_fv: FeatureView, online_config: Optional[fv_mod.OnlineConfig] = None
+    ) -> FeatureView:
+        """Create an updated FeatureView with new online configuration."""
+        assert base_fv.version is not None
+        assert base_fv.database is not None
+        assert base_fv.schema is not None
+
+        feature_descs_str: Optional[dict[str, str]] = (
+            {k.identifier(): v for k, v in base_fv.feature_descs.items()} if base_fv.feature_descs is not None else None
+        )
+        cluster_by_str: Optional[list[str]] = (
+            [col.identifier() for col in base_fv.cluster_by] if base_fv.cluster_by is not None else None
+        )
+
+        return FeatureView._construct_feature_view(
+            name=base_fv.name.identifier(),
+            entities=base_fv.entities,
+            feature_df=base_fv.feature_df,
+            timestamp_col=base_fv.timestamp_col.identifier() if base_fv.timestamp_col is not None else None,
+            desc=base_fv.desc,
+            version=str(base_fv.version),
+            status=base_fv.status,
+            feature_descs=feature_descs_str or {},
+            refresh_freq=base_fv.refresh_freq,
+            database=base_fv.database.identifier(),
+            schema=base_fv.schema.identifier(),
+            warehouse=base_fv.warehouse.identifier() if base_fv.warehouse is not None else None,
+            refresh_mode=base_fv.refresh_mode,
+            refresh_mode_reason=base_fv.refresh_mode_reason,
+            initialize=base_fv.initialize,
+            owner=base_fv.owner,
+            infer_schema_df=base_fv._infer_schema_df,
+            session=self._session,
+            cluster_by=cluster_by_str,
+            online_config=online_config,
+        )
+
+    def _build_offline_update_queries(
+        self, feature_view: FeatureView, refresh_freq: Optional[str], warehouse: Optional[str], desc: str
+    ) -> tuple[str, Optional[str]]:
+        """Build offline update query and its rollback query."""
+        if feature_view.status == FeatureViewStatus.STATIC:
+            update_query = f"""
+                ALTER VIEW {feature_view.fully_qualified_name()} SET
+                COMMENT = '{desc}'
+            """
+            return update_query, None  # No rollback needed for comment changes
+        else:
+            warehouse_id = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
+            # TODO: SNOW-2260633 Handle cron expression updates for refresh_freq
+            update_query = f"""
+                ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
+                TARGET_LAG = '{refresh_freq or feature_view.refresh_freq}'
+                WAREHOUSE = {warehouse_id}
+                COMMENT = '{desc}'
+            """
+            rollback_query = f"""ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
+                    TARGET_LAG = '{feature_view.refresh_freq}'
+                    WAREHOUSE = {feature_view.warehouse}
+                    COMMENT = '{feature_view.desc}'
+                """
+            return update_query, rollback_query
+
+    @dataclass(frozen=True)
+    class _OnlineUpdateStrategy:
+        """Encapsulates online update operations and their rollbacks."""
+
+        operations: list[tuple[str, Union[str, FeatureView]]]
+        rollback_operations: list[tuple[str, Union[str, FeatureView]]]
+        final_config: Optional[fv_mod.OnlineConfig]
+
+    def _plan_online_update(
+        self, feature_view: FeatureView, online_config: Optional[fv_mod.OnlineConfig]
+    ) -> _OnlineUpdateStrategy:
+        """Plan online update operations based on current state and target config."""
+        if online_config is None:
+            return self._OnlineUpdateStrategy([], [], None)
+
+        current_online = feature_view.online
+        target_online = online_config.enable
+
+        # Enable online (create table)
+        if target_online and not current_online:
+            return self._plan_online_enable(feature_view, online_config)
+
+        # Disable online (drop table)
+        elif not target_online and current_online:
+            return self._plan_online_disable(feature_view)
+
+        # Update existing online table
+        elif target_online and current_online:
+            return self._plan_online_update_existing(feature_view, online_config)
+
+        # No change needed
+        else:
+            return self._OnlineUpdateStrategy([], [], online_config)
+
+    def _plan_online_enable(
+        self, feature_view: FeatureView, online_config: fv_mod.OnlineConfig
+    ) -> _OnlineUpdateStrategy:
+        """Plan operations to enable online storage."""
+        # Get default target_lag from existing config or use default
+        default_target_lag = (
+            feature_view.online_config.target_lag
+            if feature_view.online_config and feature_view.online_config.target_lag
+            else fv_mod._DEFAULT_TARGET_LAG
+        )
+        final_config = fv_mod.OnlineConfig(
+            enable=True,
+            target_lag=online_config.target_lag if online_config.target_lag is not None else default_target_lag,
+        )
+
+        temp_fv = self._create_updated_feature_view(feature_view, final_config)
+
+        operations: list[tuple[str, Union[str, FeatureView]]] = [("CREATE_ONLINE", temp_fv)]
+        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [
+            ("DELETE_ONLINE", temp_fv.fully_qualified_online_table_name())
+        ]
+
+        return self._OnlineUpdateStrategy(operations, rollback_ops, final_config)
+
+    def _plan_online_disable(self, feature_view: FeatureView) -> _OnlineUpdateStrategy:
+        """Plan operations to disable online storage."""
+        table_name = feature_view.fully_qualified_online_table_name()
+
+        operations: list[tuple[str, Union[str, FeatureView]]] = [("DELETE_ONLINE", table_name)]
+        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [
+            ("CREATE_ONLINE", self._create_updated_feature_view(feature_view, feature_view.online_config))
+        ]
+
+        # Create disabled config to properly represent the new state
+        disabled_config = fv_mod.OnlineConfig(enable=False)
+
+        return self._OnlineUpdateStrategy(operations, rollback_ops, disabled_config)
+
+    def _plan_online_update_existing(
+        self, feature_view: FeatureView, online_config: fv_mod.OnlineConfig
+    ) -> _OnlineUpdateStrategy:
+        """Plan operations to update existing online table configuration."""
+        existing_config = feature_view.online_config or fv_mod.OnlineConfig(
+            enable=True, target_lag=fv_mod._DEFAULT_TARGET_LAG
+        )
+        if online_config.target_lag is None or online_config.target_lag == existing_config.target_lag:
+            return self._OnlineUpdateStrategy([], [], existing_config)
+
+        table_name = feature_view.fully_qualified_online_table_name()
+        update_query = f"ALTER ONLINE FEATURE TABLE {table_name} SET TARGET_LAG = '{online_config.target_lag}'"
+        rollback_query = f"ALTER ONLINE FEATURE TABLE {table_name} SET TARGET_LAG = '{existing_config.target_lag}'"
+
+        operations: list[tuple[str, Union[str, FeatureView]]] = [("UPDATE_ONLINE", update_query)]
+        rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [("UPDATE_ONLINE", rollback_query)]
+
+        final_config = fv_mod.OnlineConfig(
+            enable=True,
+            target_lag=online_config.target_lag,
+        )
+
+        return self._OnlineUpdateStrategy(operations, rollback_ops, final_config)
+
+    def _plan_feature_view_update_operations(
+        self,
+        feature_view: FeatureView,
+        refresh_freq: Optional[str],
+        warehouse: Optional[str],
+        desc: str,
+        online_config: Optional[fv_mod.OnlineConfig],
+    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]]]:
+        """Plan all update operations and their rollbacks."""
+        operations: list[tuple[str, Union[str, FeatureView]]] = []
+        rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
+
+        # Plan offline updates
+        offline_update, offline_rollback = self._build_offline_update_queries(
+            feature_view, refresh_freq, warehouse, desc
+        )
+        operations.append(("OFFLINE_UPDATE", offline_update))
+        if offline_rollback:
+            rollback_operations.append(("OFFLINE_ROLLBACK", offline_rollback))
+
+        # Plan online updates
+        online_strategy = self._plan_online_update(feature_view, online_config)
+        operations.extend(online_strategy.operations)
+        rollback_operations.extend(online_strategy.rollback_operations)
+
+        return operations, rollback_operations
+
+    def _plan_feature_view_status_operations(
+        self, feature_view: FeatureView, operation: str
+    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]]]:
+        """Plan atomic operations for suspend/resume operations.
+
+        Args:
+            feature_view: The feature view to operate on
+            operation: "SUSPEND" or "RESUME"
+
+        Returns:
+            Tuple of (operations, rollback_operations)
+        """
+        assert operation in ["SUSPEND", "RESUME"], f"Operation {operation} not supported"
+
+        operations: list[tuple[str, Union[str, FeatureView]]] = []
+        rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
+
+        fully_qualified_name = feature_view.fully_qualified_name()
+
+        # Define the reverse operation for rollback
+        reverse_operation = "RESUME" if operation == "SUSPEND" else "SUSPEND"
+
+        # Plan offline operations (dynamic table + task)
+        offline_sql = f"ALTER DYNAMIC TABLE {fully_qualified_name} {operation}"
+        offline_rollback_sql = f"ALTER DYNAMIC TABLE {fully_qualified_name} {reverse_operation}"
+
+        task_sql = f"ALTER TASK IF EXISTS {fully_qualified_name} {operation}"
+        task_rollback_sql = f"ALTER TASK IF EXISTS {fully_qualified_name} {reverse_operation}"
+
+        operations.append(("OFFLINE_STATUS", offline_sql))
+        operations.append(("TASK_STATUS", task_sql))
+
+        # Rollback operations (in reverse order)
+        rollback_operations.insert(0, ("TASK_STATUS", task_rollback_sql))
+        rollback_operations.insert(0, ("OFFLINE_STATUS", offline_rollback_sql))
+
+        # Plan online operations if applicable
+        if feature_view.online:
+            fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
+            online_sql = f"ALTER ONLINE FEATURE TABLE {fully_qualified_online_name} {operation}"
+            online_rollback_sql = f"ALTER ONLINE FEATURE TABLE {fully_qualified_online_name} {reverse_operation}"
+
+            operations.append(("ONLINE_STATUS", online_sql))
+            # Add to front of rollback operations to maintain reverse order
+            rollback_operations.insert(0, ("ONLINE_STATUS", online_rollback_sql))
+
+        return operations, rollback_operations
+
+    def _handle_update_failure(
+        self,
+        error: Exception,
+        rollback_operations: list[tuple[str, Union[str, FeatureView]]],
+        feature_view: FeatureView,
+    ) -> None:
+        """Handle update failure with rollback."""
+        logger.warning(f"Update failed, attempting rollback: {error}")
+        try:
+            self._execute_atomic_operations(rollback_operations)
+            logger.info("Rollback completed successfully")
+        except Exception as rollback_error:
+            logger.error(f"Rollback failed: {rollback_error}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"Update failed and rollback failed. Original error: {error}. Rollback error: {rollback_error}"
+                ),
+            ) from error
+
+        # Re-raise original error
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+            original_exception=RuntimeError(
+                f"Update feature view {feature_view.name}/{feature_view.version} failed: {error}"
+            ),
+        ) from error
+
+    def _handle_status_operation_failure(
+        self,
+        error: Exception,
+        rollback_operations: list[tuple[str, Union[str, FeatureView]]],
+        feature_view: FeatureView,
+        operation: str,
+    ) -> None:
+        """Handle status operation failure (suspend/resume) with rollback."""
+        logger.warning(f"{operation} failed, attempting rollback: {error}")
+        try:
+            self._execute_atomic_operations(rollback_operations)
+            logger.info("Rollback completed successfully")
+        except Exception as rollback_error:
+            logger.error(f"Rollback failed: {rollback_error}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"{operation} failed and rollback failed. "
+                    f"Operation error: {error}. "
+                    f"Rollback error: {rollback_error}"
+                ),
+            ) from error
+
+        # Re-raise original error
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+            original_exception=RuntimeError(
+                f"{operation} feature view {feature_view.name}/{feature_view.version} failed: {error}"
+            ),
+        ) from error
+
+    def _execute_atomic_operations(self, operations: list[tuple[str, Union[str, FeatureView]]]) -> None:
+        """Execute a list of operations atomically.
+
+        Args:
+            operations: List of (operation_type, operation_data) tuples
+        """
+        for op_type, op_data in operations:
+            if op_type in (
+                "OFFLINE_UPDATE",
+                "OFFLINE_ROLLBACK",
+                "UPDATE_ONLINE",
+                "OFFLINE_STATUS",
+                "TASK_STATUS",
+                "ONLINE_STATUS",
+            ):
+                assert isinstance(op_data, str)
+                self._session.sql(op_data).collect(statement_params=self._telemetry_stmp)
+            elif op_type == "CREATE_ONLINE":
+                assert isinstance(op_data, FeatureView)
+                assert op_data.version is not None
+                feature_view_name = FeatureView._get_physical_name(op_data.name, op_data.version)
+                self._create_online_feature_table(op_data, feature_view_name)
+            elif op_type == "DELETE_ONLINE":
+                assert isinstance(op_data, str)
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {op_data}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+
+    def _read_from_offline_store(
+        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+    ) -> DataFrame:
+        """Read feature values from the offline store (main feature view table)."""
+        table_name = feature_view.fully_qualified_name()
+
+        # Build SELECT and WHERE clauses using helper methods
+        select_clause = self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
+        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+
+        query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
+        return self._session.sql(query)
+
+    def _read_from_online_store(
+        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+    ) -> DataFrame:
+        """Read feature values from the online store with optional key filtering."""
+        # Check if online store is enabled
+        if not feature_view.online:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Online store is not enabled for feature view {feature_view.name}/{feature_view.version}"
+                ),
+            )
+
+        fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
+
+        # Build SELECT and WHERE clauses using helper methods
+        select_clause = self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
+        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+
+        query = f"SELECT {select_clause} FROM {fully_qualified_online_name}{where_clause}"
+        return self._session.sql(query)
+
     @dispatch_decorator()
     def _clear(self, dryrun: bool = True) -> None:
         """
@@ -1810,6 +2442,7 @@ class FeatureStore:
         override: bool,
     ) -> None:
         # TODO: cluster by join keys once DT supports that
+        query = ""
         try:
             override_clause = " OR REPLACE" if override else ""
             query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name} ({column_descs})
@@ -1870,6 +2503,78 @@ class FeatureStore:
 
         if block:
             self._check_dynamic_table_refresh_mode(feature_view_name)
+
+    def _create_offline_feature_view(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        column_descs: str,
+        tagging_clause_str: str,
+        block: bool,
+        overwrite: bool,
+    ) -> list[tuple[_FeatureStoreObjTypes, str]]:
+        """Create the offline representation for a feature view.
+
+        Depending on `refresh_freq`, this creates either a Dynamic Table (managed feature view)
+        or a View (external feature view). Returns a list of created resources for rollback.
+
+        Args:
+            feature_view: The feature view definition to materialize.
+            feature_view_name: The physical name object for the feature view.
+            fully_qualified_name: Fully qualified name for the created view/dynamic table.
+            column_descs: Column descriptions clause used in the CREATE statement.
+            tagging_clause_str: Tagging clause used in the CREATE statement.
+            block: Whether to block until the initial refresh completes when applicable.
+            overwrite: Whether to replace existing objects if they already exist.
+
+        Returns:
+            A list of tuples of the created object types and their fully qualified names,
+            used for potential rollback.
+
+        Raises:
+            SnowflakeMLException: [RuntimeError] If creating the view or dynamic table fails.
+        """
+        created: list[tuple[_FeatureStoreObjTypes, str]] = []
+        refresh_freq = feature_view.refresh_freq
+
+        # External feature view via View (no refresh schedule)
+        if refresh_freq is None:
+            try:
+                overwrite_clause = " OR REPLACE" if overwrite else ""
+                query = f"""CREATE{overwrite_clause} VIEW {fully_qualified_name} ({column_descs})
+                    COMMENT = '{feature_view.desc}'
+                    TAG (
+                        {tagging_clause_str}
+                    )
+                    AS {feature_view.query}
+                """
+                self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+                created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
+                return created
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(f"Create view {fully_qualified_name} failed: {e}"),
+                ) from e
+
+        # Managed feature view via Dynamic Table (and optional Task)
+        schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
+        self._create_dynamic_table(
+            feature_view_name,
+            feature_view,
+            fully_qualified_name,
+            column_descs,
+            tagging_clause_str,
+            schedule_task,
+            feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse,
+            block,
+            overwrite,
+        )
+        created.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
+        if schedule_task:
+            created.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
+        return created
 
     def _check_dynamic_table_refresh_mode(self, feature_view_name: SqlIdentifier) -> None:
         found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
@@ -2173,7 +2878,9 @@ class FeatureStore:
         ]
         return dynamic_table_results + view_results
 
-    def _update_feature_view_status(self, feature_view: FeatureView, operation: str) -> FeatureView:
+    def _update_feature_view_status(
+        self, feature_view: FeatureView, operation: str, store_type: Optional[fv_mod.StoreType] = None
+    ) -> FeatureView:
         assert operation in [
             "RESUME",
             "SUSPEND",
@@ -2186,21 +2893,51 @@ class FeatureStore:
             )
 
         fully_qualified_name = feature_view.fully_qualified_name()
-        try:
-            self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} {operation}").collect(
-                statement_params=self._telemetry_stmp
-            )
-            if operation != "REFRESH":
-                self._session.sql(f"ALTER TASK IF EXISTS {fully_qualified_name} {operation}").collect(
+
+        # Handle offline feature view (default for suspend/resume, or when explicitly requested)
+        if store_type is None or store_type == fv_mod.StoreType.OFFLINE:
+            try:
+                self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} {operation}").collect(
                     statement_params=self._telemetry_stmp
                 )
-        except Exception as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(f"Failed to update feature view {fully_qualified_name}'s status: {e}"),
-            ) from e
+                if operation != "REFRESH":
+                    self._session.sql(f"ALTER TASK IF EXISTS {fully_qualified_name} {operation}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(
+                        f"Failed to update feature view {fully_qualified_name}'s status: {e}"
+                    ),
+                ) from e
 
-        logger.info(f"Successfully {operation} FeatureView {feature_view.name}/{feature_view.version}.")
+        elif store_type == fv_mod.StoreType.ONLINE and operation in ["SUSPEND", "RESUME", "REFRESH"]:
+            if feature_view.online:
+                fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
+                try:
+                    self._session.sql(f"ALTER ONLINE FEATURE TABLE {fully_qualified_online_name} {operation}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                    logger.info(
+                        f"Successfully {operation.lower()}ed online feature table for "
+                        f"{feature_view.name}/{feature_view.version}"
+                    )
+                except Exception as e:
+                    # For refresh operations, raise the exception; for suspend/resume, just log warning
+                    if operation == "REFRESH":
+                        raise snowml_exceptions.SnowflakeMLException(
+                            error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                            original_exception=RuntimeError(
+                                f"Failed to refresh online feature table {fully_qualified_online_name}: {e}"
+                            ),
+                        ) from e
+                    else:
+                        # Log warning but don't fail the entire operation if online table operation
+                        # fails for suspend/resume
+                        logger.warning(f"Failed to {operation} online feature table {fully_qualified_online_name}: {e}")
+
+        logger.info(f"Successfully {operation.lower()}ed FeatureView {feature_view.name}/{feature_view.version}.")
         return self.get_feature_view(feature_view.name, feature_view.version)
 
     def _optimized_find_feature_views(
@@ -2245,7 +2982,80 @@ class FeatureStore:
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
         values.append(row["warehouse"] if "warehouse" in row else None)
         values.append(json.dumps(self._extract_cluster_by_columns(row["cluster_by"])) if "cluster_by" in row else None)
+
+        online_config_json = self._determine_online_config_from_oft(name, version, include_runtime_metadata=True)
+        values.append(online_config_json)
+
         output_values.append(values)
+
+    def _determine_online_config_from_oft(
+        self, name: str, version: str, *, include_runtime_metadata: bool = False
+    ) -> str:
+        """Determine online configuration by checking for corresponding online feature table.
+
+        Args:
+            name: Feature view name
+            version: Feature view version
+            include_runtime_metadata: If True, includes additional runtime metadata
+                (refresh_mode, scheduling_state) in the JSON for display purposes.
+                If False, returns only OnlineConfig-compatible JSON.
+
+        Returns:
+            JSON string of OnlineConfig with enable=True and table's target_lag if online table exists,
+            otherwise default config with enable=False. When include_runtime_metadata=True,
+            may include additional fields not part of OnlineConfig.
+
+        Raises:
+            SnowflakeMLException: If multiple online feature tables found for the given name/version,
+                or if the online feature table is missing required 'target_lag' column.
+        """
+        online_table_name = FeatureView._get_online_table_name(name, version)
+
+        online_tables = self._find_object(object_type="ONLINE FEATURE TABLES", object_name=online_table_name)
+
+        if online_tables:
+            if len(online_tables) != 1:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(
+                        f"Expected exactly 1 online feature table for {online_table_name}, "
+                        f"but found {len(online_tables)}"
+                    ),
+                )
+
+            oft_row = online_tables[0]
+
+            def extract_field(row: Row, field_name: str) -> str:
+                if field_name in row:
+                    return str(row[field_name])
+                elif field_name.upper() in row:
+                    return str(row[field_name.upper()])
+                else:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                        original_exception=RuntimeError(
+                            f"Online feature table {online_table_name} missing required '{field_name}' column"
+                        ),
+                    )
+
+            # Extract required fields using consistent pattern
+            target_lag = extract_field(oft_row, "target_lag")
+
+            online_config = fv_mod.OnlineConfig(enable=True, target_lag=target_lag)
+
+            if include_runtime_metadata:
+                display_data = json.loads(online_config.to_json())
+
+                display_data["refresh_mode"] = extract_field(oft_row, "refresh_mode")
+                display_data["scheduling_state"] = extract_field(oft_row, "scheduling_state")
+
+                return json.dumps(display_data)
+            else:
+                return online_config.to_json()
+        else:
+            # No online feature table found - return default disabled config
+            online_config = fv_mod.OnlineConfig(enable=False, target_lag=fv_mod._DEFAULT_TARGET_LAG)
+            return online_config.to_json()
 
     def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> tuple[_FeatureViewMetadata, str]:
         if len(row["text"]) == 0:
@@ -2274,6 +3084,7 @@ class FeatureStore:
                 )
             fv_metadata = _FeatureViewMetadata.from_json(m.group("fv_metadata"))
             query = m.group("query")
+
             return (fv_metadata, query)
 
     def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: list[Row]) -> FeatureView:
@@ -2295,6 +3106,9 @@ class FeatureStore:
 
         infer_schema_df = self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
         desc = row["comment"]
+
+        online_config_json = self._determine_online_config_from_oft(name.identifier(), version)
+        online_config = fv_mod.OnlineConfig.from_json(online_config_json)
 
         if obj_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
             df = self._session.sql(query)
@@ -2332,6 +3146,7 @@ class FeatureStore:
                 infer_schema_df=infer_schema_df,
                 session=self._session,
                 cluster_by=self._extract_cluster_by_columns(row["cluster_by"]),
+                online_config=online_config,
             )
             return fv
         else:
@@ -2359,6 +3174,7 @@ class FeatureStore:
                 owner=row["owner"],
                 infer_schema_df=infer_schema_df,
                 session=self._session,
+                online_config=online_config,
             )
             return fv
 
@@ -2372,6 +3188,103 @@ class FeatureStore:
             if r["comment"] is not None:
                 descs[SqlIdentifier(r["name"], case_sensitive=True).identifier()] = r["comment"]
         return descs
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def _create_online_feature_table(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        overwrite: bool = False,
+    ) -> str:
+        """Create online feature table for the feature view.
+
+        Args:
+            feature_view: The FeatureView object for which to create the online feature table.
+            feature_view_name: The name of the feature view.
+            overwrite: Whether to overwrite existing online feature table. Defaults to False.
+
+        Returns:
+            The name of the created online table (without schema qualification).
+
+        Raises:
+            SnowflakeMLException: [ValueError] If OnlineConfig is required but not provided.
+            SnowflakeMLException: If creating the online feature table fails.
+        """
+        online_table_name = FeatureView._get_online_table_name(feature_view_name)
+
+        fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
+        source_table_name = feature_view_name
+
+        # Extract join keys for PRIMARY KEY (preserve order and ensure unique)
+        ordered_join_keys: list[str] = []
+        seen_join_keys: set[str] = set()
+        for entity in feature_view.entities:
+            for join_key in entity.join_keys:
+                resolved_key = join_key.resolved()
+                if resolved_key not in seen_join_keys:
+                    seen_join_keys.add(resolved_key)
+                    ordered_join_keys.append(resolved_key)
+        quoted_join_keys = [f'"{key}"' for key in ordered_join_keys]
+        primary_key_clause = f"PRIMARY KEY ({', '.join(quoted_join_keys)})"
+
+        # Build online config clauses
+        config = feature_view.online_config
+        if not config:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("OnlineConfig is required to create online feature table"),
+            )
+        target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._DEFAULT_TARGET_LAG
+        target_lag_clause = f"TARGET_LAG='{target_lag_value}'"
+
+        warehouse_clause = ""
+        if feature_view.warehouse:
+            warehouse_clause = f"WAREHOUSE={feature_view.warehouse}"
+        elif self._default_warehouse:
+            warehouse_clause = f"WAREHOUSE={self._default_warehouse}"
+
+        refresh_mode_clause = ""
+        if feature_view.refresh_mode:
+            refresh_mode_clause = f"REFRESH_MODE='{feature_view.refresh_mode}'"
+
+        timestamp_clause = ""
+        if feature_view.timestamp_col:
+            timestamp_clause = f"TIMESTAMP_COLUMN='{feature_view.timestamp_col}'"
+
+        # Create online feature table
+        try:
+            overwrite_clause = "OR REPLACE " if overwrite else ""
+
+            query_parts = [
+                f"CREATE {overwrite_clause}ONLINE FEATURE TABLE {fully_qualified_online_name}",
+                primary_key_clause,
+                refresh_mode_clause,
+                timestamp_clause,
+                warehouse_clause,
+                target_lag_clause,
+                f"FROM {source_table_name}",
+            ]
+
+            query = " ".join(part for part in query_parts if part)
+            self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+
+            oft_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, snowml_version.VERSION)
+            tag_clause = f"""
+                ALTER ONLINE FEATURE TABLE {fully_qualified_online_name} SET TAG
+                {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{oft_obj_info.to_json()}'
+            """
+
+            self._session.sql(tag_clause).collect(statement_params=self._telemetry_stmp)
+        except Exception as e:
+            logger.error(f"Failed to create online feature table for {feature_view.name}: {e}")
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"Create online feature table {fully_qualified_online_name} failed: {e}"
+                ),
+            ) from e
+
+        return online_table_name
 
     def _find_object(
         self,
@@ -2410,13 +3323,21 @@ class FeatureStore:
             all_rows = self._session.sql(f"SHOW {object_type} LIKE '{match_name}' {search_scope}").collect(
                 statement_params=self._telemetry_stmp
             )
-            # There could be none-FS objects under FS schema, thus filter on objects with FS special tag.
+            # There could be non-FS objects under FS schema, thus filter on objects with FS special tag.
             if object_type not in tag_free_object_types and len(all_rows) > 0:
                 fs_obj_rows = self._lookup_tagged_objects(
                     _FEATURE_STORE_OBJECT_TAG, [lambda d: d["domain"] == obj_domain]
                 )
                 fs_tag_objects = [row["entityName"] for row in fs_obj_rows]
         except Exception as e:
+            # ONLINE FEATURE TABLE preview feature may raise SQL error if not enabled
+            # Return empty list for discovery flows in this case
+            if (
+                object_type == "ONLINE FEATURE TABLES"
+                and isinstance(e, SnowparkSQLException)
+                and ("unexpected 'online'" in str(e).lower())
+            ):
+                return []
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                 original_exception=RuntimeError(f"Failed to find object : {e}"),
@@ -2631,3 +3552,101 @@ class FeatureStore:
             # Handle both quoted and unquoted column names.
             return re.findall(identifier.SF_IDENTIFIER_RE, match.group(1))
         return []
+
+    def _build_select_clause_and_validate(
+        self, feature_view: FeatureView, feature_names: Optional[list[str]], include_join_keys: bool = True
+    ) -> str:
+        """Build SELECT clause for feature view queries and validate feature names.
+
+        Args:
+            feature_view: The feature view to build the clause for
+            feature_names: Optional list of feature names to include
+            include_join_keys: Whether to include join keys in the select clause
+
+        Returns:
+            SELECT clause string
+
+        Raises:
+            SnowflakeMLException: If requested feature names don't exist
+        """
+        if feature_names:
+            # Validate feature names exist
+            available_features = [f.name for f in feature_view.output_schema.fields]
+            for feature_name in feature_names:
+                if feature_name not in available_features:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ARGUMENT,
+                        original_exception=ValueError(
+                            f"Feature '{feature_name}' not found in feature view. "
+                            f"Available features: {available_features}"
+                        ),
+                    )
+
+            # Build select clause with join keys and requested features
+            select_columns = []
+            if include_join_keys:
+                all_join_keys = []
+                for entity in feature_view.entities:
+                    all_join_keys.extend([key.resolved() for key in entity.join_keys])
+                select_columns.extend([f'"{key}"' for key in all_join_keys])
+
+            select_columns.extend([f'"{name}"' for name in feature_names])
+            return ", ".join(select_columns)
+        else:
+            # Select all columns
+            return "*"
+
+    def _build_where_clause_for_keys(self, feature_view: FeatureView, keys: Optional[list[list[str]]]) -> str:
+        """Build WHERE clause for key filtering.
+
+        Args:
+            feature_view: The feature view to build the clause for
+            keys: Optional list of key value lists to filter by
+
+        Returns:
+            WHERE clause string (empty if no keys provided)
+
+        Raises:
+            SnowflakeMLException: If key structure is invalid
+        """
+        if not keys:
+            return ""
+
+        # Get join keys from entities for key filtering
+        all_join_keys = []
+        for entity in feature_view.entities:
+            all_join_keys.extend([key.resolved() for key in entity.join_keys])
+
+        # Validate key structure
+        for key_values in keys:
+            if len(key_values) != len(all_join_keys):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Each key must have {len(all_join_keys)} values for join keys {all_join_keys}, "
+                        f"got {len(key_values)} values"
+                    ),
+                )
+
+        where_conditions = []
+        for key_values in keys:
+            key_conditions = []
+            for join_key, value in zip(all_join_keys, key_values):
+                safe_value = str(value).replace("'", "''")
+                key_conditions.append(f"\"{join_key}\" = '{safe_value}'")
+            where_conditions.append(f"({' AND '.join(key_conditions)})")
+
+        return f" WHERE {' OR '.join(where_conditions)}"
+
+    def _get_store_type(self, store_type: Union[fv_mod.StoreType, str]) -> fv_mod.StoreType:
+        """Return a StoreType enum from a Union[StoreType, str].
+
+        Args:
+            store_type: Store type enum or string value.
+
+        Returns:
+            StoreType enum value.
+        """
+        if isinstance(store_type, str):
+            return fv_mod.StoreType(store_type.lower())
+        return store_type

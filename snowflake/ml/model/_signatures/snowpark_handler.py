@@ -84,7 +84,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             return json.loads(x)
 
         for field in data.schema.fields:
-            if isinstance(field.datatype, spt.ArrayType):
+            if isinstance(field.datatype, (spt.ArrayType, spt.MapType, spt.StructType)):
                 df_local[identifier.get_unescaped_names(field.name)] = df_local[
                     identifier.get_unescaped_names(field.name)
                 ].map(load_if_not_null)

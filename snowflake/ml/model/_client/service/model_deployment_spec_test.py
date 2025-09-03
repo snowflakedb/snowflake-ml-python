@@ -280,13 +280,11 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 num_workers=10,
                 max_batch_rows=1024,
                 warehouse=sql_identifier.SqlIdentifier("warehouse"),
-                target_method="predict",
-                input_table_database_name=sql_identifier.SqlIdentifier("input_table_db"),
-                input_table_schema_name=sql_identifier.SqlIdentifier("input_table_schema"),
-                input_table_name=sql_identifier.SqlIdentifier("input_table"),
-                output_table_database_name=sql_identifier.SqlIdentifier("output_table_db"),
-                output_table_schema_name=sql_identifier.SqlIdentifier("output_table_schema"),
-                output_table_name=sql_identifier.SqlIdentifier("output_table"),
+                function_name="function_name",
+                input_stage_location="input_stage_location",
+                output_stage_location="output_stage_location",
+                completion_filename="completion_filename",
+                input_file_pattern="*",
             )
             file_path_str = mds.save()
 
@@ -313,9 +311,15 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "num_workers": 10,
                             "max_batch_rows": 1024,
                             "warehouse": "WAREHOUSE",
-                            "target_method": "predict",
-                            "input_table_name": "INPUT_TABLE_DB.INPUT_TABLE_SCHEMA.INPUT_TABLE",
-                            "output_table_name": "OUTPUT_TABLE_DB.OUTPUT_TABLE_SCHEMA.OUTPUT_TABLE",
+                            "function_name": "function_name",
+                            "input": {
+                                "input_stage_location": "input_stage_location",
+                                "input_file_pattern": "*",
+                            },
+                            "output": {
+                                "output_stage_location": "output_stage_location",
+                                "completion_filename": "completion_filename",
+                            },
                         },
                     },
                 )
@@ -502,9 +506,11 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 job_name=sql_identifier.SqlIdentifier("job"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
                 warehouse=sql_identifier.SqlIdentifier("wh"),
-                target_method="predict",
-                input_table_name=sql_identifier.SqlIdentifier("in"),
-                output_table_name=sql_identifier.SqlIdentifier("out"),
+                function_name="function_name",
+                input_stage_location="input_stage_location",
+                output_stage_location="output_stage_location",
+                completion_filename="completion_filename",
+                input_file_pattern="*",
             )
 
         mds_job = model_deployment_spec.ModelDeploymentSpec()
@@ -518,9 +524,12 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             job_name=sql_identifier.SqlIdentifier("job"),
             inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
             warehouse=sql_identifier.SqlIdentifier("wh"),
-            target_method="predict",
-            input_table_name=sql_identifier.SqlIdentifier("in"),
-            output_table_name=sql_identifier.SqlIdentifier("out"),
+            function_name="function_name",
+            input_stage_location="input_stage_location",
+            output_stage_location="output_stage_location",
+            completion_filename="completion_filename",
+            input_file_pattern="*",
+            num_workers=1,
         )
         with self.assertRaisesRegex(ValueError, "Cannot add a service spec when a job spec already exists"):
             mds_job.add_service_spec(

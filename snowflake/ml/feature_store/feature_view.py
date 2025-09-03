@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import warnings
 from collections import OrderedDict
@@ -31,10 +32,12 @@ from snowflake.snowpark.types import (
     _NumericType,
 )
 
+_DEFAULT_TARGET_LAG = "10 seconds"
 _FEATURE_VIEW_NAME_DELIMITER = "$"
 _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS = ["FS_TIMESTAMP_COL_PLACEHOLDER_VAL", "NULL"]
 _TIMESTAMP_COL_PLACEHOLDER = "NULL"
 _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
+_ONLINE_TABLE_SUFFIX = "$ONLINE"
 # Feature view version rule is aligned with dataset version rule in SQL.
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _FEATURE_VIEW_VERSION_MAX_LENGTH = 128
@@ -43,6 +46,44 @@ _RESULT_SCAN_QUERY_PATTERN = re.compile(
     r".*FROM\s*TABLE\s*\(\s*RESULT_SCAN\s*\(.*",
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
+
+
+@dataclass(frozen=True)
+class OnlineConfig:
+    """Configuration for online feature storage."""
+
+    enable: bool = False
+    target_lag: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.target_lag is None:
+            return
+        if not isinstance(self.target_lag, str) or not self.target_lag.strip():
+            raise ValueError("target_lag must be a non-empty string")
+
+        object.__setattr__(self, "target_lag", self.target_lag.strip())
+
+    def to_json(self) -> str:
+        data: dict[str, Any] = asdict(self)
+        return json.dumps(data)
+
+    @classmethod
+    def from_json(cls, json_str: str) -> OnlineConfig:
+        data = json.loads(json_str)
+        return cls(**data)
+
+
+class StoreType(Enum):
+    """
+    Enumeration for specifying the storage type when reading from or refreshing feature views.
+
+    The Feature View supports two storage modes:
+    - OFFLINE: Traditional batch storage for historical feature data and training
+    - ONLINE: Low-latency storage optimized for real-time feature serving
+    """
+
+    ONLINE = "online"
+    OFFLINE = "offline"
 
 
 @dataclass(frozen=True)
@@ -171,6 +212,7 @@ class FeatureView(lineage_node.LineageNode):
         initialize: str = "ON_CREATE",
         refresh_mode: str = "AUTO",
         cluster_by: Optional[list[str]] = None,
+        online_config: Optional[OnlineConfig] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -204,6 +246,8 @@ class FeatureView(lineage_node.LineageNode):
             cluster_by: Columns to cluster the feature view by.
                 - Defaults to the join keys from entities.
                 - If `timestamp_col` is provided, it is added to the default clustering keys.
+            online_config: Optional configuration for online storage. If provided with enable=True,
+                online storage will be enabled. Defaults to None (no online storage).
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -227,9 +271,26 @@ class FeatureView(lineage_node.LineageNode):
             >>> registered_fv = fs.register_feature_view(draft_fv, "v1")
             >>> print(registered_fv.status)
             FeatureViewStatus.ACTIVE
+            <BLANKLINE>
+            >>> # Example with online configuration for online feature storage
+            >>> config = OnlineConfig(enable=True, target_lag='15s')
+            >>> online_fv = FeatureView(
+            ...     name="my_online_fv",
+            ...     entities=[e1, e2],
+            ...     feature_df=feature_df,
+            ...     timestamp_col='TS',
+            ...     refresh_freq='1d',
+            ...     desc='Feature view with online storage',
+            ...     online_config=config  # optional, enables online feature storage
+            ... )
+            >>> registered_online_fv = fs.register_feature_view(online_fv, "v1")
+            >>> print(registered_online_fv.online)
+            True
 
         # noqa: DAR401
         """
+        if online_config is not None:
+            logging.warning("'online_config' is in private preview since 1.12.0. Do not use it in production.")
 
         self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: list[Entity] = entities
@@ -257,6 +318,7 @@ class FeatureView(lineage_node.LineageNode):
         self._cluster_by: list[SqlIdentifier] = (
             [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
         )
+        self._online_config: Optional[OnlineConfig] = online_config
 
         # Validate kwargs
         if _kwargs:
@@ -469,6 +531,31 @@ class FeatureView(lineage_node.LineageNode):
     @property
     def feature_descs(self) -> Optional[dict[SqlIdentifier, str]]:
         return self._feature_desc
+
+    @property
+    def online(self) -> bool:
+        return self._online_config.enable if self._online_config else False
+
+    @property
+    def online_config(self) -> Optional[OnlineConfig]:
+        return self._online_config
+
+    def fully_qualified_online_table_name(self) -> str:
+        """Get the fully qualified name for the online feature table.
+
+        Returns:
+            The fully qualified name (<database_name>.<schema_name>.<online_table_name>) for the
+            online feature table in Snowflake.
+
+        Raises:
+            RuntimeError: if the FeatureView is not registered or not configured for online storage.
+        """
+        if self.status == FeatureViewStatus.DRAFT or self.version is None:
+            raise RuntimeError(f"FeatureView {self.name} has not been registered.")
+        if not self.online:
+            raise RuntimeError(f"FeatureView {self.name} is not configured for online storage.")
+        online_table_name = self._get_online_table_name(self.name, self.version)
+        return f"{self._database}.{self._schema}.{online_table_name}"
 
     def list_columns(self) -> DataFrame:
         """List all columns and their information.
@@ -756,6 +843,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 feature_desc_dict[k.identifier()] = v
             fv_dict["_feature_desc"] = feature_desc_dict
 
+        fv_dict["_online_config"] = self._online_config.to_json() if self._online_config is not None else None
+
         lineage_node_keys = [key for key in fv_dict if key.startswith("_node") or key == "_session"]
 
         for key in lineage_node_keys:
@@ -844,6 +933,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             owner=json_dict["_owner"],
             infer_schema_df=session.sql(json_dict.get("_infer_schema_query", None)),
             session=session,
+            online_config=OnlineConfig.from_json(json_dict["_online_config"])
+            if json_dict.get("_online_config")
+            else None,
         )
 
     def _get_compact_repr(self) -> _CompactRepresentation:
@@ -916,6 +1008,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         infer_schema_df: Optional[DataFrame],
         session: Session,
         cluster_by: Optional[list[str]] = None,
+        online_config: Optional[OnlineConfig] = None,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -925,6 +1018,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             desc=desc,
             _infer_schema_df=infer_schema_df,
             cluster_by=cluster_by,
+            online_config=online_config,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
@@ -960,6 +1054,34 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             default_cluster_by_cols.append(self.timestamp_col)
 
         return default_cluster_by_cols
+
+    @staticmethod
+    def _get_online_table_name(
+        feature_view_name: Union[SqlIdentifier, str], version: Optional[Union[FeatureViewVersion, str]] = None
+    ) -> SqlIdentifier:
+        """Get the online feature table name without qualification.
+
+        Args:
+            feature_view_name: Offline feature view name.
+            version: Feature view version. If not provided, feature_view_name must be a SqlIdentifier.
+
+        Returns:
+            The online table name SqlIdentifier
+        """
+        if version is None:
+            assert isinstance(feature_view_name, SqlIdentifier), "Single argument must be SqlIdentifier"
+            online_name = f"{feature_view_name.resolved()}{_ONLINE_TABLE_SUFFIX}"
+            return SqlIdentifier(online_name, case_sensitive=True)
+        else:
+            fv_name = (
+                feature_view_name
+                if isinstance(feature_view_name, SqlIdentifier)
+                else SqlIdentifier(feature_view_name, case_sensitive=True)
+            )
+            fv_version = version if isinstance(version, FeatureViewVersion) else FeatureViewVersion(version)
+            physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
+            online_name = f"{physical_name}{_ONLINE_TABLE_SUFFIX}"
+            return SqlIdentifier(online_name, case_sensitive=True)
 
 
 lineage_node.DOMAIN_LINEAGE_REGISTRY["feature_view"] = FeatureView

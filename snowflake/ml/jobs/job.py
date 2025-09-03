@@ -99,21 +99,23 @@ class MLJob(Generic[T], SerializableSessionMixin):
         result_path_str = self._container_spec["env"].get(constants.RESULT_PATH_ENV_VAR)
         if result_path_str is None:
             raise RuntimeError(f"Job {self.name} doesn't have a result path configured")
+
+        # If result path is relative, it is relative to the stage mount path
+        result_path = Path(result_path_str)
+        if not result_path.is_absolute():
+            return f"{self._stage_path}/{result_path.as_posix()}"
+
+        # If result path is absolute, it is relative to the stage mount path
         volume_mounts = self._container_spec["volumeMounts"]
         stage_mount_str = next(v for v in volume_mounts if v.get("name") == constants.STAGE_VOLUME_NAME)["mountPath"]
-
-        result_path = Path(result_path_str)
         stage_mount = Path(stage_mount_str)
         try:
             relative_path = result_path.relative_to(stage_mount)
+            return f"{self._stage_path}/{relative_path.as_posix()}"
         except ValueError:
-            if result_path.is_absolute():
-                raise ValueError(
-                    f"Result path {result_path} is absolute, but should be relative to stage mount {stage_mount}"
-                )
-            relative_path = result_path
-
-        return f"{self._stage_path}/{relative_path.as_posix()}"
+            raise ValueError(
+                f"Result path {result_path} is absolute, but should be relative to stage mount {stage_mount}"
+            )
 
     @overload
     def get_logs(
@@ -419,15 +421,29 @@ def _get_head_instance_id(session: snowpark.Session, job_id: str) -> Optional[in
     if not rows:
         return None
 
-    if target_instances > len(rows):
-        raise RuntimeError("Couldn’t retrieve head instance due to missing instances.")
+    # we have already integrated with first_instance startup policy,
+    # the instance 0 is guaranteed to be the head instance
+    head_instance = next(
+        (
+            row
+            for row in rows
+            if "instance_id" in row and row["instance_id"] is not None and int(row["instance_id"]) == 0
+        ),
+        None,
+    )
+    # fallback to find the first instance if the instance 0 is not found
+    if not head_instance:
+        if target_instances > len(rows):
+            raise RuntimeError(
+                f"Couldn’t retrieve head instance due to missing instances. {target_instances} > {len(rows)}"
+            )
+        # Sort by start_time first, then by instance_id
+        try:
+            sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
+        except TypeError:
+            raise RuntimeError("Job instance information unavailable.")
+        head_instance = sorted_instances[0]
 
-    # Sort by start_time first, then by instance_id
-    try:
-        sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
-    except TypeError:
-        raise RuntimeError("Job instance information unavailable.")
-    head_instance = sorted_instances[0]
     if not head_instance["start_time"]:
         # If head instance hasn't started yet, return None
         return None

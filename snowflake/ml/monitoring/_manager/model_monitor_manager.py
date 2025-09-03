@@ -108,6 +108,7 @@ class ModelMonitorManager:
         prediction_class_columns = self._build_column_list_from_input(source_config.prediction_class_columns)
         actual_score_columns = self._build_column_list_from_input(source_config.actual_score_columns)
         actual_class_columns = self._build_column_list_from_input(source_config.actual_class_columns)
+        segment_columns = self._build_column_list_from_input(source_config.segment_columns)
 
         id_columns = [sql_identifier.SqlIdentifier(column_name) for column_name in source_config.id_columns]
         ts_column = sql_identifier.SqlIdentifier(source_config.timestamp_column)
@@ -123,6 +124,7 @@ class ModelMonitorManager:
             actual_score_columns=actual_score_columns,
             actual_class_columns=actual_class_columns,
             id_columns=id_columns,
+            segment_columns=segment_columns,
         )
 
         self._model_monitor_client.create_model_monitor(
@@ -144,6 +146,7 @@ class ModelMonitorManager:
             prediction_class_columns=prediction_class_columns,
             actual_score_columns=actual_score_columns,
             actual_class_columns=actual_class_columns,
+            segment_columns=segment_columns,
             refresh_interval=model_monitor_config.refresh_interval,
             aggregation_window=model_monitor_config.aggregation_window,
             baseline_database=baseline_database_name_id,

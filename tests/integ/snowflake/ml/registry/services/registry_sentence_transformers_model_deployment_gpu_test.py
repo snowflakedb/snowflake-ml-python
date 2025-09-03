@@ -30,12 +30,10 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self._original_cache_dir
         self.cache_dir.cleanup()
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["sentence-transformers"]],
-    )
-    def test_sentence_transformers(
+    def _test_sentence_transformers(
         self,
         pip_requirements: Optional[list[str]],
+        use_default_repo: bool,
     ) -> None:
         import sentence_transformers
 
@@ -72,7 +70,22 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             pip_requirements=pip_requirements,
+            use_default_repo=use_default_repo,
         )
+
+    @parameterized.product(  # type: ignore[misc]
+        pip_requirements=[None, ["sentence-transformers"]],
+    )
+    def test_sentence_transformers(
+        self,
+        pip_requirements: Optional[list[str]],
+    ) -> None:
+        self._test_sentence_transformers(pip_requirements, use_default_repo=False)
+
+    def test_sentence_transformers_with_default_repo(
+        self,
+    ) -> None:
+        self._test_sentence_transformers(None, use_default_repo=True)
 
 
 if __name__ == "__main__":

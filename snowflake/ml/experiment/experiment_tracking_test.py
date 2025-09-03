@@ -8,6 +8,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import _entities as entities, experiment_tracking
+from snowflake.ml.experiment._client import artifact
 from snowflake.ml.experiment._entities import run_metadata
 from snowflake.snowpark import session
 
@@ -322,6 +323,34 @@ class ExperimentTrackingTest(absltest.TestCase):
             # Verify registry.log_model was called with original arguments
             self.mock_registry.log_model.assert_called_once_with(mock_model, model_name="test", version_name="v1")
 
+    def test_log_artifact(self) -> None:
+        """Test logging artifact with nested artifact path"""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        run = exp.start_run("TEST_RUN")
+        # Mock artifact expansion to simulate nested paths
+        mock_pairs = [
+            ("/tmp/file1.txt", "nested/path"),
+            ("/tmp/subdir/file2.bin", "nested/path/subdir"),
+        ]
+        with patch(
+            "snowflake.ml.experiment._client.artifact.get_put_path_pairs",
+            return_value=mock_pairs,
+        ) as mock_get_pairs:
+            exp.log_artifact(local_path="/local/dir", artifact_path="nested/path")
+
+            # Verify expansion was called with provided args
+            mock_get_pairs.assert_called_once_with("/local/dir", "nested/path")
+
+        # Verify put_artifact was called for each pair with correct kwargs
+        self.assertEqual(self.mock_sql_client.put_artifact.call_count, len(mock_pairs))
+        for idx, (file_path, dest_artifact_path) in enumerate(mock_pairs):
+            call_kwargs = self.mock_sql_client.put_artifact.call_args_list[idx][1]
+            self.assertEqual(call_kwargs["experiment_name"], run.experiment_name)
+            self.assertEqual(call_kwargs["run_name"], run.name)
+            self.assertEqual(call_kwargs["artifact_path"], dest_artifact_path)
+            self.assertEqual(call_kwargs["file_path"], file_path)
+
     def test_delete_run_no_experiment_raises_error(self) -> None:
         """Test that deleting a run without an experiment raises RuntimeError"""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
@@ -363,6 +392,94 @@ class ExperimentTrackingTest(absltest.TestCase):
 
         self.assertIn(expected_run_line, output)
         self.assertIn(expected_experiment_line, output)
+
+    def test_list_artifacts(self) -> None:
+        # Prepare fake return from sql client
+        expected = [
+            artifact.ArtifactInfo(name="file1.txt", size=10, md5="aaa", last_modified="2024-01-01"),
+            artifact.ArtifactInfo(name="dir/file2.bin", size=20, md5="bbb", last_modified="2024-01-02"),
+        ]
+        self.mock_sql_client.list_artifacts.return_value = expected
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+
+        # Test that listing artifacts without an experiment raises an error
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.list_artifacts(run_name="RUN1")
+        self.assertIn("No experiment set. Please set an experiment before listing artifacts.", str(ctx.exception))
+
+        # Test that listing artifacts with an experiment works
+        exp.set_experiment("EXP1")
+        res = exp.list_artifacts(run_name="RUN1")
+
+        # Verify delegation to SQL client with root path
+        self.mock_sql_client.list_artifacts.assert_called_once()
+        kwargs = self.mock_sql_client.list_artifacts.call_args[1]
+        self.assertEqual(kwargs["experiment_name"].identifier(), "EXP1")
+        self.assertEqual(kwargs["run_name"].identifier(), "RUN1")
+        self.assertEqual(kwargs["artifact_path"], "")
+        self.assertIs(res, expected)
+
+    def test_download_artifacts(self) -> None:
+        # Scenario 1: raises without experiment
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.download_artifacts(run_name="RUN1")
+        self.assertIn("No experiment set. Please set an experiment before downloading artifacts.", str(ctx.exception))
+
+        # Scenario 2: explicit artifact_path and target_path
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        expected_artifacts_1 = [
+            artifact.ArtifactInfo(name="sub/dir/a.txt", size=1, md5="md5a", last_modified="2024-01-01"),
+            artifact.ArtifactInfo(name="sub/dir/b.bin", size=2, md5="md5b", last_modified="2024-01-02"),
+        ]
+        self.mock_sql_client.list_artifacts.reset_mock()
+        self.mock_sql_client.get_artifact.reset_mock()
+        self.mock_sql_client.list_artifacts.return_value = expected_artifacts_1
+        pairs_1 = [("sub/dir/a.txt", "/tmp/out"), ("sub/dir/b.bin", "/tmp/out/sub")]
+        with patch(
+            "snowflake.ml.experiment._client.artifact.get_download_path_pairs",
+            return_value=pairs_1,
+        ) as mock_get_pairs:
+            exp.download_artifacts(run_name="RUN1", artifact_path="sub/dir", target_path="/tmp/out")
+            self.mock_sql_client.list_artifacts.assert_called_once()
+            list_kwargs = self.mock_sql_client.list_artifacts.call_args[1]
+            self.assertEqual(list_kwargs["experiment_name"].identifier(), "EXP1")
+            self.assertEqual(list_kwargs["run_name"].identifier(), "RUN1")
+            self.assertEqual(list_kwargs["artifact_path"], "sub/dir")
+            mock_get_pairs.assert_called_once_with(expected_artifacts_1, "/tmp/out")
+        self.assertEqual(self.mock_sql_client.get_artifact.call_count, len(pairs_1))
+        for idx, (rel_path, local_dir) in enumerate(pairs_1):
+            call_kwargs = self.mock_sql_client.get_artifact.call_args_list[idx][1]
+            self.assertEqual(call_kwargs["experiment_name"].identifier(), "EXP1")
+            self.assertEqual(call_kwargs["run_name"].identifier(), "RUN1")
+            self.assertEqual(call_kwargs["artifact_path"], rel_path)
+            self.assertEqual(call_kwargs["target_path"], local_dir)
+
+        # Scenario 3: defaults for artifact_path and target_path
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP2")
+        expected_artifacts_2: list[artifact.ArtifactInfo] = []
+        self.mock_sql_client.list_artifacts.reset_mock()
+        self.mock_sql_client.get_artifact.reset_mock()
+        self.mock_sql_client.list_artifacts.return_value = expected_artifacts_2
+        pairs_2 = [("a.txt", ""), ("b.bin", "subdir")]
+        with patch(
+            "snowflake.ml.experiment._client.artifact.get_download_path_pairs",
+            return_value=pairs_2,
+        ) as mock_get_pairs:
+            exp.download_artifacts(run_name="RUN2")
+            list_kwargs = self.mock_sql_client.list_artifacts.call_args[1]
+            self.assertEqual(list_kwargs["artifact_path"], "")
+            mock_get_pairs.assert_called_once_with(expected_artifacts_2, "")
+        self.assertEqual(self.mock_sql_client.get_artifact.call_count, len(pairs_2))
+        for idx, (rel_path, local_dir) in enumerate(pairs_2):
+            call_kwargs = self.mock_sql_client.get_artifact.call_args_list[idx][1]
+            self.assertEqual(call_kwargs["experiment_name"].identifier(), "EXP2")
+            self.assertEqual(call_kwargs["run_name"].identifier(), "RUN2")
+            self.assertEqual(call_kwargs["artifact_path"], rel_path)
+            self.assertEqual(call_kwargs["target_path"], local_dir)
 
 
 if __name__ == "__main__":

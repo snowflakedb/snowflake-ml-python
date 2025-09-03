@@ -26,12 +26,10 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
         self.cache_dir.cleanup()
 
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["transformers"]],
-    )
-    def test_text_generation(
+    def _test_text_generation(
         self,
         pip_requirements: Optional[list[str]],
+        use_default_repo: bool,
     ) -> None:
         import transformers
 
@@ -71,7 +69,22 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             pip_requirements=pip_requirements,
+            use_default_repo=use_default_repo,
         )
+
+    @parameterized.product(  # type: ignore[misc]
+        pip_requirements=[None, ["transformers"]],
+    )
+    def test_text_generation(
+        self,
+        pip_requirements: Optional[list[str]],
+    ) -> None:
+        self._test_text_generation(pip_requirements, use_default_repo=False)
+
+    def test_text_generation_with_default_repo(
+        self,
+    ) -> None:
+        self._test_text_generation(None, use_default_repo=True)
 
 
 if __name__ == "__main__":

@@ -194,16 +194,14 @@ class ModelDeploymentSpec:
         self,
         job_name: sql_identifier.SqlIdentifier,
         inference_compute_pool_name: sql_identifier.SqlIdentifier,
+        function_name: str,
+        input_stage_location: str,
+        output_stage_location: str,
+        completion_filename: str,
+        input_file_pattern: str,
         warehouse: sql_identifier.SqlIdentifier,
-        target_method: str,
-        input_table_name: sql_identifier.SqlIdentifier,
-        output_table_name: sql_identifier.SqlIdentifier,
         job_database_name: Optional[sql_identifier.SqlIdentifier] = None,
         job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
-        input_table_database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        input_table_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
-        output_table_database_name: Optional[sql_identifier.SqlIdentifier] = None,
-        output_table_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
         cpu: Optional[str] = None,
         memory: Optional[str] = None,
         gpu: Optional[Union[str, int]] = None,
@@ -215,16 +213,14 @@ class ModelDeploymentSpec:
         Args:
             job_name: Name of the job.
             inference_compute_pool_name: Compute pool for inference.
+            warehouse: Warehouse for the job.
+            function_name: Function name.
+            input_stage_location: Stage location for input data.
+            output_stage_location: Stage location for output data.
             job_database_name: Database name for the job.
             job_schema_name: Schema name for the job.
-            warehouse: Warehouse for the job.
-            target_method: Target method for inference.
-            input_table_name: Input table name.
-            output_table_name: Output table name.
-            input_table_database_name: Database for input table.
-            input_table_schema_name: Schema for input table.
-            output_table_database_name: Database for output table.
-            output_table_schema_name: Schema for output table.
+            input_file_pattern: Pattern for input files (optional).
+            completion_filename: Name of completion file (default: "completion.txt").
             cpu: CPU requirement.
             memory: Memory requirement.
             gpu: GPU requirement.
@@ -242,30 +238,12 @@ class ModelDeploymentSpec:
 
         saved_job_database = job_database_name or self.database
         saved_job_schema = job_schema_name or self.schema
-        input_table_database_name = input_table_database_name or self.database
-        input_table_schema_name = input_table_schema_name or self.schema
-        output_table_database_name = output_table_database_name or self.database
-        output_table_schema_name = output_table_schema_name or self.schema
 
         assert saved_job_database is not None
         assert saved_job_schema is not None
-        assert input_table_database_name is not None
-        assert input_table_schema_name is not None
-        assert output_table_database_name is not None
-        assert output_table_schema_name is not None
 
         fq_job_name = identifier.get_schema_level_object_identifier(
             saved_job_database.identifier(), saved_job_schema.identifier(), job_name.identifier()
-        )
-        fq_input_table_name = identifier.get_schema_level_object_identifier(
-            input_table_database_name.identifier(),
-            input_table_schema_name.identifier(),
-            input_table_name.identifier(),
-        )
-        fq_output_table_name = identifier.get_schema_level_object_identifier(
-            output_table_database_name.identifier(),
-            output_table_schema_name.identifier(),
-            output_table_name.identifier(),
         )
 
         self._add_inference_spec(cpu, memory, gpu, num_workers, max_batch_rows)
@@ -273,10 +251,15 @@ class ModelDeploymentSpec:
         self._job = model_deployment_spec_schema.Job(
             name=fq_job_name,
             compute_pool=inference_compute_pool_name.identifier(),
-            warehouse=warehouse.identifier(),
-            target_method=target_method,
-            input_table_name=fq_input_table_name,
-            output_table_name=fq_output_table_name,
+            warehouse=warehouse.identifier() if warehouse else None,
+            function_name=function_name,
+            input=model_deployment_spec_schema.Input(
+                input_stage_location=input_stage_location, input_file_pattern=input_file_pattern
+            ),
+            output=model_deployment_spec_schema.Output(
+                output_stage_location=output_stage_location,
+                completion_filename=completion_filename,
+            ),
             **self._inference_spec,
         )
         return self

@@ -46,3 +46,29 @@ class ModelMonitor:
             telemetry.TelemetrySubProject.MONITORING.value,
         )
         self._model_monitor_client.resume_monitor(self.name, statement_params=statement_params)
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    def add_segment_column(self, segment_column: str) -> None:
+        """Add a segment column to the Model Monitor"""
+        statement_params = telemetry.get_statement_params(
+            telemetry.TelemetryProject.MLOPS.value,
+            telemetry.TelemetrySubProject.MONITORING.value,
+        )
+        segment_column_id = sql_identifier.SqlIdentifier(segment_column)
+        self._model_monitor_client.add_segment_column(self.name, segment_column_id, statement_params=statement_params)
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    def drop_segment_column(self, segment_column: str) -> None:
+        """Drop a segment column from the Model Monitor"""
+        statement_params = telemetry.get_statement_params(
+            telemetry.TelemetryProject.MLOPS.value,
+            telemetry.TelemetrySubProject.MONITORING.value,
+        )
+        segment_column_id = sql_identifier.SqlIdentifier(segment_column)
+        self._model_monitor_client.drop_segment_column(self.name, segment_column_id, statement_params=statement_params)

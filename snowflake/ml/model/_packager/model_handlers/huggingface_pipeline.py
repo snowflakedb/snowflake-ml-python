@@ -1,6 +1,8 @@
 import json
 import logging
 import os
+import time
+import uuid
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
@@ -11,7 +13,12 @@ from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
-from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    custom_model,
+    model_signature,
+    openai_signatures,
+    type_hints as model_types,
+)
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
@@ -151,7 +158,10 @@ class HuggingFacePipelineHandler(
             assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
             params = {**model.__dict__, **model.model_kwargs}
 
-        inferred_pipe_sig = model_signature_utils.huggingface_pipeline_signature_auto_infer(task, params=params)
+        inferred_pipe_sig = model_signature_utils.huggingface_pipeline_signature_auto_infer(
+            task,
+            params=params,
+        )
 
         if not is_sub_model:
             target_methods = handlers_utils.get_target_methods(
@@ -401,6 +411,34 @@ class HuggingFacePipelineHandler(
                             ),
                             axis=1,
                         ).to_list()
+                    elif raw_model.task == "text-generation":
+                        # verify when the target method is __call__ and
+                        # if the signature is default text-generation signature
+                        # then use the HuggingFaceOpenAICompatibleModel to wrap the pipeline
+                        if signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC:
+                            wrapped_model = HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
+
+                            temp_res = X.apply(
+                                lambda row: wrapped_model.generate_chat_completion(
+                                    messages=row["messages"],
+                                    max_completion_tokens=row.get("max_completion_tokens", None),
+                                    temperature=row.get("temperature", None),
+                                    stop_strings=row.get("stop", None),
+                                    n=row.get("n", 1),
+                                    stream=row.get("stream", False),
+                                    top_p=row.get("top_p", 1.0),
+                                    frequency_penalty=row.get("frequency_penalty", None),
+                                    presence_penalty=row.get("presence_penalty", None),
+                                ),
+                                axis=1,
+                            ).to_list()
+                        else:
+                            if len(signature.inputs) > 1:
+                                input_data = X.to_dict("records")
+                            # If it is only expecting one argument, Then it is expecting a list of something.
+                            else:
+                                input_data = X[signature.inputs[0].name].to_list()
+                            temp_res = getattr(raw_model, target_method)(input_data)
                     else:
                         # For others, we could offer the whole dataframe as a list.
                         # Some of them may need some conversion
@@ -527,3 +565,170 @@ class HuggingFacePipelineHandler(
         hg_pipe_model = _HFPipelineModel(custom_model.ModelContext())
 
         return hg_pipe_model
+
+
+class HuggingFaceOpenAICompatibleModel:
+    """
+    A class to wrap a Hugging Face text generation model and provide an
+    OpenAI-compatible chat completion interface.
+    """
+
+    def __init__(self, pipeline: "transformers.Pipeline") -> None:
+        """
+        Initializes the model and tokenizer.
+
+        Args:
+            pipeline (transformers.pipeline): The Hugging Face pipeline to wrap.
+        """
+
+        self.pipeline = pipeline
+        self.model = self.pipeline.model
+        self.tokenizer = self.pipeline.tokenizer
+
+        self.model_name = self.pipeline.model.name_or_path
+
+    def _apply_chat_template(self, messages: list[dict[str, Any]]) -> str:
+        """
+        Applies a chat template to a list of messages.
+        If the tokenizer has a chat template, it uses that.
+        Otherwise, it falls back to a simple concatenation.
+
+        Args:
+            messages (list[dict]): A list of message dictionaries, e.g.,
+                                   [{"role": "user", "content": "Hello!"}, ...]
+
+        Returns:
+            The formatted prompt string ready for model input.
+        """
+
+        if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
+            # Use the tokenizer's built-in chat template if available
+            # `tokenize=False` means it returns a string, not token IDs
+            return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        else:
+            # Fallback to a simple concatenation for models without a specific chat template
+            # This is a basic example; real chat models often need specific formatting.
+            prompt = ""
+            for message in messages:
+                role = message.get("role", "user")
+                content = message.get("content", "")
+                if role == "system":
+                    prompt += f"System: {content}\n"
+                elif role == "user":
+                    prompt += f"User: {content}\n"
+                elif role == "assistant":
+                    prompt += f"Assistant: {content}\n"
+            prompt += "Assistant:"  # Indicate that the assistant should respond
+            return prompt
+
+    def generate_chat_completion(
+        self,
+        messages: list[dict[str, Any]],
+        max_completion_tokens: Optional[int] = None,
+        stream: Optional[bool] = False,
+        stop_strings: Optional[list[str]] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        frequency_penalty: Optional[float] = None,
+        presence_penalty: Optional[float] = None,
+        n: int = 1,
+    ) -> dict[str, Any]:
+        """
+        Generates a chat completion response in an OpenAI-compatible format.
+
+        Args:
+            messages (list[dict]): A list of message dictionaries, e.g.,
+                                   [{"role": "system", "content": "You are a helpful assistant."},
+                                    {"role": "user", "content": "What is deep learning?"}]
+            max_completion_tokens (int): The maximum number of completion tokens to generate.
+            stop_strings (list[str]): A list of strings to stop generation.
+            temperature (float): The temperature for sampling.
+            top_p (float): The top-p value for sampling.
+            stream (bool): Whether to stream the generation.
+            frequency_penalty (float): The frequency penalty for sampling.
+            presence_penalty (float): The presence penalty for sampling.
+            n (int): The number of samples to generate.
+
+        Returns:
+            dict: An OpenAI-compatible dictionary representing the chat completion.
+        """
+        # Apply chat template to convert messages into a single prompt string
+
+        prompt_text = self._apply_chat_template(messages)
+
+        # Tokenize the prompt
+        inputs = self.tokenizer(
+            prompt_text,
+            return_tensors="pt",
+            padding=True,
+        )
+        prompt_tokens = inputs.input_ids.shape[1]
+
+        from transformers import GenerationConfig
+
+        generation_config = GenerationConfig(
+            max_new_tokens=max_completion_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id,
+            stop_strings=stop_strings,
+            stream=stream,
+            repetition_penalty=frequency_penalty,
+            diversity_penalty=presence_penalty if n > 1 else None,
+            num_return_sequences=n,
+            num_beams=max(2, n),  # must be >1
+            num_beam_groups=max(2, n) if presence_penalty else 1,
+        )
+
+        # Generate text
+        output_ids = self.model.generate(
+            inputs.input_ids,
+            attention_mask=inputs.attention_mask,
+            generation_config=generation_config,
+        )
+
+        generated_texts = []
+        completion_tokens = 0
+        total_tokens = prompt_tokens
+        for output_id in output_ids:
+            # The output_ids include the input prompt
+            # Decode the generated text, excluding the input prompt
+            # so we slice to get only new tokens
+            generated_tokens = output_id[prompt_tokens:]
+            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            generated_texts.append(generated_text)
+
+            # Calculate completion tokens
+            completion_tokens += len(generated_tokens)
+            total_tokens += len(generated_tokens)
+
+        choices = []
+        for i, generated_text in enumerate(generated_texts):
+            choices.append(
+                {
+                    "index": i,
+                    "message": {"role": "assistant", "content": generated_text},
+                    "logprobs": None,  # Not directly supported in this basic implementation
+                    "finish_reason": "stop",  # Assuming stop for simplicity
+                }
+            )
+
+        # Construct OpenAI-compatible response
+        response = {
+            "id": f"chatcmpl-{uuid.uuid4().hex}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": self.model_name,
+            "choices": choices,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+        }
+        return response

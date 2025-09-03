@@ -42,6 +42,26 @@ def validate_sklearn_args(args: dict[str, tuple[Any, Any, bool]], klass: type) -
                     error_code=error_codes.DEPENDENCY_VERSION_ERROR,
                     original_exception=RuntimeError(f"Arg {k} is not supported by current version of SKLearn/XGBoost."),
                 )
+        elif v[0] == v[1] and v[0] != signature.parameters[k].default:
+            # If default value (pulled at autogen time) is not the same as the installed library's default value,
+            # we need to validate the parameter value against the parameter constraints.
+            # If the parameter value is invalid, we drop it.
+            try:
+                from sklearn.utils._param_validation import (
+                    InvalidParameterError,
+                    validate_parameter_constraints,
+                )
+
+                try:
+                    validate_parameter_constraints(
+                        klass._parameter_constraints,  # type: ignore[attr-defined]
+                        {k: v[0]},
+                        klass.__name__,
+                    )
+                except InvalidParameterError:
+                    continue  # Let the underlying estimator fill in the default value.
+            except (ImportError, AttributeError, TypeError):
+                result[k] = v[0]  # Try to use the value as is.
         else:
             result[k] = v[0]
     return result
@@ -199,7 +219,12 @@ def handle_inference_result(
         transformed_numpy_array = np.hstack(transformed_numpy_array)  # type: ignore[call-overload]
 
     if len(transformed_numpy_array.shape) == 1:
-        transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
+        # Within a vectorized UDF, a single-row batch often yields a 1D array of length n_components.
+        # That must be reshaped to (1, n_components) to keep the number of rows aligned with the input batch.
+        if len(output_cols) > 1:
+            transformed_numpy_array = np.reshape(transformed_numpy_array, (1, -1))
+        else:
+            transformed_numpy_array = np.reshape(transformed_numpy_array, (-1, 1))
 
     shape = transformed_numpy_array.shape
     if len(shape) > 1:
@@ -292,3 +317,20 @@ def should_include_sample_weight(estimator: object, method_name: str) -> bool:
         return True
 
     return False
+
+
+def is_multi_task_estimator(estimator: object) -> bool:
+    """
+    Check if the estimator is a multi-task estimator that requires 2D targets.
+
+    Args:
+        estimator: The estimator to check
+
+    Returns:
+        True if the estimator is a multi-task estimator, False otherwise
+    """
+    # List of known multi-task estimators that require 2D targets
+    multi_task_estimators = {"MultiTaskElasticNet", "MultiTaskElasticNetCV", "MultiTaskLasso", "MultiTaskLassoCV"}
+
+    estimator_name = estimator.__class__.__name__
+    return estimator_name in multi_task_estimators

@@ -54,7 +54,7 @@ DATAFRAME_TYPE = Union[DataFrame, pd.DataFrame]
 
 INFER_SIGNATURE_MAX_ROWS = 100
 
-SKLEARN_LOWER, SKLEARN_UPPER = ('1.4', '1.6')
+SKLEARN_LOWER, SKLEARN_UPPER = ('1.4', '1.7')
 # Modeling library estimators require a smaller sklearn version range.
 if not version.Version(SKLEARN_LOWER) <= version.Version(sklearn.__version__) < version.Version(SKLEARN_UPPER):
     raise Exception(

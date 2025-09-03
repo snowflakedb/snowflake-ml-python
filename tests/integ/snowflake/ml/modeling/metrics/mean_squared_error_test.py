@@ -89,21 +89,18 @@ class MeanSquaredErrorTest(parameterized.TestCase):
 
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_BINARY_DATA_LIST))),
-        squared=[True, False],
     )
-    def test_squared(self, data_index: int, squared: bool) -> None:
+    def test_squared(self, data_index: int) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_BINARY_DATA_LIST[data_index], _SF_SCHEMA)
 
         actual_loss = snowml_metrics.mean_squared_error(
             df=input_df,
             y_true_col_names=_Y_TRUE_COLS,
             y_pred_col_names=_Y_PRED_COLS,
-            squared=squared,
         )
         sklearn_loss = sklearn_metrics.mean_squared_error(
             pandas_df[_Y_TRUE_COLS],
             pandas_df[_Y_PRED_COLS],
-            squared=squared,
         )
         np.testing.assert_allclose(actual_loss, sklearn_loss, rtol=1.0e-6, atol=1.0e-6)
 

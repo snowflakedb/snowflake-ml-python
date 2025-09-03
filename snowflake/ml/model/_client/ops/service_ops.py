@@ -10,17 +10,13 @@ import time
 from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
+from snowflake.ml import jobs
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
-from snowflake.ml.model import (
-    inference_engine as inference_engine_module,
-    model_signature,
-    type_hints,
-)
+from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
-from snowflake.ml.model._signatures import snowpark_handler
-from snowflake.snowpark import async_job, dataframe, exceptions, row, session
+from snowflake.snowpark import async_job, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
@@ -866,174 +862,97 @@ class ServiceOperator:
         except exceptions.SnowparkSQLException:
             return False
 
-    def invoke_job_method(
+    def invoke_batch_job_method(
         self,
-        target_method: str,
-        signature: model_signature.ModelSignature,
-        X: Union[type_hints.SupportedDataType, dataframe.DataFrame],
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
+        *,
+        function_name: str,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        job_database_name: Optional[sql_identifier.SqlIdentifier],
-        job_schema_name: Optional[sql_identifier.SqlIdentifier],
-        job_name: sql_identifier.SqlIdentifier,
+        job_name: str,
         compute_pool_name: sql_identifier.SqlIdentifier,
-        warehouse_name: sql_identifier.SqlIdentifier,
+        warehouse: sql_identifier.SqlIdentifier,
         image_repo_name: Optional[str],
-        output_table_database_name: Optional[sql_identifier.SqlIdentifier],
-        output_table_schema_name: Optional[sql_identifier.SqlIdentifier],
-        output_table_name: sql_identifier.SqlIdentifier,
-        cpu_requests: Optional[str],
-        memory_requests: Optional[str],
-        gpu_requests: Optional[Union[int, str]],
+        input_stage_location: str,
+        input_file_pattern: str,
+        output_stage_location: str,
+        completion_filename: str,
+        force_rebuild: bool,
         num_workers: Optional[int],
         max_batch_rows: Optional[int],
-        force_rebuild: bool,
-        build_external_access_integrations: Optional[list[sql_identifier.SqlIdentifier]],
+        cpu_requests: Optional[str],
+        memory_requests: Optional[str],
         statement_params: Optional[dict[str, Any]] = None,
-    ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
-        # fall back to the registry's database and schema if not provided
-        database_name = database_name or self._database_name
-        schema_name = schema_name or self._schema_name
+    ) -> jobs.MLJob[Any]:
+        database_name = self._database_name
+        schema_name = self._schema_name
 
-        # fall back to the model's database and schema if not provided then to the registry's database and schema
-        job_database_name = job_database_name or database_name or self._database_name
-        job_schema_name = job_schema_name or schema_name or self._schema_name
+        job_database_name, job_schema_name, job_name = sql_identifier.parse_fully_qualified_name(job_name)
+        job_database_name = job_database_name or database_name
+        job_schema_name = job_schema_name or schema_name
 
-        image_repo_fqn = self._get_image_repo_fqn(image_repo_name, database_name, schema_name)
+        self._model_deployment_spec.clear()
 
-        input_table_database_name = job_database_name
-        input_table_schema_name = job_schema_name
-        output_table_database_name = output_table_database_name or database_name or self._database_name
-        output_table_schema_name = output_table_schema_name or schema_name or self._schema_name
+        self._model_deployment_spec.add_model_spec(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._model_deployment_spec.add_job_spec(
+            job_database_name=job_database_name,
+            job_schema_name=job_schema_name,
+            job_name=job_name,
+            inference_compute_pool_name=compute_pool_name,
+            num_workers=num_workers,
+            max_batch_rows=max_batch_rows,
+            input_stage_location=input_stage_location,
+            input_file_pattern=input_file_pattern,
+            output_stage_location=output_stage_location,
+            completion_filename=completion_filename,
+            function_name=function_name,
+            warehouse=warehouse,
+            cpu=cpu_requests,
+            memory=memory_requests,
+        )
+
+        self._model_deployment_spec.add_image_build_spec(
+            image_build_compute_pool_name=compute_pool_name,
+            fully_qualified_image_repo_name=self._get_image_repo_fqn(image_repo_name, database_name, schema_name),
+            force_rebuild=force_rebuild,
+        )
+
+        spec_yaml_str_or_path = self._model_deployment_spec.save()
 
         if self._workspace:
+            module_logger.info("using workspace")
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
-        else:
-            stage_path = None
-
-        # validate and prepare input
-        if not isinstance(X, dataframe.DataFrame):
-            keep_order = True
-            output_with_input_features = False
-            df = model_signature._convert_and_validate_local_data(X, signature.inputs)
-            s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
+            file_utils.upload_directory_to_stage(
+                self._session,
+                local_path=pathlib.Path(self._workspace.name),
+                stage_path=pathlib.PurePosixPath(stage_path),
+                statement_params=statement_params,
             )
         else:
-            keep_order = False
-            output_with_input_features = True
-            s_df = X
+            module_logger.info("not using workspace")
+            stage_path = None
 
-        # only write the index and feature input columns
-        cols = [snowpark_handler._KEEP_ORDER_COL_NAME] if snowpark_handler._KEEP_ORDER_COL_NAME in s_df.columns else []
-        cols += [
-            sql_identifier.SqlIdentifier(feature.name, case_sensitive=True).identifier() for feature in signature.inputs
-        ]
-        s_df = s_df.select(cols)
-        original_cols = s_df.columns
-
-        # input/output tables
-        fq_output_table_name = identifier.get_schema_level_object_identifier(
-            output_table_database_name.identifier(),
-            output_table_schema_name.identifier(),
-            output_table_name.identifier(),
-        )
-        tmp_input_table_id = sql_identifier.SqlIdentifier(
-            snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.TABLE)
-        )
-        fq_tmp_input_table_name = identifier.get_schema_level_object_identifier(
-            job_database_name.identifier(),
-            job_schema_name.identifier(),
-            tmp_input_table_id.identifier(),
-        )
-        s_df.write.save_as_table(
-            table_name=fq_tmp_input_table_name,
-            mode="errorifexists",
+        _, async_job = self._service_client.deploy_model(
+            stage_path=stage_path if self._workspace else None,
+            model_deployment_spec_file_rel_path=(
+                model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
+            ),
+            model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
             statement_params=statement_params,
         )
 
-        try:
-            self._model_deployment_spec.clear()
-            # save the spec
-            self._model_deployment_spec.add_model_spec(
-                database_name=database_name,
-                schema_name=schema_name,
-                model_name=model_name,
-                version_name=version_name,
-            )
-            self._model_deployment_spec.add_job_spec(
-                job_database_name=job_database_name,
-                job_schema_name=job_schema_name,
-                job_name=job_name,
-                inference_compute_pool_name=compute_pool_name,
-                cpu=cpu_requests,
-                memory=memory_requests,
-                gpu=gpu_requests,
-                num_workers=num_workers,
-                max_batch_rows=max_batch_rows,
-                warehouse=warehouse_name,
-                target_method=target_method,
-                input_table_database_name=input_table_database_name,
-                input_table_schema_name=input_table_schema_name,
-                input_table_name=tmp_input_table_id,
-                output_table_database_name=output_table_database_name,
-                output_table_schema_name=output_table_schema_name,
-                output_table_name=output_table_name,
-            )
+        # Block until the async job is done
+        async_job.result()
 
-            self._model_deployment_spec.add_image_build_spec(
-                image_build_compute_pool_name=compute_pool_name,
-                fully_qualified_image_repo_name=image_repo_fqn,
-                force_rebuild=force_rebuild,
-                external_access_integrations=build_external_access_integrations,
-            )
-
-            spec_yaml_str_or_path = self._model_deployment_spec.save()
-            if self._workspace:
-                assert stage_path is not None
-                file_utils.upload_directory_to_stage(
-                    self._session,
-                    local_path=pathlib.Path(self._workspace.name),
-                    stage_path=pathlib.PurePosixPath(stage_path),
-                    statement_params=statement_params,
-                )
-
-            # deploy the job
-            query_id, async_job = self._service_client.deploy_model(
-                stage_path=stage_path if self._workspace else None,
-                model_deployment_spec_file_rel_path=(
-                    model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
-                ),
-                model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
-                statement_params=statement_params,
-            )
-
-            while not async_job.is_done():
-                time.sleep(5)
-        finally:
-            self._session.table(fq_tmp_input_table_name).drop_table()
-
-        # handle the output
-        df_res = self._session.table(fq_output_table_name)
-        if keep_order:
-            df_res = df_res.sort(
-                snowpark_handler._KEEP_ORDER_COL_NAME,
-                ascending=True,
-            )
-            df_res = df_res.drop(snowpark_handler._KEEP_ORDER_COL_NAME)
-
-        if not output_with_input_features:
-            df_res = df_res.drop(*original_cols)
-
-        # get final result
-        if not isinstance(X, dataframe.DataFrame):
-            return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
-                df_res, features=signature.outputs, statement_params=statement_params
-            )
-        else:
-            return df_res
+        return jobs.MLJob(
+            id=sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, job_name),
+            session=self._session,
+        )
 
     def _create_temp_stage(
         self,

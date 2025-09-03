@@ -8,12 +8,12 @@ from packaging import version
 from snowflake.ml._internal import env
 from snowflake.ml.jobs import remote
 from snowflake.snowpark.context import get_active_session
-from tests.integ.snowflake.ml.jobs.modeling_job_test_base import BaseModelTest
+from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
 
 TEST_TABLE_NAME = "MULTINODE_CPU_TRAIN_DS"
 
 
-class XGBDistributedTest(BaseModelTest):
+class XGBDistributedTest(JobTestBase):
     def prepare_dataset(self, num_rows: int = 10, num_cols: int = 5) -> None:
         self.session.sql(self.generate_dataset_sql(TEST_TABLE_NAME, num_rows, num_cols)).collect()
 

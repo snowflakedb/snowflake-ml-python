@@ -41,6 +41,7 @@ def retry_until_model_name(deadline: float) -> str:
 
 
 _UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME = "unexpected_format_response_model"
+_MIDSTREAM_ERROR_MODEL_NAME = "midstream_error_model"
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,29 @@ class MockIpifyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             if model == _UNEXPECTED_RESPONSE_FORMAT_MODEL_NAME:
                 self.wfile.write(b"data: {}\n\n")
                 self.wfile.write(b'data: {"choices": [{"delta": {"content": "msg"}}]}\n\n')
+                self.wfile.flush()
+                return
+
+            if model == _MIDSTREAM_ERROR_MODEL_NAME:
+                # Send some normal content first
+                json_msg = json.dumps({"choices": [{"delta": {"content": "Hello"}}]})
+                self.wfile.write(f"data: {json_msg}\n\n".encode())
+                self.wfile.flush()
+
+                json_msg = json.dumps({"choices": [{"delta": {"content": " world"}}]})
+                self.wfile.write(f"data: {json_msg}\n\n".encode())
+                self.wfile.flush()
+
+                # Now send a midstream error
+                error_msg = json.dumps(
+                    {
+                        "error": {
+                            "message": "Something went wrong during generation",
+                            "code": "500",
+                        }
+                    }
+                )
+                self.wfile.write(f"data: {error_msg}\n\n".encode())
                 self.wfile.flush()
                 return
 
@@ -342,6 +366,51 @@ def fake_xp_request_handler(
             },
         }
 
+    if body["model"] == _MIDSTREAM_ERROR_MODEL_NAME:
+        # Simulate a midstream error for XP path
+        return {
+            "status": 200,
+            "content": """[{
+                "data": {
+                    "id": "test-id-1",
+                    "created": 1733417829,
+                    "model": "mistral-large",
+                    "choices": [{
+                        "delta": {
+                            "content": "Hello"
+                        }
+                    }]
+                }
+            }, {
+                "data": {
+                    "id": "test-id-2",
+                    "created": 1733417830,
+                    "model": "mistral-large",
+                    "choices": [{
+                        "delta": {
+                            "content": " world"
+                        }
+                    }]
+                }
+            }, {
+                "event": "message",
+                "data": {
+                    "error": {
+                        "message": "XP midstream error occurred",
+                        "code": "500"
+                    }
+                }
+            }]""",
+            "headers": {
+                "Transfer-Encoding": "chunked",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "X-Snowflake-Request-ID": "test-midstream-error-id",
+                "Date": "Thu, 05 Dec 2024 16:57:09 GMT",
+                "Content-Type": "text/event-stream",
+            },
+        }
+
     if body["model"] == "unknown_model":
         # Response from a real request.
         return {
@@ -499,6 +568,25 @@ class CompleteRESTBackendTest(unittest.TestCase):
             message += part
         self.assertEqual("msg", message)
 
+    def test_streaming_midstream_error(self) -> None:
+        response = _complete._complete_impl(
+            model=_MIDSTREAM_ERROR_MODEL_NAME,
+            prompt="test_prompt",
+            session=self.session,
+            stream=True,
+        )
+        assert isinstance(response, Iterator)
+
+        message_parts = []
+        with self.assertRaises(_complete.MidStreamException) as context:
+            for part in response:
+                message_parts.append(part)
+
+        self.assertEqual(["Hello", " world"], message_parts)
+
+        error_message = str(context.exception)
+        self.assertIn("Something went wrong during generation", error_message)
+
     def test_streaming_error(self) -> None:
         try:
             _complete._complete_impl(
@@ -577,6 +665,27 @@ class CompleteRESTBackendTest(unittest.TestCase):
         self.assertIsInstance(result, GeneratorType)
         output = "".join(list(cast(Iterable[str], result)))
         self.assertEqual(" Sure,", output)
+
+    def test_xp_midstream_error(self) -> None:
+        result = _complete._complete_impl(
+            snow_api_xp_request_handler=fake_xp_request_handler,
+            model=_MIDSTREAM_ERROR_MODEL_NAME,
+            prompt="test_prompt",
+            session=self.session,
+            stream=True,
+        )
+        self.assertIsInstance(result, GeneratorType)
+        result = cast(Iterator[str], result)
+
+        message_parts = []
+        with self.assertRaises(_complete.MidStreamException) as context:
+            for part in result:
+                message_parts.append(part)
+
+        self.assertEqual(["Hello", " world"], message_parts)
+
+        error_message = str(context.exception)
+        self.assertIn("XP midstream error occurred", error_message)
 
     def test_xp_unknown_model(self) -> None:
         with self.assertRaises(ValueError) as ar:

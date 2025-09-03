@@ -55,6 +55,14 @@ py_library(
 )
 
 py_library(
+    name = "openai_signatures",
+    srcs = ["openai_signatures.py"],
+    deps = [
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
     name = "custom_model",
     srcs = ["custom_model.py"],
     deps = [
@@ -72,6 +80,7 @@ py_library(
     name = "model",
     srcs = ["__init__.py"],
     deps = [
+        "//snowflake/ml/model/_client/model:batch_inference_specs",
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/models:huggingface_pipeline",

@@ -53,7 +53,14 @@ snowflake.ml.model.model_signature
 
     infer_signature
 
+snowflake.ml.model.openai_signatures
+------------------------------------
 
-.. .. rubric:: Attributes
+.. currentmodule:: snowflake.ml.model.openai_signatures
 
-.. None
+.. rubric:: Attributes
+
+.. autosummary::
+    :toctree: api/model
+
+    OPENAI_CHAT_SIGNATURE

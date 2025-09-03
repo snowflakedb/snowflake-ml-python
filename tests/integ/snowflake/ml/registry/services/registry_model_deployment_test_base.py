@@ -227,6 +227,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         additional_dependencies: Optional[list[str]] = None,
         pip_requirements: Optional[list[str]] = None,
         options: Optional[model_types.ModelSaveOption] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
         num_workers: Optional[int] = None,
@@ -235,6 +236,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         force_rebuild: bool = True,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
+        use_default_repo: bool = False,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -253,6 +255,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
             options=options,
+            signatures=signatures,
         )
 
         return self._deploy_model_service(
@@ -266,6 +269,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             max_batch_rows=max_batch_rows,
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,
+            use_default_repo=use_default_repo,
         )
 
     def _deploy_model_service(
@@ -280,6 +284,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         max_batch_rows: Optional[int] = None,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
+        use_default_repo: bool = False,
     ) -> ModelVersion:
         if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
             with_image_override = True
@@ -313,7 +318,9 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 service_name=service_name,
                 image_build_compute_pool=self._TEST_CPU_COMPUTE_POOL,
                 service_compute_pool=service_compute_pool,
-                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                image_repo=(
+                    None if use_default_repo else ".".join([self._test_db, self._test_schema, self._test_image_repo])
+                ),
                 gpu_requests=gpu_requests,
                 force_rebuild=True,
                 num_workers=num_workers,

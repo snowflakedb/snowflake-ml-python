@@ -11,7 +11,11 @@ import torch
 from absl.testing import absltest
 from packaging import version
 
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    model_signature,
+    openai_signatures,
+    type_hints as model_types,
+)
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers import (
     huggingface_pipeline as hf_pipeline_handler,
@@ -134,7 +138,10 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         import transformers
 
         is_signature_auto_infer = signature is None
-        signature = signature or utils.huggingface_pipeline_signature_auto_infer(task=task, params=options)
+        signature = signature or utils.huggingface_pipeline_signature_auto_infer(
+            task=task,
+            params=options,
+        )
         assert signature is not None
 
         s = {"__call__": signature}
@@ -722,7 +729,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_gpu=False,
         )
 
-    def test_text_generation_pipeline(
+    def test_text_generation_string_in_string_out_pipeline(
         self,
     ) -> None:
         x = ['A descendant of the Lost City of Atlantis, who swam to Earth while saying, "']
@@ -803,27 +810,35 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
     ) -> None:
         x = [
             [
-                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "system",
+                    "content": "Complete the sentence.",
+                },
                 {
                     "role": "user",
                     "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
                 },
-            ]
+            ],
+            250,
         ]
 
-        x_df = pd.DataFrame([x], columns=["inputs"])
+        x_df = pd.DataFrame([x], columns=["messages", "max_completion_tokens"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            original_res = original(x)
-            loaded_res = loaded(x)
+            original_res = original(x[0])
+            loaded_res = loaded(x[0])
             self.assertEqual(len(original_res), len(loaded_res))
 
         def check_udf_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+            )
 
-            for row in res["outputs"]:
+            for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("generated_text", row[0])
+                self.assertIn("message", row[0])
+                self.assertIn("content", row[0]["message"])
 
         self._basic_test_case(
             task="text-generation",
@@ -833,6 +848,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
         )
 
         with self.assertRaisesRegex(
@@ -857,6 +873,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
         )
 
         self._basic_test_case(
@@ -867,6 +884,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=lambda x, y: None,  # ignore this check
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
         )
 
     def test_text_generation_without_chat_template_pipeline(
@@ -879,24 +897,29 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     "role": "user",
                     "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
                 },
-            ]
+            ],
+            250,
         ]
 
-        x_df = pd.DataFrame([x], columns=["inputs"])
+        x_df = pd.DataFrame([x], columns=["messages", "max_completion_tokens"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
             self.assertIsNotNone(loaded.tokenizer.chat_template)
             self.assertEqual(loaded.tokenizer.chat_template, hf_pipeline_handler.DEFAULT_CHAT_TEMPLATE)
-            original_res = original(x, max_length=60, num_return_sequences=1)
-            loaded_res = loaded(x, max_length=60, num_return_sequences=1)
+            original_res = original(x[0], max_length=60, num_return_sequences=1)
+            loaded_res = loaded(x[0], max_length=60, num_return_sequences=1)
             self.assertEqual(len(original_res), len(loaded_res))
 
         def check_udf_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+            )
 
-            for row in res["outputs"]:
+            for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("generated_text", row[0])
+                self.assertIn("message", row[0])
+                self.assertIn("content", row[0]["message"])
 
         import transformers
 
@@ -917,8 +940,6 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
         # make model have multiple eos tokens
         model.config.eos_token_id = [50256, 50257]
-        # set pad token id to None
-        tokenizer.pad_token_id = None
         # Resize model embeddings to match new tokenizer
         model.resize_token_embeddings(len(tokenizer))
         self.assertIsNone(tokenizer.chat_template)
@@ -940,6 +961,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
         )
 
     def test_text2text_generation_pipeline(
@@ -1091,6 +1113,33 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
         )
+
+    def test_huggingface_openai_compatible_model(self) -> None:
+        import transformers
+
+        model_id = "hf-internal-testing/tiny-gpt2-with-chatml-template"
+        pipeline = transformers.pipeline("text-generation", model=model_id)
+        pipeline.tokenizer.pad_token = pipeline.tokenizer.eos_token
+        model = hf_pipeline_handler.HuggingFaceOpenAICompatibleModel(pipeline)
+        self.assertEqual(model.model_name, model_id)
+
+        messages = [
+            {"role": "system", "content": "Complete the sentence."},
+            {"role": "user", "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, "},
+        ]
+        res = model.generate_chat_completion(messages, max_completion_tokens=250, n=3)
+        self.assertLen(res["choices"], 3)
+        self.assertTrue("message" in res["choices"][0])
+        self.assertTrue("content" in res["choices"][0]["message"])
+        self.assertTrue("role" in res["choices"][0]["message"])
+
+        # remove the chat template
+        pipeline.tokenizer.chat_template = None
+        res = model.generate_chat_completion(messages, max_completion_tokens=250, n=3)
+        self.assertLen(res["choices"], 3)
+        self.assertTrue("message" in res["choices"][0])
+        self.assertTrue("content" in res["choices"][0]["message"])
+        self.assertTrue("role" in res["choices"][0]["message"])
 
 
 if __name__ == "__main__":

@@ -1,16 +1,18 @@
 import enum
 import pathlib
 import tempfile
+import uuid
 import warnings
 from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
 
-from snowflake import snowpark
+from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import task, type_hints
+from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -19,6 +21,7 @@ from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
+_BATCH_INFERENCE_JOB_ID_PREFIX = "BATCH_INFERENCE_"
 
 
 class ExportMode(enum.Enum):
@@ -538,6 +541,63 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
                 is_partitioned=target_function_info["is_partitioned"],
             )
+
+    @telemetry.send_api_usage_telemetry(
+        project=_TELEMETRY_PROJECT,
+        subproject=_TELEMETRY_SUBPROJECT,
+        func_params_to_log=[
+            "compute_pool",
+        ],
+    )
+    def _run_batch(
+        self,
+        *,
+        compute_pool: str,
+        input_spec: batch_inference_specs.InputSpec,
+        output_spec: batch_inference_specs.OutputSpec,
+        job_spec: Optional[batch_inference_specs.JobSpec] = None,
+    ) -> jobs.MLJob[Any]:
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+
+        if job_spec is None:
+            job_spec = batch_inference_specs.JobSpec()
+
+        warehouse = job_spec.warehouse or self._service_ops._session.get_current_warehouse()
+        if warehouse is None:
+            raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
+
+        if job_spec.job_name is None:
+            # Same as the MLJob ID generation logic with a different prefix
+            job_name = f"{_BATCH_INFERENCE_JOB_ID_PREFIX}{str(uuid.uuid4()).replace('-', '_').upper()}"
+        else:
+            job_name = job_spec.job_name
+
+        return self._service_ops.invoke_batch_job_method(
+            # model version info
+            model_name=self._model_name,
+            version_name=self._version_name,
+            # job spec
+            function_name=self._get_function_info(function_name=job_spec.function_name)["target_method"],
+            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
+            force_rebuild=job_spec.force_rebuild,
+            image_repo_name=job_spec.image_repo,
+            num_workers=job_spec.num_workers,
+            max_batch_rows=job_spec.max_batch_rows,
+            warehouse=sql_identifier.SqlIdentifier(warehouse),
+            cpu_requests=job_spec.cpu_requests,
+            memory_requests=job_spec.memory_requests,
+            job_name=job_name,
+            # input and output
+            input_stage_location=input_spec.input_stage_location,
+            input_file_pattern=input_spec.input_file_pattern,
+            output_stage_location=output_spec.output_stage_location,
+            completion_filename=output_spec.completion_filename,
+            # misc
+            statement_params=statement_params,
+        )
 
     def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
         functions: list[model_manifest_schema.ModelFunctionInfo] = self._functions
@@ -1181,70 +1241,6 @@ class ModelVersion(lineage_node.LineageNode):
             service_database_name=database_name_id,
             service_schema_name=schema_name_id,
             service_name=service_name_id,
-            statement_params=statement_params,
-        )
-
-    @snowpark._internal.utils.private_preview(version="1.8.3")
-    @telemetry.send_api_usage_telemetry(
-        project=_TELEMETRY_PROJECT,
-        subproject=_TELEMETRY_SUBPROJECT,
-    )
-    def _run_job(
-        self,
-        X: Union[pd.DataFrame, "dataframe.DataFrame"],
-        *,
-        job_name: str,
-        compute_pool: str,
-        image_repo: Optional[str] = None,
-        output_table_name: str,
-        function_name: Optional[str] = None,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        gpu_requests: Optional[Union[str, int]] = None,
-        num_workers: Optional[int] = None,
-        max_batch_rows: Optional[int] = None,
-        force_rebuild: bool = False,
-        build_external_access_integrations: Optional[list[str]] = None,
-    ) -> Union[pd.DataFrame, dataframe.DataFrame]:
-        statement_params = telemetry.get_statement_params(
-            project=_TELEMETRY_PROJECT,
-            subproject=_TELEMETRY_SUBPROJECT,
-        )
-        target_function_info = self._get_function_info(function_name=function_name)
-        job_db_id, job_schema_id, job_id = sql_identifier.parse_fully_qualified_name(job_name)
-        output_table_db_id, output_table_schema_id, output_table_id = sql_identifier.parse_fully_qualified_name(
-            output_table_name
-        )
-        warehouse = self._service_ops._session.get_current_warehouse()
-        assert warehouse, "No active warehouse selected in the current session."
-        return self._service_ops.invoke_job_method(
-            target_method=target_function_info["target_method"],
-            signature=target_function_info["signature"],
-            X=X,
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            job_database_name=job_db_id,
-            job_schema_name=job_schema_id,
-            job_name=job_id,
-            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
-            warehouse_name=sql_identifier.SqlIdentifier(warehouse),
-            image_repo_name=image_repo,
-            output_table_database_name=output_table_db_id,
-            output_table_schema_name=output_table_schema_id,
-            output_table_name=output_table_id,
-            cpu_requests=cpu_requests,
-            memory_requests=memory_requests,
-            gpu_requests=gpu_requests,
-            num_workers=num_workers,
-            max_batch_rows=max_batch_rows,
-            force_rebuild=force_rebuild,
-            build_external_access_integrations=(
-                None
-                if build_external_access_integrations is None
-                else [sql_identifier.SqlIdentifier(eai) for eai in build_external_access_integrations]
-            ),
             statement_params=statement_params,
         )
 

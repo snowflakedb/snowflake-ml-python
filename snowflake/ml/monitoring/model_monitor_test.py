@@ -31,6 +31,28 @@ class ModelMonitorInstanceTest(absltest.TestCase):
             self.model_monitor.resume()
             mock_resume.assert_called_once_with(self.test_monitor_name, statement_params=mock.ANY)
 
+    def test_add_segment_column(self) -> None:
+        test_segment_column = "CUSTOMER_SEGMENT"
+        with mock.patch.object(self.model_monitor._model_monitor_client, "add_segment_column") as mock_add_segment:
+            self.model_monitor.add_segment_column(test_segment_column)
+            # Verify it was called with the monitor name, a SqlIdentifier for the segment column, and statement params
+            mock_add_segment.assert_called_once()
+            call_args = mock_add_segment.call_args
+            self.assertEqual(call_args[0][0], self.test_monitor_name)  # monitor_name
+            self.assertEqual(call_args[0][1].identifier(), test_segment_column)  # segment_column as SqlIdentifier
+            self.assertIsNotNone(call_args[1]["statement_params"])  # statement_params
+
+    def test_drop_segment_column(self) -> None:
+        test_segment_column = "CUSTOMER_SEGMENT"
+        with mock.patch.object(self.model_monitor._model_monitor_client, "drop_segment_column") as mock_drop_segment:
+            self.model_monitor.drop_segment_column(test_segment_column)
+            # Verify it was called with the monitor name, a SqlIdentifier for the segment column, and statement params
+            mock_drop_segment.assert_called_once()
+            call_args = mock_drop_segment.call_args
+            self.assertEqual(call_args[0][0], self.test_monitor_name)  # monitor_name
+            self.assertEqual(call_args[0][1].identifier(), test_segment_column)  # segment_column as SqlIdentifier
+            self.assertIsNotNone(call_args[1]["statement_params"])  # statement_params
+
 
 if __name__ == "__main__":
     absltest.main()

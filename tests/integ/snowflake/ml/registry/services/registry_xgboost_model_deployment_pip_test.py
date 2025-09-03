@@ -13,12 +13,10 @@ from tests.integ.snowflake.ml.registry.services import (
 
 
 class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        gpu_requests=[None, "1"],
-    )
-    def test_xgb(
+    def _test_xgb(
         self,
         gpu_requests: str,
+        use_default_repo: bool,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -49,9 +47,21 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
             ),
             gpu_requests=gpu_requests,
             pip_requirements=[f"xgboost=={xgboost.__version__}"],
+            use_default_repo=use_default_repo,
         )
 
-    @absltest.skipIf(True, "Temporarily quarantined until Inference server release")
+    @parameterized.product(  # type: ignore[misc]
+        gpu_requests=[None, "1"],
+    )
+    def test_xgb(
+        self,
+        gpu_requests: str,
+    ) -> None:
+        self._test_xgb(gpu_requests, use_default_repo=False)
+
+    def test_xgb_with_default_repo(self) -> None:
+        self._test_xgb(gpu_requests=None, use_default_repo=True)
+
     def test_xgb_wide_input(self) -> None:
         n_samples = 10
         n_features = 750

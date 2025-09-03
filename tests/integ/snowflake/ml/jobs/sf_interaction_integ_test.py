@@ -2,7 +2,7 @@ import os
 import tempfile
 
 import numpy as np
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from packaging import version
 
 from snowflake.ml import jobs
@@ -10,42 +10,11 @@ from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.registry import Registry
-from snowflake.ml.utils import sql_client
-from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.context import get_active_session
-from tests.integ.snowflake.ml.jobs import test_constants
-from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
+from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
 
 
-@absltest.skipIf(
-    (region := test_env_utils.get_current_snowflake_region()) is None
-    or region["cloud"] not in test_constants._SUPPORTED_CLOUDS,
-    "Test only for SPCS supported clouds",
-)
-class AccessTest(parameterized.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        super().setUpClass()
-        cls.session = test_env_utils.get_available_session()
-        cls.dbm = db_manager.DBManager(cls.session)
-        cls.dbm.cleanup_schemas(prefix=test_constants._TEST_SCHEMA, expire_days=1)
-        cls.db = cls.session.get_current_database()
-        cls.schema = cls.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
-        try:
-            cls.compute_pool = cls.dbm.create_compute_pool(
-                test_constants._TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=5
-            )
-        except sp_exceptions.SnowparkSQLException:
-            if not cls.dbm.show_compute_pools(test_constants._TEST_COMPUTE_POOL).count() > 0:
-                raise cls.failureException(
-                    f"Compute pool {test_constants._TEST_COMPUTE_POOL} not available and could not be created"
-                )
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.dbm.drop_schema(cls.schema, if_exists=True)
-        super().tearDownClass()
-
+class AccessTest(JobTestBase):
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",

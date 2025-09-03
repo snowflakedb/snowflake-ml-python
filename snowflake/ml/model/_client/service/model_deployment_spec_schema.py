@@ -35,6 +35,16 @@ class Service(BaseModel):
     inference_engine_spec: Optional[InferenceEngineSpec] = None
 
 
+class Input(BaseModel):
+    input_stage_location: str
+    input_file_pattern: str
+
+
+class Output(BaseModel):
+    output_stage_location: str
+    completion_filename: str
+
+
 class Job(BaseModel):
     name: str
     compute_pool: str
@@ -43,10 +53,10 @@ class Job(BaseModel):
     gpu: Optional[str] = None
     num_workers: Optional[int] = None
     max_batch_rows: Optional[int] = None
-    warehouse: str
-    target_method: str
-    input_table_name: str
-    output_table_name: str
+    warehouse: Optional[str] = None
+    function_name: str
+    input: Input
+    output: Output
 
 
 class LogModelArgs(BaseModel):

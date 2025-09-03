@@ -60,7 +60,7 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
     # Change directory to user payload directory
     if [ -n "${constants.PAYLOAD_DIR_ENV_VAR}" ]; then
-        cd ${constants.PAYLOAD_DIR_ENV_VAR}
+        cd ${constants.STAGE_MOUNT_PATH_ENV_VAR}/${constants.PAYLOAD_DIR_ENV_VAR}
     fi
 
     ##### Set up Python environment #####
@@ -69,7 +69,10 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 
     if [ -f "${{MLRS_SYSTEM_REQUIREMENTS_FILE}}" ]; then
         echo "Installing packages from $MLRS_SYSTEM_REQUIREMENTS_FILE"
-        pip install -r $MLRS_SYSTEM_REQUIREMENTS_FILE
+        if ! pip install --no-index -r $MLRS_SYSTEM_REQUIREMENTS_FILE; then
+            echo "Offline install failed, falling back to regular pip install"
+            pip install -r $MLRS_SYSTEM_REQUIREMENTS_FILE
+        fi
     fi
 
     MLRS_REQUIREMENTS_FILE=${{MLRS_REQUIREMENTS_FILE:-"requirements.txt"}}
@@ -535,19 +538,30 @@ class JobPayload:
 
         upload_system_resources(session, system_stage_path)
         python_entrypoint: list[Union[str, PurePath]] = [
-            PurePath(f"{constants.SYSTEM_MOUNT_PATH}/mljob_launcher.py"),
-            PurePath(f"{constants.APP_MOUNT_PATH}/{entrypoint.file_path.relative_to(source).as_posix()}"),
+            PurePath(constants.STAGE_VOLUME_MOUNT_PATH, constants.SYSTEM_STAGE_SUBPATH, "mljob_launcher.py"),
+            PurePath(
+                constants.STAGE_VOLUME_MOUNT_PATH,
+                constants.APP_STAGE_SUBPATH,
+                entrypoint.file_path.relative_to(source).as_posix(),
+            ),
         ]
         if entrypoint.main_func:
             python_entrypoint += ["--script_main_func", entrypoint.main_func]
+
+        env_vars = {
+            constants.STAGE_MOUNT_PATH_ENV_VAR: constants.STAGE_VOLUME_MOUNT_PATH,
+            constants.PAYLOAD_DIR_ENV_VAR: constants.APP_STAGE_SUBPATH,
+            constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
+        }
 
         return types.UploadedPayload(
             stage_path=stage_path,
             entrypoint=[
                 "bash",
-                f"{constants.SYSTEM_MOUNT_PATH}/{_STARTUP_SCRIPT_PATH}",
+                f"{constants.STAGE_VOLUME_MOUNT_PATH}/{constants.SYSTEM_STAGE_SUBPATH}/{_STARTUP_SCRIPT_PATH}",
                 *python_entrypoint,
             ],
+            env_vars=env_vars,
         )
 
 

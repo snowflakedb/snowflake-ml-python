@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePath
 from typing import Iterator, Literal, Optional, Protocol, Union, runtime_checkable
 
@@ -90,6 +90,7 @@ class UploadedPayload:
     # TODO: Include manifest of payload files for validation
     stage_path: PurePath
     entrypoint: list[Union[str, PurePath]]
+    env_vars: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
