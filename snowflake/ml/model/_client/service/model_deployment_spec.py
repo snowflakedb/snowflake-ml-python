@@ -207,6 +207,7 @@ class ModelDeploymentSpec:
         gpu: Optional[Union[str, int]] = None,
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
+        replicas: Optional[int] = None,
     ) -> "ModelDeploymentSpec":
         """Add job specification to the deployment spec.
 
@@ -226,6 +227,7 @@ class ModelDeploymentSpec:
             gpu: GPU requirement.
             num_workers: Number of workers.
             max_batch_rows: Maximum batch rows for inference.
+            replicas: Number of replicas.
 
         Raises:
             ValueError: If a service spec already exists.
@@ -260,6 +262,7 @@ class ModelDeploymentSpec:
                 output_stage_location=output_stage_location,
                 completion_filename=completion_filename,
             ),
+            replicas=replicas,
             **self._inference_spec,
         )
         return self

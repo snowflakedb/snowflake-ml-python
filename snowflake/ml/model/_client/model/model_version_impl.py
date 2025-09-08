@@ -590,11 +590,12 @@ class ModelVersion(lineage_node.LineageNode):
             cpu_requests=job_spec.cpu_requests,
             memory_requests=job_spec.memory_requests,
             job_name=job_name,
+            replicas=job_spec.replicas,
             # input and output
-            input_stage_location=input_spec.input_stage_location,
-            input_file_pattern=input_spec.input_file_pattern,
-            output_stage_location=output_spec.output_stage_location,
-            completion_filename=output_spec.completion_filename,
+            input_stage_location=input_spec.stage_location,
+            input_file_pattern="*",
+            output_stage_location=output_spec.stage_location,
+            completion_filename="_SUCCESS",
             # misc
             statement_params=statement_params,
         )

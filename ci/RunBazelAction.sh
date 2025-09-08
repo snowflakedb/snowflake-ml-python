@@ -119,8 +119,7 @@ if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
         "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}"
         "--action_env=BASE_BATCH_CPU_IMAGE_PATH=${BASE_BATCH_CPU_IMAGE_PATH}"
         "--action_env=BASE_BATCH_GPU_IMAGE_PATH=${BASE_BATCH_GPU_IMAGE_PATH}"
-        "--action_env=IMAGE_BUILD_SIDECAR_CPU_PATH=${IMAGE_BUILD_SIDECAR_CPU_PATH}"
-        "--action_env=IMAGE_BUILD_SIDECAR_GPU_PATH=${IMAGE_BUILD_SIDECAR_GPU_PATH}"
+        "--action_env=MODEL_LOGGER_PATH=${MODEL_LOGGER_PATH}"
         "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}"
         "--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}"
     )

@@ -51,6 +51,7 @@ class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     has_tokenizer: NotRequired[bool]
     has_feature_extractor: NotRequired[bool]
     has_image_preprocessor: NotRequired[bool]
+    is_repo_downloaded: NotRequired[Optional[bool]]
 
 
 class LightGBMModelBlobOptions(BaseModelBlobOptions):

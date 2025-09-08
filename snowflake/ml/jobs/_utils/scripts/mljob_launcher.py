@@ -236,7 +236,9 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
 
     # Create a Snowpark session before running the script
     # Session can be retrieved from using snowflake.snowpark.context.get_active_session()
-    session = Session.builder.configs(SnowflakeLoginOptions()).create()  # noqa: F841
+    config = SnowflakeLoginOptions()
+    config["client_session_keep_alive"] = "True"
+    session = Session.builder.configs(config).create()  # noqa: F841
 
     try:
 
@@ -264,6 +266,7 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
     finally:
         # Restore original sys.argv
         sys.argv = original_argv
+        session.close()
 
 
 def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = None) -> ExecutionResult:
@@ -286,6 +289,13 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
     )
     output_dir = os.path.dirname(result_abs_path)
     os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        import ray
+
+        ray.init(address="auto")
+    except ModuleNotFoundError:
+        warnings.warn("Ray is not installed, skipping Ray initialization", ImportWarning, stacklevel=1)
 
     try:
         # Wait for minimum required instances if specified

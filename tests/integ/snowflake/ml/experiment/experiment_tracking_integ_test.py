@@ -1,5 +1,6 @@
 import json
 import os
+import pickle
 import tempfile
 import uuid
 
@@ -43,6 +44,56 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls._session.close()
+
+    def test_experiment_getstate_and_setstate(self) -> None:
+        """Test getstate and setstate methods by pickling and then unpickling"""
+        exp = ExperimentTracking(session=self._session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        pickled = pickle.dumps(exp)
+        new_exp = pickle.loads(pickled)
+
+        # Verify that the new instance has the same state
+        self.assertEqual(new_exp._database_name, exp._database_name)
+        self.assertEqual(new_exp._schema_name, "PUBLIC")
+        self.assertEqual(new_exp._experiment.name.identifier(), "TEST_EXPERIMENT")
+        self.assertEqual(new_exp._run.name.identifier(), "TEST_RUN")
+        self.assertEqual(new_exp._session, exp._session)
+        self.assertEqual(new_exp._sql_client, exp._sql_client)
+        # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
+        self.assertEqual(new_exp._registry._database_name, exp._registry._database_name)
+        self.assertEqual(new_exp._registry._schema_name, exp._registry._schema_name)
+        self.assertEqual(new_exp._registry.enable_monitoring, exp._registry.enable_monitoring)
+        # Model manager
+        self.assertEqual(new_exp._registry._model_manager._database_name, exp._registry._model_manager._database_name)
+        self.assertEqual(new_exp._registry._model_manager._schema_name, exp._registry._model_manager._schema_name)
+        self.assertEqual(new_exp._registry._model_manager._model_ops, exp._registry._model_manager._model_ops)
+        self.assertEqual(new_exp._registry._model_manager._service_ops, exp._registry._model_manager._service_ops)
+        # Model monitor manager
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager._database_name, exp._registry._model_monitor_manager._database_name
+        )
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager._schema_name, exp._registry._model_monitor_manager._schema_name
+        )
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager.statement_params,
+            exp._registry._model_monitor_manager.statement_params,
+        )
+        # Model monitor client
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager._model_monitor_client._sql_client,
+            exp._registry._model_monitor_manager._model_monitor_client._sql_client,
+        )
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager._model_monitor_client._database_name,
+            exp._registry._model_monitor_manager._model_monitor_client._database_name,
+        )
+        self.assertEqual(
+            new_exp._registry._model_monitor_manager._model_monitor_client._schema_name,
+            exp._registry._model_monitor_manager._model_monitor_client._schema_name,
+        )
 
     def test_experiment_creation_and_deletion(self) -> None:
         # set_experiment with a new experiment name creates an experiment

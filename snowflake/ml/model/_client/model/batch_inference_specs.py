@@ -4,14 +4,11 @@ from pydantic import BaseModel
 
 
 class InputSpec(BaseModel):
-    input_stage_location: str
-    input_file_pattern: str = "*"
+    stage_location: str
 
 
 class OutputSpec(BaseModel):
-    output_stage_location: str
-    output_file_prefix: Optional[str] = None
-    completion_filename: str = "_SUCCESS"
+    stage_location: str
 
 
 class JobSpec(BaseModel):
@@ -25,3 +22,4 @@ class JobSpec(BaseModel):
     warehouse: Optional[str] = None
     cpu_requests: Optional[str] = None
     memory_requests: Optional[str] = None
+    replicas: Optional[int] = None

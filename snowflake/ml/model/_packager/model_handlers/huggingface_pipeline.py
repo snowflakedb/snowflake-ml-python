@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 import warnings
@@ -88,6 +89,7 @@ class HuggingFacePipelineHandler(
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
+    MODEL_PICKLE_FILE = "snowml_huggingface_pipeline.pkl"
     ADDITIONAL_CONFIG_FILE = "pipeline_config.pt"
     DEFAULT_TARGET_METHODS = ["__call__"]
     IS_AUTO_SIGNATURE = True
@@ -199,6 +201,7 @@ class HuggingFacePipelineHandler(
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
 
+        is_repo_downloaded = False
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
             model.save_pretrained(  # type:ignore[attr-defined]
@@ -224,11 +227,22 @@ class HuggingFacePipelineHandler(
             ) as f:
                 cloudpickle.dump(pipeline_params, f)
         else:
+            model_blob_file_or_dir = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
+            model_blob_pickle_file = os.path.join(model_blob_file_or_dir, cls.MODEL_PICKLE_FILE)
+            os.makedirs(model_blob_file_or_dir, exist_ok=True)
             with open(
-                os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR),
+                model_blob_pickle_file,
                 "wb",
             ) as f:
                 cloudpickle.dump(model, f)
+            if model.repo_snapshot_dir:
+                logger.info("model's repo_snapshot_dir is available, copying snapshot")
+                shutil.copytree(
+                    model.repo_snapshot_dir,
+                    model_blob_file_or_dir,
+                    dirs_exist_ok=True,
+                )
+                is_repo_downloaded = True
 
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
@@ -236,13 +250,12 @@ class HuggingFacePipelineHandler(
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
             options=model_meta_schema.HuggingFacePipelineModelBlobOptions(
-                {
-                    "task": task,
-                    "batch_size": batch_size if batch_size is not None else 1,
-                    "has_tokenizer": has_tokenizer,
-                    "has_feature_extractor": has_feature_extractor,
-                    "has_image_preprocessor": has_image_preprocessor,
-                }
+                task=task,
+                batch_size=batch_size if batch_size is not None else 1,
+                has_tokenizer=has_tokenizer,
+                has_feature_extractor=has_feature_extractor,
+                has_image_preprocessor=has_image_preprocessor,
+                is_repo_downloaded=is_repo_downloaded,
             ),
         )
         model_meta.models[name] = base_meta
@@ -286,6 +299,27 @@ class HuggingFacePipelineHandler(
 
         return device_config
 
+    @staticmethod
+    def _load_pickle_model(
+        pickle_file: str,
+        **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
+    ) -> huggingface_pipeline.HuggingFacePipelineModel:
+        with open(pickle_file, "rb") as f:
+            m = cloudpickle.load(f)
+        assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel)
+        torch_dtype: Optional[str] = None
+        device_config = None
+        if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
+            device_config = HuggingFacePipelineHandler._get_device_config(**kwargs)
+            m.__dict__.update(device_config)
+
+        if getattr(m, "torch_dtype", None) is None and kwargs.get("use_gpu", False):
+            torch_dtype = "auto"
+            m.__dict__.update(torch_dtype=torch_dtype)
+        else:
+            m.__dict__.update(torch_dtype=None)
+        return m
+
     @classmethod
     def load_model(
         cls,
@@ -310,7 +344,13 @@ class HuggingFacePipelineHandler(
             raise ValueError("Missing field `batch_size` in model blob metadata for type `huggingface_pipeline`")
 
         model_blob_file_or_dir_path = os.path.join(model_blob_path, model_blob_filename)
-        if os.path.isdir(model_blob_file_or_dir_path):
+        is_repo_downloaded = model_blob_options.get("is_repo_downloaded", False)
+
+        def _create_pipeline_from_dir(
+            model_blob_file_or_dir_path: str,
+            model_blob_options: model_meta_schema.HuggingFacePipelineModelBlobOptions,
+            **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
+        ) -> "transformers.Pipeline":
             import transformers
 
             additional_pipeline_params = {}
@@ -330,7 +370,7 @@ class HuggingFacePipelineHandler(
             ) as f:
                 pipeline_params = cloudpickle.load(f)
 
-            device_config = cls._get_device_config(**kwargs)
+            device_config = HuggingFacePipelineHandler._get_device_config(**kwargs)
 
             m = transformers.pipeline(
                 model_blob_options["task"],
@@ -359,18 +399,59 @@ class HuggingFacePipelineHandler(
                 m.tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
             m.__dict__.update(pipeline_params)
+            return m
 
+        def _create_pipeline_from_model(
+            model_blob_file_or_dir_path: str,
+            m: huggingface_pipeline.HuggingFacePipelineModel,
+            **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
+        ) -> "transformers.Pipeline":
+            import transformers
+
+            return transformers.pipeline(
+                m.task,
+                model=model_blob_file_or_dir_path,
+                trust_remote_code=m.trust_remote_code,
+                torch_dtype=getattr(m, "torch_dtype", None),
+                revision=m.revision,
+                # pass device or device_map when creating the pipeline
+                **HuggingFacePipelineHandler._get_device_config(**kwargs),
+                # pass other model_kwargs to transformers.pipeline.from_pretrained method
+                **m.model_kwargs,
+            )
+
+        if os.path.isdir(model_blob_file_or_dir_path) and not is_repo_downloaded:
+            # the logged model is a transformers.Pipeline object
+            # weights of the model are saved in the directory
+            return _create_pipeline_from_dir(model_blob_file_or_dir_path, model_blob_options, **kwargs)
         else:
-            assert os.path.isfile(model_blob_file_or_dir_path)
-            with open(model_blob_file_or_dir_path, "rb") as f:
-                m = cloudpickle.load(f)
-            assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel)
-            if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
-                m.__dict__.update(cls._get_device_config(**kwargs))
+            # case 1: LEGACY logging, repo snapshot is not logged
+            if os.path.isfile(model_blob_file_or_dir_path):
+                # LEGACY logging that had model as a pickle file in the model blob directory
+                # the logged model is a huggingface_pipeline.HuggingFacePipelineModel object
+                # the model_blob_file_or_dir_path is the pickle file that holds
+                # the huggingface_pipeline.HuggingFacePipelineModel object
+                # the snapshot of the repo is not logged
+                return cls._load_pickle_model(model_blob_file_or_dir_path)
+            else:
+                assert os.path.isdir(model_blob_file_or_dir_path)
+                # the logged model is a huggingface_pipeline.HuggingFacePipelineModel object
+                # the pickle_file holds the huggingface_pipeline.HuggingFacePipelineModel object
+                pickle_file = os.path.join(model_blob_file_or_dir_path, cls.MODEL_PICKLE_FILE)
+                m = cls._load_pickle_model(pickle_file)
 
-            if getattr(m, "torch_dtype", None) is None and kwargs.get("use_gpu", False):
-                m.__dict__.update(torch_dtype="auto")
-        return m
+                # case 2: logging without the snapshot of the repo
+                if not is_repo_downloaded:
+                    # we return the huggingface_pipeline.HuggingFacePipelineModel object
+                    return m
+                # case 3: logging with the snapshot of the repo
+                else:
+                    # the model_blob_file_or_dir_path is the directory that holds
+                    # weights of the model from `huggingface_hub.snapshot_download`
+                    # the huggingface_pipeline.HuggingFacePipelineModel object is logged
+                    # with a snapshot of the repo, we create a transformers.Pipeline object
+                    # by reading the snapshot directory
+                    return _create_pipeline_from_model(model_blob_file_or_dir_path, m, **kwargs)
 
     @classmethod
     def convert_as_custom_model(
@@ -665,7 +746,7 @@ class HuggingFaceOpenAICompatibleModel:
             prompt_text,
             return_tensors="pt",
             padding=True,
-        )
+        ).to(self.model.device)
         prompt_tokens = inputs.input_ids.shape[1]
 
         from transformers import GenerationConfig
@@ -683,6 +764,7 @@ class HuggingFaceOpenAICompatibleModel:
             num_return_sequences=n,
             num_beams=max(2, n),  # must be >1
             num_beam_groups=max(2, n) if presence_penalty else 1,
+            do_sample=False,
         )
 
         # Generate text

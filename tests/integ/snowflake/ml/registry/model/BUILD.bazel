@@ -1,7 +1,7 @@
 load("//bazel:py_rules.bzl", "py_library", "py_test")
 
 package(default_visibility = [
-    "//model_container_services_deployment/image_build_sidecar:__subpackages__",
+    "//model_container_services_deployment/model_logger:__subpackages__",
     "//tests/integ/snowflake/ml:__subpackages__",
     "//tests/perf:__subpackages__",
 ])

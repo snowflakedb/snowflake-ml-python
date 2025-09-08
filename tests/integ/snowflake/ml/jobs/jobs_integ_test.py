@@ -473,7 +473,8 @@ class JobManagerTest(JobTestBase):
         )
         def job_sproc(session: snowpark.Session) -> None:
             job = job_fn()
-            assert job.wait() == "DONE", f"Job {job.id} failed. Logs:\n{job.get_logs()}"
+            if job.wait() != "DONE":
+                raise RuntimeError(f"Job {job.id} failed. Logs:\n{job.get_logs()}")
             return job.get_logs()
 
         result = job_sproc(self.session)
@@ -1110,6 +1111,55 @@ class JobManagerTest(JobTestBase):
                     job.get_logs(),
                     "Expected fallback to default Python version when no matching runtime available",
                 )
+
+    def test_job_with_alive_session(self) -> None:
+        def job_fn() -> str:
+            from snowflake.snowpark.context import get_active_session
+
+            session = get_active_session()
+            rows = session.sql("SHOW PARAMETERS LIKE '%CLIENT_SESSION_KEEP_ALIVE%' in SESSION;").collect()
+            if not rows:
+                return "false"
+            return str(rows[0]["value"])
+
+        job = self._submit_func_as_file(job_fn)
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertIsNotNone(job.result())
+        self.assertEqual(job.result(), "true")
+
+    def test_job_with_no_schema(self) -> None:
+        current_schema = self.session.get_current_schema()
+        current_database = self.session.get_current_database()
+        try:
+            test_db = identifier.resolve_identifier(f"test_db_{uuid4().hex}")
+            self.dbm.create_database(test_db)
+            self.dbm.drop_schema("PUBLIC", db_name=test_db, if_exists=False)
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Please specify a schema, either in the session context or as a parameter in the job submission",
+            ):
+                self._submit_func_as_file(dummy_function)
+        finally:
+            self.dbm.drop_database(test_db, if_exists=True)
+            self.session.use_database(current_database)
+            self.session.use_schema(current_schema)
+
+    def test_job_with_modin(self) -> None:
+        def test_modin_function() -> None:
+            import modin.pandas as mpd
+            import numpy as np
+            import pandas as pd
+
+            data = {
+                "A": np.random.randint(0, 100, size=100),
+                "B": np.random.randn(100),
+                "C": np.random.choice(["foo", "bar", "baz"], size=100),
+            }
+            df = pd.DataFrame(data)
+            mpd.DataFrame(df)
+
+        job = self._submit_func_as_file(test_modin_function)
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
 
 
 if __name__ == "__main__":

@@ -1,11 +1,27 @@
 # Release History
 
+## 1.13.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+* Registry: Log a HuggingFace model without having to load the model in memory using
+ the `huggingface_pipeline.HuggingFacePipelineModel`. Requires `huggingface_hub` package to installed.
+ To disable downloading HuggingFace repository, provide `download_snapshot=False` while creating the
+ `huggingface_pipeline.HuggingFacePipelineModel` object.
+* Registry: Added support for XGBoost models to use `enable_categorical=True` with pandas DataFrame
+* Registry: Added support to display privatelink inference endpoint in ModelVersion list services.
+
 ## 1.12.0
 
 ### Bug Fixes
 
 * Registry: Fixed an issue where the string representation of dictionary-type output columns was being incorrectly
   created during structured output deserialization. Now, the original data type is properly preserved.
+* Registry: Fixed the inference server performance issue for wide (500+ features) and JSON inputs.
 
 ### Behavior Changes
 
