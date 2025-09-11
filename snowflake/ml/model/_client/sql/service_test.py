@@ -390,7 +390,13 @@ class ServiceSQLTest(absltest.TestCase):
     def test_show_endpoints(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
-            collect_result=[Row(name="inference", ingress_url="foo.snowflakecomputing.app")],
+            collect_result=[
+                Row(
+                    name="inference",
+                    ingress_url="foo.snowflakecomputing.app",
+                    privatelink_ingress_url="privatelink.foo.privatelink.snowflakecomputing.com",
+                )
+            ],
             collect_statement_params=m_statement_params,
         )
         self.m_session.add_mock_sql(

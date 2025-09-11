@@ -1541,9 +1541,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""
-        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage", input_file_pattern="custom_*")
+        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
         output_spec = batch_inference_specs.OutputSpec(
-            output_stage_location="@output_stage", completion_filename="CUSTOM_COMPLETE"
+            stage_location="@output_stage",
         )
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
@@ -1555,6 +1555,7 @@ class ModelVersionImplTest(absltest.TestCase):
             max_batch_rows=2000,
             cpu_requests="4",
             memory_requests="8Gi",
+            replicas=10,
         )
 
         mock_job = mock.MagicMock(spec=jobs.MLJob)
@@ -1583,10 +1584,11 @@ class ModelVersionImplTest(absltest.TestCase):
                 cpu_requests="4",
                 memory_requests="8Gi",
                 job_name="CUSTOM_JOB_NAME",
+                replicas=10,
                 input_stage_location="@input_stage",
-                input_file_pattern="custom_*",
+                input_file_pattern="*",
                 output_stage_location="@output_stage",
-                completion_filename="CUSTOM_COMPLETE",
+                completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
             )
 
@@ -1594,8 +1596,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_generated_job_name(self) -> None:
         """Test _run_batch with job_name generated when None."""
-        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage", input_file_pattern="*")
-        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
             job_name=None,  # This will trigger job name generation
@@ -1634,8 +1636,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_warehouse_from_session(self) -> None:
         """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
-        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
-        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
             job_name="TEST_JOB",
@@ -1675,8 +1677,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_no_warehouse_error(self) -> None:
         """Test _run_batch raises ValueError when no warehouse is available."""
-        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
-        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
             job_name="TEST_JOB",
@@ -1706,8 +1708,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_none_job_spec(self) -> None:
         """Test _run_batch with job_spec=None uses default JobSpec values."""
-        input_spec = batch_inference_specs.InputSpec(input_stage_location="@input_stage")
-        output_spec = batch_inference_specs.OutputSpec(output_stage_location="@output_stage")
+        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
 
         mock_job = mock.MagicMock(spec=jobs.MLJob)
 
@@ -1748,6 +1750,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 cpu_requests=None,  # JobSpec default
                 memory_requests=None,  # JobSpec default
                 job_name="BATCH_INFERENCE_DEFAULT_UUID_1234_5678_ABCD",  # generated since job_name=None
+                replicas=None,  # JobSpec default
                 input_stage_location="@input_stage",
                 input_file_pattern="*",  # InputSpec default
                 output_stage_location="@output_stage",

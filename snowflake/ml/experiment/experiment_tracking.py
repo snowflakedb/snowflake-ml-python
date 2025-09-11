@@ -7,7 +7,7 @@ from urllib.parse import quote
 import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake.ml import model as ml_model, registry
 from snowflake.ml._internal.human_readable_id import hrid_generator
-from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml._internal.utils import mixins, sql_identifier
 from snowflake.ml.experiment import (
     _entities as entities,
     _experiment_info as experiment_info,
@@ -23,7 +23,7 @@ from snowflake.snowpark import session
 DEFAULT_EXPERIMENT_NAME = sql_identifier.SqlIdentifier("DEFAULT")
 
 
-class ExperimentTracking:
+class ExperimentTracking(mixins.SerializableSessionMixin):
     """
     Class to manage experiments in Snowflake.
     """
@@ -73,11 +73,33 @@ class ExperimentTracking:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
+        self._session = session
 
         # The experiment in context
         self._experiment: Optional[entities.Experiment] = None
         # The run in context
         self._run: Optional[entities.Run] = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = super().__getstate__()
+        # Remove unpicklable attributes
+        state["_sql_client"] = None
+        state["_registry"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        # Restore unpicklable attributes
+        self._sql_client = sql_client.ExperimentTrackingSQLClient(
+            session=self._session,
+            database_name=self._database_name,
+            schema_name=self._schema_name,
+        )
+        self._registry = registry.Registry(
+            session=self._session,
+            database_name=self._database_name,
+            schema_name=self._schema_name,
+        )
 
     def set_experiment(
         self,

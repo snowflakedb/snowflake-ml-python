@@ -1,5 +1,4 @@
 import json
-import os
 import tempfile
 
 import inflection
@@ -90,7 +89,6 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
             options={"enable_explainability": False},
         )
 
-    @absltest.skipIf(os.getenv("BASE_CPU_IMAGE_PATH", None) is None, "BASE_CPU_IMAGE_PATH is not set")
     def test_udf_500_column_limit(self) -> None:
         lm = DemoModel(custom_model.ModelContext())
         num_cols = 501

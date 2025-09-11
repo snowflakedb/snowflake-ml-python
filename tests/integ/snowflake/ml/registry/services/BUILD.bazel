@@ -97,6 +97,23 @@ py_test(
 )
 
 py_test(
+    name = "registry_wide_input_format_test",
+    timeout = "eternal",
+    srcs = ["registry_wide_input_format_test.py"],
+    shard_count = 2,
+    tags = [
+        "feature:model_registry",
+        "wide_input_format_test",
+    ],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:jwt_generator",
+        "//snowflake/ml/utils:authentication",
+    ],
+)
+
+py_test(
     name = "registry_custom_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],

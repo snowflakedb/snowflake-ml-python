@@ -6,7 +6,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
 
-class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
+class TestRegistryArtifactRepositoryInteg(registry_model_test_base.RegistryModelTestBase):
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         test_artifact_repository=[False, True],

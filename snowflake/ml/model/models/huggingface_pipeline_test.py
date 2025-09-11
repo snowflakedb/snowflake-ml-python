@@ -31,13 +31,11 @@ class HuggingFacePipelineTest(absltest.TestCase):
             UserWarning,
             "Using a pipeline without specifying a model name and revision in production is not recommended.",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation")
+            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", download_snapshot=False)
 
-        huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="gpt2")
+        huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="facebook/opt-125m")
 
-        huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", config="gpt2")
-
-        huggingface_pipeline.HuggingFacePipelineModel(model="gpt2")
+        huggingface_pipeline.HuggingFacePipelineModel(model="facebook/opt-125m")
 
         huggingface_pipeline.HuggingFacePipelineModel(model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER)
 
@@ -47,7 +45,10 @@ class HuggingFacePipelineTest(absltest.TestCase):
             mock_config.custom_pipelines = {}
             mock_from_pretrained.return_value = mock_config
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="fill-mask", model=testing_utils.SMALL_MODEL_IDENTIFIER, token=testing_utils.TOKEN
+                task="fill-mask",
+                model=testing_utils.SMALL_MODEL_IDENTIFIER,
+                token=testing_utils.TOKEN,
+                download_snapshot=False,
             )
             mock_from_pretrained.assert_called_once_with(
                 testing_utils.SMALL_MODEL_IDENTIFIER,
@@ -76,7 +77,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             RuntimeError,
             "Impossible to instantiate a pipeline without either a task or a model being specified.",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(config="gpt2")
+            huggingface_pipeline.HuggingFacePipelineModel(config="facebook/opt-125m")
 
         with self.assertRaisesRegex(
             RuntimeError,
@@ -95,7 +96,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             "`token` and `use_auth_token` are both specified. Please set only the argument `token`.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="text-generation", model="gpt2", token="token", model_kwargs={"use_auth_token": True}
+                task="text-generation", model="facebook/opt-125m", token="token", model_kwargs={"use_auth_token": True}
             )
 
         with self.assertRaisesRegex(
@@ -108,14 +109,17 @@ class HuggingFacePipelineTest(absltest.TestCase):
             RuntimeError,
             "Impossible to use non-string config as input for HuggingFacePipelineModel.",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="gpt2", config=1)
+            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="facebook/opt-125m", config=1)
 
         with self.assertRaisesRegex(
             ValueError,
             "You cannot use both `pipeline\\(... device_map=..., model_kwargs",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="text-generation", model="gpt2", device_map="auto", model_kwargs={"device_map": "auto"}
+                task="text-generation",
+                model="facebook/opt-125m",
+                device_map="auto",
+                model_kwargs={"device_map": "auto"},
             )
 
         with self.assertWarnsRegex(
@@ -123,7 +127,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             "Both `device` and `device_map` are specified.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="text-generation", model="gpt2", device_map="auto", device=0
+                task="text-generation", model="facebook/opt-125m", device_map="auto", device=0
             )
 
     def test_create_service(self) -> None:
@@ -144,6 +148,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             model="openai-community/gpt2",
             task="text-generation",
             trust_remote_code=True,
+            download_snapshot=False,
         )
 
         # Patch the ServiceOperator constructor to return our mock

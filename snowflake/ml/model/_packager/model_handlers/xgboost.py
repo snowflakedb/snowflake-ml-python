@@ -229,6 +229,11 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                     enable_categorical = False
                     for col, d_type in X.dtypes.items():
                         if pd.api.extensions.ExtensionDtype.is_dtype(d_type):
+                            if pd.CategoricalDtype.is_dtype(d_type):
+                                enable_categorical = True
+                            elif isinstance(d_type, pd.StringDtype):
+                                X[col] = X[col].astype("category")
+                                enable_categorical = True
                             continue
                         if not np.issubdtype(d_type, np.number):
                             # categorical columns are converted to numpy's str dtype

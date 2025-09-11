@@ -57,6 +57,7 @@ class Job(BaseModel):
     function_name: str
     input: Input
     output: Output
+    replicas: Optional[int] = None
 
 
 class LogModelArgs(BaseModel):

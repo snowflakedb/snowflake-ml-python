@@ -881,6 +881,7 @@ class ServiceOperator:
         max_batch_rows: Optional[int],
         cpu_requests: Optional[str],
         memory_requests: Optional[str],
+        replicas: Optional[int],
         statement_params: Optional[dict[str, Any]] = None,
     ) -> jobs.MLJob[Any]:
         database_name = self._database_name
@@ -914,6 +915,7 @@ class ServiceOperator:
             warehouse=warehouse,
             cpu=cpu_requests,
             memory=memory_requests,
+            replicas=replicas,
         )
 
         self._model_deployment_spec.add_image_build_spec(

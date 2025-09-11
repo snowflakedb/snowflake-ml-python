@@ -680,8 +680,10 @@ def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kw
     elif func_spec.kwonlydefaults and field in func_spec.kwonlyargs:
         if field in kwargs:
             return True, kwargs[field]
-        else:
+        elif field in func_spec.kwonlydefaults:
             return True, func_spec.kwonlydefaults[field]
+        else:
+            return False, None
     else:
         return False, None
 

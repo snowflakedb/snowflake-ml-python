@@ -28,6 +28,10 @@ class HuggingFacePipelineModel:
         token: Optional[str] = None,
         trust_remote_code: Optional[bool] = None,
         model_kwargs: Optional[dict[str, Any]] = None,
+        download_snapshot: bool = True,
+        # repo snapshot download args
+        allow_patterns: Optional[Union[list[str], str]] = None,
+        ignore_patterns: Optional[Union[list[str], str]] = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -52,6 +56,9 @@ class HuggingFacePipelineModel:
                 Defaults to None.
             model_kwargs: Additional dictionary of keyword arguments passed along to the model's `from_pretrained(...,`.
                 Defaults to None.
+            download_snapshot: Whether to download the HuggingFace repository. Defaults to True.
+            allow_patterns: If provided, only files matching at least one pattern are downloaded.
+            ignore_patterns: If provided, files matching any of the patterns are not downloaded.
             kwargs: Additional keyword arguments passed along to the specific pipeline init (see the documentation for
                 the corresponding pipeline class for possible values).
 
@@ -220,6 +227,21 @@ class HuggingFacePipelineModel:
                     stacklevel=2,
                 )
 
+        repo_snapshot_dir: Optional[str] = None
+        if download_snapshot:
+            try:
+                from huggingface_hub import snapshot_download
+
+                repo_snapshot_dir = snapshot_download(
+                    repo_id=model,
+                    revision=revision,
+                    token=token,
+                    allow_patterns=allow_patterns,
+                    ignore_patterns=ignore_patterns,
+                )
+            except ImportError:
+                logger.info("huggingface_hub package is not installed, skipping snapshot download")
+
         # ==== End pipeline logic from transformers ====
 
         self.task = normalized_task
@@ -229,6 +251,7 @@ class HuggingFacePipelineModel:
         self.trust_remote_code = trust_remote_code
         self.model_kwargs = model_kwargs
         self.tokenizer = tokenizer
+        self.repo_snapshot_dir = repo_snapshot_dir
         self.__dict__.update(kwargs)
 
     @telemetry.send_api_usage_telemetry(

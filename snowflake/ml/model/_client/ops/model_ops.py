@@ -47,6 +47,7 @@ class ServiceInfo(TypedDict):
 class ModelOperator:
     INFERENCE_SERVICE_ENDPOINT_NAME = "inference"
     INGRESS_ENDPOINT_URL_SUFFIX = "snowflakecomputing.app"
+    PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING = "privatelink.snowflakecomputing"
 
     def __init__(
         self,
@@ -612,6 +613,30 @@ class ModelOperator:
             statement_params=statement_params,
         )
 
+    def _is_privatelink_connection(self) -> bool:
+        """Detect if the current session is using a privatelink connection."""
+        try:
+            host = self._session.connection.host
+            return ModelOperator.PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING in host
+        except AttributeError:
+            return False
+
+    def _extract_and_validate_ingress_url(self, res_row: "row.Row") -> Optional[str]:
+        """Extract and validate ingress URL from endpoint row."""
+        url_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME]
+        if url_value is None:
+            return None
+        url_str = str(url_value)
+        return url_str if url_str.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX) else None
+
+    def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> Optional[str]:
+        """Extract and validate privatelink ingress URL from endpoint row."""
+        url_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME]
+        if url_value is None:
+            return None
+        url_str = str(url_value)
+        return url_str if ModelOperator.PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING in url_str else None
+
     def show_services(
         self,
         *,
@@ -644,8 +669,10 @@ class ModelOperator:
         fully_qualified_service_names = [str(service) for service in json_array if "MODEL_BUILD_" not in service]
 
         result: list[ServiceInfo] = []
+        is_privatelink_connection = self._is_privatelink_connection()
+
         for fully_qualified_service_name in fully_qualified_service_names:
-            ingress_url: Optional[str] = None
+            inference_endpoint: Optional[str] = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
             statuses = self._service_client.get_service_container_statuses(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
@@ -659,17 +686,23 @@ class ModelOperator:
             ):
                 if (
                     res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME]
-                    == self.INFERENCE_SERVICE_ENDPOINT_NAME
-                    and res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME] is not None
+                    != self.INFERENCE_SERVICE_ENDPOINT_NAME
                 ):
-                    ingress_url = str(
-                        res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME]
-                    )
-                    if not ingress_url.endswith(ModelOperator.INGRESS_ENDPOINT_URL_SUFFIX):
-                        ingress_url = None
+                    continue
+
+                ingress_url = self._extract_and_validate_ingress_url(res_row)
+                privatelink_ingress_url = self._extract_and_validate_privatelink_url(res_row)
+
+                if is_privatelink_connection and privatelink_ingress_url is not None:
+                    inference_endpoint = privatelink_ingress_url
+                else:
+                    inference_endpoint = ingress_url
+
             result.append(
                 ServiceInfo(
-                    name=fully_qualified_service_name, status=service_status.value, inference_endpoint=ingress_url
+                    name=fully_qualified_service_name,
+                    status=service_status.value,
+                    inference_endpoint=inference_endpoint,
                 )
             )
 

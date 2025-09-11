@@ -1167,6 +1167,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1000,
                 cpu_requests="1",
                 memory_requests="4GiB",
+                replicas=1,
             )
 
             # Verify all method calls
@@ -1201,6 +1202,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
                 cpu="1",
                 memory="4GiB",
+                replicas=1,
             )
 
             mock_add_image_build_spec.assert_called_once_with(
@@ -1302,6 +1304,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     max_batch_rows=1000,
                     cpu_requests="1",
                     memory_requests="4GiB",
+                    replicas=1,
                 )
 
                 # Verify stage operations
@@ -1387,6 +1390,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=None,
                 cpu_requests=None,
                 memory_requests=None,
+                replicas=None,
                 statement_params=self.m_statement_params,
             )
 
@@ -1406,6 +1410,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
                 cpu=None,
                 memory=None,
+                replicas=None,
             )
 
             # Verify image build spec called with None for image repo

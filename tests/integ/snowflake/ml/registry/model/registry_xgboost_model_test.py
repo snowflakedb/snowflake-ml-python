@@ -527,6 +527,65 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_xgb_classifier_with_pandas_categorical_dtype_columns(
+        self,
+        registry_test_fn: str,
+    ) -> None:
+        data = {
+            "color": ["red", "blue", "green", "red"],
+            "size": [1, 2, 2, 4],
+            "price": [10, 15, 20, 25],
+            "target": [0, 1, 1, 0],
+        }
+        input_features = [
+            "color",
+            "size",
+            "price",
+        ]
+
+        df = pd.DataFrame(data)
+        df["color"] = df["color"].astype("category")
+        df["size"] = df["size"].astype("category")
+
+        X = df[input_features]
+        y = df["target"]
+
+        # Train XGBoost classifier with enable_categorical=True with pandas categorical dataframe
+        classifier = xgboost.XGBClassifier(enable_categorical=True)
+        classifier.fit(X, y)
+
+        def check_predict_fn(res: pd.DataFrame) -> None:
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame(classifier.predict(X), columns=res.columns),
+                check_dtype=False,
+            )
+
+        def check_predict_proba_fn(res: pd.DataFrame) -> None:
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame(classifier.predict_proba(X), columns=res.columns),
+                check_dtype=False,
+            )
+
+        getattr(self, registry_test_fn)(
+            model=classifier,
+            sample_input_data=X,
+            prediction_assert_fns={
+                "predict": (
+                    X,
+                    check_predict_fn,
+                ),
+                "predict_proba": (
+                    X,
+                    check_predict_proba_fn,
+                ),
+            },
+        )
+
     def test_xgb_model_with_quoted_identifiers_ignore_case(self):
         cal_X, cal_y = datasets.load_breast_cancer(return_X_y=True)
         cal_X_df = pd.DataFrame(cal_X, columns=[f"col_{i}" for i in range(cal_X.shape[1])])

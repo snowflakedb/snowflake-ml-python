@@ -50,7 +50,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def min_instances(self) -> int:
         try:
             return int(self._container_spec["env"].get(constants.MIN_INSTANCES_ENV_VAR, 1))
-        except TypeError:
+        except (TypeError, ValueError):
             return 1
 
     @property
@@ -83,7 +83,10 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def _container_spec(self) -> dict[str, Any]:
         """Get the job's main container spec."""
         containers = self._service_spec["spec"]["containers"]
-        container_spec = next(c for c in containers if c["name"] == constants.DEFAULT_CONTAINER_NAME)
+        try:
+            container_spec = next(c for c in containers if c["name"] == constants.DEFAULT_CONTAINER_NAME)
+        except StopIteration:
+            raise ValueError(f"Container '{constants.DEFAULT_CONTAINER_NAME}' not found in job {self.name}")
         return cast(dict[str, Any], container_spec)
 
     @property

@@ -5,7 +5,6 @@ import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model import type_hints
 
 
@@ -67,15 +66,6 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
         self,
         target_platforms_and_dependency_combinations: dict[any, any],
     ) -> None:
-        region = snowflake_env.get_regions(self.session)[snowflake_env.get_current_region_id(self.session)]
-        cloud = region["cloud"]
-        if (
-            cloud == snowflake_env.SnowflakeCloudType.GCP
-            and type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value
-            in target_platforms_and_dependency_combinations["target_platforms"]
-        ):
-            self.skipTest("SPCS not enabled as the target platform in GCP")
-
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target

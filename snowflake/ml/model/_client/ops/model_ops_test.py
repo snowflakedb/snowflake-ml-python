@@ -40,6 +40,11 @@ class ModelOpsTest(absltest.TestCase):
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_statement_params = {"test": "1"}
         self.c_session = cast(Session, self.m_session)
+
+        mock_connection = mock.Mock()
+        mock_connection.host = "account.snowflakecomputing.com"
+        self.m_session.connection = mock_connection
+
         self.m_ops = model_ops.ModelOperator(
             self.c_session,
             database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -463,8 +468,14 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_show_services_1(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
-        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting")]
-        m_endpoints_list_res_1 = [Row(name="inference", ingress_url="foo.snowflakecomputing.app")]
+        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting", privatelink_ingress_url=None)]
+        m_endpoints_list_res_1 = [
+            Row(
+                name="inference",
+                ingress_url="foo.snowflakecomputing.app",
+                privatelink_ingress_url="privatelink.foo.privatelink.snowflakecomputing.com",
+            )
+        ]
         m_statuses_0 = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
@@ -489,67 +500,99 @@ class ModelOpsTest(absltest.TestCase):
         ) as mock_show_versions, mock.patch.object(
             self.m_ops._service_client,
             "get_service_container_statuses",
-            side_effect=[m_statuses_0, m_statuses_1],
+            side_effect=[m_statuses_0, m_statuses_1, m_statuses_0, m_statuses_1],
         ) as mock_get_service_container_statuses, mock.patch.object(
-            self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res_0, m_endpoints_list_res_1]
+            self.m_ops._service_client,
+            "show_endpoints",
+            side_effect=[
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+            ],
         ) as mock_show_endpoints:
-            res = self.m_ops.show_services(
+
+            with mock.patch.object(self.m_ops._session.connection, "host", "account.snowflakecomputing.com"):
+                res = self.m_ops.show_services(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    statement_params=self.m_statement_params,
+                )
+                self.assertListEqual(
+                    res,
+                    [
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
+                        {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
+                    ],
+                )
+
+            with mock.patch.object(
+                self.m_ops._session.connection, "host", "account.privatelink.snowflakecomputing.com"
+            ):
+                res = self.m_ops.show_services(
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                    statement_params=self.m_statement_params,
+                )
+                self.assertListEqual(
+                    res,
+                    [
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
+                        {
+                            "name": "d.e.f",
+                            "status": "RUNNING",
+                            "inference_endpoint": "privatelink.foo.privatelink.snowflakecomputing.com",
+                        },
+                    ],
+                )
+            expected_show_versions_call = mock.call(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            self.assertListEqual(
-                res,
-                [
-                    {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
-                    {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
-                ],
-            )
-            mock_show_versions.assert_called_once_with(
-                database_name=sql_identifier.SqlIdentifier("TEMP"),
-                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
-                statement_params=self.m_statement_params,
-            )
-            mock_get_service_container_statuses.assert_has_calls(
-                [
-                    mock.call(
-                        database_name=sql_identifier.SqlIdentifier("a"),
-                        schema_name=sql_identifier.SqlIdentifier("b"),
-                        service_name=sql_identifier.SqlIdentifier("c"),
-                        statement_params=self.m_statement_params,
-                    ),
-                    mock.call(
-                        database_name=sql_identifier.SqlIdentifier("d"),
-                        schema_name=sql_identifier.SqlIdentifier("e"),
-                        service_name=sql_identifier.SqlIdentifier("f"),
-                        statement_params=self.m_statement_params,
-                    ),
-                ]
-            )
-            mock_show_endpoints.assert_has_calls(
-                [
-                    mock.call(
-                        database_name=sql_identifier.SqlIdentifier("a"),
-                        schema_name=sql_identifier.SqlIdentifier("b"),
-                        service_name=sql_identifier.SqlIdentifier("c"),
-                        statement_params=self.m_statement_params,
-                    ),
-                    mock.call(
-                        database_name=sql_identifier.SqlIdentifier("d"),
-                        schema_name=sql_identifier.SqlIdentifier("e"),
-                        service_name=sql_identifier.SqlIdentifier("f"),
-                        statement_params=self.m_statement_params,
-                    ),
-                ]
-            )
+            mock_show_versions.assert_has_calls([expected_show_versions_call, expected_show_versions_call])
+
+            expected_status_calls = [
+                mock.call(
+                    database_name=sql_identifier.SqlIdentifier("a"),
+                    schema_name=sql_identifier.SqlIdentifier("b"),
+                    service_name=sql_identifier.SqlIdentifier("c"),
+                    statement_params=self.m_statement_params,
+                ),
+                mock.call(
+                    database_name=sql_identifier.SqlIdentifier("d"),
+                    schema_name=sql_identifier.SqlIdentifier("e"),
+                    service_name=sql_identifier.SqlIdentifier("f"),
+                    statement_params=self.m_statement_params,
+                ),
+            ]
+            mock_get_service_container_statuses.assert_has_calls(expected_status_calls * 2)
+
+            expected_endpoint_calls = [
+                mock.call(
+                    database_name=sql_identifier.SqlIdentifier("a"),
+                    schema_name=sql_identifier.SqlIdentifier("b"),
+                    service_name=sql_identifier.SqlIdentifier("c"),
+                    statement_params=self.m_statement_params,
+                ),
+                mock.call(
+                    database_name=sql_identifier.SqlIdentifier("d"),
+                    schema_name=sql_identifier.SqlIdentifier("e"),
+                    service_name=sql_identifier.SqlIdentifier("f"),
+                    statement_params=self.m_statement_params,
+                ),
+            ]
+            mock_show_endpoints.assert_has_calls(expected_endpoint_calls * 2)
 
     def test_show_services_2(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
-        m_endpoints_list_res = [Row(name="inference", ingress_url=None)]
+        m_endpoints_list_res = [Row(name="inference", ingress_url=None, privatelink_ingress_url=None)]
         m_statuses = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
@@ -603,8 +646,16 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_services_3(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
         m_endpoints_list_res = [
-            Row(name="inference", ingress_url="foo.snowflakecomputing.app"),
-            Row(name="another", ingress_url="bar.snowflakecomputing.app"),
+            Row(
+                name="inference",
+                ingress_url="foo.snowflakecomputing.app",
+                privatelink_ingress_url="privatelink.foo.privatelink.snowflakecomputing.com",
+            ),
+            Row(
+                name="another",
+                ingress_url="bar.snowflakecomputing.app",
+                privatelink_ingress_url="privatelink.bar.privatelink.snowflakecomputing.com",
+            ),
         ]
         m_statuses = [
             service_sql.ServiceStatusInfo(
@@ -658,7 +709,13 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_show_services_4(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
-        m_endpoints_list_res = [Row(name="custom", ingress_url="foo.snowflakecomputing.app")]
+        m_endpoints_list_res = [
+            Row(
+                name="custom",
+                ingress_url="foo.snowflakecomputing.app",
+                privatelink_ingress_url="privatelink.foo.privatelink.snowflakecomputing.com",
+            )
+        ]
         m_statuses = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,

@@ -14,17 +14,11 @@ import pytest
 import requests
 import retrying
 import yaml
-from absl.testing import absltest
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
-from snowflake.ml._internal.utils import (
-    identifier,
-    jwt_generator,
-    snowflake_env,
-    sql_identifier,
-)
+from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
@@ -40,11 +34,6 @@ from tests.integ.snowflake.ml.test_utils import (
 
 
 @pytest.mark.spcs_deployment_image
-@absltest.skipUnless(
-    test_env_utils.get_current_snowflake_cloud_type()
-    in [snowflake_env.SnowflakeCloudType.AWS, snowflake_env.SnowflakeCloudType.AZURE],
-    "SPCS only available in AWS and Azure",
-)
 class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
     _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
@@ -53,6 +42,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     BUILDER_IMAGE_PATH = os.getenv("BUILDER_IMAGE_PATH", None)
     BASE_CPU_IMAGE_PATH = os.getenv("BASE_CPU_IMAGE_PATH", None)
     BASE_GPU_IMAGE_PATH = os.getenv("BASE_GPU_IMAGE_PATH", None)
+    PROXY_IMAGE_PATH = os.getenv("PROXY_IMAGE_PATH", None)
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -158,6 +148,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
 
         deploy_spec_dict["image_build"]["builder_image"] = self.BUILDER_IMAGE_PATH
         deploy_spec_dict["image_build"]["base_image"] = image_path
+        deploy_spec_dict["service"]["proxy_image"] = self.PROXY_IMAGE_PATH
 
         if inline_deploy_spec_enabled:
             # dict to yaml string

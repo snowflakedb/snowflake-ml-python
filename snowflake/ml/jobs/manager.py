@@ -58,7 +58,8 @@ def list_jobs(
         >>> from snowflake.ml.jobs import list_jobs
         >>> list_jobs(limit=5)
     """
-    session = session or get_active_session()
+
+    session = _ensure_session(session)
     try:
         df = _get_job_history_spcs(
             session,
@@ -162,7 +163,7 @@ def _get_job_history_spcs(
 @telemetry.send_api_usage_telemetry(project=_PROJECT)
 def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob[Any]:
     """Retrieve a job service from the backend."""
-    session = session or get_active_session()
+    session = _ensure_session(session)
     try:
         database, schema, job_name = identifier.parse_schema_level_object_identifier(job_id)
         database = identifier.resolve_identifier(cast(str, database or session.get_current_database()))
@@ -434,8 +435,10 @@ def _submit_job(
 
     Raises:
         ValueError: If database or schema value(s) are invalid
+        RuntimeError: If schema is not specified in session context or job submission
+        snowpark.exceptions.SnowparkSQLException: if failed to upload payload
     """
-    session = session or get_active_session()
+    session = _ensure_session(session)
 
     # Check for deprecated args
     if "num_instances" in kwargs:
@@ -486,10 +489,17 @@ def _submit_job(
     stage_name = f"@{'.'.join(filter(None, stage_path_parts[:3]))}"
     stage_path = pathlib.PurePosixPath(f"{stage_name}{stage_path_parts[-1].rstrip('/')}/{job_name}")
 
-    # Upload payload
-    uploaded_payload = payload_utils.JobPayload(
-        source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=additional_payloads
-    ).upload(session, stage_path)
+    try:
+        # Upload payload
+        uploaded_payload = payload_utils.JobPayload(
+            source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=additional_payloads
+        ).upload(session, stage_path)
+    except snowpark.exceptions.SnowparkSQLException as e:
+        if e.sql_error_code == 90106:
+            raise RuntimeError(
+                "Please specify a schema, either in the session context or as a parameter in the job submission"
+            )
+        raise
 
     if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled():
         # Add default env vars (extracted from spec_utils.generate_service_spec)
@@ -651,3 +661,15 @@ def _do_submit_job_v2(
     actual_job_id = query_helper.run_query(session, query_template, params=params)[0][0]
 
     return get_job(actual_job_id, session=session)
+
+
+def _ensure_session(session: Optional[snowpark.Session]) -> snowpark.Session:
+    try:
+        session = session or get_active_session()
+    except snowpark.exceptions.SnowparkSessionException as e:
+        if "More than one active session" in e.message:
+            raise RuntimeError("Please specify the session as a parameter in API call")
+        if "No default Session is found" in e.message:
+            raise RuntimeError("Please create a session before API call")
+        raise
+    return session
