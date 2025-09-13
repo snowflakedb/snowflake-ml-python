@@ -25,7 +25,7 @@ RESULT_PATH_DEFAULT_VALUE = f"{OUTPUT_STAGE_SUBPATH}/mljob_result.pkl"
 DEFAULT_IMAGE_REPO = "/snowflake/images/snowflake_images"
 DEFAULT_IMAGE_CPU = "st_plat/runtime/x86/runtime_image/snowbooks"
 DEFAULT_IMAGE_GPU = "st_plat/runtime/x86/generic_gpu/runtime_image/snowbooks"
-DEFAULT_IMAGE_TAG = "1.6.2"
+DEFAULT_IMAGE_TAG = "1.8.0"
 DEFAULT_ENTRYPOINT_PATH = "func.py"
 
 # Percent of container memory to allocate for /dev/shm volume

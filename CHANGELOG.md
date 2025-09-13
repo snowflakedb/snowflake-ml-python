@@ -1,5 +1,18 @@
 # Release History
 
+## 1.14.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+* ML Job: The `additional_payloads` argument is now **deprecated** in favor of `imports`.
+
+### New Features
+
+* ML Job: Added a `runtime` argument for job submission, allowing users to specify a custom runtime image.
+Supported values include image tags and full image URLs.
+
 ## 1.13.0
 
 ### Bug Fixes

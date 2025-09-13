@@ -304,3 +304,15 @@ py_test(
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
 )
+
+py_test(
+    name = "registry_prophet_model_test",
+    timeout = "long",
+    srcs = ["registry_prophet_model_test.py"],
+    optional_dependencies = ["prophet"],
+    shard_count = 4,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_model_test_base",
+    ],
+)

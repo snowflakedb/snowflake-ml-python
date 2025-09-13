@@ -16,7 +16,7 @@ from packaging import version
 from snowflake import snowpark
 from snowflake.ml import jobs
 from snowflake.ml._internal import env
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, snowflake_env
 from snowflake.ml.jobs import job as jd
 from snowflake.ml.jobs._utils import (
     constants,
@@ -556,7 +556,6 @@ class JobManagerTest(JobTestBase):
         "Decorator test only works for Python 3.10 to pickle compatibility",
     )
     def test_job_data_connector(self) -> None:
-        from snowflake.ml._internal.utils import mixins
         from snowflake.ml.data import data_connector
         from snowflake.ml.data._internal import arrow_ingestor
 
@@ -564,8 +563,7 @@ class JobManagerTest(JobTestBase):
 
         @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def runtime_func(dc: data_connector.DataConnector) -> data_connector.DataConnector:
-            # TODO(SNOW-2182155): Enable this once headless backend receives updated SnowML with unpickle support
-            # assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
+            assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
             assert len(dc.to_pandas()) == num_rows, len(dc.to_pandas())
             return dc
 
@@ -574,16 +572,7 @@ class JobManagerTest(JobTestBase):
         )
         dc = data_connector.DataConnector.from_dataframe(df)
         self.assertIsInstance(dc._ingestor, arrow_ingestor.ArrowIngestor)
-
-        # TODO(SNOW-2182155): Remove this once headless backend receives updated SnowML with unpickle support
-        #       Register key modules to be picklable by value to avoid version desync in this test
-        cp.register_pickle_by_value(mixins)
-        cp.register_pickle_by_value(arrow_ingestor)
-        try:
-            job = runtime_func(dc)
-        finally:
-            cp.unregister_pickle_by_value(mixins)
-            cp.unregister_pickle_by_value(arrow_ingestor)
+        job = runtime_func(dc)
 
         self.assertEqual(job.wait(), "DONE", job.get_logs())
         dc_unpickled = job.result()
@@ -1160,6 +1149,21 @@ class JobManagerTest(JobTestBase):
 
         job = self._submit_func_as_file(test_modin_function)
         self.assertEqual(job.wait(), "DONE", job.get_logs())
+
+    def test_job_with_customized_runtime(self) -> None:
+        current_version = snowflake_env.get_current_snowflake_version(self.session)
+        if current_version < version.parse("9.28.0"):
+            self.skipTest("Customized runtime is not supported on this version of Snowflake.")
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_EXECUTE_ML_JOB_FUNCTION = TRUE").collect()
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to enable ENABLE_EXECUTE_ML_JOB_FUNCTION. Skipping test.")
+
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+            customized_runtime = "/snowflake/images/snowflake_images/st_plat/runtime/x86/runtime_image/snowbooks:1.7.1"
+            job = self._submit_func_as_file(dummy_function, runtime=customized_runtime)
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertIn(customized_runtime, job._container_spec["image"])
 
 
 if __name__ == "__main__":

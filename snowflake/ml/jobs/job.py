@@ -83,6 +83,8 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def _container_spec(self) -> dict[str, Any]:
         """Get the job's main container spec."""
         containers = self._service_spec["spec"]["containers"]
+        if len(containers) == 1:
+            return cast(dict[str, Any], containers[0])
         try:
             container_spec = next(c for c in containers if c["name"] == constants.DEFAULT_CONTAINER_NAME)
         except StopIteration:
@@ -163,7 +165,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         Returns:
             The job's execution logs.
         """
-        logs = _get_logs(self._session, self.id, limit, instance_id, verbose)
+        logs = _get_logs(self._session, self.id, limit, instance_id, self._container_spec["name"], verbose)
         assert isinstance(logs, str)  # mypy
         if as_list:
             return logs.splitlines()
@@ -281,7 +283,12 @@ def _get_service_spec(session: snowpark.Session, job_id: str) -> dict[str, Any]:
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "limit", "instance_id"])
 def _get_logs(
-    session: snowpark.Session, job_id: str, limit: int = -1, instance_id: Optional[int] = None, verbose: bool = True
+    session: snowpark.Session,
+    job_id: str,
+    limit: int = -1,
+    instance_id: Optional[int] = None,
+    container_name: str = constants.DEFAULT_CONTAINER_NAME,
+    verbose: bool = True,
 ) -> str:
     """
     Retrieve the job's execution logs.
@@ -291,6 +298,7 @@ def _get_logs(
         limit: The maximum number of lines to return. Negative values are treated as no limit.
         session: The Snowpark session to use. If none specified, uses active session.
         instance_id: Optional instance ID to get logs from a specific instance.
+        container_name: The container name to get logs from a specific container.
         verbose: Whether to return the full log or just the portion between START and END messages.
 
     Returns:
@@ -311,7 +319,7 @@ def _get_logs(
     params: list[Any] = [
         job_id,
         0 if instance_id is None else instance_id,
-        constants.DEFAULT_CONTAINER_NAME,
+        container_name,
     ]
     if limit > 0:
         params.append(limit)
@@ -337,7 +345,7 @@ def _get_logs(
                     job_id,
                     limit=limit,
                     instance_id=instance_id if instance_id else 0,
-                    container_name=constants.DEFAULT_CONTAINER_NAME,
+                    container_name=container_name,
                 )
                 full_log = os.linesep.join(row[0] for row in logs)
 

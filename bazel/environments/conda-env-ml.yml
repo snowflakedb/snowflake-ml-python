@@ -33,6 +33,7 @@ dependencies:
   - packaging==24.1
   - pandas==2.1.4
   - platformdirs==4.3.7
+  - prophet==1.1.5
   - protobuf==4.25.3
   - psutil==5.9.0
   - pyarrow==16.1.0

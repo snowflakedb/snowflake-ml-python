@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     import mlflow
     import numpy as np
     import pandas as pd
+    import prophet
     import sentence_transformers
     import sklearn.base
     import sklearn.pipeline
@@ -80,6 +81,7 @@ SupportedRequireSignatureModelType = Union[
     "catboost.CatBoost",
     "lightgbm.LGBMModel",
     "lightgbm.Booster",
+    "prophet.Prophet",
     "snowflake.ml.model.custom_model.CustomModel",
     "sklearn.base.BaseEstimator",
     "sklearn.pipeline.Pipeline",
@@ -133,6 +135,7 @@ SupportedModelHandlerType = Literal[
     "huggingface_pipeline",
     "lightgbm",
     "mlflow",
+    "prophet",
     "pytorch",
     "sentence_transformers",
     "sklearn",
@@ -235,11 +238,16 @@ class KerasSaveOptions(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
 
+class ProphetSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CatBoostModelSaveOptions,
     CustomModelSaveOption,
     LGBMModelSaveOptions,
+    ProphetSaveOptions,
     SKLModelSaveOptions,
     XGBModelSaveOptions,
     SNOWModelSaveOptions,
@@ -263,24 +271,20 @@ class CatBoostModelLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
 
 
-class CustomModelLoadOption(BaseModelLoadOption):
-    ...
+class CustomModelLoadOption(BaseModelLoadOption): ...
 
 
-class SKLModelLoadOptions(BaseModelLoadOption):
-    ...
+class SKLModelLoadOptions(BaseModelLoadOption): ...
 
 
 class XGBModelLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
 
 
-class LGBMModelLoadOptions(BaseModelLoadOption):
-    ...
+class LGBMModelLoadOptions(BaseModelLoadOption): ...
 
 
-class SNOWModelLoadOptions(BaseModelLoadOption):
-    ...
+class SNOWModelLoadOptions(BaseModelLoadOption): ...
 
 
 class PyTorchLoadOptions(BaseModelLoadOption):
@@ -291,12 +295,10 @@ class TorchScriptLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
 
 
-class TensorflowLoadOptions(BaseModelLoadOption):
-    ...
+class TensorflowLoadOptions(BaseModelLoadOption): ...
 
 
-class MLFlowLoadOptions(BaseModelLoadOption):
-    ...
+class MLFlowLoadOptions(BaseModelLoadOption): ...
 
 
 class HuggingFaceLoadOptions(BaseModelLoadOption):
@@ -314,11 +316,15 @@ class KerasLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
 
 
+class ProphetLoadOptions(BaseModelLoadOption): ...
+
+
 ModelLoadOption = Union[
     BaseModelLoadOption,
     CatBoostModelLoadOptions,
     CustomModelLoadOption,
     LGBMModelLoadOptions,
+    ProphetLoadOptions,
     SKLModelLoadOptions,
     XGBModelLoadOptions,
     SNOWModelLoadOptions,

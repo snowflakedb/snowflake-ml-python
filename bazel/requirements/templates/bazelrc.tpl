@@ -24,6 +24,7 @@ build:py3.9 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.9
 build:py3.10 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.10
 build:py3.11 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.11
 build:py3.12 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.12
+build:py3.13 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.13
 
 build:build --config=_build
 
