@@ -256,9 +256,6 @@ class ServiceSQLClient(_base._BaseSQLClient):
             )
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME, allow_empty=True)
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME, allow_empty=True)
-            .has_column(
-                ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME, allow_empty=True
-            )
         )
 
         return res.validate()

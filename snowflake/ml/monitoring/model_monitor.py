@@ -72,3 +72,33 @@ class ModelMonitor:
         )
         segment_column_id = sql_identifier.SqlIdentifier(segment_column)
         self._model_monitor_client.drop_segment_column(self.name, segment_column_id, statement_params=statement_params)
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    def add_custom_metric_column(self, custom_metric_column: str) -> None:
+        """Add a custom metric column to the Model Monitor"""
+        statement_params = telemetry.get_statement_params(
+            telemetry.TelemetryProject.MLOPS.value,
+            telemetry.TelemetrySubProject.MONITORING.value,
+        )
+        custom_metric_column_identifier = sql_identifier.SqlIdentifier(custom_metric_column)
+        self._model_monitor_client.add_custom_metric_column(
+            self.name, custom_metric_column_identifier, statement_params=statement_params
+        )
+
+    @telemetry.send_api_usage_telemetry(
+        project=telemetry.TelemetryProject.MLOPS.value,
+        subproject=telemetry.TelemetrySubProject.MONITORING.value,
+    )
+    def drop_custom_metric_column(self, custom_metric_column: str) -> None:
+        """Drop a custom metric column from the Model Monitor"""
+        statement_params = telemetry.get_statement_params(
+            telemetry.TelemetryProject.MLOPS.value,
+            telemetry.TelemetrySubProject.MONITORING.value,
+        )
+        custom_metric_column_identifier = sql_identifier.SqlIdentifier(custom_metric_column)
+        self._model_monitor_client.drop_custom_metric_column(
+            self.name, custom_metric_column_identifier, statement_params=statement_params
+        )

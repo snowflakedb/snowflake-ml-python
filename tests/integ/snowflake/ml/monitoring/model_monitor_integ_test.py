@@ -31,7 +31,11 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         return columns_json.get("segment_columns", [])
 
     def _create_test_table(
-        self, fully_qualified_table_name: str, id_column_type: str = "STRING", segment_columns: list = None
+        self,
+        fully_qualified_table_name: str,
+        id_column_type: str = "STRING",
+        segment_columns: list = None,
+        custom_metric_columns: list = None,
     ) -> None:
         """Create a test table with optional segment columns for testing."""
 
@@ -42,10 +46,15 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         if segment_columns:
             segment_columns_def = ", " + ", ".join([f"{col} STRING" for col in segment_columns])
 
+        # Build the custom metric columns part of the table definition
+        custom_metric_columns_def = ""
+        if custom_metric_columns:
+            custom_metric_columns_def = ", " + ", ".join([f"{col} FLOAT" for col in custom_metric_columns])
+
         self._session.sql(
             f"""CREATE OR REPLACE TABLE {fully_qualified_table_name}
             (label FLOAT, prediction FLOAT,
-            {s}, id {id_column_type}, timestamp TIMESTAMP_NTZ{segment_columns_def})"""
+            {s}, id {id_column_type}, timestamp TIMESTAMP_NTZ{segment_columns_def}{custom_metric_columns_def})"""
         ).collect()
 
         # Needed to create DT against this table
@@ -58,10 +67,18 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
             segment_columns_insert = ", " + ", ".join(segment_columns)
             segment_values_insert = ", " + ", ".join([f"'{col}_value'" for col in segment_columns])
 
+        # Build the custom metric columns part of the INSERT statement
+        custom_metric_columns_insert = ""
+        custom_metric_values_insert = ""
+        if custom_metric_columns:
+            custom_metric_columns_insert = ", " + ", ".join(custom_metric_columns)
+            custom_metric_values_insert = ", " + ", ".join(["1.23" for _ in custom_metric_columns])
+
         self._session.sql(
             f"""INSERT INTO {fully_qualified_table_name}
-            (label, prediction, {", ".join(INPUT_FEATURE_COLUMNS_NAMES)}, id, timestamp{segment_columns_insert})
-            VALUES (1, 1, {", ".join(["1"] * 64)}, '1', CURRENT_TIMESTAMP(){segment_values_insert})"""
+            (label, prediction, {", ".join(INPUT_FEATURE_COLUMNS_NAMES)}, id, timestamp{segment_columns_insert}
+            {custom_metric_columns_insert}) VALUES (1, 1, {", ".join(["1"] * 64)}, '1', CURRENT_TIMESTAMP()
+            {segment_values_insert}{custom_metric_values_insert})"""
         ).collect()
 
     @classmethod
@@ -108,7 +125,12 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         )
 
     def _add_sample_monitor(
-        self, monitor_name: str, source: str, model_version: model_version_impl.ModelVersion, segment_columns=None
+        self,
+        monitor_name: str,
+        source: str,
+        model_version: model_version_impl.ModelVersion,
+        segment_columns=None,
+        custom_metric_columns=None,
     ) -> model_monitor.ModelMonitor:
         return self.registry.add_monitor(
             name=monitor_name,
@@ -119,6 +141,7 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
                 id_columns=["id"],
                 timestamp_column="timestamp",
                 segment_columns=segment_columns,
+                custom_metric_columns=custom_metric_columns,
             ),
             model_monitor_config=model_monitor_config.ModelMonitorConfig(
                 model_version=model_version,
@@ -318,6 +341,45 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         monitor_names = [m["name"] for m in monitors]
         self.assertIn(monitor_name.upper(), monitor_names)
 
+    def test_create_monitor_with_custom_metric_columns(self):
+        """Test creating a monitor with valid custom_metric_columns."""
+
+        self._session.sql("ALTER SESSION SET ENABLE_MODEL_MONITOR_CUSTOM_METRICS = TRUE").collect()
+
+        source_table_name = "source_table_with_custom_metrics"
+        model_name = "model_with_custom_metrics"
+        monitor_name = "monitor_with_custom_metrics"
+
+        # Create table with custom metric columns
+        self._create_test_table(
+            f"{self._db_name}.{self._schema_name}.{source_table_name}", custom_metric_columns=["custom_metric"]
+        )
+
+        # Create model version
+        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
+
+        # Create monitor with custom metric columns - this should succeed
+        monitor = self._add_sample_monitor(
+            monitor_name=monitor_name,
+            source=source_table_name,
+            model_version=mv,
+            custom_metric_columns=["custom_metric"],
+        )
+
+        # Verify monitor was created successfully
+        self.assertEqual(monitor.name, monitor_name.upper())
+
+        # Verify it appears in the list of monitors
+        monitors = self.registry.show_model_monitors()
+        monitor_names = [m["name"] for m in monitors]
+        self.assertIn(monitor_name.upper(), monitor_names)
+
+        # Verify describe monitor shows custom metric column
+        describe_result = self._session.sql(
+            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
+        ).collect()
+        self.assertIn("CUSTOM_METRIC", describe_result[0]["columns"])
+
     def test_create_monitor_with_segment_columns_missing_in_source(self):
         """Test creating a monitor with invalid segment_columns should fail."""
 
@@ -349,6 +411,55 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         monitors = self.registry.show_model_monitors()
         monitor_names = [m["name"] for m in monitors]
         self.assertNotIn(monitor_name.upper(), monitor_names)
+
+    def test_add_drop_custom_metric_columns(self):
+        """Test adding and dropping custom metric columns."""
+
+        self._session.sql("ALTER SESSION SET ENABLE_MODEL_MONITOR_CUSTOM_METRICS = TRUE").collect()
+        source_table_name = "source_table_custom_metrics"
+        model_name = "model_custom_metrics"
+        monitor_name = "monitor_custom_metrics"
+
+        # Create table with initial custom metric columns
+        self._create_test_table(
+            f"{self._db_name}.{self._schema_name}.{source_table_name}", custom_metric_columns=["initial_metric"]
+        )
+
+        # Create model version
+        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
+
+        # Create monitor with initial custom metric columns
+        monitor = self._add_sample_monitor(
+            monitor_name=monitor_name,
+            source=source_table_name,
+            model_version=mv,
+            custom_metric_columns=["initial_metric"],
+        )
+
+        # Verify monitor was created successfully with initial custom metric
+        describe_result = self._session.sql(
+            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
+        ).collect()
+        self.assertIn("INITIAL_METRIC", describe_result[0]["columns"])
+
+        # Add new custom metric columns
+        monitor.add_custom_metric_column("input_feature_1")
+
+        # Verify new custom metric columns were added
+        describe_result = self._session.sql(
+            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
+        ).collect()
+        self.assertIn("INPUT_FEATURE_1", json.loads(describe_result[0]["columns"])["custom_metric_columns"])
+
+        # Drop a custom metric column
+        monitor.drop_custom_metric_column("initial_metric")
+
+        # Verify the custom metric column was dropped
+        describe_result = self._session.sql(
+            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
+        ).collect()
+        self.assertNotIn("INITIAL_METRIC", json.loads(describe_result[0]["columns"])["custom_metric_columns"])
+        self.assertIn("INITIAL_METRIC", json.loads(describe_result[0]["columns"])["numerical_columns"])
 
 
 if __name__ == "__main__":

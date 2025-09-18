@@ -788,7 +788,7 @@ class ModelVersion(lineage_node.LineageNode):
         inference_engine_args: service_ops.InferenceEngineArgs,
         gpu_requests: Optional[Union[str, int]] = None,
     ) -> Optional[service_ops.InferenceEngineArgs]:
-        """Enrich inference engine args with model path and tensor parallelism settings.
+        """Enrich inference engine args with tensor parallelism settings.
 
         Args:
             inference_engine_args: The original inference engine args
@@ -802,21 +802,6 @@ class ModelVersion(lineage_node.LineageNode):
         """
         if inference_engine_args.inference_engine_args_override is None:
             inference_engine_args.inference_engine_args_override = []
-
-        # Get model stage path and strip off "snow://" prefix
-        model_stage_path = self._model_ops.get_model_version_stage_path(
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-        )
-
-        # Strip "snow://" prefix
-        if model_stage_path.startswith("snow://"):
-            model_stage_path = model_stage_path.replace("snow://", "", 1)
-
-        # Always overwrite the model key by appending
-        inference_engine_args.inference_engine_args_override.append(f"--model={model_stage_path}")
 
         gpu_count = None
 

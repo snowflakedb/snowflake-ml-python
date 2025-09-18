@@ -232,6 +232,7 @@ def submit_file(
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
+            imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
 
     Returns:
         An object representing the submitted job.
@@ -286,6 +287,7 @@ def submit_directory(
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
+            imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
 
     Returns:
         An object representing the submitted job.
@@ -341,6 +343,7 @@ def submit_from_stage(
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
+            imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
 
     Returns:
         An object representing the submitted job.
@@ -404,6 +407,8 @@ def _submit_job(
         "num_instances",  # deprecated
         "target_instances",
         "min_instances",
+        "enable_metrics",
+        "query_warehouse",
     ],
 )
 def _submit_job(
@@ -447,6 +452,13 @@ def _submit_job(
         )
         target_instances = max(target_instances, kwargs.pop("num_instances"))
 
+    imports = None
+    if "additional_payloads" in kwargs:
+        logger.warning(
+            "'additional_payloads' is deprecated and will be removed in a future release. Use 'imports' instead."
+        )
+        imports = kwargs.pop("additional_payloads")
+
     # Use kwargs for less common optional parameters
     database = kwargs.pop("database", None)
     schema = kwargs.pop("schema", None)
@@ -457,10 +469,7 @@ def _submit_job(
     spec_overrides = kwargs.pop("spec_overrides", None)
     enable_metrics = kwargs.pop("enable_metrics", True)
     query_warehouse = kwargs.pop("query_warehouse", session.get_current_warehouse())
-    additional_payloads = kwargs.pop("additional_payloads", None)
-
-    if additional_payloads:
-        logger.warning("'additional_payloads' is in private preview since 1.9.1. Do not use it in production.")
+    imports = kwargs.pop("imports", None) or imports
 
     # Warn if there are unknown kwargs
     if kwargs:
@@ -492,7 +501,7 @@ def _submit_job(
     try:
         # Upload payload
         uploaded_payload = payload_utils.JobPayload(
-            source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=additional_payloads
+            source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=imports
         ).upload(session, stage_path)
     except snowpark.exceptions.SnowparkSQLException as e:
         if e.sql_error_code == 90106:
@@ -500,6 +509,22 @@ def _submit_job(
                 "Please specify a schema, either in the session context or as a parameter in the job submission"
             )
         raise
+
+    # FIXME: Temporary patches, remove this after v1 is deprecated
+    if target_instances > 1:
+        default_spec_overrides = {
+            "spec": {
+                "endpoints": [
+                    {"name": "ray-dashboard-endpoint", "port": 12003, "protocol": "TCP"},
+                ]
+            },
+        }
+        if spec_overrides:
+            spec_overrides = spec_utils.merge_patch(
+                default_spec_overrides, spec_overrides, display_name="spec_overrides"
+            )
+        else:
+            spec_overrides = default_spec_overrides
 
     if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled():
         # Add default env vars (extracted from spec_utils.generate_service_spec)
@@ -668,8 +693,10 @@ def _ensure_session(session: Optional[snowpark.Session]) -> snowpark.Session:
         session = session or get_active_session()
     except snowpark.exceptions.SnowparkSessionException as e:
         if "More than one active session" in e.message:
-            raise RuntimeError("Please specify the session as a parameter in API call")
+            raise RuntimeError(
+                "More than one active session is found. Please specify the session explicitly as a parameter"
+            ) from None
         if "No default Session is found" in e.message:
-            raise RuntimeError("Please create a session before API call")
+            raise RuntimeError("No active session is found. Please create a session") from None
         raise
     return session

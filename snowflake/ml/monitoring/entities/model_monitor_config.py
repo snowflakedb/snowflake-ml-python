@@ -36,6 +36,9 @@ class ModelMonitorSourceConfig:
     segment_columns: Optional[list[str]] = None
     """List of columns in the source containing segment information for grouped monitoring."""
 
+    custom_metric_columns: Optional[list[str]] = None
+    """List of columns in the source containing custom metrics."""
+
 
 @dataclass
 class ModelMonitorConfig:

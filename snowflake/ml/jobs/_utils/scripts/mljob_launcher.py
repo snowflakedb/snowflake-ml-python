@@ -234,12 +234,6 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
     if payload_dir and payload_dir not in sys.path:
         sys.path.insert(0, payload_dir)
 
-    # Create a Snowpark session before running the script
-    # Session can be retrieved from using snowflake.snowpark.context.get_active_session()
-    config = SnowflakeLoginOptions()
-    config["client_session_keep_alive"] = "True"
-    session = Session.builder.configs(config).create()  # noqa: F841
-
     try:
 
         if main_func:
@@ -266,7 +260,6 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
     finally:
         # Restore original sys.argv
         sys.argv = original_argv
-        session.close()
 
 
 def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = None) -> ExecutionResult:
@@ -296,6 +289,12 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         ray.init(address="auto")
     except ModuleNotFoundError:
         warnings.warn("Ray is not installed, skipping Ray initialization", ImportWarning, stacklevel=1)
+
+    # Create a Snowpark session before starting
+    # Session can be retrieved from using snowflake.snowpark.context.get_active_session()
+    config = SnowflakeLoginOptions()
+    config["client_session_keep_alive"] = "True"
+    session = Session.builder.configs(config).create()  # noqa: F841
 
     try:
         # Wait for minimum required instances if specified
@@ -351,6 +350,9 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
             warnings.warn(
                 f"Failed to serialize JSON result to {result_json_path}: {json_exc}", RuntimeWarning, stacklevel=1
             )
+
+        # Close the session after serializing the result
+        session.close()
 
 
 if __name__ == "__main__":

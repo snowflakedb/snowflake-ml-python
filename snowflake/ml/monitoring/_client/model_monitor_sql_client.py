@@ -30,8 +30,8 @@ class MonitorOperation(Enum):
 _OPERATION_SUPPORTED_PROPS: dict[MonitorOperation, frozenset[str]] = {
     MonitorOperation.SUSPEND: frozenset(),
     MonitorOperation.RESUME: frozenset(),
-    MonitorOperation.ADD: frozenset({"SEGMENT_COLUMN"}),
-    MonitorOperation.DROP: frozenset({"SEGMENT_COLUMN"}),
+    MonitorOperation.ADD: frozenset({"SEGMENT_COLUMN", "CUSTOM_METRIC_COLUMN"}),
+    MonitorOperation.DROP: frozenset({"SEGMENT_COLUMN", "CUSTOM_METRIC_COLUMN"}),
 }
 
 
@@ -91,6 +91,7 @@ class ModelMonitorSQLClient:
         baseline_schema: Optional[sql_identifier.SqlIdentifier] = None,
         baseline: Optional[sql_identifier.SqlIdentifier] = None,
         segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         baseline_sql = ""
@@ -100,6 +101,10 @@ class ModelMonitorSQLClient:
         segment_columns_sql = ""
         if segment_columns:
             segment_columns_sql = f"SEGMENT_COLUMNS={_build_sql_list_from_columns(segment_columns)}"
+
+        custom_metric_columns_sql = ""
+        if custom_metric_columns:
+            custom_metric_columns_sql = f"CUSTOM_METRIC_COLUMNS={_build_sql_list_from_columns(custom_metric_columns)}"
 
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
@@ -120,6 +125,7 @@ class ModelMonitorSQLClient:
                     REFRESH_INTERVAL='{refresh_interval}'
                     AGGREGATION_WINDOW='{aggregation_window}'
                     {segment_columns_sql}
+                    {custom_metric_columns_sql}
                     {baseline_sql}""",
             statement_params=statement_params,
         ).has_column("status").has_dimensions(1, 1).validate()
@@ -210,6 +216,7 @@ class ModelMonitorSQLClient:
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
         segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
     ) -> None:
         """Ensures all columns exist in the source table.
 
@@ -222,12 +229,14 @@ class ModelMonitorSQLClient:
             actual_class_columns: List of actual class column names.
             id_columns: List of id column names.
             segment_columns: List of segment column names.
+            custom_metric_columns: List of custom metric column names.
 
         Raises:
             ValueError: If any of the columns do not exist in the source.
         """
 
         segment_columns = [] if segment_columns is None else segment_columns
+        custom_metric_columns = [] if custom_metric_columns is None else custom_metric_columns
 
         if timestamp_column not in source_column_schema:
             raise ValueError(f"Timestamp column {timestamp_column} does not exist in source.")
@@ -248,6 +257,9 @@ class ModelMonitorSQLClient:
         if not all([column_name in source_column_schema for column_name in segment_columns]):
             raise ValueError(f"Segment column(s): {segment_columns} do not exist in source.")
 
+        if not all([column_name in source_column_schema for column_name in custom_metric_columns]):
+            raise ValueError(f"Custom Metric column(s): {custom_metric_columns} do not exist in source.")
+
     def validate_source(
         self,
         *,
@@ -261,6 +273,7 @@ class ModelMonitorSQLClient:
         actual_class_columns: list[sql_identifier.SqlIdentifier],
         id_columns: list[sql_identifier.SqlIdentifier],
         segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
+        custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
     ) -> None:
 
         source_database = source_database or self._database_name
@@ -281,6 +294,7 @@ class ModelMonitorSQLClient:
             actual_class_columns=actual_class_columns,
             id_columns=id_columns,
             segment_columns=segment_columns,
+            custom_metric_columns=custom_metric_columns,
         )
 
     def _alter_monitor(
@@ -299,7 +313,7 @@ class ModelMonitorSQLClient:
 
             if target_property not in supported_target_properties:
                 raise ValueError(
-                    f"Only {', '.join(supported_target_properties)} supported as target property "
+                    f"Only {', '.join(sorted(supported_target_properties))} supported as target property "
                     f"for {operation.name} operation"
                 )
 
@@ -364,5 +378,35 @@ class ModelMonitorSQLClient:
             monitor_name=monitor_name,
             target_property="SEGMENT_COLUMN",
             target_value=segment_column,
+            statement_params=statement_params,
+        )
+
+    def add_custom_metric_column(
+        self,
+        monitor_name: sql_identifier.SqlIdentifier,
+        custom_metric_column: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Add a custom metric column to the Model Monitor"""
+        self._alter_monitor(
+            operation=MonitorOperation.ADD,
+            monitor_name=monitor_name,
+            target_property="CUSTOM_METRIC_COLUMN",
+            target_value=custom_metric_column,
+            statement_params=statement_params,
+        )
+
+    def drop_custom_metric_column(
+        self,
+        monitor_name: sql_identifier.SqlIdentifier,
+        custom_metric_column: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Drop a custom metric column from the Model Monitor"""
+        self._alter_monitor(
+            operation=MonitorOperation.DROP,
+            monitor_name=monitor_name,
+            target_property="CUSTOM_METRIC_COLUMN",
+            target_value=custom_metric_column,
             statement_params=statement_params,
         )

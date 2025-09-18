@@ -53,6 +53,34 @@ class ModelMonitorInstanceTest(absltest.TestCase):
             self.assertEqual(call_args[0][1].identifier(), test_segment_column)  # segment_column as SqlIdentifier
             self.assertIsNotNone(call_args[1]["statement_params"])  # statement_params
 
+    def test_add_custom_metric_column(self) -> None:
+        test_custom_metric_column = "CUSTOM_METRIC"
+        with mock.patch.object(
+            self.model_monitor._model_monitor_client, "add_custom_metric_column"
+        ) as mock_add_custom_metric:
+            self.model_monitor.add_custom_metric_column(test_custom_metric_column)
+            mock_add_custom_metric.assert_called_once_with(
+                self.test_monitor_name, test_custom_metric_column, statement_params=mock.ANY
+            )
+            call_args = mock_add_custom_metric.call_args
+            self.assertEqual(call_args[0][0], self.test_monitor_name)
+            self.assertEqual(call_args[0][1].identifier(), test_custom_metric_column)
+            self.assertIsNotNone(call_args[1]["statement_params"])
+
+    def test_drop_custom_metric_column(self) -> None:
+        test_custom_metric_column = "CUSTOM_METRIC"
+        with mock.patch.object(
+            self.model_monitor._model_monitor_client, "drop_custom_metric_column"
+        ) as mock_drop_custom_metric:
+            self.model_monitor.drop_custom_metric_column(test_custom_metric_column)
+            mock_drop_custom_metric.assert_called_once_with(
+                self.test_monitor_name, test_custom_metric_column, statement_params=mock.ANY
+            )
+            call_args = mock_drop_custom_metric.call_args
+            self.assertEqual(call_args[0][0], self.test_monitor_name)
+            self.assertEqual(call_args[0][1].identifier(), test_custom_metric_column)
+            self.assertIsNotNone(call_args[1]["statement_params"])
+
 
 if __name__ == "__main__":
     absltest.main()

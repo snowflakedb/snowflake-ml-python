@@ -323,17 +323,20 @@ class ServiceOperator:
             statement_params=statement_params,
         )
 
-        # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(
-            self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_BUILD)
-        )
-        model_build_service = ServiceLogInfo(
-            database_name=service_database_name,
-            schema_name=service_schema_name,
-            service_name=model_build_service_name,
-            deployment_step=DeploymentStep.MODEL_BUILD,
-            log_color=service_logger.LogColor.GREEN,
-        )
+        model_build_service: Optional[ServiceLogInfo] = None
+        if is_enable_image_build:
+            # stream service logs in a thread
+            model_build_service_name = sql_identifier.SqlIdentifier(
+                self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_BUILD)
+            )
+            model_build_service = ServiceLogInfo(
+                database_name=service_database_name,
+                schema_name=service_schema_name,
+                service_name=model_build_service_name,
+                deployment_step=DeploymentStep.MODEL_BUILD,
+                log_color=service_logger.LogColor.GREEN,
+            )
+
         model_inference_service = ServiceLogInfo(
             database_name=service_database_name,
             schema_name=service_schema_name,
@@ -375,7 +378,7 @@ class ServiceOperator:
                 progress_status.increment()
 
                 # Poll for model build to start if not using existing service
-                if not model_inference_service_exists:
+                if not model_inference_service_exists and model_build_service:
                     self._wait_for_service_status(
                         model_build_service_name,
                         service_sql.ServiceStatus.RUNNING,
@@ -390,7 +393,7 @@ class ServiceOperator:
                 progress_status.increment()
 
                 # Poll for model build completion
-                if not model_inference_service_exists:
+                if not model_inference_service_exists and model_build_service:
                     self._wait_for_service_status(
                         model_build_service_name,
                         service_sql.ServiceStatus.DONE,
@@ -454,7 +457,7 @@ class ServiceOperator:
         self,
         async_job: snowpark.AsyncJob,
         model_logger_service: Optional[ServiceLogInfo],
-        model_build_service: ServiceLogInfo,
+        model_build_service: Optional[ServiceLogInfo],
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
@@ -483,7 +486,7 @@ class ServiceOperator:
         self,
         force_rebuild: bool,
         service_log_meta: ServiceLogMetadata,
-        model_build_service: ServiceLogInfo,
+        model_build_service: Optional[ServiceLogInfo],
         model_inference_service: ServiceLogInfo,
         operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
@@ -599,13 +602,24 @@ class ServiceOperator:
             # check if model logger service is done
             # and transition the service log metadata to the model image build service
             if service.deployment_step == DeploymentStep.MODEL_LOGGING:
-                service_log_meta.transition_service_log_metadata(
-                    model_build_service,
-                    f"Model Logger service {service.display_service_name} complete.",
-                    is_model_build_service_done=False,
-                    is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
-                    operation_id=operation_id,
-                )
+                if model_build_service:
+                    # building the inference image, transition to the model build service
+                    service_log_meta.transition_service_log_metadata(
+                        model_build_service,
+                        f"Model Logger service {service.display_service_name} complete.",
+                        is_model_build_service_done=False,
+                        is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                        operation_id=operation_id,
+                    )
+                else:
+                    # no model build service, transition to the model inference service
+                    service_log_meta.transition_service_log_metadata(
+                        model_inference_service,
+                        f"Model Logger service {service.display_service_name} complete.",
+                        is_model_build_service_done=True,
+                        is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
+                        operation_id=operation_id,
+                    )
             # check if model build service is done
             # and transition the service log metadata to the model inference service
             elif service.deployment_step == DeploymentStep.MODEL_BUILD:
@@ -616,6 +630,8 @@ class ServiceOperator:
                     is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
                     operation_id=operation_id,
                 )
+            elif service.deployment_step == DeploymentStep.MODEL_INFERENCE:
+                module_logger.info(f"Inference service {service.display_service_name} is deployed.")
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
 
@@ -623,7 +639,7 @@ class ServiceOperator:
         self,
         async_job: snowpark.AsyncJob,
         model_logger_service: Optional[ServiceLogInfo],
-        model_build_service: ServiceLogInfo,
+        model_build_service: Optional[ServiceLogInfo],
         model_inference_service: ServiceLogInfo,
         model_inference_service_exists: bool,
         force_rebuild: bool,
@@ -632,14 +648,23 @@ class ServiceOperator:
     ) -> None:
         """Stream service logs while the async job is running."""
 
-        model_build_service_logger = service_logger.get_logger(  # BuildJobName
-            model_build_service.display_service_name,
-            model_build_service.log_color,
-            operation_id=operation_id,
-        )
-        if model_logger_service:
-            model_logger_service_logger = service_logger.get_logger(  # ModelLoggerName
-                model_logger_service.display_service_name,
+        if model_build_service:
+            model_build_service_logger = service_logger.get_logger(
+                model_build_service.display_service_name,  # BuildJobName
+                model_build_service.log_color,
+                operation_id=operation_id,
+            )
+            service_log_meta = ServiceLogMetadata(
+                service_logger=model_build_service_logger,
+                service=model_build_service,
+                service_status=None,
+                is_model_build_service_done=False,
+                is_model_logger_service_done=True,
+                log_offset=0,
+            )
+        elif model_logger_service:
+            model_logger_service_logger = service_logger.get_logger(
+                model_logger_service.display_service_name,  # ModelLoggerName
                 model_logger_service.log_color,
                 operation_id=operation_id,
             )
@@ -653,12 +678,17 @@ class ServiceOperator:
                 log_offset=0,
             )
         else:
+            model_inference_service_logger = service_logger.get_logger(
+                model_inference_service.display_service_name,  # ModelInferenceName
+                model_inference_service.log_color,
+                operation_id=operation_id,
+            )
             service_log_meta = ServiceLogMetadata(
-                service_logger=model_build_service_logger,
-                service=model_build_service,
+                service_logger=model_inference_service_logger,
+                service=model_inference_service,
                 service_status=None,
                 is_model_build_service_done=False,
-                is_model_logger_service_done=True,
+                is_model_logger_service_done=False,
                 log_offset=0,
             )
 

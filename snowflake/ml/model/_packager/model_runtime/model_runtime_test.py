@@ -331,7 +331,7 @@ class ModelRuntimeTest(absltest.TestCase):
                 dependencies = yaml.safe_load(f)
 
             self.assertContainsSubset(
-                ["python==3.9.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
+                ["python==3.10.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
                 dependencies["dependencies"],
             )
 

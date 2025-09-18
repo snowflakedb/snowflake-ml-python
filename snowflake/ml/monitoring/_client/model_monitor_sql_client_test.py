@@ -250,6 +250,34 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
         )
         self.m_session.finalize()
 
+    def test_add_custom_metric_column(self) -> None:
+        test_custom_metric_column = sql_identifier.SqlIdentifier("CUSTOM_METRIC")
+        self.m_session.add_mock_sql(
+            (
+                f"""ALTER MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name} """
+                f"""ADD CUSTOM_METRIC_COLUMN={test_custom_metric_column}"""
+            ),
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+        self.monitor_sql_client.add_custom_metric_column(
+            monitor_name=self.test_monitor_name, custom_metric_column=test_custom_metric_column
+        )
+        self.m_session.finalize()
+
+    def test_drop_custom_metric_column(self) -> None:
+        test_custom_metric_column = sql_identifier.SqlIdentifier("CUSTOM_METRIC")
+        self.m_session.add_mock_sql(
+            (
+                f"""ALTER MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name} """
+                f"""DROP CUSTOM_METRIC_COLUMN={test_custom_metric_column}"""
+            ),
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+        self.monitor_sql_client.drop_custom_metric_column(
+            monitor_name=self.test_monitor_name, custom_metric_column=test_custom_metric_column
+        )
+        self.m_session.finalize()
+
     def test_alter_monitor_validation(self) -> None:
         """Test validation logic in _alter_monitor method"""
         # Test missing target property and value for ADD operation
@@ -271,7 +299,9 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
             )
 
         # Test invalid target property for ADD operation
-        with self.assertRaisesRegex(ValueError, "Only SEGMENT_COLUMN supported as target property for ADD operation"):
+        with self.assertRaisesRegex(
+            ValueError, "Only CUSTOM_METRIC_COLUMN, SEGMENT_COLUMN supported as target property for ADD operation"
+        ):
             self.monitor_sql_client._alter_monitor(
                 operation=MonitorOperation.ADD,
                 monitor_name=self.test_monitor_name,
@@ -280,7 +310,9 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
             )
 
         # Test invalid target property for DROP operation
-        with self.assertRaisesRegex(ValueError, "Only SEGMENT_COLUMN supported as target property for DROP operation"):
+        with self.assertRaisesRegex(
+            ValueError, "Only CUSTOM_METRIC_COLUMN, SEGMENT_COLUMN supported as target property for DROP operation"
+        ):
             self.monitor_sql_client._alter_monitor(
                 operation=MonitorOperation.DROP,
                 monitor_name=self.test_monitor_name,
@@ -375,6 +407,55 @@ class ModelMonitorSqlClientTest(absltest.TestCase):
             refresh_interval="1 hour",
             aggregation_window="1 day",
             segment_columns=[sql_identifier.SqlIdentifier("CUSTOMER_SEGMENT"), sql_identifier.SqlIdentifier("REGION")],
+        )
+        self.m_session.finalize()
+
+    def test_create_model_monitor_with_custom_metric_columns(self) -> None:
+        """Test creating model monitor with custom metric columns"""
+        self.m_session.add_mock_sql(
+            f"""
+            CREATE MODEL MONITOR {self.test_db_name}.{self.test_schema_name}.{self.test_monitor_name}
+                WITH
+                    MODEL={self.test_db_name}.{self.test_schema_name}.{self.test_model_name}
+                    VERSION='{self.test_model_version_name}'
+                    FUNCTION='predict'
+                    WAREHOUSE='{self.test_wh_name}'
+                    SOURCE={self.test_db_name}.{self.test_schema_name}.{self.test_source_table_name}
+                    ID_COLUMNS=('ID')
+                    PREDICTION_SCORE_COLUMNS=('PREDICTION')
+                    PREDICTION_CLASS_COLUMNS=()
+                    ACTUAL_SCORE_COLUMNS=('LABEL')
+                    ACTUAL_CLASS_COLUMNS=()
+                    TIMESTAMP_COLUMN='TIMESTAMP'
+                    REFRESH_INTERVAL='1 hour'
+                    AGGREGATION_WINDOW='1 day'
+                    CUSTOM_METRIC_COLUMNS=('CUSTOM_METRIC')
+                    """,
+            result=mock_data_frame.MockDataFrame([Row(status="Success")]),
+        )
+
+        self.monitor_sql_client.create_model_monitor(
+            monitor_database=self.test_db_name,
+            monitor_schema=self.test_schema_name,
+            monitor_name=self.test_monitor_name,
+            source_database=self.test_db_name,
+            source_schema=self.test_schema_name,
+            source=self.test_source_table_name,
+            model_database=self.test_db_name,
+            model_schema=self.test_schema_name,
+            model_name=self.test_model_name,
+            version_name=self.test_model_version_name,
+            function_name="predict",
+            warehouse_name=self.test_wh_name,
+            timestamp_column=self.test_timestamp_column,
+            id_columns=[self.test_id_column_name],
+            prediction_score_columns=[self.test_prediction_column_name],
+            prediction_class_columns=[],
+            actual_score_columns=[self.test_label_column_name],
+            actual_class_columns=[],
+            refresh_interval="1 hour",
+            aggregation_window="1 day",
+            custom_metric_columns=[sql_identifier.SqlIdentifier("CUSTOM_METRIC")],
         )
         self.m_session.finalize()
 

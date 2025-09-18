@@ -612,7 +612,6 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 inference_engine=inference_engine.InferenceEngine.VLLM,
                 inference_engine_args=[
                     "--some_vllm_arg=0.8",
-                    "--model=model",
                     "--tensor_parallel_size=2",
                 ],
             )
@@ -640,7 +639,6 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                                 "inference_engine_name": "vllm",
                                 "inference_engine_args": [
                                     "--some_vllm_arg=0.8",
-                                    "--model=model",
                                     "--tensor_parallel_size=2",
                                 ],
                             },

@@ -433,6 +433,43 @@ class ServiceSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_show_endpoints_non_business_critical(self) -> None:
+        """Test show_endpoints for non-Business Critical accounts where privatelink_ingress_url column doesn't exist."""
+        m_statement_params = {"test": "1"}
+        # Row without privatelink_ingress_url field
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[
+                Row(
+                    name="inference",
+                    ingress_url="foo.snowflakecomputing.app",
+                )
+            ],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql(
+            """SHOW ENDPOINTS IN SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        # This should work without errors even though privatelink_ingress_url column is missing
+        result = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_endpoints(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            statement_params=m_statement_params,
+        )
+
+        # Verify the result contains the row with only name and ingress_url
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["name"], "inference")
+        self.assertEqual(result[0]["ingress_url"], "foo.snowflakecomputing.app")
+        self.assertNotIn("privatelink_ingress_url", result[0])
+
 
 if __name__ == "__main__":
     absltest.main()

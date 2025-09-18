@@ -47,7 +47,8 @@ class ServiceInfo(TypedDict):
 class ModelOperator:
     INFERENCE_SERVICE_ENDPOINT_NAME = "inference"
     INGRESS_ENDPOINT_URL_SUFFIX = "snowflakecomputing.app"
-    PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING = "privatelink.snowflakecomputing"
+    # app-service-privatelink might not contain "snowflakecomputing" in the url - using the minimum required substring
+    PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING = "privatelink.snowflake"
 
     def __init__(
         self,
@@ -631,7 +632,13 @@ class ModelOperator:
 
     def _extract_and_validate_privatelink_url(self, res_row: "row.Row") -> Optional[str]:
         """Extract and validate privatelink ingress URL from endpoint row."""
-        url_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME]
+        # Check if the privatelink_ingress_url column exists
+        col_name = self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME
+        if col_name not in res_row:
+            # Column doesn't exist in query result for non-Business Critical accounts
+            return None
+
+        url_value = res_row[col_name]
         if url_value is None:
             return None
         url_str = str(url_value)
