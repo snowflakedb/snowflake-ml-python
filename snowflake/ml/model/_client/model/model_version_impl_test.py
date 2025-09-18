@@ -1020,11 +1020,6 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_check_huggingface_text_generation_model,
             mock.patch.object(
                 self.m_mv._model_ops,
-                "get_model_version_stage_path",
-                return_value="snow://model/DB.SCHEMA.MODEL/versions/v1/",
-            ),
-            mock.patch.object(
-                self.m_mv._model_ops,
                 "_fetch_model_spec",
                 return_value={
                     "model_type": "huggingface_pipeline",
@@ -1065,7 +1060,6 @@ class ModelVersionImplTest(absltest.TestCase):
             expected_args = [
                 "--max_tokens=1000",
                 "--temperature=0.8",
-                "--model=model/DB.SCHEMA.MODEL/versions/v1/",
                 "--tensor-parallel-size=4",
             ]
 
@@ -1347,117 +1341,102 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_enrich_inference_engine_args(self) -> None:
         """Test _enrich_inference_engine_args method with various inputs."""
-        # Mock get_model_version_stage_path to return a predictable path
-        with mock.patch.object(
-            self.m_mv._model_ops,
-            "get_model_version_stage_path",
-            return_value="snow://model/TEMP.test.MODEL/versions/v1/",
-        ) as mock_get_path:
-            # Test with args=None and no GPU
-            enriched = self.m_mv._enrich_inference_engine_args(
+        # Test with args=None and no GPU
+        enriched = self.m_mv._enrich_inference_engine_args(
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=None,
+            ),
+            gpu_requests=None,
+        )
+        assert enriched is not None
+        self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
+        self.assertEqual(enriched.inference_engine_args_override, [])
+
+        # Test with empty args and GPU count
+        enriched = self.m_mv._enrich_inference_engine_args(
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=None,
+            ),
+            gpu_requests=2,
+        )
+        assert enriched is not None
+        self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
+        self.assertEqual(enriched.inference_engine_args_override, ["--tensor-parallel-size=2"])
+
+        # Test with args and string GPU count
+        original_args = ["--max_tokens=100", "--temperature=0.7"]
+        enriched = self.m_mv._enrich_inference_engine_args(
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=original_args,
+            ),
+            gpu_requests="4",
+        )
+        assert enriched is not None
+        self.assertEqual(
+            enriched,
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=[
+                    "--max_tokens=100",
+                    "--temperature=0.7",
+                    "--tensor-parallel-size=4",
+                ],
+            ),
+        )
+
+        # Test overwriting existing model key with new model key by appending to the list
+        enriched = self.m_mv._enrich_inference_engine_args(
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=[
+                    "--max_tokens=100",
+                    "--temperature=0.7",
+                ],
+            ),
+        )
+        self.assertEqual(
+            enriched,
+            service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=[
+                    "--max_tokens=100",
+                    "--temperature=0.7",
+                ],
+            ),
+        )
+
+        # Test with invalid GPU string
+        with self.assertRaises(ValueError):
+            self.m_mv._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
                     inference_engine_args_override=None,
                 ),
-                gpu_requests=None,
-            )
-            assert enriched is not None
-            self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
-            self.assertEqual(enriched.inference_engine_args_override, ["--model=model/TEMP.test.MODEL/versions/v1/"])
-            mock_get_path.assert_called_with(
-                database_name=None,
-                schema_name=None,
-                model_name=sql_identifier.SqlIdentifier("MODEL"),
-                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                gpu_requests="invalid",
             )
 
-            # Test with empty args and GPU count
-            enriched = self.m_mv._enrich_inference_engine_args(
+        # Test with zero GPU (should not set tensor-parallel-size)
+        with self.assertRaises(ValueError):
+            self.m_mv._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
                     inference_engine_args_override=None,
                 ),
-                gpu_requests=2,
+                gpu_requests=0,
             )
-            assert enriched is not None
-            self.assertEqual(enriched.inference_engine, inference_engine.InferenceEngine.VLLM)
 
-            # Test with args and string GPU count
-            original_args = ["--max_tokens=100", "--temperature=0.7"]
-            enriched = self.m_mv._enrich_inference_engine_args(
+        # Test with negative GPU (should not set tensor-parallel-size)
+        with self.assertRaises(ValueError):
+            self.m_mv._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=original_args,
+                    inference_engine_args_override=None,
                 ),
-                gpu_requests="4",
+                gpu_requests=-1,
             )
-            assert enriched is not None
-            self.assertEqual(
-                enriched,
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=[
-                        "--max_tokens=100",
-                        "--temperature=0.7",
-                        "--model=model/TEMP.test.MODEL/versions/v1/",
-                        "--tensor-parallel-size=4",
-                    ],
-                ),
-            )
-
-            # Test overwriting existing model key with new model key by appending to the list
-            enriched = self.m_mv._enrich_inference_engine_args(
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=[
-                        "--max_tokens=100",
-                        "--temperature=0.7",
-                        "--model=old/path",
-                    ],
-                ),
-            )
-            self.assertEqual(
-                enriched,
-                service_ops.InferenceEngineArgs(
-                    inference_engine=inference_engine.InferenceEngine.VLLM,
-                    inference_engine_args_override=[
-                        "--max_tokens=100",
-                        "--temperature=0.7",
-                        "--model=old/path",
-                        "--model=model/TEMP.test.MODEL/versions/v1/",
-                    ],
-                ),
-            )
-
-            # Test with invalid GPU string
-            with self.assertRaises(ValueError):
-                self.m_mv._enrich_inference_engine_args(
-                    service_ops.InferenceEngineArgs(
-                        inference_engine=inference_engine.InferenceEngine.VLLM,
-                        inference_engine_args_override=None,
-                    ),
-                    gpu_requests="invalid",
-                )
-
-            # Test with zero GPU (should not set tensor-parallel-size)
-            with self.assertRaises(ValueError):
-                self.m_mv._enrich_inference_engine_args(
-                    service_ops.InferenceEngineArgs(
-                        inference_engine=inference_engine.InferenceEngine.VLLM,
-                        inference_engine_args_override=None,
-                    ),
-                    gpu_requests=0,
-                )
-
-            # Test with negative GPU (should not set tensor-parallel-size)
-            with self.assertRaises(ValueError):
-                self.m_mv._enrich_inference_engine_args(
-                    service_ops.InferenceEngineArgs(
-                        inference_engine=inference_engine.InferenceEngine.VLLM,
-                        inference_engine_args_override=None,
-                    ),
-                    gpu_requests=-1,
-                )
 
     def test_check_huggingface_text_generation_model(self) -> None:
         """Test _check_huggingface_text_generation_model method."""

@@ -556,7 +556,6 @@ class JobManagerTest(JobTestBase):
         "Decorator test only works for Python 3.10 to pickle compatibility",
     )
     def test_job_data_connector(self) -> None:
-        from snowflake.ml._internal.utils import mixins
         from snowflake.ml.data import data_connector
         from snowflake.ml.data._internal import arrow_ingestor
 
@@ -564,9 +563,8 @@ class JobManagerTest(JobTestBase):
 
         @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def runtime_func(dc: data_connector.DataConnector) -> data_connector.DataConnector:
-            # TODO(SNOW-2182155): Enable this once headless backend receives updated SnowML with unpickle support
-            # assert "Ray" in type(dc._ingestor).__name__, type(dc._ingestor).__qualname__
-            assert len(dc.to_pandas()) == num_rows, len(dc.to_pandas())
+            if len(dc.to_pandas()) != num_rows:
+                raise RuntimeError(f"Unexpected number of rows: expected {num_rows}, actual {len(dc.to_pandas())}")
             return dc
 
         df = self.session.sql(
@@ -575,16 +573,7 @@ class JobManagerTest(JobTestBase):
         dc = data_connector.DataConnector.from_dataframe(df)
         self.assertIsInstance(dc._ingestor, arrow_ingestor.ArrowIngestor)
 
-        # TODO(SNOW-2182155): Remove this once headless backend receives updated SnowML with unpickle support
-        #       Register key modules to be picklable by value to avoid version desync in this test
-        cp.register_pickle_by_value(mixins)
-        cp.register_pickle_by_value(arrow_ingestor)
-        try:
-            job = runtime_func(dc)
-        finally:
-            cp.unregister_pickle_by_value(mixins)
-            cp.unregister_pickle_by_value(arrow_ingestor)
-
+        job = runtime_func(dc)
         self.assertEqual(job.wait(), "DONE", job.get_logs())
         dc_unpickled = job.result()
         self.assertIsInstance(dc_unpickled, data_connector.DataConnector)

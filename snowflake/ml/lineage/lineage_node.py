@@ -83,7 +83,6 @@ class LineageNode(mixins.SerializableSessionMixin):
         raise NotImplementedError()
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
-    @snowpark._internal.utils.private_preview(version="1.5.3")
     def lineage(
         self,
         direction: Literal["upstream", "downstream"] = "downstream",

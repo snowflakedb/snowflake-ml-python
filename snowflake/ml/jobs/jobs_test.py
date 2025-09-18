@@ -10,6 +10,13 @@ from snowflake.ml.jobs import job
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.row import Row
 
+SERVICE_SPEC = """
+spec:
+  containers:
+    - name: main
+      image: test-image
+"""
+
 
 class JobTest(parameterized.TestCase):
     @parameterized.named_parameters(  # type: ignore[misc]
@@ -83,7 +90,7 @@ class JobTest(parameterized.TestCase):
 
         def sql_side_effect(session: snowpark.Session, query_str: str, *args: Any, **kwargs: Any) -> Any:
             if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):
-                return [Row(target_instances=2)]
+                return [Row(target_instances=2, spec=SERVICE_SPEC)]
             else:
                 raise sp_exceptions.SnowparkSQLException("Waiting to start, Container Status: PENDING")
 
@@ -97,7 +104,7 @@ class JobTest(parameterized.TestCase):
         def sql_side_effect(session: snowpark.Session, query_str: str, *args: Any, **kwargs: Any) -> Any:
             if query_str.startswith("DESCRIBE SERVICE IDENTIFIER"):
                 return [
-                    Row(target_instances=2),
+                    Row(target_instances=2, spec=SERVICE_SPEC),
                 ]
             elif query_str.startswith("SELECT VALUE FROM "):
                 return [

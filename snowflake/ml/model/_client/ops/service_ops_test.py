@@ -774,7 +774,6 @@ class ServiceOpsTest(parameterized.TestCase):
 
         # Define test inference engine kwargs
         test_inference_engine_args = [
-            "--model=model/DB.SCHEMA.MODEL/versions/VERSION/",
             "--tensor-parallel-size=2",
             "--max_tokens=1000",
             "--temperature=0.8",
@@ -938,7 +937,6 @@ class ServiceOpsTest(parameterized.TestCase):
 
         # Define test inference engine kwargs
         test_inference_engine_args = [
-            "--model=model/DB.SCHEMA.MODEL/versions/VERSION/",
             "--tensor-parallel-size=2",
             "--max_tokens=1000",
             "--temperature=0.8",

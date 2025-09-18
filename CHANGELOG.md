@@ -1,5 +1,15 @@
 # Release History
 
+## 1.14.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+* ML Job: The `additional_payloads` argument is now **deprecated** in favor of `imports`.
+
 ## 1.13.0
 
 ### Bug Fixes

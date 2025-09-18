@@ -28,13 +28,13 @@ build:py3.12 --repo_env=BAZEL_CONDA_PYTHON_VERSION=3.12
 build:build --config=_build
 
 # Config to sync files
-run:pre_build --config=_build --config=py3.9
+run:pre_build --config=_build --config=py3.10
 
 # Config to run type check
-build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.9
+build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.10
 
 # Config to build the doc
-build:docs --config=_all --config=py3.9
+build:docs --config=_all --config=py3.10
 
 # Public the extended setting
 
