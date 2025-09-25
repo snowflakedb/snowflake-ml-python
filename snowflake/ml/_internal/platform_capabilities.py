@@ -1,8 +1,8 @@
 import json
+import logging
 from contextlib import contextmanager
 from typing import Any, Optional
 
-from absl import logging
 from packaging import version
 
 from snowflake.ml import version as snowml_version
@@ -12,6 +12,8 @@ from snowflake.snowpark import (
     exceptions as snowpark_exceptions,
     session as snowpark_session,
 )
+
+logger = logging.getLogger(__name__)
 
 LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
 INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
@@ -60,12 +62,12 @@ class PlatformCapabilities:
     @classmethod  # type: ignore[arg-type]
     @contextmanager
     def mock_features(cls, features: dict[str, Any] = _dummy_features) -> None:  # type: ignore[misc]
-        logging.debug(f"Setting mock features: {features}")
+        logger.debug(f"Setting mock features: {features}")
         cls.set_mock_features(features)
         try:
             yield
         finally:
-            logging.debug(f"Clearing mock features: {features}")
+            logger.debug(f"Clearing mock features: {features}")
             cls.clear_mock_features()
 
     def is_inlined_deployment_spec_enabled(self) -> bool:
@@ -98,7 +100,7 @@ class PlatformCapabilities:
                         error_code=error_codes.INTERNAL_SNOWML_ERROR, original_exception=RuntimeError(message)
                     )
         except snowpark_exceptions.SnowparkSQLException as e:
-            logging.debug(f"Failed to retrieve platform capabilities: {e}")
+            logger.debug(f"Failed to retrieve platform capabilities: {e}")
             # This can happen is server side is older than 9.2. That is fine.
         return {}
 
@@ -144,7 +146,7 @@ class PlatformCapabilities:
 
         value = self.features.get(feature_name)
         if value is None:
-            logging.debug(f"Feature {feature_name} not found, returning large version number")
+            logger.debug(f"Feature {feature_name} not found, returning large version number")
             return large_version
 
         try:
@@ -152,7 +154,7 @@ class PlatformCapabilities:
             version_str = str(value)
             return version.Version(version_str)
         except (version.InvalidVersion, ValueError, TypeError) as e:
-            logging.debug(
+            logger.debug(
                 f"Failed to parse version from feature {feature_name} with value '{value}': {e}. "
                 f"Returning large version number"
             )
@@ -171,7 +173,7 @@ class PlatformCapabilities:
         feature_version = self._get_version_feature(feature_name)
 
         result = current_version >= feature_version
-        logging.debug(
+        logger.debug(
             f"Version comparison for feature {feature_name}: "
             f"current={current_version}, feature={feature_version}, enabled={result}"
         )

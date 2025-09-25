@@ -76,17 +76,30 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
             self._session, f"ALTER EXPERIMENT {experiment_fqn} DROP RUN {run_name}"
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
-    def modify_run(
+    def modify_run_add_metrics(
         self,
         *,
         experiment_name: sql_identifier.SqlIdentifier,
         run_name: sql_identifier.SqlIdentifier,
-        run_metadata: str,
+        metrics: str,
     ) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         query_result_checker.SqlResultValidator(
             self._session,
-            f"ALTER EXPERIMENT {experiment_fqn} MODIFY RUN {run_name} SET METADATA=$${run_metadata}$$",
+            f"ALTER EXPERIMENT {experiment_fqn} MODIFY RUN {run_name} ADD METRICS=$${metrics}$$",
+        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def modify_run_add_params(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: sql_identifier.SqlIdentifier,
+        params: str,
+    ) -> None:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        query_result_checker.SqlResultValidator(
+            self._session,
+            f"ALTER EXPERIMENT {experiment_fqn} MODIFY RUN {run_name} ADD PARAMETERS=$${params}$$",
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def put_artifact(

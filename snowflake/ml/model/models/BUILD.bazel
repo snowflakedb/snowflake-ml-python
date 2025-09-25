@@ -12,6 +12,7 @@ py_library(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:openai_signatures",
+        "//snowflake/ml/model/_client/model:inference_engine_utils",
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",
@@ -26,6 +27,7 @@ py_test(
     tags = ["feature:model_registry"],
     deps = [
         ":huggingface_pipeline",
+        "//snowflake/ml/model:inference_engine",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

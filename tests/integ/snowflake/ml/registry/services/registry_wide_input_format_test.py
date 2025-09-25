@@ -116,6 +116,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
         response = self._make_rest_api_call(endpoint, payload, jwt_token_generator, target_method)
         return response.status_code
 
+    @absltest.skip("Skipping test until inference server release 0.0.21")
     def test_wide_input_format_regression(self) -> None:
         """
         End-to-end regression test for wide input format path with parameter optimization.
@@ -153,6 +154,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
         logger.info("=" * 60)
         self._test_wide_input_regression_false()
 
+    @absltest.skip("Skipping test until inference server release 0.0.21")
     def test_quoted_identifiers_basic_functionality(self) -> None:
         """
         Basic inference functionality test for parameter optimization.
@@ -229,7 +231,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
             # Model signature is stored in UPPERCASE (case_sensitive=False default)
             # Dictionary format must match stored signature regardless of QUOTED_IDENTIFIERS_IGNORE_CASE
 
-            # Test 1: Exact case should FAIL (400) - doesn't match UPPERCASE stored signature
+            # Test 1: Exact case should PASS (200) - matches direct signature cached in inference server release 0.0.21
             try:
                 exact_case_result = self._rest_api_call_with_dictionary(
                     self.train_data[self.feature_cols].head(1),
@@ -238,11 +240,10 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
                 )
                 logger.info(f"   📋 Dictionary format (exact case): Status {exact_case_result}")
 
-                # Exact case should fail because stored signature is UPPERCASE
                 self.assertEqual(
                     exact_case_result,
-                    400,
-                    "Dictionary format with exact case should FAIL - stored signature is UPPERCASE "
+                    200,
+                    "Dictionary format with exact case should PASS - signature is stored in cache "
                     "(case_sensitive=False default)",
                 )
 
@@ -261,7 +262,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
                 )
                 logger.info(f"   📋 Dictionary format (uppercase): Status {uppercase_result}")
 
-                # UPPERCASE should succeed because it matches stored signature
+                # UPPERCASE should succeed because it matches stored signature (normalized identifier cache)
                 self.assertEqual(
                     uppercase_result,
                     200,
@@ -407,24 +408,23 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
         if param_on:
             raise ValueError("Test only supports param_on=False to avoid affecting parallel tests")
 
-        # With QUOTED_IDENTIFIERS_IGNORE_CASE = false and case_sensitive=False (default):
-        # Model signature is stored in UPPERCASE, so exact case should FAIL, UPPERCASE should succeed
+        # With QUOTED_IDENTIFIERS_IGNORE_CASE = false and case_sensitive=False (default)
 
-        # Test 1: Exact case should FAIL (400) - doesn't match UPPERCASE stored signature
+        # Test 1: Exact case should PASS (200) - matches direct signature cached as of inference server release 0.0.21
         exact_case_data = {"Feature_One": 1.0, "FEATURE_TWO": 2.0, "feature_three": 1, "Mixed_Case_Col": 0}
         exact_payload = {"data": [[0, exact_case_data]]}
 
         exact_response = self._make_rest_api_call(endpoint, exact_payload, jwt_token_generator)
         logger.info(f"   📋 Exact case test: Status {exact_response.status_code}")
 
-        # Exact case should fail because signature is stored in UPPERCASE
+        # Exact case should pass because signature is stored in cache
         self.assertEqual(
             exact_response.status_code,
-            400,
-            "Exact case dictionary format should FAIL with case_sensitive=False - signature stored in UPPERCASE",
+            200,
+            "Exact case dictionary format should PASS with case_sensitive=False - signature is stored in cache",
         )
 
-        # Test 2: UPPERCASE should SUCCEED (200) - matches UPPERCASE stored signature
+        # Test 2: UPPERCASE should SUCCEED (200) - matches UPPERCASE stored signature (normalized identifier cache)
         uppercase_data = {"FEATURE_ONE": 1.0, "FEATURE_TWO": 2.0, "FEATURE_THREE": 1, "MIXED_CASE_COL": 0}
         uppercase_payload = {"data": [[0, uppercase_data]]}
 

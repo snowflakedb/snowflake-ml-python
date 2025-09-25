@@ -1,4 +1,3 @@
-import json
 import unittest.mock as mock
 from unittest.mock import MagicMock
 
@@ -9,7 +8,6 @@ import snowflake.ml.experiment._experiment_info as experiment_info
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import experiment_tracking
 from snowflake.ml.experiment._client import experiment_tracking_sql_client as sql_client
-from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.registry._manager import model_manager
 
 
@@ -82,68 +80,6 @@ class RunTest(absltest.TestCase):
 
         # Verify that the original log_model method is restored
         self.assertIs(model_manager.ModelManager.log_model, unpatched)
-
-    def test_get_metadata_success(self) -> None:
-        """Test _get_metadata method successfully retrieves run metadata."""
-        run = entities.Run(
-            experiment_tracking=self.mock_experiment_tracking,
-            experiment_name=self.experiment_name,
-            run_name=self.run_name,
-        )
-
-        # Mock the metadata returned from SQL client
-        sample_metadata = {
-            "status": "RUNNING",
-            "metrics": [{"name": "accuracy", "value": 0.95, "step": 100}],
-            "parameters": [{"name": "learning_rate", "value": "0.001"}],
-        }
-
-        # Mock the SQL client response
-        # The show_runs_in_experiment returns a list of tuples, where each tuple
-        # contains run information including metadata in a specific column
-        mock_run_row = {sql_client.ExperimentTrackingSQLClient.RUN_METADATA_COL_NAME: json.dumps(sample_metadata)}
-
-        self.mock_sql_client.show_runs_in_experiment.return_value = [mock_run_row]
-
-        # Call _get_metadata
-        result = run._get_metadata()
-
-        # Verify SQL client was called correctly
-        self.mock_sql_client.show_runs_in_experiment.assert_called_once_with(
-            experiment_name=self.experiment_name, like=str(self.run_name)
-        )
-
-        # Verify the result is a RunData object with correct data
-        self.assertIsInstance(result, run_metadata.RunMetadata)
-        self.assertEqual(result.status, run_metadata.RunStatus.RUNNING)
-        self.assertEqual(len(result.metrics), 1)
-        self.assertEqual(result.metrics[0].name, "accuracy")
-        self.assertEqual(result.metrics[0].value, 0.95)
-        self.assertEqual(len(result.parameters), 1)
-        self.assertEqual(result.parameters[0].name, "learning_rate")
-
-    def test_get_metadata_run_not_found(self) -> None:
-        """Test _get_metadata method when run is not found."""
-        run = entities.Run(
-            experiment_tracking=self.mock_experiment_tracking,
-            experiment_name=self.experiment_name,
-            run_name=self.run_name,
-        )
-
-        # Mock SQL client to return empty list (no runs found)
-        self.mock_sql_client.show_runs_in_experiment.return_value = []
-
-        # Call _get_metadata and expect RuntimeError
-        with self.assertRaises(RuntimeError) as context:
-            run._get_metadata()
-
-        expected_message = f"Run {self.run_name} not found in experiment {self.experiment_name}."
-        self.assertEqual(str(context.exception), expected_message)
-
-        # Verify SQL client was called correctly
-        self.mock_sql_client.show_runs_in_experiment.assert_called_once_with(
-            experiment_name=self.experiment_name, like=str(self.run_name)
-        )
 
     def test_context_manager_usage(self) -> None:
         """Test Run as a context manager in typical usage."""

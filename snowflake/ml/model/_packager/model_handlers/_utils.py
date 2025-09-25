@@ -1,5 +1,6 @@
 import importlib
 import json
+import logging
 import os
 import pathlib
 import warnings
@@ -8,7 +9,6 @@ from typing import Any, Callable, Iterable, Optional, Sequence, cast
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
-from absl import logging
 
 import snowflake.snowpark.dataframe as sp_df
 from snowflake.ml._internal import env
@@ -22,6 +22,8 @@ from snowflake.ml.model._signatures import (
     utils as model_signature_utils,
 )
 from snowflake.snowpark import DataFrame as SnowparkDataFrame
+
+logger = logging.getLogger(__name__)
 
 EXPLAIN_BACKGROUND_DATA_ROWS_COUNT_LIMIT = 1000
 
@@ -257,7 +259,7 @@ def validate_model_task(passed_model_task: model_types.Task, inferred_model_task
             )
         return inferred_model_task
     elif inferred_model_task != model_types.Task.UNKNOWN:
-        logging.info(f"Inferred Task: {inferred_model_task.name} is used as task for this model " f"version")
+        logger.info(f"Inferred Task: {inferred_model_task.name} is used as task for this model " f"version")
         return inferred_model_task
     return passed_model_task
 

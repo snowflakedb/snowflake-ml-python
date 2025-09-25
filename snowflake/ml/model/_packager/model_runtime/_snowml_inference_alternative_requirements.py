@@ -2,7 +2,6 @@
 # Generate by running 'bazel run --config=pre_build //bazel/requirements:sync_requirements'
 
 REQUIREMENTS = [
-    "absl-py>=0.15,<2",
     "aiohttp!=4.0.0a0, !=4.0.0a1",
     "anyio>=3.5.0,<5",
     "cachetools>=3.1.1,<6",

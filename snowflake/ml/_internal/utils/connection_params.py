@@ -1,10 +1,12 @@
 import configparser
+import logging
 import os
 from typing import Optional, Union
 
-from absl import logging
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_CONNECTION_FILE = "~/.snowsql/config"
 
@@ -106,7 +108,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
     """Loads the dictionary from snowsql config file."""
     snowsql_config_file = login_file if login_file else os.path.expanduser(_DEFAULT_CONNECTION_FILE)
     if not os.path.exists(snowsql_config_file):
-        logging.error(f"Connection name given but snowsql config file is not found at: {snowsql_config_file}")
+        logger.error(f"Connection name given but snowsql config file is not found at: {snowsql_config_file}")
         raise Exception("Snowflake SnowSQL config not found.")
 
     config = configparser.ConfigParser(inline_comment_prefixes="#")
@@ -122,7 +124,7 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
         # See https://docs.snowflake.com/en/user-guide/snowsql-start.html#configuring-default-connection-settings
         connection_name = "connections"
 
-    logging.info(f"Reading {snowsql_config_file} for connection parameters defined as {connection_name}")
+    logger.info(f"Reading {snowsql_config_file} for connection parameters defined as {connection_name}")
     config.read(snowsql_config_file)
     conn_params = dict(config[connection_name])
     # Remap names to appropriate args in Python Connector API

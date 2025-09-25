@@ -110,15 +110,16 @@ class JWTGenerator:
         }
 
         # Regenerate the actual token
-        token = jwt.encode(payload, key=self.private_key, algorithm=JWTGenerator.ALGORITHM)
+        token = jwt.encode(payload, key=self.private_key, algorithm=JWTGenerator.ALGORITHM)  # type: ignore[arg-type]
         # If you are using a version of PyJWT prior to 2.0, jwt.encode returns a byte string instead of a string.
         # If the token is a byte string, convert it to a string.
         if isinstance(token, bytes):
             token = token.decode("utf-8")
         self.token = token
+        public_key = self.private_key.public_key()
         logger.info(
             "Generated a JWT with the following payload: %s",
-            jwt.decode(self.token, key=self.private_key.public_key(), algorithms=[JWTGenerator.ALGORITHM]),
+            jwt.decode(self.token, key=public_key, algorithms=[JWTGenerator.ALGORITHM]),  # type: ignore[arg-type]
         )
 
         return token

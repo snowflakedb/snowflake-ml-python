@@ -5,7 +5,7 @@ import tempfile
 import numpy as np
 import pandas as pd
 from absl.testing import absltest, parameterized
-from packaging import requirements, version
+from packaging import requirements
 
 from snowflake.ml._internal import env_utils
 from snowflake.ml.model import model_signature, openai_signatures
@@ -24,53 +24,6 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         if self._original_cache_dir:
             os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
         self.cache_dir.cleanup()
-
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
-    def test_conversational_pipeline(
-        self,
-        registry_test_fn: str,
-    ) -> None:
-        # We have to import here due to cache location issue.
-        # Only by doing so can we make the cache dir setting effective.
-        import transformers
-
-        if version.parse(transformers.__version__) >= version.parse("4.42.0"):
-            self.skipTest("This test is not compatible with transformers>=4.42.0")
-
-        model = transformers.pipeline(task="conversational", model="ToddGoldfarb/Cadet-Tiny")
-
-        x_df = pd.DataFrame(
-            [
-                {
-                    "user_inputs": [
-                        "Do you speak French?",
-                        "Do you know how to say Snowflake in French?",
-                    ],
-                    "generated_responses": ["Yes I do."],
-                },
-            ]
-        )
-
-        def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["generated_responses"]))
-
-            for row in res["generated_responses"]:
-                self.assertIsInstance(row, list)
-                for resp in row:
-                    self.assertIsInstance(resp, str)
-
-        getattr(self, registry_test_fn)(
-            model=model,
-            prediction_assert_fns={
-                "": (
-                    x_df,
-                    check_res,
-                ),
-            },
-            options={"relax_version": False},
-        )
 
     def test_fill_mask_pipeline(self) -> None:
         import transformers

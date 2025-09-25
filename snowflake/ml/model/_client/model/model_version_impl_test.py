@@ -11,7 +11,11 @@ from snowflake.ml import jobs
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import inference_engine, model_signature, task, type_hints
-from snowflake.ml.model._client.model import batch_inference_specs, model_version_impl
+from snowflake.ml.model._client.model import (
+    batch_inference_specs,
+    inference_engine_utils,
+    model_version_impl,
+)
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -1298,21 +1302,21 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_get_inference_engine_args(self) -> None:
         # Test with None
-        inference_engine_args = self.m_mv._get_inference_engine_args(None)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(None)
         self.assertIsNone(inference_engine_args)
 
         # Test with empty experimental_options
-        inference_engine_args = self.m_mv._get_inference_engine_args({})
+        inference_engine_args = inference_engine_utils._get_inference_engine_args({})
         self.assertIsNone(inference_engine_args)
 
         # Test with experimental_options missing inference_engine key
         with self.assertRaises(ValueError) as cm:
-            self.m_mv._get_inference_engine_args({"other_key": "value"})
+            inference_engine_utils._get_inference_engine_args({"other_key": "value"})
         self.assertEqual(str(cm.exception), "inference_engine is required in experimental_options")
 
         # Test with only inference_engine (no args_override)
         experimental_options: dict[str, Any] = {"inference_engine": inference_engine.InferenceEngine.VLLM}
-        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertIsNone(inference_engine_args.inference_engine_args_override)
@@ -1322,7 +1326,7 @@ class ModelVersionImplTest(absltest.TestCase):
             "inference_engine": inference_engine.InferenceEngine.VLLM,
             "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
         }
-        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertEqual(
@@ -1334,7 +1338,7 @@ class ModelVersionImplTest(absltest.TestCase):
             "inference_engine": inference_engine.InferenceEngine.VLLM,
             "inference_engine_args_override": [],
         }
-        inference_engine_args = self.m_mv._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertEqual(inference_engine_args.inference_engine_args_override, [])
@@ -1342,7 +1346,7 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_enrich_inference_engine_args(self) -> None:
         """Test _enrich_inference_engine_args method with various inputs."""
         # Test with args=None and no GPU
-        enriched = self.m_mv._enrich_inference_engine_args(
+        enriched = inference_engine_utils._enrich_inference_engine_args(
             service_ops.InferenceEngineArgs(
                 inference_engine=inference_engine.InferenceEngine.VLLM,
                 inference_engine_args_override=None,
@@ -1354,7 +1358,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.assertEqual(enriched.inference_engine_args_override, [])
 
         # Test with empty args and GPU count
-        enriched = self.m_mv._enrich_inference_engine_args(
+        enriched = inference_engine_utils._enrich_inference_engine_args(
             service_ops.InferenceEngineArgs(
                 inference_engine=inference_engine.InferenceEngine.VLLM,
                 inference_engine_args_override=None,
@@ -1367,7 +1371,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test with args and string GPU count
         original_args = ["--max_tokens=100", "--temperature=0.7"]
-        enriched = self.m_mv._enrich_inference_engine_args(
+        enriched = inference_engine_utils._enrich_inference_engine_args(
             service_ops.InferenceEngineArgs(
                 inference_engine=inference_engine.InferenceEngine.VLLM,
                 inference_engine_args_override=original_args,
@@ -1388,7 +1392,7 @@ class ModelVersionImplTest(absltest.TestCase):
         )
 
         # Test overwriting existing model key with new model key by appending to the list
-        enriched = self.m_mv._enrich_inference_engine_args(
+        enriched = inference_engine_utils._enrich_inference_engine_args(
             service_ops.InferenceEngineArgs(
                 inference_engine=inference_engine.InferenceEngine.VLLM,
                 inference_engine_args_override=[
@@ -1410,7 +1414,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test with invalid GPU string
         with self.assertRaises(ValueError):
-            self.m_mv._enrich_inference_engine_args(
+            inference_engine_utils._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
                     inference_engine_args_override=None,
@@ -1420,7 +1424,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test with zero GPU (should not set tensor-parallel-size)
         with self.assertRaises(ValueError):
-            self.m_mv._enrich_inference_engine_args(
+            inference_engine_utils._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
                     inference_engine_args_override=None,
@@ -1430,7 +1434,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test with negative GPU (should not set tensor-parallel-size)
         with self.assertRaises(ValueError):
-            self.m_mv._enrich_inference_engine_args(
+            inference_engine_utils._enrich_inference_engine_args(
                 service_ops.InferenceEngineArgs(
                     inference_engine=inference_engine.InferenceEngine.VLLM,
                     inference_engine_args_override=None,
@@ -1520,7 +1524,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""
-        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
         output_spec = batch_inference_specs.OutputSpec(
             stage_location="@output_stage",
         )
@@ -1546,7 +1552,7 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_invoke_batch_job,
         ):
             result = self.m_mv._run_batch(
-                compute_pool="CUSTOM_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+                compute_pool="CUSTOM_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
             # Verify all parameters are passed correctly
@@ -1564,9 +1570,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests="8Gi",
                 job_name="CUSTOM_JOB_NAME",
                 replicas=10,
-                input_stage_location="@input_stage",
+                input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
-                output_stage_location="@output_stage",
+                output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
             )
@@ -1575,7 +1581,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_generated_job_name(self) -> None:
         """Test _run_batch with job_name generated when None."""
-        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
@@ -1602,7 +1610,7 @@ class ModelVersionImplTest(absltest.TestCase):
             mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
 
             result = self.m_mv._run_batch(
-                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
             # Verify result
@@ -1615,7 +1623,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_warehouse_from_session(self) -> None:
         """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
-        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
@@ -1641,7 +1651,7 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_get_warehouse,
         ):
             result = self.m_mv._run_batch(
-                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
             # Verify result
@@ -1656,7 +1666,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_no_warehouse_error(self) -> None:
         """Test _run_batch raises ValueError when no warehouse is available."""
-        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
@@ -1679,7 +1691,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
             ):
                 self.m_mv._run_batch(
-                    compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=job_spec
+                    compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
                 )
 
             # Verify session warehouse was called
@@ -1687,7 +1699,9 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_none_job_spec(self) -> None:
         """Test _run_batch with job_spec=None uses default JobSpec values."""
-        input_spec = batch_inference_specs.InputSpec(stage_location="@input_stage")
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
 
         mock_job = mock.MagicMock(spec=jobs.MLJob)
@@ -1706,7 +1720,7 @@ class ModelVersionImplTest(absltest.TestCase):
             mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
 
             result = self.m_mv._run_batch(
-                compute_pool="TEST_POOL", input_spec=input_spec, output_spec=output_spec, job_spec=None
+                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=None
             )
 
             # Verify result
@@ -1730,9 +1744,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests=None,  # JobSpec default
                 job_name="BATCH_INFERENCE_DEFAULT_UUID_1234_5678_ABCD",  # generated since job_name=None
                 replicas=None,  # JobSpec default
-                input_stage_location="@input_stage",
+                input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",  # InputSpec default
-                output_stage_location="@output_stage",
+                output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",  # OutputSpec default
                 statement_params=mock.ANY,
             )

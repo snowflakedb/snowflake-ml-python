@@ -9,7 +9,6 @@ import numpy as np
 import pandas as pd
 import torch
 from absl.testing import absltest
-from packaging import version
 
 from snowflake.ml.model import (
     model_signature,
@@ -273,52 +272,6 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     assert callable(pk.model)
                     res = pk.model(udf_test_input.copy(deep=True))
                     check_udf_res_fn(res)
-
-    def test_conversational_pipeline(self) -> None:
-        import transformers
-
-        if version.parse(transformers.__version__) >= version.parse("4.42.0"):
-            self.skipTest("This test is not compatible with transformers>=4.42.0")
-
-        x = transformers.Conversation(
-            text="Do you know how to say Snowflake in French?",
-            past_user_inputs=["Do you speak French?"],
-            generated_responses=["Yes I do."],
-        )
-
-        x_df = pd.DataFrame(
-            [
-                {
-                    "user_inputs": x.past_user_inputs + [x.new_user_input],
-                    "generated_responses": x.generated_responses,
-                },
-            ]
-        )
-
-        def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            original_res = original(copy.deepcopy(x))
-            loaded_res = loaded(copy.deepcopy(x))
-            assert isinstance(original_res, transformers.Conversation)
-            assert isinstance(loaded_res, transformers.Conversation)
-            self.assertListEqual(original_res.generated_responses, loaded_res.generated_responses)
-            self.assertListEqual(original_res.past_user_inputs, loaded_res.past_user_inputs)
-
-        def check_udf_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["generated_responses"]))
-
-            for row in res["generated_responses"]:
-                self.assertIsInstance(row, list)
-                for resp in row:
-                    self.assertIsInstance(resp, str)
-
-        self._basic_test_case(
-            task="conversational",
-            model_id="ToddGoldfarb/Cadet-Tiny",
-            udf_test_input=x_df,
-            options={},
-            check_pipeline_fn=check_pipeline,
-            check_udf_res_fn=check_udf_res,
-        )
 
     def test_fill_mask_pipeline(self) -> None:
         x = ["LynYuu is the <mask> of the Grand Duchy of Yu."]

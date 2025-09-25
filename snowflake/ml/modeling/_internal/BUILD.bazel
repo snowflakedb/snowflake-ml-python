@@ -23,7 +23,7 @@ py_library(
 py_test(
     name = "model_transformer_builder_test",
     srcs = ["model_transformer_builder_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":estimator_utils",
         ":model_transformer_builder",
@@ -48,7 +48,7 @@ py_library(
 py_test(
     name = "estimator_utils_test",
     srcs = ["estimator_utils_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":estimator_utils",
     ],
@@ -67,7 +67,7 @@ py_test(
     name = "model_specifications_test",
     srcs = ["model_specifications_test.py"],
     optional_dependencies = ["lightgbm"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":model_specifications",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:distributed_hpo_trainer",
@@ -97,7 +97,7 @@ py_library(
 py_test(
     name = "model_trainer_builder_test",
     srcs = ["model_trainer_builder_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":model_trainer",
         ":model_trainer_builder",

@@ -261,13 +261,13 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             step: The step of the metrics. Defaults to 0.
         """
         run = self._get_or_start_run()
-        metadata = run._get_metadata()
+        metrics_list = []
         for key, value in metrics.items():
-            metadata.set_metric(key, value, step)
-        self._sql_client.modify_run(
+            metrics_list.append(entities.Metric(key, value, step))
+        self._sql_client.modify_run_add_metrics(
             experiment_name=run.experiment_name,
             run_name=run.name,
-            run_metadata=json.dumps(metadata.to_dict()),
+            metrics=json.dumps([metric.to_dict() for metric in metrics_list]),
         )
 
     def log_param(
@@ -296,13 +296,13 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
                 to string.
         """
         run = self._get_or_start_run()
-        metadata = run._get_metadata()
+        params_list = []
         for key, value in params.items():
-            metadata.set_param(key, value)
-        self._sql_client.modify_run(
+            params_list.append(entities.Param(key, str(value)))
+        self._sql_client.modify_run_add_params(
             experiment_name=run.experiment_name,
             run_name=run.name,
-            run_metadata=json.dumps(metadata.to_dict()),
+            params=json.dumps([param.to_dict() for param in params_list]),
         )
 
     def log_artifact(

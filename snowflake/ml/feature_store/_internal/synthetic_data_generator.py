@@ -1,3 +1,4 @@
+import logging
 import math
 import random
 import sched
@@ -5,8 +6,6 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Optional, cast
-
-from absl.logging import logging
 
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import (

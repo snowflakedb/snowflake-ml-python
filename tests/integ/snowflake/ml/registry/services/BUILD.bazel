@@ -114,6 +114,20 @@ py_test(
 )
 
 py_test(
+    name = "registry_model_deployment_ingress_endpoint_data_format_test",
+    timeout = "eternal",
+    srcs = ["registry_model_deployment_ingress_endpoint_data_format_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:jwt_generator",
+        "//snowflake/ml/utils:authentication",
+    ],
+)
+
+py_test(
     name = "registry_custom_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_deployment_test.py"],
@@ -128,6 +142,17 @@ py_test(
     name = "registry_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_test.py"],
+    shard_count = 3,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_batch_inference_test",
+    timeout = "long",
+    srcs = ["registry_custom_model_batch_inference_test.py"],
     shard_count = 3,
     tags = ["feature:model_registry"],
     deps = [

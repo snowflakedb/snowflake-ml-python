@@ -66,9 +66,9 @@
 
 - name: absl-py
   dev_version: 1.4.0
-  version_requirements: '>=0.15,<2'
   tags:
     - build_essential
+    - build_test_env
 # For fsspec[http] in conda
 - name_conda: aiohttp
   dev_version_conda: 3.9.5

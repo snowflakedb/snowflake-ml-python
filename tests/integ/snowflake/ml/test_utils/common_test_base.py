@@ -132,7 +132,8 @@ class CommonTestBase(parameterized.TestCase):
                             imports.append(snowcortex_zip_module_filename)
                         except ModuleNotFoundError:
                             pass
-                        packages = additional_packages or []
+                        # Always include absl-py since the test framework imports from absl.testing
+                        packages = (additional_packages or []) + ["absl-py"]
                         offending_list = ["snowflake-connector-python"]
                         if any([p.startswith("scikit-learn") for p in packages]):
                             offending_list.append("scikit-learn")
