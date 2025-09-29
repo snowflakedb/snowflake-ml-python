@@ -79,7 +79,7 @@ py_library(
 py_test(
     name = "xgboost_external_memory_trainer_test",
     srcs = ["xgboost_external_memory_trainer_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":xgboost_external_memory_trainer",
         "//snowflake/ml/_internal/utils:temp_file_utils",

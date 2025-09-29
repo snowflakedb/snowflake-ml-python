@@ -446,9 +446,9 @@ test will fail if you forget that part.
 
 ## Integration test
 
-### Test in Store Procedure
+### Test in Stored Procedure
 
-To test if your code is working in store procedure or not simply, you could work based on `CommonTestBase` in
+To test if your code is working in stored procedure or not simply, you could work based on `CommonTestBase` in
 `tests/integ/snowflake/ml/test_utils/common_test_base.py`. An example of such test could be found in
 `tests/integ/snowflake/ml/_internal/file_utils_integ_test.py`.
 
@@ -462,32 +462,6 @@ To write a such test, you need to
 1. Decorate your test method with `common_test_base.CommonTestBase.sproc_test()`. If you want your test running in
 store procedure only rather than both locally and in store procedure, set `local=False`. If you don't want to test
 with caller's rights, set `test_callers_rights=False`. (Owner's rights store procedure is always tested)
-
-### Compatibility Test
-
-To test if your code is compatible with previous version simply, you could work based on `CommonTestBase` in
-`tests/integ/snowflake/ml/test_utils/common_test_base.py`.
-
-To write a such test, you need to
-
-1. Your test cannot have a parameter called `_snowml_pkg_ver`.
-1. Let your test case inherit from `common_test_base.CommonTestBase`.
-1. Remove all Snowpark Session creation in your test, and use `self.session` to access the session if needed.
-1. If you write your own `setUp` and `tearDown` method, remember to call `super().setUp()` or
-   `super().tearDown()`.
-1. Write a factory method in your test class that return a tuple of a function and its parameters as a tuple. The
-function will be run as a store procedure in the environment with previous version of library.
-
-    **Note**: Since the function will be created as a store procedure, the first argument must be a Snowpark Session.
-    The arguments tuple you provided via the factory method does not require to include the session object.
-
-    **Note**: To avoid any objects from current environment affecting the result, instead of using `cloudpickle` to
-    pickle the function, the function will be created as a Python file and registered as a store procedure. This means
-    you cannot use any object outside of the function, and if you want to import anything, you need to import inside
-    the function definition. So it would help if you make your prepare function as simple as possible.
-
-1. Decorate your test method with `common_test_base.CommonTestBase.compatibility_test`, providing the factory method
-you created in the above step, optional version range to test with, as well as additional package requirements.
 
 ## `pre-commit`
 

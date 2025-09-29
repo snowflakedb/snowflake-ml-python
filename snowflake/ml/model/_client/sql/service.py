@@ -1,8 +1,9 @@
+import contextlib
 import dataclasses
 import enum
 import logging
 import textwrap
-from typing import Any, Optional
+from typing import Any, Generator, Optional
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -16,6 +17,11 @@ from snowflake.snowpark import dataframe, functions as F, row, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
+
+# Using this token instead of '?' to avoid escaping issues
+# After quotes are escaped, we replace this token with '|| ? ||'
+QMARK_RESERVED_TOKEN = "<QMARK_RESERVED_TOKEN>"
+QMARK_PARAMETER_TOKEN = "'|| ? ||'"
 
 
 class ServiceStatus(enum.Enum):
@@ -70,12 +76,26 @@ class ServiceSQLClient(_base._BaseSQLClient):
     CONTAINER_STATUS = "status"
     MESSAGE = "message"
 
+    @contextlib.contextmanager
+    def _qmark_paramstyle(self) -> Generator[None, None, None]:
+        """Context manager that temporarily changes paramstyle to qmark and restores original value on exit."""
+        if not hasattr(self._session, "_options"):
+            yield
+        else:
+            original_paramstyle = self._session._options["paramstyle"]
+            try:
+                self._session._options["paramstyle"] = "qmark"
+                yield
+            finally:
+                self._session._options["paramstyle"] = original_paramstyle
+
     def deploy_model(
         self,
         *,
         stage_path: Optional[str] = None,
         model_deployment_spec_yaml_str: Optional[str] = None,
         model_deployment_spec_file_rel_path: Optional[str] = None,
+        query_params: Optional[list[Any]] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> tuple[str, snowpark.AsyncJob]:
         assert model_deployment_spec_yaml_str or model_deployment_spec_file_rel_path
@@ -83,11 +103,18 @@ class ServiceSQLClient(_base._BaseSQLClient):
             model_deployment_spec_yaml_str = snowpark_utils.escape_single_quotes(
                 model_deployment_spec_yaml_str
             )  # type: ignore[no-untyped-call]
+            model_deployment_spec_yaml_str = model_deployment_spec_yaml_str.replace(  # type: ignore[union-attr]
+                QMARK_RESERVED_TOKEN, QMARK_PARAMETER_TOKEN
+            )
             logger.info(f"Deploying model with spec={model_deployment_spec_yaml_str}")
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('{model_deployment_spec_yaml_str}')"
         else:
             sql_str = f"CALL SYSTEM$DEPLOY_MODEL('@{stage_path}/{model_deployment_spec_file_rel_path}')"
-        async_job = self._session.sql(sql_str).collect(block=False, statement_params=statement_params)
+        with self._qmark_paramstyle():
+            async_job = self._session.sql(
+                sql_str,
+                params=query_params if query_params else None,
+            ).collect(block=False, statement_params=statement_params)
         assert isinstance(async_job, snowpark.AsyncJob)
         return async_job.query_id, async_job
 

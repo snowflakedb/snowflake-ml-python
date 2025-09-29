@@ -4,9 +4,10 @@ from typing import Any, Optional, cast
 from unittest import mock
 
 from absl.testing import absltest, parameterized
+from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml import jobs
+from snowflake.ml import jobs, version as snowml_version
 from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import inference_engine, model_signature
@@ -52,12 +53,21 @@ class ServiceOpsTest(parameterized.TestCase):
     def _get_hugging_face_model_save_args(
         self,
         huggingface_args: Optional[dict[str, Any]] = None,
+        *,
+        use_inlined_deployment_spec: bool = False,
     ) -> dict[str, Any]:
         if huggingface_args is None:
             return self._default_hf_args
         else:
             # union huggingface_args with _default_hf_args
-            return {**self._default_hf_args, **huggingface_args}
+            if use_inlined_deployment_spec and "hf_token" in huggingface_args:
+                return {
+                    **self._default_hf_args,
+                    **huggingface_args,
+                    "hf_token": service_sql.QMARK_RESERVED_TOKEN,
+                }
+            else:
+                return {**self._default_hf_args, **huggingface_args}
 
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
@@ -95,9 +105,26 @@ class ServiceOpsTest(parameterized.TestCase):
                 "hf_token": "token",
             }
         },
+        {
+            "huggingface_args": {
+                "hf_model_name": "gpt2",
+                "hf_task": "text-generation",
+            }
+        },
     )
-    def test_create_service(self, huggingface_args: dict[str, Any]) -> None:
+    def test_create_service_basic(self, huggingface_args: dict[str, Any]) -> None:
         self._add_snowflake_version_check_mock_operations(self.m_session)
+        current_version = version.Version(snowml_version.VERSION)
+        # force enable inlined deployment spec
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            features={platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: current_version}
+        ):
+            self.m_ops = service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            )
+            self.assertTrue(self.m_ops._use_inlined_deployment_spec)
         m_statuses = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
@@ -108,13 +135,6 @@ class ServiceOpsTest(parameterized.TestCase):
             )
         ]
         with (
-            mock.patch.object(
-                self.m_ops._stage_client,
-                "create_tmp_stage",
-            ) as mock_create_stage,
-            mock.patch.object(
-                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-            ),
             mock.patch.object(
                 self.m_ops._model_deployment_spec,
                 "save",
@@ -135,9 +155,6 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._model_deployment_spec,
                 "add_hf_logger_spec",
             ) as mock_add_hf_logger,
-            mock.patch.object(
-                file_utils, "upload_directory_to_stage", return_value=None
-            ) as mock_upload_directory_to_stage,
             mock.patch.object(
                 self.m_ops._service_client,
                 "deploy_model",
@@ -189,12 +206,6 @@ class ServiceOpsTest(parameterized.TestCase):
                 progress_status=create_mock_progress_status(),
                 inference_engine_args=None,
             )
-            mock_create_stage.assert_called_once_with(
-                database_name=sql_identifier.SqlIdentifier("DB"),
-                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                stage_name=sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
-                statement_params=self.m_statement_params,
-            )
             mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
@@ -221,26 +232,20 @@ class ServiceOpsTest(parameterized.TestCase):
                 external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
             )
             if huggingface_args:
-                mock_add_hf_logger.assert_called_once_with(**self._get_hugging_face_model_save_args(huggingface_args))
+                mock_add_hf_logger.assert_called_once_with(
+                    **self._get_hugging_face_model_save_args(
+                        use_inlined_deployment_spec=True,
+                        huggingface_args=huggingface_args,
+                    )
+                )
 
             mock_save.assert_called_once()
-            mock_upload_directory_to_stage.assert_called_once_with(
-                self.c_session,
-                local_path=self.m_ops._model_deployment_spec.workspace_path,
-                stage_path=pathlib.PurePosixPath(
-                    self.m_ops._stage_client.fully_qualified_object_name(
-                        sql_identifier.SqlIdentifier("DB"),
-                        sql_identifier.SqlIdentifier("SCHEMA"),
-                        sql_identifier.SqlIdentifier("SNOWPARK_TEMP_STAGE_ABCDEF0123"),
-                    )
-                ),
-                statement_params=self.m_statement_params,
-            )
             mock_deploy_model.assert_called_once_with(
-                stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
-                model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
-                model_deployment_spec_yaml_str=None,
+                stage_path=None,
+                model_deployment_spec_file_rel_path=None,
+                model_deployment_spec_yaml_str=self.m_ops._model_deployment_spec.save(),
                 statement_params=self.m_statement_params,
+                query_params=["token"] if "hf_token" in huggingface_args else [],
             )
             mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
@@ -403,6 +408,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
                 model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
+                query_params=[],
             )
             mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -562,6 +568,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
                 model_deployment_spec_yaml_str=None,
                 statement_params=self.m_statement_params,
+                query_params=[],
             )
             mock_get_service_container_statuses.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -912,6 +919,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
                 model_deployment_spec_yaml_str=None,
+                query_params=[],
                 statement_params=self.m_statement_params,
             )
             mock_get_service_container_statuses.assert_called_once_with(
@@ -1076,6 +1084,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 stage_path="DB.SCHEMA.SNOWPARK_TEMP_STAGE_ABCDEF0123",
                 model_deployment_spec_file_rel_path=self.m_ops._model_deployment_spec.DEPLOY_SPEC_FILE_REL_PATH,
                 model_deployment_spec_yaml_str=None,
+                query_params=[],
                 statement_params=self.m_statement_params,
             )
             mock_get_service_container_statuses.assert_called_once_with(

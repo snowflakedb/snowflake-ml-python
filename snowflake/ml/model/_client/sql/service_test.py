@@ -28,8 +28,8 @@ class ServiceSQLTest(absltest.TestCase):
         )
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$DEPLOY_MODEL('@stage_path/model_deployment_spec_file_rel_path')""",
-            copy.deepcopy(m_df),
+            query="""CALL SYSTEM$DEPLOY_MODEL('@stage_path/model_deployment_spec_file_rel_path')""",
+            result=copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
 
@@ -54,8 +54,8 @@ class ServiceSQLTest(absltest.TestCase):
         )
 
         self.m_session.add_mock_sql(
-            """CALL SYSTEM$DEPLOY_MODEL('mock_yaml_str')""",
-            copy.deepcopy(m_df),
+            query="""CALL SYSTEM$DEPLOY_MODEL('mock_yaml_str')""",
+            result=copy.deepcopy(m_df),
         )
         c_session = cast(Session, self.m_session)
 

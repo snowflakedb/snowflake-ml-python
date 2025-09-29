@@ -1,6 +1,17 @@
 # Release History
 
-## 1.14.0
+## 1.15.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Registry: Dropping support for deprecated `conversational` task type for Huggingface models.
+  To read more <https://github.com/huggingface/transformers/pull/31165>
+
+### New Features
+
+## 1.14.0 (09-18-2025)
 
 ### Bug Fixes
 

@@ -1,7 +1,7 @@
+import logging
 import re
 
 import sqlparse
-from absl.logging import logging
 
 from snowflake.ml._internal.utils.formatting import unwrap
 

@@ -10,7 +10,7 @@ TIMEOUT = "long"  # 900s
 py_test(
     name = "r2_score_test",
     srcs = ["r2_score_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
@@ -21,7 +21,7 @@ py_test(
     name = "accuracy_score_test",
     srcs = ["accuracy_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -35,7 +35,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["confusion_matrix_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -50,7 +50,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["correlation_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:correlation",
         "//snowflake/ml/utils:connection_params",
@@ -61,7 +61,7 @@ py_test(
     name = "covariance_test",
     timeout = TIMEOUT,
     srcs = ["covariance_test.py"],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:covariance",
         "//snowflake/ml/utils:connection_params",
@@ -73,7 +73,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["d2_absolute_error_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:regression",
@@ -87,7 +87,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["d2_pinball_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:regression",
@@ -101,7 +101,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["explained_variance_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:regression",
         "//snowflake/ml/utils:connection_params",
@@ -114,7 +114,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["f1_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -128,7 +128,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["fbeta_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -142,7 +142,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["log_loss_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -156,7 +156,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["mean_absolute_error_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:regression",
@@ -170,7 +170,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["mean_absolute_percentage_error_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:regression",
@@ -184,7 +184,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["mean_squared_error_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:regression",
@@ -198,7 +198,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["metrics_utils_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:metrics_utils",
         "//snowflake/ml/utils:connection_params",
@@ -211,7 +211,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["precision_recall_curve_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:ranking",
@@ -225,7 +225,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["precision_recall_fscore_support_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -239,7 +239,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["precision_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -253,7 +253,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["recall_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":generator",
         "//snowflake/ml/modeling/metrics:classification",
@@ -267,7 +267,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["roc_auc_score_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",
@@ -280,7 +280,7 @@ py_test(
     timeout = TIMEOUT,
     srcs = ["roc_curve_test.py"],
     shard_count = SHARD_COUNT,
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/metrics:ranking",
         "//snowflake/ml/utils:connection_params",

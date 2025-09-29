@@ -3,10 +3,6 @@ from typing import Optional, Union
 from pydantic import BaseModel
 
 
-class InputSpec(BaseModel):
-    stage_location: str
-
-
 class OutputSpec(BaseModel):
     stage_location: str
 

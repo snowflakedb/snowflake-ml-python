@@ -65,9 +65,13 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         matcher: Union[
             type[smatcher.StringMatcherSql], type[smatcher.StringMatcherIgnoreWhitespace]
         ] = smatcher.StringMatcherSql,
+        *,
+        params: Optional[list[Any]] = None,
     ) -> mock_snowml_base.MockSnowMLBase:
         """Add an expected query-result pair to the session."""
-        return self.add_operation(operation="sql", args=(), kwargs={"query": matcher(query)}, result=result)
+        return self.add_operation(
+            operation="sql", args=(), kwargs={"query": matcher(query), "params": params}, result=result
+        )
 
     # DataFrame Operations
 
@@ -79,7 +83,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         )
         return mo.result
 
-    def sql(self, query: str) -> Any:
+    def sql(self, query: str, params: Optional[list[Any]] = None) -> Any:
         """Execute a mock sql call.
 
         This will compare the `query` string against the stored expected calls and if it matches, the corresponding
@@ -90,6 +94,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
 
         Args:
             query (str): Query string.
+            params (list[Any]): Query parameters.
 
         Returns:
             MockDataFrame result given.
@@ -97,7 +102,7 @@ class MockSession(mock_snowml_base.MockSnowMLBase):
         mo = self._check_operation(
             operation="sql",
             args=(),
-            kwargs={"query": query},
+            kwargs={"query": query, "params": params},
             check_args=False,
             check_kwargs=True,
         )

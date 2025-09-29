@@ -9,7 +9,6 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import _entities as entities, experiment_tracking
 from snowflake.ml.experiment._client import artifact
-from snowflake.ml.experiment._entities import run_metadata
 from snowflake.snowpark import session
 
 
@@ -177,27 +176,22 @@ class ExperimentTrackingTest(absltest.TestCase):
         exp.set_experiment("TEST_EXPERIMENT")
         run = exp.start_run("TEST_RUN")
 
-        # Use actual run metadata
-        metadata = run_metadata.RunMetadata(status=run_metadata.RunStatus.RUNNING, metrics=[], parameters=[])
-        run._get_metadata = MagicMock(return_value=metadata)
-
         # Log metrics
         metrics = {"accuracy": 0.95, "loss": 0.05}
         exp.log_metrics(metrics, step=1)
 
-        # Verify metrics were set in metadata
-        self.assertEqual(len(metadata.metrics), 2)
-        metric_dict = {(m.name, m.step): m.value for m in metadata.metrics}
-        self.assertEqual(metric_dict[("accuracy", 1)], 0.95)
-        self.assertEqual(metric_dict[("loss", 1)], 0.05)
-
         # Verify SQL client was called to modify the run
-        self.mock_sql_client.modify_run.assert_called_once()
-        call_args = self.mock_sql_client.modify_run.call_args[1]
+        self.mock_sql_client.modify_run_add_metrics.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_add_metrics.call_args[1]
         self.assertEqual(call_args["experiment_name"], run.experiment_name)
         self.assertEqual(call_args["run_name"], run.name)
-        # Verify JSON-serialized metadata was passed to SQL client
-        self.assertEqual(call_args["run_metadata"], json.dumps(metadata.to_dict()))
+
+        # Verify metrics were set correctly
+        metric_list = json.loads(call_args["metrics"])
+        self.assertEqual(len(metric_list), 2)
+        metric_dict = {(m["name"], m["step"]): m["value"] for m in metric_list}
+        self.assertEqual(metric_dict[("accuracy", 1)], 0.95)
+        self.assertEqual(metric_dict[("loss", 1)], 0.05)
 
     def test_log_metrics_without_active_run(self) -> None:
         """Test logging metrics creates a run when none is active"""
@@ -207,8 +201,6 @@ class ExperimentTrackingTest(absltest.TestCase):
         mock_run = MagicMock(spec=entities.Run)
         mock_run.experiment_name = "TEST_EXPERIMENT"
         mock_run.name = "TEST_RUN"
-        metadata = run_metadata.RunMetadata(status=run_metadata.RunStatus.RUNNING, metrics=[], parameters=[])
-        mock_run._get_metadata.return_value = metadata
         exp._get_or_start_run = MagicMock(return_value=mock_run)
 
         # Log metrics
@@ -218,19 +210,17 @@ class ExperimentTrackingTest(absltest.TestCase):
         # Verify _get_or_start_run was called
         exp._get_or_start_run.assert_called_once()
 
-        # Verify metric was set in metadata
-        self.assertEqual(len(metadata.metrics), 1)
-        self.assertEqual(metadata.metrics[0].name, "precision")
-        self.assertEqual(metadata.metrics[0].value, 0.85)
-        self.assertEqual(metadata.metrics[0].step, 2)
-
         # Verify SQL client was called to modify the run with correct args
-        self.mock_sql_client.modify_run.assert_called_once()
-        call_args = self.mock_sql_client.modify_run.call_args[1]
+        self.mock_sql_client.modify_run_add_metrics.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_add_metrics.call_args[1]
         self.assertEqual(call_args["experiment_name"], "TEST_EXPERIMENT")
         self.assertEqual(call_args["run_name"], "TEST_RUN")
-        # Verify JSON-serialized metadata was passed to SQL client
-        self.assertEqual(call_args["run_metadata"], json.dumps(metadata.to_dict()))
+
+        # Verify metrics were set correctly
+        metric_list = json.loads(call_args["metrics"])
+        self.assertEqual(len(metric_list), 1)
+        metric_dict = {(m["name"], m["step"]): m["value"] for m in metric_list}
+        self.assertEqual(metric_dict[("precision", 2)], 0.85)
 
     def test_log_params_with_active_run(self) -> None:
         """Test logging params with an active run"""
@@ -238,28 +228,23 @@ class ExperimentTrackingTest(absltest.TestCase):
         exp.set_experiment("TEST_EXPERIMENT")
         run = exp.start_run("TEST_RUN")
 
-        # Use actual run metadata
-        metadata = run_metadata.RunMetadata(status=run_metadata.RunStatus.RUNNING, metrics=[], parameters=[])
-        run._get_metadata = MagicMock(return_value=metadata)
-
         # Log params
         params = {"learning_rate": 0.01, "batch_size": 32, "model_type": "RandomForest"}
         exp.log_params(params)
 
-        # Verify params were set in metadata
-        self.assertEqual(len(metadata.parameters), 3)
-        param_dict = {p.name: p.value for p in metadata.parameters}
+        # Verify SQL client was called to modify the run with correct args
+        self.mock_sql_client.modify_run_add_params.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_add_params.call_args[1]
+        self.assertEqual(call_args["experiment_name"], run.experiment_name)
+        self.assertEqual(call_args["run_name"], run.name)
+
+        # Verify params were set correctly
+        param_list = json.loads(call_args["params"])
+        self.assertEqual(len(param_list), 3)
+        param_dict = {p["name"]: p["value"] for p in param_list}
         self.assertEqual(param_dict["learning_rate"], "0.01")
         self.assertEqual(param_dict["batch_size"], "32")
         self.assertEqual(param_dict["model_type"], "RandomForest")
-
-        # Verify SQL client was called to modify the run with correct args
-        self.mock_sql_client.modify_run.assert_called_once()
-        call_args = self.mock_sql_client.modify_run.call_args[1]
-        self.assertEqual(call_args["experiment_name"], run.experiment_name)
-        self.assertEqual(call_args["run_name"], run.name)
-        # Verify JSON-serialized metadata was passed to SQL client
-        self.assertEqual(call_args["run_metadata"], json.dumps(metadata.to_dict()))
 
     def test_log_params_without_active_run(self) -> None:
         """Test logging params creates a run when none is active"""
@@ -269,8 +254,6 @@ class ExperimentTrackingTest(absltest.TestCase):
         mock_run = MagicMock(spec=entities.Run)
         mock_run.experiment_name = "TEST_EXPERIMENT"
         mock_run.name = "TEST_RUN"
-        metadata = run_metadata.RunMetadata(status=run_metadata.RunStatus.RUNNING, metrics=[], parameters=[])
-        mock_run._get_metadata.return_value = metadata
         exp._get_or_start_run = MagicMock(return_value=mock_run)
 
         # Log params
@@ -280,18 +263,17 @@ class ExperimentTrackingTest(absltest.TestCase):
         # Verify _get_or_start_run was called
         exp._get_or_start_run.assert_called_once()
 
-        # Verify param was set in metadata
-        self.assertEqual(len(metadata.parameters), 1)
-        self.assertEqual(metadata.parameters[0].name, "algorithm")
-        self.assertEqual(metadata.parameters[0].value, "gradient_boosting")
-
         # Verify SQL client was called to modify the run with correct args
-        self.mock_sql_client.modify_run.assert_called_once()
-        call_args = self.mock_sql_client.modify_run.call_args[1]
+        self.mock_sql_client.modify_run_add_params.assert_called_once()
+        call_args = self.mock_sql_client.modify_run_add_params.call_args[1]
         self.assertEqual(call_args["experiment_name"], "TEST_EXPERIMENT")
         self.assertEqual(call_args["run_name"], "TEST_RUN")
-        # Verify JSON-serialized metadata was passed to SQL client
-        self.assertEqual(call_args["run_metadata"], json.dumps(metadata.to_dict()))
+
+        # Verify params were set correctly
+        param_list = json.loads(call_args["params"])
+        self.assertEqual(len(param_list), 1)
+        param_dict = {p["name"]: p["value"] for p in param_list}
+        self.assertEqual(param_dict["algorithm"], "gradient_boosting")
 
     def test_log_model(self) -> None:
         """Test that log_model uses ExperimentInfoPatcher with correct experiment info"""

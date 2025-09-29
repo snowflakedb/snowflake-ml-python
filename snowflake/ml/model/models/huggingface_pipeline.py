@@ -8,6 +8,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.human_readable_id import hrid_generator
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model._client.model import inference_engine_utils
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.snowpark import async_job, session
 
@@ -77,6 +78,15 @@ class HuggingFacePipelineModel:
         framework = kwargs.get("framework", None)
         feature_extractor = kwargs.get("feature_extractor", None)
 
+        _can_download_snapshot = False
+        if download_snapshot:
+            try:
+                import huggingface_hub as hf_hub
+
+                _can_download_snapshot = True
+            except ImportError:
+                pass
+
         # ==== Start pipeline logic from transformers ====
         if model_kwargs is None:
             model_kwargs = {}
@@ -141,22 +151,23 @@ class HuggingFacePipelineModel:
         # Instantiate config if needed
         config_obj = None
 
-        if isinstance(config, str):
-            config_obj = transformers.AutoConfig.from_pretrained(
-                config, _from_pipeline=task, **hub_kwargs, **model_kwargs
-            )
-            hub_kwargs["_commit_hash"] = config_obj._commit_hash
-        elif config is None and isinstance(model, str):
-            config_obj = transformers.AutoConfig.from_pretrained(
-                model, _from_pipeline=task, **hub_kwargs, **model_kwargs
-            )
-            hub_kwargs["_commit_hash"] = config_obj._commit_hash
-        # We only support string as config argument.
-        elif config is not None and not isinstance(config, str):
-            raise RuntimeError(
-                "Impossible to use non-string config as input for HuggingFacePipelineModel. Use transformers.Pipeline"
-                " object if required."
-            )
+        if not _can_download_snapshot:
+            if isinstance(config, str):
+                config_obj = transformers.AutoConfig.from_pretrained(
+                    config, _from_pipeline=task, **hub_kwargs, **model_kwargs
+                )
+                hub_kwargs["_commit_hash"] = config_obj._commit_hash
+            elif config is None and isinstance(model, str):
+                config_obj = transformers.AutoConfig.from_pretrained(
+                    model, _from_pipeline=task, **hub_kwargs, **model_kwargs
+                )
+                hub_kwargs["_commit_hash"] = config_obj._commit_hash
+            # We only support string as config argument.
+            elif config is not None and not isinstance(config, str):
+                raise RuntimeError(
+                    "Impossible to use non-string config as input for HuggingFacePipelineModel. "
+                    "Use transformers.Pipeline object if required."
+                )
 
         # ==== Start pipeline logic (Task) from transformers ====
 
@@ -208,7 +219,7 @@ class HuggingFacePipelineModel:
                 "Using a pipeline without specifying a model name and revision in production is not recommended.",
                 stacklevel=2,
             )
-            if config is None and isinstance(model, str):
+            if not _can_download_snapshot and config is None and isinstance(model, str):
                 config_obj = transformers.AutoConfig.from_pretrained(
                     model, _from_pipeline=task, **hub_kwargs, **model_kwargs
                 )
@@ -228,11 +239,10 @@ class HuggingFacePipelineModel:
                 )
 
         repo_snapshot_dir: Optional[str] = None
-        if download_snapshot:
+        if _can_download_snapshot:
             try:
-                from huggingface_hub import snapshot_download
 
-                repo_snapshot_dir = snapshot_download(
+                repo_snapshot_dir = hf_hub.snapshot_download(
                     repo_id=model,
                     revision=revision,
                     token=token,
@@ -268,7 +278,7 @@ class HuggingFacePipelineModel:
         ],
     )
     @snowpark._internal.utils.private_preview(version="1.9.1")
-    def create_service(
+    def log_model_and_create_service(
         self,
         *,
         session: session.Session,
@@ -293,6 +303,7 @@ class HuggingFacePipelineModel:
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Logs a Hugging Face model and creates a service in Snowflake.
 
@@ -319,6 +330,10 @@ class HuggingFacePipelineModel:
             force_rebuild: Whether to force rebuild the image. Defaults to False.
             build_external_access_integrations: External access integrations for building the image. Defaults to None.
             block: Whether to block the operation. Defaults to True.
+            experimental_options: Experimental options for the service creation with custom inference engine.
+                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                `inference_engine` is the name of the inference engine to use.
+                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
 
         Raises:
             ValueError: if database and schema name is not provided and session doesn't have a
@@ -359,6 +374,24 @@ class HuggingFacePipelineModel:
             schema_name=schema_name_id,
         )
         logger.info(f"A service job is going to register the hf model as: {model_name}.{version_name}")
+
+        # Check if model is HuggingFace text-generation before doing inference engine checks
+        inference_engine_args = None
+        if experimental_options:
+            if self.task != "text-generation":
+                raise ValueError(
+                    "Currently, InferenceEngine using experimental_options is only supported for "
+                    "HuggingFace text-generation models."
+                )
+
+            inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+
+            # Enrich inference engine args if inference engine is specified
+            if inference_engine_args is not None:
+                inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
+                    inference_engine_args,
+                    gpu_requests,
+                )
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions
@@ -412,6 +445,8 @@ class HuggingFacePipelineModel:
                         # TODO: remove warehouse in the next release
                         warehouse=session.get_current_warehouse(),
                     ),
+                    # inference engine
+                    inference_engine_args=inference_engine_args,
                 )
                 status.update(label="HuggingFace model service created successfully", state="complete", expanded=False)
                 return result

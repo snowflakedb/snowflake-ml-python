@@ -155,7 +155,8 @@ class ServiceOperator:
             database_name=database_name,
             schema_name=schema_name,
         )
-        if pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled():
+        self._use_inlined_deployment_spec = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
+        if self._use_inlined_deployment_spec:
             self._workspace = None
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec()
         else:
@@ -264,7 +265,14 @@ class ServiceOperator:
             self._model_deployment_spec.add_hf_logger_spec(
                 hf_model_name=hf_model_args.hf_model_name,
                 hf_task=hf_model_args.hf_task,
-                hf_token=hf_model_args.hf_token,
+                hf_token=(
+                    # when using inlined deployment spec, we need to use QMARK_RESERVED_TOKEN
+                    # to avoid revealing the token while calling the SYSTEM$DEPLOY_MODEL function
+                    # noop if using file-based deployment spec or token is not provided
+                    service_sql.QMARK_RESERVED_TOKEN
+                    if hf_model_args.hf_token and self._use_inlined_deployment_spec
+                    else hf_model_args.hf_token
+                ),
                 hf_tokenizer=hf_model_args.hf_tokenizer,
                 hf_revision=hf_model_args.hf_revision,
                 hf_trust_remote_code=hf_model_args.hf_trust_remote_code,
@@ -320,6 +328,14 @@ class ServiceOperator:
                 model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH if self._workspace else None
             ),
             model_deployment_spec_yaml_str=None if self._workspace else spec_yaml_str_or_path,
+            query_params=(
+                # when using inlined deployment spec, we need to add the token to the query params
+                # to avoid revealing the token while calling the SYSTEM$DEPLOY_MODEL function
+                # noop if using file-based deployment spec or token is not provided
+                [hf_model_args.hf_token]
+                if (self._use_inlined_deployment_spec and hf_model_args and hf_model_args.hf_token)
+                else []
+            ),
             statement_params=statement_params,
         )
 

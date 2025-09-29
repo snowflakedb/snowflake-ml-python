@@ -17,7 +17,7 @@ py_test(
     srcs = [
         "disable_distributed_hpo_test.py",
     ],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":disable_distributed_hpo",
         "//snowflake/ml/modeling/_internal:model_trainer_builder",
@@ -42,7 +42,7 @@ py_test(
     srcs = [
         "enable_anonymous_sproc_test.py",
     ],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":enable_anonymous_sproc",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",
@@ -64,7 +64,7 @@ py_test(
     srcs = [
         "disable_model_tracer_test.py",
     ],
-    tags = ["feature:core"],
+    tags = ["feature:modeling"],
     deps = [
         ":disable_model_tracer",
         "//snowflake/ml/modeling/_internal/snowpark_implementations:snowpark_trainer",

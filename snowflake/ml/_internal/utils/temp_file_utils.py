@@ -1,9 +1,8 @@
+import logging
 import os
 import shutil
 import tempfile
 from typing import Iterable, Union
-
-from absl.logging import logging
 
 logger = logging.getLogger(__name__)
 

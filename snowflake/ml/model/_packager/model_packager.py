@@ -1,8 +1,7 @@
+import logging
 import os
 from types import ModuleType
 from typing import Optional
-
-from absl import logging
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -11,6 +10,8 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_handler
 from snowflake.ml.model._packager.model_meta import model_meta
+
+logger = logging.getLogger(__name__)
 
 
 class ModelPackager:
@@ -96,7 +97,7 @@ class ModelPackager:
                 **options,
             )
             if signatures is None:
-                logging.info(f"Model signatures are auto inferred as:\n\n{meta.signatures}")
+                logger.info(f"Model signatures are auto inferred as:\n\n{meta.signatures}")
 
         self.model = model
         self.meta = meta

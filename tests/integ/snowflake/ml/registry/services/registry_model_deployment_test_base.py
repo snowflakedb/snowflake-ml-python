@@ -19,7 +19,13 @@ from cryptography.hazmat.primitives import serialization
 
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
-from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    JobSpec,
+    ModelVersion,
+    OutputSpec,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.registry import registry
@@ -66,11 +72,13 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         self._test_image_repo = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
             self._run_id, "image_repo"
         ).upper()
+        self._test_stage = "TEST_STAGE"
 
         self.session.sql(f"USE WAREHOUSE {self._TEST_SPCS_WH}").collect()
 
         self._db_manager = db_manager.DBManager(self.session)
         self._db_manager.create_database(self._test_db)
+        self._db_manager.create_stage(self._test_stage)
         self._db_manager.create_image_repo(self._test_image_repo)
         self._db_manager.cleanup_databases(expire_hours=6)
         self.registry = registry.Registry(self.session)
@@ -340,6 +348,129 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 test_input, endpoint=endpoint, jwt_token_generator=jwt_token_generator, target_method=target_method
             )
             check_func(res_df)
+
+        return mv
+
+    def _test_registry_batch_inference(
+        self,
+        model: model_types.SupportedModelType,
+        input_stage_location: str,
+        output_stage_location: str,
+        service_name: str,
+        sample_input_data: Optional[model_types.SupportedDataType] = None,
+        additional_dependencies: Optional[list[str]] = None,
+        pip_requirements: Optional[list[str]] = None,
+        options: Optional[model_types.ModelSaveOption] = None,
+        signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
+        gpu_requests: Optional[str] = None,
+        service_compute_pool: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        replicas: Optional[int] = 1,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = True,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        use_default_repo: bool = False,
+    ) -> ModelVersion:
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+        ]
+        if additional_dependencies:
+            conda_dependencies.extend(additional_dependencies)
+
+        # Get the name of the caller as the model name
+        name = f"model_{inspect.stack()[1].function}"
+        version = f"ver_{self._run_id}"
+        mv = self.registry.log_model(
+            model=model,
+            model_name=name,
+            version_name=version,
+            sample_input_data=sample_input_data,
+            conda_dependencies=conda_dependencies,
+            pip_requirements=pip_requirements,
+            options=options,
+            signatures=signatures,
+        )
+
+        return self._deploy_batch_inference(
+            mv,
+            input_stage_location,
+            output_stage_location,
+            service_name=service_name,
+            gpu_requests=gpu_requests,
+            cpu_requests=cpu_requests,
+            service_compute_pool=service_compute_pool,
+            num_workers=num_workers,
+            replicas=replicas,
+        )
+
+    def _deploy_batch_inference(
+        self,
+        mv: ModelVersion,
+        input_stage_location: str,
+        output_stage_location: str,
+        service_name: str,
+        gpu_requests: Optional[str] = None,
+        cpu_requests: Optional[str] = None,
+        service_compute_pool: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        replicas: int = 1,
+    ) -> ModelVersion:
+        if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
+            with_image_override = True
+        elif not self.BUILDER_IMAGE_PATH and not self.BASE_CPU_IMAGE_PATH and not self.BASE_GPU_IMAGE_PATH:
+            with_image_override = False
+        else:
+            raise ValueError(
+                "Please set or unset BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, and BASE_GPU_IMAGE_PATH at the same time."
+            )
+
+        if service_name is None:
+            service_name = f"service_{inspect.stack()[1].function}_{self._run_id}"
+        if service_compute_pool is None:
+            service_compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
+
+        if with_image_override:
+            """
+            self._deploy_model_with_image_override(
+                mv,
+                service_name=service_name,
+                service_compute_pool=sql_identifier.SqlIdentifier(service_compute_pool),
+                gpu_requests=gpu_requests,
+                num_workers=num_workers,
+                max_instances=max_instances,
+                max_batch_rows=max_batch_rows,
+                force_rebuild=False,
+                cpu_requests=cpu_requests,
+                memory_requests=memory_requests,
+            )
+            """
+            # TODO: implement this
+            pass
+        else:
+            job = mv._run_batch(
+                compute_pool=service_compute_pool,
+                input_spec=None,
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                job_spec=JobSpec(
+                    job_name=service_name,
+                    num_workers=num_workers,
+                    gpu_requests=gpu_requests,
+                    cpu_requests=cpu_requests,
+                    replicas=replicas,
+                ),
+            )
+            job.wait()
+
+        # Assuming the batch job writes a _SUCCESS file at the root of the output stage
+        success_file_path = output_stage_location.rstrip("/") + "/_SUCCESS"
+        list_results = self.session.sql(f"LIST {success_file_path}").collect()
+        if len(list_results) == 0:
+            raise RuntimeError(f"Batch job did not produce success file at: {success_file_path}")
+
+        # todo: add more logic to validate the outcome
+        df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
+        assert df.count() > 0
 
         return mv
 

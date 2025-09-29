@@ -43,7 +43,6 @@ DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}{{'<|im_start|>' + message
 def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model_env.ModelDependency]:
     # Text
     if task in [
-        "conversational",
         "fill-mask",
         "ner",
         "token-classification",
@@ -521,6 +520,7 @@ class HuggingFacePipelineHandler(
                                 input_data = X[signature.inputs[0].name].to_list()
                             temp_res = getattr(raw_model, target_method)(input_data)
                     else:
+                        # TODO: remove conversational pipeline code
                         # For others, we could offer the whole dataframe as a list.
                         # Some of them may need some conversion
                         if hasattr(transformers, "ConversationalPipeline") and isinstance(
@@ -759,11 +759,13 @@ class HuggingFaceOpenAICompatibleModel:
             eos_token_id=self.tokenizer.eos_token_id,
             stop_strings=stop_strings,
             stream=stream,
-            repetition_penalty=frequency_penalty,
-            diversity_penalty=presence_penalty if n > 1 else None,
             num_return_sequences=n,
-            num_beams=max(2, n),  # must be >1
-            num_beam_groups=max(2, n) if presence_penalty else 1,
+            num_beams=max(1, n),  # must be >1
+            repetition_penalty=frequency_penalty,
+            # TODO: Handle diversity_penalty and num_beam_groups
+            # not all models support them making it hard to support any huggingface model
+            # diversity_penalty=presence_penalty if n > 1 else None,
+            # num_beam_groups=max(2, n) if presence_penalty else 1,
             do_sample=False,
         )
 

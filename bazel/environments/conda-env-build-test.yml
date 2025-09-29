@@ -6,6 +6,7 @@ channels:
   - https://repo.anaconda.com/pkgs/snowflake
   - nodefaults
 dependencies:
+  - absl-py==1.4.0
   - inflection==0.5.1
   - psutil==5.9.0
   - pytest-rerunfailures==12.0

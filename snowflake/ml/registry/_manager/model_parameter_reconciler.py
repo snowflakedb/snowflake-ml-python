@@ -1,8 +1,8 @@
+import logging
 import warnings
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from absl.logging import logging
 from packaging import requirements
 
 from snowflake.ml import version as snowml_version
@@ -221,7 +221,7 @@ class ModelParameterReconciler:
             ).get(env_utils.SNOWPARK_ML_PKG_NAME, [])
 
             if len(snowml_matched_versions) < 1 and not options.get("embed_local_ml_library", False):
-                logging.info(
+                logger.info(
                     f"Local snowflake-ml-python library has version {snowml_version.VERSION},"
                     " which is not available in the Snowflake server, embedding local ML library automatically."
                 )

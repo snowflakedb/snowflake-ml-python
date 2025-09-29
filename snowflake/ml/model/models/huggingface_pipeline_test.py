@@ -4,6 +4,7 @@ import tempfile
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.model import inference_engine
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.snowpark import async_job, session
@@ -32,13 +33,20 @@ class HuggingFacePipelineTest(absltest.TestCase):
             "Using a pipeline without specifying a model name and revision in production is not recommended.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", download_snapshot=False)
-
-        huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="facebook/opt-125m")
-
-        huggingface_pipeline.HuggingFacePipelineModel(model="facebook/opt-125m")
-
-        huggingface_pipeline.HuggingFacePipelineModel(model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER)
-
+        huggingface_pipeline.HuggingFacePipelineModel(
+            task="text-generation",
+            model="facebook/opt-125m",
+            download_snapshot=False,
+        )
+        # without task
+        huggingface_pipeline.HuggingFacePipelineModel(
+            model="facebook/opt-125m",
+            download_snapshot=False,
+        )
+        huggingface_pipeline.HuggingFacePipelineModel(
+            model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER,
+            download_snapshot=False,
+        )
         with absltest.mock.patch("transformers.AutoConfig.from_pretrained") as mock_from_pretrained:
             mock_config = absltest.mock.Mock()
             mock_config._commit_hash = "fake_commit_hash"
@@ -58,58 +66,71 @@ class HuggingFacePipelineTest(absltest.TestCase):
                 trust_remote_code=None,
                 _commit_hash=None,
             )
-
         with self.assertRaisesRegex(
             ValueError,
             "Loading this pipeline requires you to execute the code in the pipeline file",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(model="lysandre/test-dynamic-pipeline")
-
-        huggingface_pipeline.HuggingFacePipelineModel(model="lysandre/test-dynamic-pipeline", trust_remote_code=True)
-
+            huggingface_pipeline.HuggingFacePipelineModel(
+                model="lysandre/test-dynamic-pipeline",
+                download_snapshot=False,
+            )
+        huggingface_pipeline.HuggingFacePipelineModel(
+            model="lysandre/test-dynamic-pipeline",
+            trust_remote_code=True,
+            download_snapshot=False,
+        )
+        huggingface_pipeline.HuggingFacePipelineModel(
+            model="lysandre/test-dynamic-pipeline",
+            trust_remote_code=True,
+            download_snapshot=True,
+        )
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to instantiate a pipeline without either a task or a model being specified.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel()
-
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to instantiate a pipeline without either a task or a model being specified.",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(config="facebook/opt-125m")
-
+            huggingface_pipeline.HuggingFacePipelineModel(config="facebook/opt-125m", download_snapshot=False)
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to instantiate a pipeline with tokenizer specified but not the model as the provided",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", tokenizer="tokenizer")
-
+            huggingface_pipeline.HuggingFacePipelineModel(
+                task="text-generation", tokenizer="tokenizer", download_snapshot=False
+            )
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to instantiate a pipeline with feature_extractor specified but not the model as the provided",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", feature_extractor="feature_extractor")
-
         with self.assertRaisesRegex(
             ValueError,
             "`token` and `use_auth_token` are both specified. Please set only the argument `token`.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="text-generation", model="facebook/opt-125m", token="token", model_kwargs={"use_auth_token": True}
+                task="text-generation",
+                model="facebook/opt-125m",
+                token="token",
+                model_kwargs={"use_auth_token": True},
             )
-
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to use non-string model as input for HuggingFacePipelineModel.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model=1)  # type: ignore[arg-type]
-
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to use non-string config as input for HuggingFacePipelineModel.",
         ):
-            huggingface_pipeline.HuggingFacePipelineModel(task="text-generation", model="facebook/opt-125m", config=1)
+            huggingface_pipeline.HuggingFacePipelineModel(
+                task="text-generation",
+                model="facebook/opt-125m",
+                config=1,
+                download_snapshot=False,
+            )
 
         with self.assertRaisesRegex(
             ValueError,
@@ -127,7 +148,10 @@ class HuggingFacePipelineTest(absltest.TestCase):
             "Both `device` and `device_map` are specified.",
         ):
             huggingface_pipeline.HuggingFacePipelineModel(
-                task="text-generation", model="facebook/opt-125m", device_map="auto", device=0
+                task="text-generation",
+                model="facebook/opt-125m",
+                device_map="auto",
+                device=0,
             )
 
     def test_create_service(self) -> None:
@@ -157,7 +181,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             return_value=mock_service_operator,
         ):
             # Call the create_service function
-            result = model_ref.create_service(
+            result = model_ref.log_model_and_create_service(
                 session=mock_session,
                 model_name="test_model",
                 version_name="v1",
@@ -211,7 +235,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             return_value=mock_service_operator,
         ):
             # Call the create_service function
-            result = model_ref.create_service(
+            result = model_ref.log_model_and_create_service(
                 session=mock_session,
                 model_name="test_model",
                 version_name="v1",
@@ -279,6 +303,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             model="openai-community/gpt2",
             task="text-generation",
             trust_remote_code=True,
+            download_snapshot=False,
         )
 
         # Patch the ServiceOperator constructor to return our mock
@@ -287,7 +312,7 @@ class HuggingFacePipelineTest(absltest.TestCase):
             return_value=mock_service_operator,
         ):
             # Call the create_service function in non-blocking mode
-            result = model_ref.create_service(
+            result = model_ref.log_model_and_create_service(
                 session=mock_session,
                 model_name="test_model",
                 service_name="test_service",
@@ -302,6 +327,95 @@ class HuggingFacePipelineTest(absltest.TestCase):
             # Check that create_service was called with block=False
             args = mock_create_service.call_args.kwargs
             self.assertFalse(args["block"])
+
+    def test_create_service_with_experimental_options(self) -> None:
+        """Test the create_service function with experimental options."""
+        # Mock session
+        mock_session = absltest.mock.Mock(spec=session.Session)
+        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
+        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
+        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
+
+        # Mock the ServiceOperator
+        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
+        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
+        mock_service_operator.create_service = mock_create_service
+
+        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
+            model="openai-community/gpt2",
+            task="text-generation",
+            trust_remote_code=True,
+            download_snapshot=False,
+        )
+
+        # Patch the ServiceOperator constructor to return our mock
+        with absltest.mock.patch(
+            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
+            return_value=mock_service_operator,
+        ):
+            result = model_ref.log_model_and_create_service(
+                session=mock_session,
+                model_name="test_model",
+                service_name="test_service",
+                service_compute_pool="test_compute_pool",
+                block=True,
+                experimental_options={
+                    "inference_engine": inference_engine.InferenceEngine.VLLM,
+                    "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
+                },
+            )
+            self.assertEqual(result, "test_service_id")
+            args = mock_create_service.call_args.kwargs
+            self.assertEqual(
+                args["inference_engine_args"],
+                service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.VLLM,
+                    inference_engine_args_override=["--max_tokens=100", "--temperature=0.7"],
+                ),
+            )
+
+    def test_create_service_with_experimental_options_invalid_task(self) -> None:
+        """Test the create_service function with experimental options."""
+        # Mock session
+        mock_session = absltest.mock.Mock(spec=session.Session)
+        mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
+        mock_session.get_current_schema = absltest.mock.Mock(return_value="test_schema")
+        mock_session.get_current_warehouse = absltest.mock.Mock(return_value="test_warehouse")
+
+        # Mock the ServiceOperator
+        mock_service_operator = absltest.mock.Mock(spec=service_ops.ServiceOperator)
+        mock_create_service = absltest.mock.Mock(return_value="test_service_id")
+        mock_service_operator.create_service = mock_create_service
+
+        model_ref = huggingface_pipeline.HuggingFacePipelineModel(
+            model="google-bert/bert-base-uncased",
+            task="fill-mask",
+            trust_remote_code=True,
+            download_snapshot=False,
+        )
+
+        # Patch the ServiceOperator constructor to return our mock
+        with absltest.mock.patch(
+            "snowflake.ml.model._client.ops.service_ops.ServiceOperator",
+            return_value=mock_service_operator,
+        ):
+            with self.assertRaises(ValueError) as cm:
+                model_ref.log_model_and_create_service(
+                    session=mock_session,
+                    model_name="test_model",
+                    service_name="test_service",
+                    service_compute_pool="test_compute_pool",
+                    block=True,
+                    experimental_options={
+                        "inference_engine": inference_engine.InferenceEngine.VLLM,
+                        "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
+                    },
+                )
+                self.assertEqual(
+                    str(cm.exception),
+                    "Currently, InferenceEngine using experimental_options is only supported for "
+                    "HuggingFace text-generation models.",
+                )
 
 
 if __name__ == "__main__":

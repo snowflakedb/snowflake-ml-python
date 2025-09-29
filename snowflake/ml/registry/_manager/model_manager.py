@@ -1,8 +1,8 @@
+import logging
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import pandas as pd
-from absl.logging import logging
 
 from snowflake.ml._internal import platform_capabilities, telemetry
 from snowflake.ml._internal.exceptions import error_codes, exceptions

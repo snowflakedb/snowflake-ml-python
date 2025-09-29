@@ -12,7 +12,10 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import task, type_hints
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import (
+    batch_inference_specs,
+    inference_engine_utils,
+)
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -22,6 +25,7 @@ from snowflake.snowpark import Session, async_job, dataframe
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
 _BATCH_INFERENCE_JOB_ID_PREFIX = "BATCH_INFERENCE_"
+_BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
 
 
 class ExportMode(enum.Enum):
@@ -553,7 +557,7 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         *,
         compute_pool: str,
-        input_spec: batch_inference_specs.InputSpec,
+        input_spec: dataframe.DataFrame,
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
     ) -> jobs.MLJob[Any]:
@@ -568,6 +572,18 @@ class ModelVersion(lineage_node.LineageNode):
         warehouse = job_spec.warehouse or self._service_ops._session.get_current_warehouse()
         if warehouse is None:
             raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
+
+        # use a temporary folder in the output stage to store the intermediate output from the dataframe
+        output_stage_location = output_spec.stage_location
+        if not output_stage_location.endswith("/"):
+            output_stage_location += "/"
+        input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
+
+        try:
+            input_spec.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
+        # todo: be specific about the type of errors to provide better error messages.
+        except Exception as e:
+            raise RuntimeError(f"Failed to process input_spec: {e}")
 
         if job_spec.job_name is None:
             # Same as the MLJob ID generation logic with a different prefix
@@ -592,9 +608,9 @@ class ModelVersion(lineage_node.LineageNode):
             job_name=job_name,
             replicas=job_spec.replicas,
             # input and output
-            input_stage_location=input_spec.stage_location,
+            input_stage_location=input_stage_location,
             input_file_pattern="*",
-            output_stage_location=output_spec.stage_location,
+            output_stage_location=output_stage_location,
             completion_filename="_SUCCESS",
             # misc
             statement_params=statement_params,
@@ -767,60 +783,6 @@ class ModelVersion(lineage_node.LineageNode):
             model_name=model_name_id,
             version_name=sql_identifier.SqlIdentifier(version),
         )
-
-    def _get_inference_engine_args(
-        self, experimental_options: Optional[dict[str, Any]]
-    ) -> Optional[service_ops.InferenceEngineArgs]:
-
-        if not experimental_options:
-            return None
-
-        if "inference_engine" not in experimental_options:
-            raise ValueError("inference_engine is required in experimental_options")
-
-        return service_ops.InferenceEngineArgs(
-            inference_engine=experimental_options["inference_engine"],
-            inference_engine_args_override=experimental_options.get("inference_engine_args_override"),
-        )
-
-    def _enrich_inference_engine_args(
-        self,
-        inference_engine_args: service_ops.InferenceEngineArgs,
-        gpu_requests: Optional[Union[str, int]] = None,
-    ) -> Optional[service_ops.InferenceEngineArgs]:
-        """Enrich inference engine args with tensor parallelism settings.
-
-        Args:
-            inference_engine_args: The original inference engine args
-            gpu_requests: The number of GPUs requested
-
-        Returns:
-            Enriched inference engine args
-
-        Raises:
-            ValueError: Invalid gpu_requests
-        """
-        if inference_engine_args.inference_engine_args_override is None:
-            inference_engine_args.inference_engine_args_override = []
-
-        gpu_count = None
-
-        # Set tensor-parallelism if gpu_requests is specified
-        if gpu_requests is not None:
-            # assert gpu_requests is a string or an integer before casting to int
-            if isinstance(gpu_requests, str) or isinstance(gpu_requests, int):
-                try:
-                    gpu_count = int(gpu_requests)
-                except ValueError:
-                    raise ValueError(f"Invalid gpu_requests: {gpu_requests}")
-
-        if gpu_count is not None:
-            if gpu_count > 0:
-                inference_engine_args.inference_engine_args_override.append(f"--tensor-parallel-size={gpu_count}")
-            else:
-                raise ValueError(f"Invalid gpu_requests: {gpu_requests}")
-
-        return inference_engine_args
 
     def _check_huggingface_text_generation_model(
         self,
@@ -1101,13 +1063,14 @@ class ModelVersion(lineage_node.LineageNode):
         if experimental_options:
             self._check_huggingface_text_generation_model(statement_params)
 
-        inference_engine_args: Optional[service_ops.InferenceEngineArgs] = self._get_inference_engine_args(
-            experimental_options
-        )
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
 
         # Enrich inference engine args if inference engine is specified
         if inference_engine_args is not None:
-            inference_engine_args = self._enrich_inference_engine_args(inference_engine_args, gpu_requests)
+            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
+                inference_engine_args,
+                gpu_requests,
+            )
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions

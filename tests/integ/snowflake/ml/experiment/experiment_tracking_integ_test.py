@@ -9,7 +9,6 @@ import xgboost as xgb
 from absl.testing import absltest
 
 from snowflake.ml.experiment import ExperimentTracking
-from snowflake.ml.experiment._entities.run_metadata import RunStatus
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -174,10 +173,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
         # Set up experiment and run
         self.exp.set_experiment(experiment_name=experiment_name)
-        with self.exp.start_run(run_name=run_name) as run:
-
-            # Verify run is running
-            self.assertEqual(run._get_metadata().status, RunStatus.RUNNING)
+        with self.exp.start_run(run_name=run_name):
 
             # Log single metric
             self.exp.log_metric("accuracy", 0.95, step=1)
@@ -218,7 +214,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         metadata = json.loads(runs[0]["metadata"])
 
         # Verify run is finished
-        self.assertEqual(metadata["status"], RunStatus.FINISHED.value)
+        self.assertEqual(metadata["status"], "FINISHED")
 
         # Check metrics
         self.assertIn("metrics", metadata)
@@ -275,7 +271,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
         # Parse and verify metadata contains all logged data
         metadata = json.loads(runs[0]["metadata"])
-        self.assertEqual(metadata["status"], RunStatus.RUNNING.value)
+        self.assertEqual(metadata["status"], "RUNNING")
 
         # Check metrics
         self.assertIn("metrics", metadata)
@@ -300,7 +296,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.exp.end_run()
         runs = self._session.sql(f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT").collect()
         self.assertEqual(len(runs), 1)
-        self.assertEqual(json.loads(runs[0]["metadata"])["status"], RunStatus.FINISHED.value)
+        self.assertEqual(json.loads(runs[0]["metadata"])["status"], "FINISHED")
 
     def test_log_model(self) -> None:
         """Test that log_model works with experiment tracking"""

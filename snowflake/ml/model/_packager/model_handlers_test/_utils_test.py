@@ -248,8 +248,8 @@ class UtilTest(absltest.TestCase):
                             assert len(cm.output) == 1, "expecting only 1 log"
                             log = cm.output[0]
                             self.assertEqual(
-                                f"INFO:absl:Inferred Task: {inferred_task.name} is used as "
-                                f"task for this model version",
+                                "INFO:snowflake.ml.model._packager.model_handlers._utils:Inferred Task: "
+                                f"{inferred_task.name} is used as task for this model version",
                                 log,
                             )
                     elif inferred_task != task:

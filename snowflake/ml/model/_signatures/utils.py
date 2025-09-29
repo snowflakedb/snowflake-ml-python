@@ -110,27 +110,6 @@ def huggingface_pipeline_signature_auto_infer(
 ) -> Optional[core.ModelSignature]:
     # Text
 
-    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ConversationalPipeline
-    # Needs to convert to conversation object.
-    if task == "conversational":
-        warnings.warn(
-            (
-                "Conversational pipeline is removed from transformers since 4.42.0. "
-                "Support will be removed from snowflake-ml-python soon."
-            ),
-            category=DeprecationWarning,
-            stacklevel=1,
-        )
-        return core.ModelSignature(
-            inputs=[
-                core.FeatureSpec(name="user_inputs", dtype=core.DataType.STRING, shape=(-1,)),
-                core.FeatureSpec(name="generated_responses", dtype=core.DataType.STRING, shape=(-1,)),
-            ],
-            outputs=[
-                core.FeatureSpec(name="generated_responses", dtype=core.DataType.STRING, shape=(-1,)),
-            ],
-        )
-
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TokenClassificationPipeline
     if task == "fill-mask":
         return core.ModelSignature(

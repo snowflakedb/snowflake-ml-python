@@ -1,18 +1,18 @@
-# Snowpark ML
+# Snowflake ML Python
 
-Snowpark ML is a set of tools including SDKs and underlying infrastructure to build and deploy machine learning models.
-With Snowpark ML, you can pre-process data, train, manage and deploy ML models all within Snowflake, using a single SDK,
+Snowflake ML Python is a set of tools including SDKs and underlying infrastructure to build and deploy machine learning models.
+With Snowflake ML Python, you can pre-process data, train, manage and deploy ML models all within Snowflake,
 and benefit from Snowflake’s proven performance, scalability, stability and governance at every stage of the Machine
 Learning workflow.
 
-## Key Components of Snowpark ML
+## Key Components of Snowflake ML Python
 
-The Snowpark ML Python SDK provides a number of APIs to support each stage of an end-to-end Machine Learning development
-and deployment process, and includes two key components.
+The Snowflake ML Python SDK provides a number of APIs to support each stage of an end-to-end Machine Learning development
+and deployment process.
 
-### Snowpark ML Development
+### Snowflake ML Model Development
 
-[Snowpark ML Development](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#ml-modeling)
+[Snowflake ML Model Development](https://docs.snowflake.com/developer-guide/snowflake-ml/overview#ml-modeling)
 provides a collection of python APIs enabling efficient ML model development directly in Snowflake:
 
 1. Modeling API (`snowflake.ml.modeling`) for data preprocessing, feature engineering and model training in Snowflake.
@@ -23,19 +23,16 @@ model development classes based on sklearn, xgboost, and lightgbm.
 1. Framework Connectors: Optimized, secure and performant data provisioning for Pytorch and Tensorflow frameworks in
 their native data loader formats.
 
-1. FileSet API: FileSet provides a Python fsspec-compliant API for materializing data into a Snowflake internal stage
-from a query or Snowpark Dataframe along with a number of convenience APIs.
+### Snowflake ML Ops
 
-### Snowflake MLOps
+Snowflake ML Python contains a suite of MLOps tools. It complements
+the Snowflake Modeling API, and provides end to end development to deployment within Snowflake.
+The Snowflake ML Ops suite consists of:
 
-Snowflake MLOps contains suit of tools and objects to make ML development cycle. It complements
-the Snowpark ML Development API, and provides end to end development to deployment within Snowflake.
-Currently, the API consists of:
-
-1. [Registry](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowflake-model-registry): A python API
+1. [Registry](https://docs.snowflake.com/developer-guide/snowflake-ml/overview#snowflake-model-registry): A python API
   allows secure deployment and management of models in Snowflake, supporting models trained both inside and outside of
   Snowflake.
-2. [Feature Store](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#snowflake-feature-store): A fully
+2. [Feature Store](https://docs.snowflake.com/developer-guide/snowflake-ml/overview#snowflake-feature-store): A fully
   integrated solution for defining, managing, storing and discovering ML features derived from your data. The
   Snowflake Feature Store supports automated, incremental refresh from batch and streaming data sources, so that
   feature pipelines need be defined only once to be continuously updated with new data.
@@ -44,11 +41,18 @@ Currently, the API consists of:
 
 ## Getting started
 
+Learn about all Snowflake ML feature offerings in the [Developer Guide](https://docs.snowflake.com/developer-guide/snowflake-ml/overview).
+
 ### Have your Snowflake account ready
 
 If you don't have a Snowflake account yet, you can [sign up for a 30-day free trial account](https://signup.snowflake.com/).
 
 ### Installation
+
+Snowflake ML Python is pre-installed in Container Runtime notebook environments.
+[Learn more](https://docs.snowflake.com/en/developer-guide/snowflake-ml/notebooks-on-spcs).
+
+In Snowflake Warehouse notebook environments, snowflake-ml-python can be installed using the "Packages" drop-down menu.
 
 Follow the [installation instructions](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index#installing-snowpark-ml)
 in the Snowflake documentation.
@@ -59,8 +63,8 @@ or [virtualenv](https://docs.python.org/3/tutorial/venv.html) to create a virtua
 
 ### Conda channels
 
-The [Snowflake Conda Channel](https://repo.anaconda.com/pkgs/snowflake/) contains the official snowpark ML package releases.
-The recommended approach is to install `snowflake-ml-python` this conda channel:
+The [Snowflake Anaconda Channel](https://repo.anaconda.com/pkgs/snowflake/) contains the official snowflake-ml-python package
+releases. To install `snowflake-ml-python` from this conda channel:
 
 ```sh
 conda install \
@@ -69,24 +73,17 @@ conda install \
   snowflake-ml-python
 ```
 
-See [the developer guide](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index) for installation instructions.
+See [the developer guide](https://docs.snowflake.com/en/developer-guide/snowpark-ml/index) for detailed installation instructions.
 
-The latest version of the `snowpark-ml-python` package is also published in a conda channel in this repository. Package versions
-in this channel may not yet be present in the official Snowflake conda channel.
+The snowflake-ml-python package is also published in [conda-forge](https://anaconda.org/conda-forge/snowflake-ml-python).
+To install `snowflake-ml-python` from conda forge:
 
-Install `snowflake-ml-python` from this channel with the following (being sure to replace `<version_specifier>` with the
-desired version, e.g. `1.0.10`):
-
-```bash
+```sh
 conda install \
-  -c https://raw.githubusercontent.com/snowflakedb/snowflake-ml-python/conda/releases/  \
-  -c https://repo.anaconda.com/pkgs/snowflake \
+  -c https://conda.anaconda.org/conda-forge/ \
   --override-channels \
-  snowflake-ml-python==<version_specifier>
+  snowflake-ml-python
 ```
-
-Note that until a `snowflake-ml-python` package version is available in the official Snowflake conda channel, there may
-be compatibility issues. Server-side functionality that `snowflake-ml-python` depends on may not yet be released.
 
 ### Verifying the package
 
