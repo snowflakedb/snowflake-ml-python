@@ -7,6 +7,7 @@ import re
 import tempfile
 import threading
 import time
+import warnings
 from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
@@ -14,6 +15,7 @@ from snowflake.ml import jobs
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
+from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.snowpark import async_job, exceptions, row, session
@@ -155,17 +157,17 @@ class ServiceOperator:
             database_name=database_name,
             schema_name=schema_name,
         )
+        self._stage_client = stage_sql.StageSQLClient(
+            session,
+            database_name=database_name,
+            schema_name=schema_name,
+        )
         self._use_inlined_deployment_spec = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
         if self._use_inlined_deployment_spec:
             self._workspace = None
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec()
         else:
             self._workspace = tempfile.TemporaryDirectory()
-            self._stage_client = stage_sql.StageSQLClient(
-                session,
-                database_name=database_name,
-                schema_name=schema_name,
-            )
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec(
                 workspace_path=pathlib.Path(self._workspace.name)
             )
@@ -651,6 +653,47 @@ class ServiceOperator:
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
 
+    def _enforce_save_mode(self, output_mode: batch_inference_specs.SaveMode, output_stage_location: str) -> None:
+        """Enforce the save mode for the output stage location.
+
+        Args:
+            output_mode: The output mode
+            output_stage_location: The output stage location to check/clean.
+
+        Raises:
+            FileExistsError: When ERROR mode is specified and files exist in the output location.
+            RuntimeError: When operations fail (checking files or removing files).
+            ValueError: When an invalid SaveMode is specified.
+        """
+        list_results = self._stage_client.list_stage(output_stage_location)
+
+        if output_mode == batch_inference_specs.SaveMode.ERROR:
+            if len(list_results) > 0:
+                raise FileExistsError(
+                    f"Output stage location '{output_stage_location}' is not empty. "
+                    f"Found {len(list_results)} existing files. When using ERROR mode, the output location "
+                    f"must be empty. Please clear the existing files or use OVERWRITE mode."
+                )
+        elif output_mode == batch_inference_specs.SaveMode.OVERWRITE:
+            if len(list_results) > 0:
+                warnings.warn(
+                    f"Output stage location '{output_stage_location}' is not empty. "
+                    f"Found {len(list_results)} existing files. OVERWRITE mode will remove all existing files "
+                    f"in the output location before running the batch inference job.",
+                    stacklevel=2,
+                )
+                try:
+                    self._session.sql(f"REMOVE {output_stage_location}").collect()
+                except Exception as e:
+                    raise RuntimeError(
+                        f"OVERWRITE was specified. However, failed to remove existing files in output stage "
+                        f"{output_stage_location}: {e}. Please clear up the existing files manually and retry "
+                        f"the operation."
+                    )
+        else:
+            valid_modes = list(batch_inference_specs.SaveMode)
+            raise ValueError(f"Invalid SaveMode: {output_mode}. Must be one of {valid_modes}")
+
     def _stream_service_logs(
         self,
         async_job: snowpark.AsyncJob,
@@ -927,6 +970,7 @@ class ServiceOperator:
         max_batch_rows: Optional[int],
         cpu_requests: Optional[str],
         memory_requests: Optional[str],
+        gpu_requests: Optional[str],
         replicas: Optional[int],
         statement_params: Optional[dict[str, Any]] = None,
     ) -> jobs.MLJob[Any]:
@@ -961,6 +1005,7 @@ class ServiceOperator:
             warehouse=warehouse,
             cpu=cpu_requests,
             memory=memory_requests,
+            gpu=gpu_requests,
             replicas=replicas,
         )
 

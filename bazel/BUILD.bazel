@@ -28,6 +28,14 @@ py_binary(
     srcs_version = "PY3",
 )
 
+py_binary(
+    name = "add_pytest_marks",
+    srcs = ["add_pytest_marks.py"],
+    main = "add_pytest_marks.py",
+    python_version = "PY3",
+    srcs_version = "PY3",
+)
+
 # Package group for common targets in the repo.
 package_group(
     name = "snowml_public_common",

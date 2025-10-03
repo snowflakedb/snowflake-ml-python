@@ -17,6 +17,7 @@ import yaml
 from cryptography.hazmat import backends
 from cryptography.hazmat.primitives import serialization
 
+from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
 from snowflake.ml.model import (
@@ -29,7 +30,7 @@ from snowflake.ml.model import (
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.registry import registry
-from snowflake.ml.utils import authentication
+from snowflake.ml.utils import authentication, connection_params
 from snowflake.snowpark import row
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.test_utils import (
@@ -52,15 +53,38 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
+        # Get login options BEFORE session creation (which clears password for security)
+        login_options = connection_params.SnowflakeLoginOptions()
+
+        # Capture password from login options before session creation clears it
+        pat_token = login_options.get("password")
+
+        # Now create session (this will clear password in session._conn._lower_case_parameters)
         super().setUp()
 
         # Set log level to INFO so that service logs are visible
         logging.basicConfig(level=logging.INFO)
 
-        with open(self.session._conn._lower_case_parameters["private_key_path"], "rb") as f:
-            self.private_key = serialization.load_pem_private_key(
-                f.read(), password=None, backend=backends.default_backend()
-            )
+        # Read private_key_path from session connection parameters (after session creation)
+        conn_params = self.session._conn._lower_case_parameters
+        private_key_path = conn_params.get("private_key_path")
+
+        if private_key_path:
+            # Try to load private key for JWT authentication
+            with open(private_key_path, "rb") as f:
+                self.private_key = serialization.load_pem_private_key(
+                    f.read(), password=None, backend=backends.default_backend()
+                )
+            self.pat_token = None
+        elif pat_token:
+            # Use PAT token from password parameter
+            self.private_key = None
+            self.pat_token = pat_token
+        else:
+            # No authentication credentials available
+            self.private_key = None
+            self.pat_token = None
+            raise ValueError("No authentication credentials found: neither private_key_path nor password parameter set")
 
         self.snowflake_account_url = self.session._conn._lower_case_parameters.get("host", None)
         if self.snowflake_account_url:
@@ -354,7 +378,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
     def _test_registry_batch_inference(
         self,
         model: model_types.SupportedModelType,
-        input_stage_location: str,
+        input_spec: snowpark.DataFrame,
         output_stage_location: str,
         service_name: str,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -371,6 +395,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
+        function_name: Optional[str] = None,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -394,20 +419,21 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
 
         return self._deploy_batch_inference(
             mv,
-            input_stage_location,
-            output_stage_location,
+            input_spec=input_spec,
+            output_stage_location=output_stage_location,
             service_name=service_name,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
             service_compute_pool=service_compute_pool,
             num_workers=num_workers,
             replicas=replicas,
+            function_name=function_name,
         )
 
     def _deploy_batch_inference(
         self,
         mv: ModelVersion,
-        input_stage_location: str,
+        input_spec: snowpark.DataFrame,
         output_stage_location: str,
         service_name: str,
         gpu_requests: Optional[str] = None,
@@ -415,6 +441,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         service_compute_pool: Optional[str] = None,
         num_workers: Optional[int] = None,
         replicas: int = 1,
+        function_name: Optional[str] = None,
     ) -> ModelVersion:
         if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
             with_image_override = True
@@ -450,7 +477,7 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         else:
             job = mv._run_batch(
                 compute_pool=service_compute_pool,
-                input_spec=None,
+                input_spec=input_spec,
                 output_spec=OutputSpec(stage_location=output_stage_location),
                 job_spec=JobSpec(
                     job_name=service_name,
@@ -458,19 +485,24 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                     gpu_requests=gpu_requests,
                     cpu_requests=cpu_requests,
                     replicas=replicas,
+                    function_name=function_name,
                 ),
             )
             job.wait()
 
-        # Assuming the batch job writes a _SUCCESS file at the root of the output stage
+        self.assertEqual(job.status, "DONE")
+
         success_file_path = output_stage_location.rstrip("/") + "/_SUCCESS"
         list_results = self.session.sql(f"LIST {success_file_path}").collect()
-        if len(list_results) == 0:
-            raise RuntimeError(f"Batch job did not produce success file at: {success_file_path}")
+        self.assertGreater(len(list_results), 0, f"Batch job did not produce success file at: {success_file_path}")
 
         # todo: add more logic to validate the outcome
         df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
-        assert df.count() > 0
+        self.assertEqual(
+            df.count(),
+            input_spec.count(),
+            f"Output row count ({df.count()}) does not match input row count ({input_spec.count()})",
+        )
 
         return mv
 
@@ -493,7 +525,11 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             time.sleep(10)
         return endpoint
 
-    def _get_jwt_token_generator(self) -> jwt_generator.JWTGenerator:
+    def _get_jwt_token_generator(self) -> Optional[jwt_generator.JWTGenerator]:
+        """Get JWT token generator if private key is available."""
+        if self.private_key is None:
+            return None
+
         account = identifier.get_unescaped_names(self.session.get_current_account())
         user = identifier.get_unescaped_names(self.session.get_current_user())
         if not account or not user:
@@ -505,21 +541,75 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             self.private_key,
         )
 
+    def _get_auth_for_inference(self, endpoint: str):
+        """Get authentication for inference requests - private key first, then PAT fallback."""
+        if self.private_key:
+            # Use JWT authentication if private key available
+            jwt_token_generator = self._get_jwt_token_generator()
+            return authentication.SnowflakeJWTTokenAuth(
+                jwt_token_generator=jwt_token_generator,
+                role=identifier.get_unescaped_names(self.session.get_current_role()),
+                endpoint=endpoint,
+                snowflake_account_url=self.snowflake_account_url,
+            )
+        elif self.pat_token:
+            # Fallback to PAT authentication
+            return authentication.SnowflakePATAuth(self.pat_token)
+        else:
+            raise ValueError("No authentication credentials available for inference requests")
+
     def _inference_using_rest_api(
+        self,
+        test_input: pd.DataFrame,
+        *,
+        endpoint: str,
+        jwt_token_generator: Optional[jwt_generator.JWTGenerator] = None,
+        target_method: str,
+    ) -> pd.DataFrame:
+        test_input_arr = model_signature._convert_local_data_to_df(test_input).values
+        test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
+
+        # Use automatic auth selection (jwt_token_generator kept for backward compatibility but ignored)
+        auth_handler = self._get_auth_for_inference(endpoint)
+
+        res = retrying.retry(
+            wait_exponential_multiplier=100,
+            wait_exponential_max=4000,
+            retry_on_result=RegistryModelDeploymentTestBase.retry_if_result_status_retriable,
+        )(requests.post)(
+            f"https://{endpoint}/{target_method.replace('_', '-')}",
+            json={"data": test_input_arr.tolist()},
+            auth=auth_handler,
+        )
+        res.raise_for_status()
+        return pd.DataFrame([x[1] for x in res.json()["data"]])
+
+    def _single_inference_request(
         self,
         test_input: pd.DataFrame,
         *,
         endpoint: str,
         jwt_token_generator: jwt_generator.JWTGenerator,
         target_method: str,
-    ) -> pd.DataFrame:
+    ) -> requests.Response:
+        """Make a single REST API inference request without retries.
+
+        This method is designed for performance testing where we want to measure
+        the actual response time of individual requests without retry overhead.
+
+        Args:
+            test_input: Input data for inference
+            endpoint: Service endpoint URL
+            jwt_token_generator: JWT token generator for authentication
+            target_method: Target method name (e.g., 'predict')
+
+        Returns:
+            Raw requests.Response object (success or failure)
+        """
         test_input_arr = model_signature._convert_local_data_to_df(test_input).values
         test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
-        res = retrying.retry(
-            wait_exponential_multiplier=100,
-            wait_exponential_max=4000,
-            retry_on_result=RegistryModelDeploymentTestBase.retry_if_result_status_retriable,
-        )(requests.post)(
+
+        return requests.post(
             f"https://{endpoint}/{target_method.replace('_', '-')}",
             json={"data": test_input_arr.tolist()},
             auth=authentication.SnowflakeJWTTokenAuth(
@@ -528,6 +618,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 endpoint=endpoint,
                 snowflake_account_url=self.snowflake_account_url,
             ),
+            timeout=60,  # 60 second timeout since ingrrss will timeout after 60 seconds.
+            # This will help in case the service itself is not reachable.
         )
-        res.raise_for_status()
-        return pd.DataFrame([x[1] for x in res.json()["data"]])

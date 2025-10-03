@@ -12,6 +12,7 @@ from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.model.volatility import Volatility
 from snowflake.ml.registry._manager import model_manager
 from snowflake.ml.test_utils import mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
@@ -239,7 +240,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -327,7 +328,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -401,7 +402,12 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"enable_explainability": False, "embed_local_ml_library": True, "relax_version": False},
+                options={
+                    "enable_explainability": False,
+                    "embed_local_ml_library": True,
+                    "relax_version": False,
+                    "volatility": Volatility.IMMUTABLE,
+                },
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -478,7 +484,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=m_code_paths,
                 ext_modules=m_ext_modules,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -553,7 +559,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -696,10 +702,12 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"enable_explainability": False, "relax_version": False}
-                if target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
-                or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
-                else {"embed_local_ml_library": True, "relax_version": True},
+                options=(
+                    {"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE}
+                    if target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
+                    or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                    else {"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE}
+                ),
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -759,9 +767,11 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"enable_explainability": False, "relax_version": False}
-                if target_platform_constant == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
-                else {"embed_local_ml_library": True, "relax_version": True},
+                options=(
+                    {"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE}
+                    if target_platform_constant == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                    else {"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE}
+                ),
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -823,7 +833,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -998,7 +1008,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"enable_explainability": False, "relax_version": False},
+                options={"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1050,6 +1060,7 @@ class ModelManagerTest(parameterized.TestCase):
             expected_options = options.copy()
             expected_options["embed_local_ml_library"] = True
             expected_options["relax_version"] = True
+            expected_options["volatility"] = Volatility.IMMUTABLE
             mock_save.assert_called_once_with(
                 name="MODEL",
                 model=m_model,
@@ -1139,7 +1150,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1168,7 +1179,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1197,7 +1208,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )
@@ -1248,7 +1259,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"embed_local_ml_library": True, "relax_version": True},
+                options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 experiment_info=None,
             )

@@ -4,10 +4,10 @@ import tempfile
 
 import importlib_resources
 import yaml
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from packaging import requirements
 
-from snowflake.ml._internal import env_utils
+from snowflake.ml._internal import env_utils, platform_capabilities
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager.model_meta import (
@@ -16,6 +16,7 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._packager.model_runtime import model_runtime
+from snowflake.ml.model.volatility import Volatility
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -103,9 +104,13 @@ _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED = list(
 )
 
 
-class ModelManifestTest(absltest.TestCase):
+class ModelManifestTest(parameterized.TestCase):
     def test_model_manifest_1(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -149,7 +154,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_2(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -200,7 +209,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_mix(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -283,7 +296,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_table_function(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -325,7 +342,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_partitioned_function(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -368,7 +389,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_pip(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -406,7 +431,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_target_platforms(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -447,7 +476,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_artifact_repo_map(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -474,7 +507,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_resource_constraint(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -501,7 +538,11 @@ class ModelManifestTest(absltest.TestCase):
                 )
 
     def test_model_manifest_user_files(self) -> None:
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -615,6 +656,224 @@ class ModelManifestTest(absltest.TestCase):
             mm = model_manifest.ModelManifest(pathlib.Path(tmpdir))
 
             self.assertDictEqual(raw_input, mm.load())
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (Volatility.IMMUTABLE,),
+        (Volatility.VOLATILE,),
+    )
+    def test_model_manifest_with_volatility(self, volatility: Volatility) -> None:
+        """Test that ModelManifest.save() generates MANIFEST.yml with volatility field when specified."""
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            # Test with explicit volatility options
+            options = type_hints.BaseModelSaveOption(
+                method_options={
+                    "predict": type_hints.ModelMethodSaveOptions(volatility=volatility, function_type="FUNCTION")
+                },
+                relax_version=False,
+            )
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Verify MANIFEST.yml was created and contains volatility
+            manifest_path = pathlib.Path(workspace, "MANIFEST.yml")
+            self.assertTrue(manifest_path.exists())
+
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            # Verify manifest structure
+            self.assertIn("methods", manifest_content)
+            self.assertEqual(len(manifest_content["methods"]), 1)
+
+            method = manifest_content["methods"][0]
+            self.assertIn("volatility", method)
+            self.assertEqual(method["volatility"], volatility.name)
+            self.assertEqual(method["name"], "PREDICT")
+            self.assertEqual(method["type"], "FUNCTION")
+
+    def test_model_manifest_with_no_volatility(self) -> None:
+        """Test that ModelManifest.save() omits volatility when not specified and not set globally from reconciler."""
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(
+                relax_version=False,
+            )
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            method = manifest_content["methods"][0]
+            self.assertNotIn("volatility", method)
+
+    def test_model_manifest_with_global_volatility(self) -> None:
+        """Test that ModelManifest.save() uses global volatility when not set at method level."""
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(
+                relax_version=False,
+                volatility=Volatility.VOLATILE,
+            )
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            method = manifest_content["methods"][0]
+            self.assertEqual(method.get("volatility"), Volatility.VOLATILE.name)
+
+    def test_model_manifest_with_global_volatility_and_method_volatility(self) -> None:
+        """Test that ModelManifest.save() uses method volatility over global volatility when not set at method level."""
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures={"predict": _DUMMY_SIG["predict"]},
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(
+                relax_version=False,
+                volatility=Volatility.VOLATILE,
+                method_options={
+                    "predict": {
+                        "volatility": Volatility.IMMUTABLE,
+                    }
+                },
+            )
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            method = manifest_content["methods"][0]
+            self.assertEqual(method.get("volatility"), Volatility.IMMUTABLE.name)
+
+    def test_model_manifest_without_set_volatility_from_manifest_parameter(self) -> None:
+        """Test that ModelManifest.save() omits volatility when parameter in gs doesn't exist or not enabled"""
+        for mock_feature in (
+            {"dummy_feature": True},
+            {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: False},
+        ):
+            with (
+                tempfile.TemporaryDirectory() as workspace,
+                tempfile.TemporaryDirectory() as tmpdir,
+                platform_capabilities.PlatformCapabilities.mock_features(mock_feature),
+            ):
+                mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures={"predict": _DUMMY_SIG["predict"]},
+                    python_version="3.8",
+                    embed_local_ml_library=True,
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+
+                # Test with explicit volatility options
+                options = type_hints.BaseModelSaveOption(
+                    method_options={
+                        "predict": type_hints.ModelMethodSaveOptions(
+                            volatility=Volatility.IMMUTABLE, function_type="FUNCTION"
+                        )
+                    },
+                    relax_version=False,
+                )
+
+                mm.save(
+                    meta,
+                    pathlib.PurePosixPath("model"),
+                    options=options,
+                )
+
+                # Load and verify the manifest
+                with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                    manifest_content = yaml.safe_load(f)
+
+                method = manifest_content["methods"][0]
+                self.assertNotIn("volatility", method)
 
 
 if __name__ == "__main__":

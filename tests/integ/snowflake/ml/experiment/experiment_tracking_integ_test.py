@@ -10,7 +10,7 @@ from absl.testing import absltest
 
 from snowflake.ml.experiment import ExperimentTracking
 from snowflake.ml.utils import connection_params
-from snowflake.snowpark import Session
+from snowflake.snowpark import Session, session as snowpark_session
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 
@@ -44,6 +44,50 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
     def tearDownClass(cls) -> None:
         cls._session.close()
 
+    def assert_experiment_tracking_equality(self, exp1: ExperimentTracking, exp2: ExperimentTracking) -> None:
+        """Helper method to assert equality of two ExperimentTracking instances."""
+        self.assertEqual(exp1._database_name, exp2._database_name)
+        self.assertEqual(exp1._schema_name, exp2._schema_name)
+        self.assertEqual(exp1._session, exp2._session)
+        self.assertEqual(exp1._sql_client, exp2._sql_client)
+        # The experiment and run do not have __eq__ methods, so we check their attributes manually
+        self.assertEqual(exp1._experiment.name, exp2._experiment.name)
+        self.assertEqual(exp1._run.experiment_name, exp2._run.experiment_name)
+        self.assertEqual(exp1._run.name, exp2._run.name)
+        # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
+        self.assertEqual(exp1._registry._database_name, exp2._registry._database_name)
+        self.assertEqual(exp1._registry._schema_name, exp2._registry._schema_name)
+        self.assertEqual(exp1._registry.enable_monitoring, exp2._registry.enable_monitoring)
+        # Model manager
+        self.assertEqual(exp1._registry._model_manager._database_name, exp2._registry._model_manager._database_name)
+        self.assertEqual(exp1._registry._model_manager._schema_name, exp2._registry._model_manager._schema_name)
+        self.assertEqual(exp1._registry._model_manager._model_ops, exp2._registry._model_manager._model_ops)
+        self.assertEqual(exp1._registry._model_manager._service_ops, exp2._registry._model_manager._service_ops)
+        # Model monitor manager
+        self.assertEqual(
+            exp1._registry._model_monitor_manager._database_name, exp2._registry._model_monitor_manager._database_name
+        )
+        self.assertEqual(
+            exp1._registry._model_monitor_manager._schema_name, exp2._registry._model_monitor_manager._schema_name
+        )
+        self.assertEqual(
+            exp1._registry._model_monitor_manager.statement_params,
+            exp2._registry._model_monitor_manager.statement_params,
+        )
+        # Model monitor client
+        self.assertEqual(
+            exp1._registry._model_monitor_manager._model_monitor_client._sql_client,
+            exp2._registry._model_monitor_manager._model_monitor_client._sql_client,
+        )
+        self.assertEqual(
+            exp1._registry._model_monitor_manager._model_monitor_client._database_name,
+            exp2._registry._model_monitor_manager._model_monitor_client._database_name,
+        )
+        self.assertEqual(
+            exp1._registry._model_monitor_manager._model_monitor_client._schema_name,
+            exp2._registry._model_monitor_manager._model_monitor_client._schema_name,
+        )
+
     def test_experiment_getstate_and_setstate(self) -> None:
         """Test getstate and setstate methods by pickling and then unpickling"""
         exp = ExperimentTracking(session=self._session)
@@ -53,46 +97,35 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         pickled = pickle.dumps(exp)
         new_exp = pickle.loads(pickled)
 
-        # Verify that the new instance has the same state
-        self.assertEqual(new_exp._database_name, exp._database_name)
-        self.assertEqual(new_exp._schema_name, "PUBLIC")
-        self.assertEqual(new_exp._experiment.name.identifier(), "TEST_EXPERIMENT")
-        self.assertEqual(new_exp._run.name.identifier(), "TEST_RUN")
-        self.assertEqual(new_exp._session, exp._session)
-        self.assertEqual(new_exp._sql_client, exp._sql_client)
-        # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
-        self.assertEqual(new_exp._registry._database_name, exp._registry._database_name)
-        self.assertEqual(new_exp._registry._schema_name, exp._registry._schema_name)
-        self.assertEqual(new_exp._registry.enable_monitoring, exp._registry.enable_monitoring)
-        # Model manager
-        self.assertEqual(new_exp._registry._model_manager._database_name, exp._registry._model_manager._database_name)
-        self.assertEqual(new_exp._registry._model_manager._schema_name, exp._registry._model_manager._schema_name)
-        self.assertEqual(new_exp._registry._model_manager._model_ops, exp._registry._model_manager._model_ops)
-        self.assertEqual(new_exp._registry._model_manager._service_ops, exp._registry._model_manager._service_ops)
-        # Model monitor manager
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager._database_name, exp._registry._model_monitor_manager._database_name
-        )
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager._schema_name, exp._registry._model_monitor_manager._schema_name
-        )
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager.statement_params,
-            exp._registry._model_monitor_manager.statement_params,
-        )
-        # Model monitor client
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager._model_monitor_client._sql_client,
-            exp._registry._model_monitor_manager._model_monitor_client._sql_client,
-        )
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager._model_monitor_client._database_name,
-            exp._registry._model_monitor_manager._model_monitor_client._database_name,
-        )
-        self.assertEqual(
-            new_exp._registry._model_monitor_manager._model_monitor_client._schema_name,
-            exp._registry._model_monitor_manager._model_monitor_client._schema_name,
-        )
+        self.assert_experiment_tracking_equality(exp, new_exp)
+
+    def test_experiment_getstate_and_setstate_no_session(self) -> None:
+        """Test getstate and setstate methods by pickling and then unpickling without an active session"""
+        exp = ExperimentTracking(session=self._session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        saved_account = exp._session.get_current_account()
+        saved_role = exp._session.get_current_role()
+        saved_database = exp._session.get_current_database()
+        saved_schema = exp._session.get_current_schema()
+
+        pickled = pickle.dumps(exp)
+        session = snowpark_session._active_sessions.pop()  # Simulate having no active session
+        new_exp = pickle.loads(pickled)
+
+        # Check that the session is None and the session state is populated correctly
+        self.assertIsNone(new_exp._session)
+        self.assertEqual(new_exp._session_state.account, saved_account)
+        self.assertEqual(new_exp._session_state.role, saved_role)
+        self.assertEqual(new_exp._session_state.database, saved_database)
+        self.assertEqual(new_exp._session_state.schema, saved_schema)
+
+        # Restore the session and check for equality
+        snowpark_session._active_sessions.add(session)
+        new_exp.set_experiment("TEST_EXPERIMENT")  # set_experiment is decorated with @_restore_session
+        self.assertIsNone(new_exp._session_state)
+        self.assert_experiment_tracking_equality(exp, new_exp)
 
     def test_experiment_creation_and_deletion(self) -> None:
         # set_experiment with a new experiment name creates an experiment

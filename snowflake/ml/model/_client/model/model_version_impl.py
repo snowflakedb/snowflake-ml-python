@@ -551,6 +551,8 @@ class ModelVersion(lineage_node.LineageNode):
         subproject=_TELEMETRY_SUBPROJECT,
         func_params_to_log=[
             "compute_pool",
+            "output_spec",
+            "job_spec",
         ],
     )
     def _run_batch(
@@ -579,6 +581,8 @@ class ModelVersion(lineage_node.LineageNode):
             output_stage_location += "/"
         input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
 
+        self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
+
         try:
             input_spec.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
         # todo: be specific about the type of errors to provide better error messages.
@@ -605,6 +609,7 @@ class ModelVersion(lineage_node.LineageNode):
             warehouse=sql_identifier.SqlIdentifier(warehouse),
             cpu_requests=job_spec.cpu_requests,
             memory_requests=job_spec.memory_requests,
+            gpu_requests=job_spec.gpu_requests,
             job_name=job_name,
             replicas=job_spec.replicas,
             # input and output

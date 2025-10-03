@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from snowflake.ml._internal.utils import identifier
@@ -14,6 +15,14 @@ def _identifiers_match(saved: Optional[str], current: Optional[str]) -> bool:
     saved_resolved = identifier.resolve_identifier(saved) if saved is not None else saved
     current_resolved = identifier.resolve_identifier(current) if current is not None else current
     return saved_resolved == current_resolved
+
+
+@dataclass(frozen=True)
+class _SessionState:
+    account: Optional[str]
+    role: Optional[str]
+    database: Optional[str]
+    schema: Optional[str]
 
 
 class SerializableSessionMixin:
@@ -40,17 +49,23 @@ class SerializableSessionMixin:
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         """Restore session from context during unpickling."""
-        saved_account = state.pop(_SESSION_ACCOUNT_KEY, None)
-        saved_role = state.pop(_SESSION_ROLE_KEY, None)
-        saved_database = state.pop(_SESSION_DATABASE_KEY, None)
-        saved_schema = state.pop(_SESSION_SCHEMA_KEY, None)
+        session_state = _SessionState(
+            account=state.pop(_SESSION_ACCOUNT_KEY, None),
+            role=state.pop(_SESSION_ROLE_KEY, None),
+            database=state.pop(_SESSION_DATABASE_KEY, None),
+            schema=state.pop(_SESSION_SCHEMA_KEY, None),
+        )
 
         if hasattr(super(), "__setstate__"):
             super().__setstate__(state)  # type: ignore[misc]
         else:
             self.__dict__.update(state)
 
-        if saved_account is not None:
+        self._set_session(session_state)
+
+    def _set_session(self, session_state: _SessionState) -> None:
+
+        if session_state.account is not None:
             active_sessions = snowpark_session._get_active_sessions()
             if len(active_sessions) == 0:
                 raise RuntimeError("No active Snowpark session available. Please create a session.")
@@ -63,10 +78,10 @@ class SerializableSessionMixin:
                     active_sessions,
                     key=lambda s: sum(
                         (
-                            _identifiers_match(saved_account, s.get_current_account()),
-                            _identifiers_match(saved_role, s.get_current_role()),
-                            _identifiers_match(saved_database, s.get_current_database()),
-                            _identifiers_match(saved_schema, s.get_current_schema()),
+                            _identifiers_match(session_state.account, s.get_current_account()),
+                            _identifiers_match(session_state.role, s.get_current_role()),
+                            _identifiers_match(session_state.database, s.get_current_database()),
+                            _identifiers_match(session_state.schema, s.get_current_schema()),
                         )
                     ),
                 ),

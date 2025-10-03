@@ -204,7 +204,7 @@ class ModelDeploymentSpec:
         job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
         cpu: Optional[str] = None,
         memory: Optional[str] = None,
-        gpu: Optional[Union[str, int]] = None,
+        gpu: Optional[str] = None,
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         replicas: Optional[int] = None,

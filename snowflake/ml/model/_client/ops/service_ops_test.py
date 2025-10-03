@@ -11,6 +11,7 @@ from snowflake.ml import jobs, version as snowml_version
 from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import inference_engine, model_signature
+from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.ops import service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql
@@ -1174,6 +1175,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1000,
                 cpu_requests="1",
                 memory_requests="4GiB",
+                gpu_requests=None,
                 replicas=1,
             )
 
@@ -1209,6 +1211,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
                 cpu="1",
                 memory="4GiB",
+                gpu=None,
                 replicas=1,
             )
 
@@ -1311,6 +1314,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     max_batch_rows=1000,
                     cpu_requests="1",
                     memory_requests="4GiB",
+                    gpu_requests=None,
                     replicas=1,
                 )
 
@@ -1397,6 +1401,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=None,
                 cpu_requests=None,
                 memory_requests=None,
+                gpu_requests=None,
                 replicas=None,
                 statement_params=self.m_statement_params,
             )
@@ -1417,6 +1422,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
                 cpu=None,
                 memory=None,
+                gpu=None,
                 replicas=None,
             )
 
@@ -1429,6 +1435,122 @@ class ServiceOpsTest(parameterized.TestCase):
 
             # Verify returned MLJob
             self.assertIsInstance(result, jobs.MLJob)
+
+    def test_enforce_save_mode_error_with_empty_stage(self) -> None:
+        """Test _enforce_save_mode with ERROR mode and empty stage location."""
+        # Mock stage_client.list_stage to return no files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = []
+        self.m_ops._stage_client = mock_stage_client
+
+        self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+
+        mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
+
+    def test_enforce_save_mode_error_with_files_raises_exception(self) -> None:
+        """Test _enforce_save_mode with ERROR mode and files in stage location."""
+        mock_file_row = mock.MagicMock()
+
+        # Mock stage_client.list_stage to return files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = [mock_file_row, mock_file_row]
+        self.m_ops._stage_client = mock_stage_client
+
+        with self.assertRaises(FileExistsError) as cm:
+            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+
+        self.assertIn("Output stage location '@test_stage/' is not empty", str(cm.exception))
+        self.assertIn("Found 2 existing files", str(cm.exception))
+        self.assertIn("When using ERROR mode", str(cm.exception))
+
+    def test_enforce_save_mode_error_with_stage_exception(self) -> None:
+        """Test _enforce_save_mode with ERROR mode when stage list operation fails."""
+        # Mock stage_client.list_stage to raise exception
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.side_effect = Exception("Stage not found")
+        self.m_ops._stage_client = mock_stage_client
+
+        with self.assertRaises(Exception) as cm:
+            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.ERROR, "@test_stage/")
+
+        self.assertIn("Stage not found", str(cm.exception))
+
+    def test_enforce_save_mode_overwrite_with_empty_stage(self) -> None:
+        """Test _enforce_save_mode with OVERWRITE mode and empty stage location."""
+        # Mock stage_client.list_stage to return no files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = []
+        self.m_ops._stage_client = mock_stage_client
+
+        with mock.patch("warnings.warn") as mock_warn:
+            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+            mock_warn.assert_not_called()
+
+        mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
+
+    def test_enforce_save_mode_overwrite_with_files_shows_warning(self) -> None:
+        """Test _enforce_save_mode with OVERWRITE mode and files in stage location."""
+        mock_file_row = mock.MagicMock()
+
+        # Mock stage_client.list_stage to return files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = [mock_file_row, mock_file_row, mock_file_row]
+        self.m_ops._stage_client = mock_stage_client
+
+        # Mock session for REMOVE command
+        mock_session = mock.MagicMock()
+        self.m_ops._session = mock_session
+
+        with mock.patch("warnings.warn") as mock_warn:
+            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+
+            mock_warn.assert_called_once()
+            warning_message = mock_warn.call_args[0][0]
+            self.assertIn("Output stage location '@test_stage/' is not empty", warning_message)
+            self.assertIn("Found 3 existing files", warning_message)
+            self.assertIn("OVERWRITE mode will remove all existing files", warning_message)
+
+        # Verify stage list was called and session REMOVE was called
+        mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
+        mock_session.sql.assert_called_once_with("REMOVE @test_stage/")
+
+    def test_enforce_save_mode_overwrite_remove_fails(self) -> None:
+        """Test _enforce_save_mode with OVERWRITE mode when REMOVE command fails."""
+        mock_session = mock.MagicMock()
+        mock_file_row = mock.MagicMock()
+
+        # Mock stage_client.list_stage to return files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = [mock_file_row]
+        self.m_ops._stage_client = mock_stage_client
+
+        # Mock session.sql for REMOVE to fail
+        mock_session.sql.return_value.collect.side_effect = Exception("Permission denied")
+        self.m_ops._session = mock_session
+
+        with self.assertRaises(RuntimeError) as cm:
+            self.m_ops._enforce_save_mode(batch_inference_specs.SaveMode.OVERWRITE, "@test_stage/")
+
+        self.assertIn("OVERWRITE was specified", str(cm.exception))
+        self.assertIn("failed to remove existing files", str(cm.exception))
+        self.assertIn("Permission denied", str(cm.exception))
+
+    def test_enforce_save_mode_invalid_mode(self) -> None:
+        """Test _enforce_save_mode with invalid SaveMode."""
+        # Mock stage_client.list_stage to return no files
+        mock_stage_client = mock.MagicMock()
+        mock_stage_client.list_stage.return_value = []
+        self.m_ops._stage_client = mock_stage_client
+
+        invalid_mode = "INVALID_MODE"
+
+        with self.assertRaises(ValueError) as cm:
+            self.m_ops._enforce_save_mode(invalid_mode, "@test_stage/")  # type: ignore[arg-type]
+
+        self.assertIn("Invalid SaveMode: INVALID_MODE", str(cm.exception))
+        self.assertIn("Must be one of", str(cm.exception))
+
+        mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
 
 
 if __name__ == "__main__":

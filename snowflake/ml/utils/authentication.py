@@ -73,3 +73,19 @@ class SnowflakeJWTTokenAuth(auth.AuthBase):
     def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
         r.headers["Authorization"] = f'Snowflake Token="{self.snowflake_token}"'
         return r
+
+
+class SnowflakePATAuth(auth.AuthBase):
+    """Authentication using Snowflake Programmatic Access Token (PAT)."""
+
+    def __init__(self, pat_token: str) -> None:
+        """Initialize with a PAT token.
+
+        Args:
+            pat_token: The programmatic access token string
+        """
+        self.pat_token = pat_token
+
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        r.headers["Authorization"] = f'Snowflake Token="{self.pat_token}"'
+        return r

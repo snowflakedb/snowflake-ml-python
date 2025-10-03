@@ -14,6 +14,7 @@ py_library(
     deps = [
         ":target_platform",
         ":task",
+        ":volatility",
         "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/modeling/framework",
     ],
@@ -28,6 +29,12 @@ py_library(
 py_library(
     name = "task",
     srcs = ["task.py"],
+    deps = [],
+)
+
+py_library(
+    name = "volatility",
+    srcs = ["volatility.py"],
     deps = [],
 )
 

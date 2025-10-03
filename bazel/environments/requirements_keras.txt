@@ -8,7 +8,7 @@ boto3==1.34.69
 build==0.10.0
 cachetools==5.3.3
 cloudpickle==2.2.1
-coverage==7.2.2
+coverage==7.6.1
 cryptography==41.0.3
 flask-cors==3.0.10
 flask==2.2.2
@@ -31,7 +31,6 @@ psutil==5.9.0
 pyarrow==16.1.0
 pydantic==2.8.2
 pyjwt==2.8.0
-pytest-rerunfailures==12.0
 pytest-timeout==2.2.0
 pytest-xdist==3.5.0
 pytest==7.4.0

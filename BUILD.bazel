@@ -10,6 +10,7 @@ exports_files([
     "CHANGELOG.md",
     "README.md",
     "LICENSE.txt",
+    "WORKSPACE",
     "mypy.ini",
     "requirements.yml",
 ])

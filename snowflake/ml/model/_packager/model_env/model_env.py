@@ -145,11 +145,12 @@ class ModelEnv:
         """
         if (self.pip_requirements or self.prefer_pip) and not self.conda_dependencies and pkgs:
             pip_pkg_reqs: list[str] = []
-            if self.targets_warehouse:
+            if self.targets_warehouse and not self.artifact_repository_map:
                 self._warn_once(
                     (
                         "Dependencies specified from pip requirements."
                         " This may prevent model deploying to Snowflake Warehouse."
+                        " Use 'artifact_repository_map' to deploy the model to Warehouse."
                     ),
                     stacklevel=2,
                 )
@@ -177,7 +178,11 @@ class ModelEnv:
                 req_to_add.name = conda_req.name
             else:
                 req_to_add = conda_req
-            show_warning_message = conda_req_channel == env_utils.DEFAULT_CHANNEL_NAME and self.targets_warehouse
+            show_warning_message = (
+                conda_req_channel == env_utils.DEFAULT_CHANNEL_NAME
+                and self.targets_warehouse
+                and not self.artifact_repository_map
+            )
 
             if any(added_pip_req.name == pip_name for added_pip_req in self._pip_requirements):
                 if show_warning_message:
@@ -185,6 +190,7 @@ class ModelEnv:
                         (
                             f"Basic dependency {req_to_add.name} specified from pip requirements."
                             " This may prevent model deploying to Snowflake Warehouse."
+                            " Use 'artifact_repository_map' to deploy the model to Warehouse."
                         ),
                         stacklevel=2,
                     )
@@ -318,13 +324,15 @@ class ModelEnv:
                     )
 
         if pip_requirements_list and self.targets_warehouse:
-            self._warn_once(
-                (
-                    "Found dependencies specified as pip requirements."
-                    " This may prevent model deploying to Snowflake Warehouse."
-                ),
-                stacklevel=2,
-            )
+            if not self.artifact_repository_map:
+                self._warn_once(
+                    (
+                        "Found dependencies specified as pip requirements."
+                        " This may prevent model deploying to Snowflake Warehouse."
+                        " Use 'artifact_repository_map' to deploy the model to Warehouse."
+                    ),
+                    stacklevel=2,
+                )
             for pip_dependency in pip_requirements_list:
                 if any(
                     channel_dependency.name == pip_dependency.name
@@ -343,13 +351,15 @@ class ModelEnv:
         pip_requirements_list = env_utils.load_requirements_file(pip_requirements_path)
 
         if pip_requirements_list and self.targets_warehouse:
-            self._warn_once(
-                (
-                    "Found dependencies specified as pip requirements."
-                    " This may prevent model deploying to Snowflake Warehouse."
-                ),
-                stacklevel=2,
-            )
+            if not self.artifact_repository_map:
+                self._warn_once(
+                    (
+                        "Found dependencies specified as pip requirements."
+                        " This may prevent model deploying to Snowflake Warehouse."
+                        " Use 'artifact_repository_map' to deploy the model to Warehouse."
+                    ),
+                    stacklevel=2,
+                )
             for pip_dependency in pip_requirements_list:
                 if any(
                     channel_dependency.name == pip_dependency.name

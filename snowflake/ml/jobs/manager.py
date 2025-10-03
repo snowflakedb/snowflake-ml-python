@@ -1,6 +1,7 @@
 import json
 import logging
 import pathlib
+import sys
 import textwrap
 from pathlib import PurePath
 from typing import Any, Callable, Optional, TypeVar, Union, cast, overload
@@ -344,6 +345,9 @@ def submit_from_stage(
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
+            runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
+                e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
+                it should contain image repository, image name and image tag.
 
     Returns:
         An object representing the submitted job.
@@ -409,6 +413,7 @@ def _submit_job(
         "min_instances",
         "enable_metrics",
         "query_warehouse",
+        "runtime_environment",
     ],
 )
 def _submit_job(
@@ -459,6 +464,9 @@ def _submit_job(
         )
         imports = kwargs.pop("additional_payloads")
 
+    if "runtime_environment" in kwargs:
+        logger.warning("'runtime_environment' is in private preview since 1.15.0, do not use it in production.")
+
     # Use kwargs for less common optional parameters
     database = kwargs.pop("database", None)
     schema = kwargs.pop("schema", None)
@@ -470,6 +478,7 @@ def _submit_job(
     enable_metrics = kwargs.pop("enable_metrics", True)
     query_warehouse = kwargs.pop("query_warehouse", session.get_current_warehouse())
     imports = kwargs.pop("imports", None) or imports
+    runtime_environment = kwargs.pop("runtime_environment", None)
 
     # Warn if there are unknown kwargs
     if kwargs:
@@ -544,6 +553,7 @@ def _submit_job(
             min_instances=min_instances,
             enable_metrics=enable_metrics,
             use_async=True,
+            runtime_environment=runtime_environment,
         )
 
     # Fall back to v1
@@ -556,6 +566,7 @@ def _submit_job(
         target_instances=target_instances,
         min_instances=min_instances,
         enable_metrics=enable_metrics,
+        runtime_environment=runtime_environment,
     )
 
     # Generate spec overrides
@@ -639,6 +650,7 @@ def _do_submit_job_v2(
     min_instances: int = 1,
     enable_metrics: bool = True,
     use_async: bool = True,
+    runtime_environment: Optional[str] = None,
 ) -> jb.MLJob[Any]:
     """
     Generate the SQL query for job submission.
@@ -657,6 +669,7 @@ def _do_submit_job_v2(
         min_instances: Minimum number of instances required to start the job.
         enable_metrics: Whether to enable platform metrics for the job.
         use_async: Whether to run the job asynchronously.
+        runtime_environment: image tag or full image URL to use for the job.
 
     Returns:
         The job object.
@@ -672,6 +685,13 @@ def _do_submit_job_v2(
         "ENABLE_METRICS": enable_metrics,
         "SPEC_OVERRIDES": spec_overrides,
     }
+    # for the image tag or full image URL, we use that directly
+    if runtime_environment:
+        spec_options["RUNTIME"] = runtime_environment
+    elif feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
+        # when feature flag is enabled, we get the local python version and wrap it in a dict
+        # in system function, we can know whether it is python version or image tag or full image URL through the format
+        spec_options["RUNTIME"] = json.dumps({"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"})
     job_options = {
         "EXTERNAL_ACCESS_INTEGRATIONS": external_access_integrations,
         "QUERY_WAREHOUSE": query_warehouse,

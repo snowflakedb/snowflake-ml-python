@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--run-grype] [--report <report_path>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--run-grype] [--report <report_path>] [--feature-areas <areas>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -18,6 +18,8 @@
 # run-grype: Run grype security scanning on SPCS images. Only valid with --with-spcs-image.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
+# feature-areas: Comma-separated list of feature areas to test (e.g., "jobs,core").
+#   Valid areas: model_registry, feature_store, jobs, observability, cortex, core, modeling, model_serving, data, none
 #
 # Action
 #   - Copy the integration tests from workspace folder and execute them in testing Python env using pytest.
@@ -31,7 +33,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--run-grype] [--snowflake-env <sf_env>] [--report <report_path>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--run-grype] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
     exit "${exit_code}"
 }
 
@@ -49,6 +51,7 @@ SNOWPARK_DIR="snowpark-python"
 IS_NT=false
 JUNIT_REPORT_PATH=""
 SF_ENV="prod3"
+FEATURE_AREAS=""
 
 while (($#)); do
     case $1 in
@@ -95,6 +98,10 @@ while (($#)); do
         ;;
     --run-grype)
         RUN_GRYPE=true
+        ;;
+    --feature-areas)
+        shift
+        FEATURE_AREAS=$1
         ;;
     -h | --help)
         help 0
@@ -193,12 +200,15 @@ _MICROMAMBA_BIN="micromamba${EXT}"
 if [ "${ENV}" = "conda" ]; then
     CONDA="/mnt/jenkins/home/jenkins/miniforge3/condabin/conda"
 
+    MINIFORGE_VERSION="25.3.1-0"
+    CONDA_BUILD_VERSION="25.7.0"
+
     # Check if miniforge is already installed
     if [ -x "${CONDA}" ]; then
         echo "Miniforge exists at ${CONDA}."
     else
         echo "Downloading miniforge ..."
-        curl -L -O "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-$(uname)-$(uname -m).sh"
+        curl -L -O "https://github.com/conda-forge/miniforge/releases/download/${MINIFORGE_VERSION}/Miniforge3-$(uname)-$(uname -m).sh"
 
         echo "Installing miniforge ..."
         /bin/bash "Miniforge3-$(uname)-$(uname -m).sh" -b -u
@@ -207,7 +217,7 @@ if [ "${ENV}" = "conda" ]; then
     echo "Using ${CONDA} ..."
 
     echo "Installing conda-build ..."
-    ${CONDA} install conda-build --yes
+    ${CONDA} install conda-build="${CONDA_BUILD_VERSION}" --yes
 
     echo "Installing micromamba ..."
     if ! command -v "${_MICROMAMBA_BIN}" &>/dev/null; then
@@ -226,13 +236,19 @@ pushd ${SNOWML_DIR}
 VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.py| cut -d'"' -f2)
 echo "Extracted Package Version from code: ${VERSION}"
 
-# Generate and copy auto-gen tests.
+# Generate and copy auto-gen tests with pytest marks.
 "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
 
 # Rsync cannot work well with path that has drive letter in Windows,
 # Thus, rsync has to use relative path instead of absolute ones.
 
 rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
+
+if [[ -n "${FEATURE_AREAS}" ]]; then
+    # Add pytest marks to all test files based on their feature: tags
+    echo "Adding pytest marks to test files..."
+    ${PYTHON_EXECUTABLE} bazel/add_pytest_marks.py --targets //tests/integ/... --bazel-path "${BAZEL}"
+fi
 
 # Read environments from optional_dependency_groups.bzl
 groups=()
@@ -332,8 +348,25 @@ COMMON_PYTEST_FLAG+=(--strict-markers) # Strict the pytest markers to avoid typo
 COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
-COMMON_PYTEST_FLAG+=(--reruns 1)
 COMMON_PYTEST_FLAG+=(--timeout=3600)
+
+# Add feature area filtering if specified
+if [[ -n "${FEATURE_AREAS}" ]]; then
+    # Convert comma-separated list to pytest mark expression
+    # e.g., "jobs,core" becomes "feature_area_jobs or feature_area_core"
+    IFS=',' read -ra AREAS <<< "${FEATURE_AREAS}"
+    MARK_EXPR=""
+    for i in "${!AREAS[@]}"; do
+        area="${AREAS[$i]}"
+        if [[ $i -eq 0 ]]; then
+            MARK_EXPR="feature_area_${area}"
+        else
+            MARK_EXPR="${MARK_EXPR} or feature_area_${area}"
+        fi
+    done
+    COMMON_PYTEST_FLAG+=(-m "${MARK_EXPR}")
+    echo "Running tests with feature area filter: ${MARK_EXPR}"
+fi
 
 group_exit_codes=()
 group_coverage_report_files=()
