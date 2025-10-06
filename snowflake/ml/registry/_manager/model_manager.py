@@ -221,6 +221,7 @@ class ModelManager:
             )
 
         reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            model=model,
             session=self._model_ops._session,
             database_name=self._database_name,
             schema_name=self._schema_name,

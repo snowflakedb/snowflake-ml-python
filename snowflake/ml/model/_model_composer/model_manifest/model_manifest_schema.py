@@ -46,6 +46,7 @@ class ModelFunctionMethodDict(TypedDict):
     handler: Required[str]
     inputs: Required[list[ModelMethodSignatureFieldWithName]]
     outputs: Required[Union[list[ModelMethodSignatureField], list[ModelMethodSignatureFieldWithName]]]
+    volatility: NotRequired[str]
 
 
 ModelMethodDict = ModelFunctionMethodDict

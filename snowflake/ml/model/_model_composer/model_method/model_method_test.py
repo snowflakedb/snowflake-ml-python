@@ -2,8 +2,9 @@ import pathlib
 import tempfile
 
 import importlib_resources
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer import model_method as model_method_pkg
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -16,6 +17,7 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta,
     model_meta_schema,
 )
+from snowflake.ml.model.volatility import Volatility
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -32,11 +34,15 @@ _DUMMY_BLOB = model_blob_meta.ModelBlobMeta(
 )
 
 
-class ModelMethodTest(absltest.TestCase):
+class ModelMethodTest(parameterized.TestCase):
     def test_model_method(self) -> None:
         fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -70,7 +76,11 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -109,7 +119,11 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -124,7 +138,11 @@ class ModelMethodTest(absltest.TestCase):
                     fg,
                 )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -139,7 +157,11 @@ class ModelMethodTest(absltest.TestCase):
                     fg,
                 )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -174,7 +196,11 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -214,7 +240,11 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
                 name="model1",
@@ -259,7 +289,11 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
-        with tempfile.TemporaryDirectory() as workspace, tempfile.TemporaryDirectory() as tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir, name="model5", model_type="custom", signatures=_DUMMY_SIG
             ) as meta:
@@ -294,6 +328,110 @@ class ModelMethodTest(absltest.TestCase):
                 },
             )
 
+    def test_model_method_with_volatility_default(self) -> None:
+        """Test that ModelMethod.save() omits volatility when not enabled."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: False}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify volatility is omitted by default
+            self.assertNotIn("volatility", method_dict)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (Volatility.IMMUTABLE,),
+        (Volatility.VOLATILE,),
+    )
+    def test_model_method_with_volatility_explicit(self, volatility: Volatility) -> None:
+        """Test that ModelMethod.save() includes explicit volatility values in the method dict."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(volatility=volatility),
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify volatility is included
+            self.assertIn("volatility", method_dict)
+            self.assertEqual(method_dict.get("volatility"), volatility.name)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (Volatility.IMMUTABLE,),
+        (Volatility.VOLATILE,),
+    )
+    def test_model_method_with_complete_dict_structure(self, volatility: Volatility) -> None:
+        """Test that volatility is included alongside all other expected fields."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+            ),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(
+                    volatility=volatility,
+                    function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                ),
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify the complete structure includes volatility
+            expected_dict = {
+                "name": "PREDICT",
+                "runtime": "python_runtime",
+                "type": "FUNCTION",
+                "handler": "functions.predict.infer",
+                "inputs": [{"name": "INPUT", "type": "FLOAT"}, {"name": "NAME", "type": "STRING"}],
+                "outputs": [{"type": "OBJECT"}],
+                "volatility": volatility.name,
+            }
+            self.assertDictEqual(method_dict, expected_dict)
+
 
 class ModelMethodOptionsTest(absltest.TestCase):
     def test_get_model_method_options(self) -> None:
@@ -322,6 +460,28 @@ class ModelMethodOptionsTest(absltest.TestCase):
         self.assertEqual(
             method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
         )
+
+    def test_get_model_method_options_with_volatility(self) -> None:
+        """Test that get_model_method_options_from_options properly handles volatility."""
+        # Test unset volatility
+        options: type_hints.ModelSaveOption = {}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        self.assertNotIn("volatility", method_options)
+
+        # Test default global volatility
+        options = {"volatility": Volatility.IMMUTABLE}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        self.assertEqual(method_options.get("volatility"), Volatility.IMMUTABLE)
+
+        # Test explicit volatility in method_options
+        options = {"method_options": {"test": {"volatility": Volatility.IMMUTABLE}}}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        self.assertEqual(method_options.get("volatility"), Volatility.IMMUTABLE)
+
+        # Test method level overrides global
+        options = {"volatility": Volatility.VOLATILE, "method_options": {"test": {"volatility": Volatility.IMMUTABLE}}}
+        method_options = model_method.get_model_method_options_from_options(options=options, target_method="test")
+        self.assertEqual(method_options.get("volatility"), Volatility.IMMUTABLE)
 
 
 if __name__ == "__main__":

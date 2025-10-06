@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 from math import ceil
 from pathlib import PurePath
@@ -9,6 +10,8 @@ from snowflake import snowpark
 from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.jobs._utils import constants, feature_flags, query_helper, types
 from snowflake.ml.jobs._utils.runtime_env_utils import RuntimeEnvironmentsDict
+
+_OCI_TAG_REGEX = re.compile("^[a-zA-Z0-9._-]{1,128}$")
 
 
 def _get_node_resources(session: snowpark.Session, compute_pool: str) -> types.ComputeResources:
@@ -56,22 +59,55 @@ def _get_runtime_image(session: snowpark.Session, target_hardware: Literal["CPU"
     return selected_runtime.runtime_container_image if selected_runtime else None
 
 
-def _get_image_spec(session: snowpark.Session, compute_pool: str) -> types.ImageSpec:
+def _check_image_tag_valid(tag: Optional[str]) -> bool:
+    if tag is None:
+        return False
+
+    return _OCI_TAG_REGEX.fullmatch(tag) is not None
+
+
+def _get_image_spec(
+    session: snowpark.Session, compute_pool: str, runtime_environment: Optional[str] = None
+) -> types.ImageSpec:
+    """
+    Resolve image specification (container image and resources) for the job.
+
+    Behavior:
+    - If `runtime_environment` is empty or the feature flag is disabled, use the
+      default image tag and image name.
+    - If `runtime_environment` is a valid image tag, use that tag with the default
+      repository/name.
+    - If `runtime_environment` is a full image URL, use it directly.
+    - If the feature flag is enabled and `runtime_environment` is not provided,
+      select an ML Runtime image matching the local Python major.minor
+    - When multiple inputs are provided, `runtime_environment` takes priority.
+
+    Args:
+        session: Snowflake session.
+        compute_pool: Compute pool used to infer CPU/GPU resources.
+        runtime_environment: Optional image tag or full image URL to override.
+
+    Returns:
+        Image spec including container image and resource requests/limits.
+    """
     # Retrieve compute pool node resources
     resources = _get_node_resources(session, compute_pool=compute_pool)
+    hardware = "GPU" if resources.gpu > 0 else "CPU"
+    image_tag = _get_runtime_image_tag()
+    image_repo = constants.DEFAULT_IMAGE_REPO
+    image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
 
     # Use MLRuntime image
-    hardware = "GPU" if resources.gpu > 0 else "CPU"
     container_image = None
-    if feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
+    if runtime_environment:
+        if _check_image_tag_valid(runtime_environment):
+            image_tag = runtime_environment
+        else:
+            container_image = runtime_environment
+    elif feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
         container_image = _get_runtime_image(session, hardware)  # type: ignore[arg-type]
 
-    if not container_image:
-        image_repo = constants.DEFAULT_IMAGE_REPO
-        image_name = constants.DEFAULT_IMAGE_GPU if resources.gpu > 0 else constants.DEFAULT_IMAGE_CPU
-        image_tag = _get_runtime_image_tag()
-        container_image = f"{image_repo}/{image_name}:{image_tag}"
-
+    container_image = container_image or f"{image_repo}/{image_name}:{image_tag}"
     # TODO: Should each instance consume the entire pod?
     return types.ImageSpec(
         resource_requests=resources,
@@ -127,6 +163,7 @@ def generate_service_spec(
     target_instances: int = 1,
     min_instances: int = 1,
     enable_metrics: bool = False,
+    runtime_environment: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Generate a service specification for a job.
@@ -139,11 +176,12 @@ def generate_service_spec(
         target_instances: Number of instances for multi-node job
         enable_metrics: Enable platform metrics for the job
         min_instances: Minimum number of instances required to start the job
+        runtime_environment: The runtime image to use. Only support image tag or full image URL.
 
     Returns:
         Job service specification
     """
-    image_spec = _get_image_spec(session, compute_pool)
+    image_spec = _get_image_spec(session, compute_pool, runtime_environment)
 
     # Set resource requests/limits, including nvidia.com/gpu quantity if applicable
     resource_requests: dict[str, Union[str, int]] = {
@@ -317,7 +355,7 @@ def merge_patch(base: Any, patch: Any, display_name: str = "") -> Any:
     Returns:
         The patched object.
     """
-    if not type(base) is type(patch):
+    if type(base) is not type(patch):
         if base is not None:
             logging.warning(f"Type mismatch while merging {display_name} (base={type(base)}, patch={type(patch)})")
         return patch

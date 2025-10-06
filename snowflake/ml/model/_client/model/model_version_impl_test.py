@@ -1547,6 +1547,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
@@ -1568,6 +1569,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("CUSTOM_WAREHOUSE"),
                 cpu_requests="4",
                 memory_requests="8Gi",
+                gpu_requests=None,
                 job_name="CUSTOM_JOB_NAME",
                 replicas=10,
                 input_stage_location="@output_stage/_temporary/",
@@ -1601,6 +1603,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
@@ -1643,6 +1646,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
@@ -1683,6 +1687,7 @@ class ModelVersionImplTest(absltest.TestCase):
         )
 
         with (
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops._session, "get_current_warehouse", return_value=None
             ) as mock_get_warehouse,
@@ -1708,6 +1713,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
@@ -1742,6 +1748,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"),  # from session since warehouse=None
                 cpu_requests=None,  # JobSpec default
                 memory_requests=None,  # JobSpec default
+                gpu_requests=None,
                 job_name="BATCH_INFERENCE_DEFAULT_UUID_1234_5678_ABCD",  # generated since job_name=None
                 replicas=None,  # JobSpec default
                 input_stage_location="@output_stage/_temporary/",

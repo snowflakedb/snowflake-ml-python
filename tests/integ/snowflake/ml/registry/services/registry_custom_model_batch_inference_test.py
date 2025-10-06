@@ -18,16 +18,16 @@ class DemoModel(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"]})
 
 
-@absltest.skip("Skipping batch inference integration test temporarily")
 class TestCustomModelBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
     @parameterized.parameters(  # type: ignore[misc]
-        {"gpu_requests": "1", "cpu_requests": None},
-        {"gpu_requests": None, "cpu_requests": None},
+        {"num_workers": 1, "replicas": 1, "cpu_requests": None},
+        {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
     )
     def test_end_to_end_pipeline(
         self,
-        gpu_requests: str,
+        replicas: int,
         cpu_requests: str,
+        num_workers: int,
     ) -> None:
         model = DemoModel(custom_model.ModelContext())
         num_cols = 2
@@ -38,24 +38,17 @@ class TestCustomModelBatchInferenceInteg(registry_model_deployment_test_base.Reg
 
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
 
-        input_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/input/"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
-
-        # Write the test data to the input stage location
-        sp_df.write.copy_into_location(
-            location=input_stage_location, file_format_type="PARQUET", header=True, overwrite=True
-        )
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_stage_location=input_stage_location,
+            input_spec=sp_df,
             output_stage_location=output_stage_location,
-            gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
-            num_workers=1,
+            num_workers=num_workers,
             service_name=f"batch_inference_{name}",
-            replicas=2,
+            replicas=replicas,
         )
 
 

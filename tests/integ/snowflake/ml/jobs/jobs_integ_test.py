@@ -1150,6 +1150,30 @@ class JobManagerTest(JobTestBase):
         job = self._submit_func_as_file(test_modin_function)
         self.assertEqual(job.wait(), "DONE", job.get_logs())
 
+    @parameterized.parameters(  # type: ignore[misc]
+        ("1.7.1"),
+        ("/snowflake/images/snowflake_images/st_plat/runtime/x86/runtime_image/snowbooks:1.7.1"),
+    )
+    def test_job_with_runtime_environment(self, runtime_environment: str) -> None:
+        job_v1 = self._submit_func_as_file(dummy_function, runtime_environment=runtime_environment)
+        self.assertEqual(job_v1.wait(), "DONE", job_v1.get_logs())
+        self.assertIn(runtime_environment, job_v1._container_spec["image"])
+
+        rows = self.session.sql("SHOW PARAMETERS LIKE 'ENABLE_EXECUTE_ML_JOB_FUNCTION'").collect()
+        if not rows or rows[0]["value"] == "false":
+            self.skipTest("ENABLE_EXECUTE_ML_JOB_FUNCTION is disabled.")
+
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_EXECUTE_ML_JOB_FUNCTION = TRUE").collect()
+            with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+                job_v2 = self._submit_func_as_file(dummy_function, runtime_environment=runtime_environment)
+                self.assertEqual(job_v2.wait(), "DONE", job_v2.get_logs())
+                self.assertIn(runtime_environment, job_v2._container_spec["image"])
+        except sp_exceptions.SnowparkSQLException:
+            self.skipTest("Unable to enable required session parameters for runtime_environment. Skipping test.")
+        finally:
+            self.session.sql("ALTER SESSION SET ENABLE_EXECUTE_ML_JOB_FUNCTION = FALSE").collect()
+
 
 if __name__ == "__main__":
     absltest.main()

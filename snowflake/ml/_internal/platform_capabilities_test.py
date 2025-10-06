@@ -200,6 +200,36 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_live_commit_enabled())
 
+    def test_enabled_set_module_functions_volatility_from_manifest_false(self) -> None:
+        """Test is_set_module_functions_volatility_from_manifest method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_set_module_functions_volatility_from_manifest())
+
+    def test_enabled_set_module_functions_volatility_from_manifest_true(self) -> None:
+        """Test is_set_module_functions_volatility_from_manifest method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_set_module_functions_volatility_from_manifest())
+
     @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
     def test_mocking(self, live_commit: bool) -> None:
         """Test mocking of platform capabilities."""
