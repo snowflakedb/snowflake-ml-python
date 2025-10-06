@@ -52,7 +52,9 @@ py_test(
     deps = [
         ":model_parameter_reconciler",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/test_utils:mock_session",
     ],
 )

@@ -1,6 +1,44 @@
 # Release History
 
-## 1.15.0
+## 1.16.0
+
+### Bug Fixes
+
+* Registry: Remove redundant pip dependency warnings when `artifact_repository_map` is provided for warehouse model deployments.
+
+### Behavior Changes
+
+### New Features
+
+* Support scikit-learn < 1.8.
+* ML Job: Added support for configuring the runtime image via `runtime_environment`
+  (image tag or full image URL) at submission time.
+  Examples:
+  * @remote(compute_pool, stage_name = 'payload_stage', runtime_environment = '1.8.0')
+  * submit_file('/path/to/repo/test.py', compute_pool, stage_name = 'payload_stage', runtime_environment = '/mydb/myschema/myrepo/myimage:latest')
+* Registry: Ability to mark model methods as `Volatility.VOLATILE` or `Volatility.IMMUTABLE`.
+
+```python
+from snowflake.ml.model.volatility import Volatility
+
+options = {
+    "embed_local_ml_library": True,
+    "relax_version": True,
+    "save_location": "/path/to/my/directory",
+    "function_type": "TABLE_FUNCTION",
+    "volatility": Volatility.IMMUTABLE,
+    "method_options": {
+        "predict": {
+            "case_sensitive": False,
+            "max_batch_size": 100,
+            "function_type": "TABLE_FUNCTION",
+            "volatility": Volatility.VOLATILE,
+        },
+}
+
+````
+
+## 1.15.0 (09-29-2025)
 
 ### Bug Fixes
 

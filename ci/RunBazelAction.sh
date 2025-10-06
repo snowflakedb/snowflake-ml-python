@@ -163,7 +163,6 @@ local_all)
     ;;
 perf)
     cache_test_results="--cache_test_results=no"
-
     query_expr='kind(".*_test rule", //tests/perf/...)'
 
     if [[ -n "${USER_LDAP:-}" ]]; then
@@ -215,6 +214,10 @@ if [ ${#groups[@]} -eq 0 ]; then
     exit 1
 fi
 
+# Identify non-python test targets that should always run with core
+non_python_test_targets_file="${working_dir}/non_python_test_targets"
+"${bazel}" query 'kind(".*_test rule", set('"$(<"${all_test_targets_file}")"')) - kind("py_test rule", set('"$(<"${all_test_targets_file}")"'))' >"${non_python_test_targets_file}"
+
 # Create files for each group's targets
 # Create arrays for each group's files and exit codes
 group_test_targets_files=()
@@ -247,14 +250,26 @@ core_targets_file="${working_dir}/core_targets"
 comm -2 -3 <(sort "${all_test_targets_file}") \
     <(sort "${working_dir}/filtered_targets") >"${core_targets_file}"
 
+# Always include non-python test targets in core group
+if [[ -s "${non_python_test_targets_file}" ]]; then
+    cat "${non_python_test_targets_file}" >> "${core_targets_file}"
+    sort -u "${core_targets_file}" -o "${core_targets_file}"
+fi
+
 # Remove core-compatible targets from other groups
 for i in "${!groups[@]}"; do
     group="${groups[$i]}"
     # Create temporary file for filtered targets
     filtered_file="${working_dir}/${group}_filtered"
-    # Keep only targets that are not in core_targets
+    # Keep only targets that are not in core_targets or non-python targets
     comm -2 -3 <(sort "${group_test_targets_files[$i]}") \
         <(sort "${core_targets_file}") >"${filtered_file}"
+    # Remove non-python test targets from other groups since they should only run with core
+    if [[ -s "${non_python_test_targets_file}" ]]; then
+        comm -2 -3 <(sort "${filtered_file}") \
+            <(sort "${non_python_test_targets_file}") >"${filtered_file}.tmp"
+        mv "${filtered_file}.tmp" "${filtered_file}"
+    fi
     # Replace original file with filtered results
     mv "${filtered_file}" "${group_test_targets_files[$i]}"
 done
@@ -275,11 +290,14 @@ if [[ "${action}" = "test" ]]; then
     # Run tests for each group
     for i in "${!groups[@]}"; do
         group="${groups[$i]}"
+        # Set default test output verbosity (can be overridden via BAZEL_TEST_OUTPUT)
+        TEST_OUTPUT_FLAG="--test_output=${BAZEL_TEST_OUTPUT:-errors}"
         "${bazel}" test \
+            --jobs=8 \
+            --local_test_jobs=8 \
             --config="${group}" \
             "${cache_test_results}" \
-            --test_output=errors \
-            --flaky_test_attempts=2 \
+            ${TEST_OUTPUT_FLAG} \
             ${action_env[@]+"${action_env[@]}"} \
             "${tag_filter}" \
             --target_pattern_file "${group_test_targets_files[$i]}"

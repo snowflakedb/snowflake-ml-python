@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
 INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
+SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST = "SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST"
 
 
 class PlatformCapabilities:
@@ -72,6 +73,9 @@ class PlatformCapabilities:
 
     def is_inlined_deployment_spec_enabled(self) -> bool:
         return self._is_version_feature_enabled(INLINE_DEPLOYMENT_SPEC_PARAMETER)
+
+    def is_set_module_functions_volatility_from_manifest(self) -> bool:
+        return self._get_bool_feature(SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST, False)
 
     def is_live_commit_enabled(self) -> bool:
         return self._get_bool_feature(LIVE_COMMIT_PARAMETER, False)

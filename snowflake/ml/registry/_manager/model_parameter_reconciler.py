@@ -11,6 +11,7 @@ from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import target_platform, type_hints as model_types
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model.volatility import DEFAULT_VOLATILITY_BY_MODEL_TYPE, Volatility
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -34,6 +35,7 @@ class ModelParameterReconciler:
 
     def __init__(
         self,
+        model: model_types.SupportedModelType,
         session: Session,
         database_name: sql_identifier.SqlIdentifier,
         schema_name: sql_identifier.SqlIdentifier,
@@ -45,6 +47,7 @@ class ModelParameterReconciler:
         python_version: Optional[str] = None,
         statement_params: Optional[dict[str, str]] = None,
     ) -> None:
+        self._model = model
         self._session = session
         self._database_name = database_name
         self._schema_name = schema_name
@@ -67,6 +70,7 @@ class ModelParameterReconciler:
         reconciled_target_platforms = self._reconcile_target_platforms()
         reconciled_options = self._reconcile_explainability_options(reconciled_target_platforms)
         reconciled_options = self._reconcile_relax_version(reconciled_options, reconciled_target_platforms)
+        reconciled_options = self._reconcile_volatility_defaults(reconciled_options)  # ADD THIS LINE
 
         return ReconciledParameters(
             conda_dependencies=self._conda_dependencies,
@@ -290,5 +294,28 @@ class ModelParameterReconciler:
                     "targeting only Snowpark Container Services."
                 ),
             )
+
+        return options
+
+    def _get_default_volatility_for_model(self, model: model_types.SupportedModelType) -> Volatility:
+        """Get default volatility for a model based on its type."""
+        from snowflake.ml.model._packager import model_handler
+
+        handler = model_handler.find_handler(model)
+        # default to IMMUTABLE if no handler found or handler type not in defaults
+        if not handler or handler.HANDLER_TYPE not in DEFAULT_VOLATILITY_BY_MODEL_TYPE:
+            return Volatility.IMMUTABLE
+        return DEFAULT_VOLATILITY_BY_MODEL_TYPE[handler.HANDLER_TYPE]
+
+    def _reconcile_volatility_defaults(self, options: model_types.ModelSaveOption) -> model_types.ModelSaveOption:
+        """Set global default volatility based on model type."""
+
+        # Skip if default_volatility is already explicitly set
+        if "volatility" in options:
+            return options
+
+        # Get default volatility for this model type
+        default_volatility = self._get_default_volatility_for_model(self._model)
+        options["volatility"] = default_volatility
 
         return options

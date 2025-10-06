@@ -152,9 +152,26 @@ class ModelEnvTest(absltest.TestCase):
             (
                 "Dependencies specified from pip requirements."
                 " This may prevent model deploying to Snowflake Warehouse."
+                " Use 'artifact_repository_map' to deploy the model to Warehouse."
             ),
         ):
             env.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
+            self.assertListEqual(env.conda_dependencies, [])
+            self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
+
+        env = model_env.ModelEnv()
+        env.pip_requirements = ["some-package==1.0.1"]
+        env.artifact_repository_map = {"channel": "db.sc.repo"}
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            env.include_if_absent([model_env.ModelDependency(requirement="some-package", pip_name="some-package")])
+
+            # Check that pip requirements warning is suppressed with artifact_repository_map
+            pip_warnings = [
+                warning for warning in w if "Dependencies specified from pip requirements" in str(warning.message)
+            ]
+            self.assertEqual(len(pip_warnings), 0)
             self.assertListEqual(env.conda_dependencies, [])
             self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
 
@@ -881,6 +898,26 @@ class ModelEnvTest(absltest.TestCase):
                 env.load_from_conda_file(env_file_path)
 
             self.assertListEqual(env.conda_dependencies, ["conda-forge::pytorch!=2.0", "numpy>=1.22.4"])
+
+            env = model_env.ModelEnv()
+            env.artifact_repository_map = {"channel": "db.sc.repo"}
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                env.load_from_conda_file(env_file_path)
+
+                # Check that only pip requirements warning is suppressed
+                pip_warnings = [
+                    warning
+                    for warning in w
+                    if "Found dependencies specified as pip requirements" in str(warning.message)
+                ]
+                self.assertEqual(len(pip_warnings), 0)
+
+                # Non-Snowflake channel warnings should still be present
+                channel_warnings = [warning for warning in w if "non-Snowflake channel" in str(warning.message)]
+                self.assertGreater(len(channel_warnings), 0)
+
+            self.assertListEqual(env.conda_dependencies, ["conda-forge::pytorch!=2.0", "numpy>=1.22.4"])
             self.assertIn("apple", env._conda_dependencies)
             self.assertListEqual(env.pip_requirements, ["python-package"])
             self.assertEqual(env.python_version, "3.10")
@@ -934,6 +971,22 @@ class ModelEnvTest(absltest.TestCase):
                 ),
             ):
                 env.load_from_pip_file(pip_file_path)
+
+            self.assertListEqual(env.pip_requirements, ["numpy==1.22.4", "python-package"])
+
+            env = model_env.ModelEnv()
+            env.artifact_repository_map = {"channel": "db.sc.repo"}
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                env.load_from_pip_file(pip_file_path)
+
+                # Check that pip requirements warning is suppressed with artifact_repository_map
+                pip_warnings = [
+                    warning
+                    for warning in w
+                    if "Found dependencies specified as pip requirements" in str(warning.message)
+                ]
+                self.assertEqual(len(pip_warnings), 0)
 
             self.assertListEqual(env.pip_requirements, ["numpy==1.22.4", "python-package"])
 
@@ -1248,7 +1301,8 @@ class ModelEnvTest(absltest.TestCase):
             self.assertEqual(
                 str(pip_warnings[0].message),
                 "Dependencies specified from pip requirements."
-                " This may prevent model deploying to Snowflake Warehouse.",
+                " This may prevent model deploying to Snowflake Warehouse."
+                " Use 'artifact_repository_map' to deploy the model to Warehouse.",
             )
 
     def test_load_from_dict_warnings(self) -> None:
@@ -1294,8 +1348,23 @@ class ModelEnvTest(absltest.TestCase):
                 self.assertEqual(
                     str(pip_warnings[0].message),
                     "Found dependencies specified as pip requirements."
-                    " This may prevent model deploying to Snowflake Warehouse.",
+                    " This may prevent model deploying to Snowflake Warehouse."
+                    " Use 'artifact_repository_map' to deploy the model to Warehouse.",
                 )
+
+            # Test with artifact_repository_map - no warnings should be raised
+            env_dict_with_repo: model_meta_schema.ModelEnvDict = {
+                "conda": "conda.yml",
+                "pip": "requirements.txt",
+                "python_version": "3.10",
+                "snowpark_ml_version": "1.1.0",
+                "artifact_repository_map": {"channel": "db.sc.repo"},
+            }
+
+            env_with_repo = model_env.ModelEnv()
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                env_with_repo.load_from_dict(pathlib.Path(tmpdir), env_dict_with_repo)
 
 
 if __name__ == "__main__":

@@ -8,8 +8,10 @@ from snowflake.ml._internal import env_utils
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model.custom_model import CustomModel
+from snowflake.ml.model.volatility import Volatility
 from snowflake.ml.registry._manager import model_parameter_reconciler
-from snowflake.ml.test_utils import mock_session
+from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import Session
 
 
@@ -24,7 +26,10 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
     def _create_reconciler(self, **kwargs: Any) -> model_parameter_reconciler.ModelParameterReconciler:
         """Helper to create reconciler with default context."""
         mock_session = kwargs.get("session", mock.MagicMock())
+        # Create a default mock model if none provided
+        default_model = kwargs.get("model", self._create_mock_model(CustomModel))
         return model_parameter_reconciler.ModelParameterReconciler(
+            model=default_model,
             session=mock_session,
             database_name=kwargs.get("database_name", self.database_name),
             schema_name=kwargs.get("schema_name", self.schema_name),
@@ -36,6 +41,11 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             python_version=kwargs.get("python_version"),
             statement_params=kwargs.get("statement_params"),
         )
+
+    def _create_mock_model(self, model_type: type[Any]) -> Any:
+        """Create a mock custom model for testing."""
+        mock_model = mock.MagicMock(spec=model_type)
+        return mock_model
 
     def test_artifact_repository_map_none(self) -> None:
         """Test that None artifact_repository_map returns None."""
@@ -455,6 +465,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         c_session = cast(Session, m_session)
 
         reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            model=self._create_mock_model(CustomModel),
             session=c_session,
             database_name=self.database_name,
             schema_name=self.schema_name,
@@ -495,6 +506,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
 
         if disable_explainability:
             reconciler = model_parameter_reconciler.ModelParameterReconciler(
+                model=self._create_mock_model(CustomModel),
                 session=c_session,
                 database_name=self.database_name,
                 schema_name=self.schema_name,
@@ -535,6 +547,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         c_session = cast(Session, m_session)
 
         reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            model=self._create_mock_model(CustomModel),
             session=c_session,
             database_name=self.database_name,
             schema_name=self.schema_name,
@@ -557,6 +570,39 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                     mock_get_versions.assert_not_called()
                 else:
                     mock_get_versions.assert_called_once()
+
+    def test_user_model_volatility_reconciled(self) -> None:
+        """Test that models' volatility is reconciled correctly."""
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        c_session = cast(Session, m_session)
+
+        # Mock the information schema query that checks for snowflake-ml-python versions
+        query = """
+                SELECT PACKAGE_NAME, VERSION
+                FROM information_schema.packages
+                WHERE (package_name = 'snowflake-ml-python')
+                AND language = 'python'
+                AND (runtime_version = '3.10'
+                    OR runtime_version is null);
+                """
+        # Return empty result to indicate no matching versions found (which triggers local ML library embedding)
+        sql_result: list[Any] = []
+        m_session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result))
+
+        reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            model=self._create_mock_model(CustomModel),
+            session=c_session,
+            database_name=self.database_name,
+            schema_name=self.schema_name,
+            conda_dependencies=None,
+            pip_requirements=None,
+            target_platforms=None,
+            options=None,
+        )
+
+        result = reconciler.reconcile()
+        assert result.options is not None
+        self.assertEqual(result.options.get("volatility"), Volatility.VOLATILE)
 
 
 if __name__ == "__main__":

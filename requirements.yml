@@ -97,7 +97,7 @@
   # Skipping version requirements as it should come as part of connector.
   # Only used in connection_params.py, which is an util library anyways.
 - name: coverage
-  dev_version: 7.2.2
+  dev_version: 7.6.1
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask
@@ -178,10 +178,6 @@
   dev_version: 7.4.0
   tags:
     - build_test_env
-- name: pytest-rerunfailures
-  dev_version: 12.0
-  tags:
-    - build_test_env
 - name: pytest-timeout
   dev_version: 2.2.0
   tags:
@@ -217,7 +213,7 @@
   version_requirements: '>=2024.6.1,<2026'
 - name: scikit-learn
   dev_version: 1.5.1
-  version_requirements: <1.7
+  version_requirements: <1.8
   tags:
     - build_essential
 - name: scipy

@@ -4,6 +4,7 @@ from typing import Optional, TypedDict, Union
 
 from typing_extensions import NotRequired
 
+from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
@@ -12,6 +13,7 @@ from snowflake.ml.model._model_composer.model_method import (
     function_generator,
 )
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
+from snowflake.ml.model.volatility import Volatility
 from snowflake.snowpark._internal import type_utils
 
 
@@ -20,10 +22,12 @@ class ModelMethodOptions(TypedDict):
 
     case_sensitive: Specify when the name of the method should be considered as case sensitive when registered to SQL.
     function_type: One of `ModelMethodFunctionTypes` specifying function type.
+    volatility: One of `Volatility` enum values specifying function volatility.
     """
 
     case_sensitive: NotRequired[bool]
     function_type: NotRequired[str]
+    volatility: NotRequired[Volatility]
 
 
 def get_model_method_options_from_options(
@@ -38,10 +42,19 @@ def get_model_method_options_from_options(
     if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:
         raise NotImplementedError(f"Function type {function_type} is not supported.")
 
-    return ModelMethodOptions(
+    default_volatility = options.get("volatility")
+    method_volatility = method_option.get("volatility")
+    resolved_volatility = method_volatility or default_volatility
+
+    # Only include volatility if explicitly provided in method options
+    result: ModelMethodOptions = ModelMethodOptions(
         case_sensitive=method_option.get("case_sensitive", False),
         function_type=function_type,
     )
+    if resolved_volatility:
+        result["volatility"] = resolved_volatility
+
+    return result
 
 
 class ModelMethod:
@@ -93,6 +106,9 @@ class ModelMethod:
         self.function_type = self.options.get(
             "function_type", model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
         )
+
+        # Volatility is optional; when not provided, we omit it from the manifest
+        self.volatility = self.options.get("volatility")
 
     @staticmethod
     def _get_method_arg_from_feature(
@@ -148,7 +164,7 @@ class ModelMethod:
         else:
             outputs = [model_manifest_schema.ModelMethodSignatureField(type="OBJECT")]
 
-        return model_manifest_schema.ModelFunctionMethodDict(
+        method_dict = model_manifest_schema.ModelFunctionMethodDict(
             name=self.method_name.resolved(),
             runtime=self.runtime_name,
             type=self.function_type,
@@ -158,3 +174,10 @@ class ModelMethod:
             inputs=input_list,
             outputs=outputs,
         )
+        should_set_volatility = (
+            platform_capabilities.PlatformCapabilities.get_instance().is_set_module_functions_volatility_from_manifest()
+        )
+        if should_set_volatility and self.volatility is not None:
+            method_dict["volatility"] = self.volatility.name
+
+        return method_dict

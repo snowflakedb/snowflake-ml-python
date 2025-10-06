@@ -15,6 +15,7 @@ from typing_extensions import NotRequired
 
 from snowflake.ml.model.target_platform import TargetPlatform
 from snowflake.ml.model.task import Task
+from snowflake.ml.model.volatility import Volatility
 
 if TYPE_CHECKING:
     import catboost
@@ -150,6 +151,7 @@ class ModelMethodSaveOptions(TypedDict):
     case_sensitive: NotRequired[bool]
     max_batch_size: NotRequired[int]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
+    volatility: NotRequired[Volatility]
 
 
 class BaseModelSaveOption(TypedDict):
@@ -158,12 +160,23 @@ class BaseModelSaveOption(TypedDict):
     embed_local_ml_library: Embedding local SnowML into the code directory of the folder.
     relax_version: Whether or not relax the version constraints of the dependencies if unresolvable in Warehouse.
         It detects any ==x.y.z in specifiers and replaced with >=x.y, <(x+1). Defaults to True.
+    function_type: Set the method function type globally. To set method function types individually see
+        function_type in method_options.
+    volatility: Set the volatility for all model methods globally. To set volatility for individual methods
+        see volatility in method_options. Defaults are set automatically based on model type: supported
+        models (sklearn, xgboost, pytorch, huggingface_pipeline, mlflow, etc.) default to IMMUTABLE, while
+        custom models default to VOLATILE. When both global volatility and per-method volatility are specified,
+        the per-method volatility takes precedence.
+    method_options: Per-method saving options. This dictionary has method names as keys and dictionary
+        values with the desired options.
+    enable_explainability: Whether to enable explainability features for the model.
     save_location: Local directory path to save the model and metadata.
     """
 
     embed_local_ml_library: NotRequired[bool]
     relax_version: NotRequired[bool]
     function_type: NotRequired[Literal["FUNCTION", "TABLE_FUNCTION"]]
+    volatility: NotRequired[Volatility]
     method_options: NotRequired[dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
     save_location: NotRequired[str]
