@@ -1,8 +1,7 @@
-import uuid
-
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.jobs import delete_job, get_job
 from snowflake.ml.model import custom_model
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -15,40 +14,127 @@ class DemoModel(custom_model.CustomModel):
 
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame({"output": input["c1"]})
+        return pd.DataFrame({"output": input["C1"]})
 
 
 class TestCustomModelBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+    def _prepare_test(self):
+        model = DemoModel(custom_model.ModelContext())
+        num_cols = 2
+
+        # Create input data
+        input_data = [[0] * num_cols, [1] * num_cols]
+        input_cols = [f"C{i}" for i in range(num_cols)]
+
+        # Create pandas DataFrame
+        input_pandas_df = pd.DataFrame(input_data, columns=input_cols)
+
+        # Generate expected predictions using the original model
+        model_output = model.predict(input_pandas_df[input_cols])
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
+
+        # Create sample input data without INDEX column for model signature
+        sp_df = self.session.create_dataframe(input_data, schema=input_cols)
+
+        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+
+        return model, service_name, output_stage_location, input_spec, expected_predictions, sp_df
+
     @parameterized.parameters(  # type: ignore[misc]
         {"num_workers": 1, "replicas": 1, "cpu_requests": None},
         {"num_workers": 2, "replicas": 2, "cpu_requests": "4"},
     )
-    def test_end_to_end_pipeline(
+    def test_custom_model(
         self,
         replicas: int,
         cpu_requests: str,
         num_workers: int,
     ) -> None:
-        model = DemoModel(custom_model.ModelContext())
-        num_cols = 2
-
-        sp_df = self.session.create_dataframe(
-            [[0] * num_cols, [1] * num_cols], schema=[f'"c{i}"' for i in range(num_cols)]
-        )
-
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        model, service_name, output_stage_location, input_spec, expected_predictions, sp_df = self._prepare_test()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_spec=sp_df,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,
-            service_name=f"batch_inference_{name}",
+            service_name=service_name,
             replicas=replicas,
+            function_name="predict",
+            expected_predictions=expected_predictions,
+        )
+
+    def test_mljob_api(self) -> None:
+        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+
+        replicas = 2
+
+        job = self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            input_spec=input_spec,
+            output_stage_location=output_stage_location,
+            cpu_requests=None,
+            replicas=replicas,
+            service_name=service_name,
+            blocking=False,
+        )
+
+        self.assertEqual(job.id, f"{self._test_db}.{self._test_schema}.{service_name}")
+        self.assertEqual(job.min_instances, 1)
+        self.assertEqual(job.target_instances, replicas)
+        self.assertIn(job.status, ["PENDING", "RUNNING"])
+        self.assertEqual(job.name, service_name)
+
+        # We just wanted to make sure the log functoin don't throw exceptions
+        job.get_logs()
+        job.show_logs()
+
+        job.cancel()
+        job.wait()  # wait until it is cancelled otherwise the job might be still pending
+        self.assertEqual(job.status, "CANCELLED")
+
+    def test_mljob_job_manager(self) -> None:
+        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+
+        job = self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            input_spec=input_spec,
+            output_stage_location=output_stage_location,
+            cpu_requests=None,
+            service_name=service_name,
+            blocking=False,
+        )
+
+        # the same job in another MLJob wrapper
+        job2 = get_job(job.id)
+        delete_job(job2)
+
+        # the job will not be queryable any more
+        try:
+            job2.wait()
+        except Exception as e:
+            error_message = str(e)
+            self.assertIn("does not exist or not authorized", error_message)
+
+    def test_default_system_compute_pool(
+        self,
+    ) -> None:
+        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+
+        self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            input_spec=input_spec,
+            output_stage_location=output_stage_location,
+            service_name=service_name,
+            replicas=2,
+            function_name="predict",
+            service_compute_pool="SYSTEM_COMPUTE_POOL_CPU",
         )
 
 

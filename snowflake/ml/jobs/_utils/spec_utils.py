@@ -104,7 +104,7 @@ def _get_image_spec(
             image_tag = runtime_environment
         else:
             container_image = runtime_environment
-    elif feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
+    elif feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
         container_image = _get_runtime_image(session, hardware)  # type: ignore[arg-type]
 
     container_image = container_image or f"{image_repo}/{image_name}:{image_tag}"
@@ -266,6 +266,7 @@ def generate_service_spec(
             {"name": "ray-client-server-endpoint", "port": 10001, "protocol": "TCP"},
             {"name": "ray-gcs-endpoint", "port": 12001, "protocol": "TCP"},
             {"name": "ray-dashboard-grpc-endpoint", "port": 12002, "protocol": "TCP"},
+            {"name": "ray-dashboard-endpoint", "port": 12003, "protocol": "TCP"},
             {"name": "ray-object-manager-endpoint", "port": 12011, "protocol": "TCP"},
             {"name": "ray-node-manager-endpoint", "port": 12012, "protocol": "TCP"},
             {"name": "ray-runtime-agent-endpoint", "port": 12013, "protocol": "TCP"},

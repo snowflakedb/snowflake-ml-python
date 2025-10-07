@@ -21,6 +21,7 @@ from snowflake.ml.jobs._utils import (
     spec_utils,
     types,
 )
+from snowflake.snowpark._internal import utils as sp_utils
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.functions import coalesce, col, lit, when
@@ -179,8 +180,10 @@ def get_job(job_id: str, session: Optional[snowpark.Session] = None) -> jb.MLJob
         _ = job._service_spec
         return job
     except SnowparkSQLException as e:
-        if "does not exist" in e.message:
-            raise ValueError(f"Job does not exist: {job_id}") from e
+        if e.sql_error_code == 2003:
+            job = jb.MLJob[Any](job_id, session=session)
+            _ = job.status
+            return job
         raise
 
 
@@ -446,7 +449,7 @@ def _submit_job(
     Raises:
         ValueError: If database or schema value(s) are invalid
         RuntimeError: If schema is not specified in session context or job submission
-        snowpark.exceptions.SnowparkSQLException: if failed to upload payload
+        SnowparkSQLException: if failed to upload payload
     """
     session = _ensure_session(session)
 
@@ -512,49 +515,44 @@ def _submit_job(
         uploaded_payload = payload_utils.JobPayload(
             source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=imports
         ).upload(session, stage_path)
-    except snowpark.exceptions.SnowparkSQLException as e:
+    except SnowparkSQLException as e:
         if e.sql_error_code == 90106:
             raise RuntimeError(
                 "Please specify a schema, either in the session context or as a parameter in the job submission"
             )
         raise
 
-    # FIXME: Temporary patches, remove this after v1 is deprecated
-    if target_instances > 1:
-        default_spec_overrides = {
-            "spec": {
-                "endpoints": [
-                    {"name": "ray-dashboard-endpoint", "port": 12003, "protocol": "TCP"},
-                ]
-            },
-        }
-        if spec_overrides:
-            spec_overrides = spec_utils.merge_patch(
-                default_spec_overrides, spec_overrides, display_name="spec_overrides"
-            )
-        else:
-            spec_overrides = default_spec_overrides
-
-    if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled():
+    if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled(default=True):
         # Add default env vars (extracted from spec_utils.generate_service_spec)
         combined_env_vars = {**uploaded_payload.env_vars, **(env_vars or {})}
 
-        return _do_submit_job_v2(
-            session=session,
-            payload=uploaded_payload,
-            args=args,
-            env_vars=combined_env_vars,
-            spec_overrides=spec_overrides,
-            compute_pool=compute_pool,
-            job_id=job_id,
-            external_access_integrations=external_access_integrations,
-            query_warehouse=query_warehouse,
-            target_instances=target_instances,
-            min_instances=min_instances,
-            enable_metrics=enable_metrics,
-            use_async=True,
-            runtime_environment=runtime_environment,
-        )
+        try:
+            return _do_submit_job_v2(
+                session=session,
+                payload=uploaded_payload,
+                args=args,
+                env_vars=combined_env_vars,
+                spec_overrides=spec_overrides,
+                compute_pool=compute_pool,
+                job_id=job_id,
+                external_access_integrations=external_access_integrations,
+                query_warehouse=query_warehouse,
+                target_instances=target_instances,
+                min_instances=min_instances,
+                enable_metrics=enable_metrics,
+                use_async=True,
+                runtime_environment=runtime_environment,
+            )
+        except SnowparkSQLException as e:
+            if not (e.sql_error_code == 90237 and sp_utils.is_in_stored_procedure()):  # type: ignore[no-untyped-call]
+                raise
+            # SNOW-2390287: SYSTEM$EXECUTE_ML_JOB() is erroneously blocked in owner's rights
+            # stored procedures. This will be fixed in an upcoming release.
+            logger.warning(
+                "Job submission using V2 failed with error {}. Falling back to V1.".format(
+                    str(e).split("\n", 1)[0],
+                )
+            )
 
     # Fall back to v1
     # Generate service spec
@@ -688,7 +686,7 @@ def _do_submit_job_v2(
     # for the image tag or full image URL, we use that directly
     if runtime_environment:
         spec_options["RUNTIME"] = runtime_environment
-    elif feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.is_enabled():
+    elif feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
         # when feature flag is enabled, we get the local python version and wrap it in a dict
         # in system function, we can know whether it is python version or image tag or full image URL through the format
         spec_options["RUNTIME"] = json.dumps({"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"})

@@ -1,6 +1,7 @@
 import uuid
 
 import inflection
+import pandas as pd
 import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
@@ -31,7 +32,12 @@ class TestXGBoostBatchInferenceInteg(registry_model_deployment_test_base.Registr
         regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
         regressor.fit(cal_X_train, cal_y_train)
 
-        sp_df = self.session.create_dataframe(cal_X_test)
+        # Generate expected predictions using the original model
+        model_output = regressor.predict(cal_X_test)
+        model_output_df = pd.DataFrame({"output_feature_0": model_output})
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(cal_X_test, model_output_df)
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
 
@@ -43,7 +49,7 @@ class TestXGBoostBatchInferenceInteg(registry_model_deployment_test_base.Registr
                 if gpu_requests
                 else {"enable_explainability": False}
             ),
-            input_spec=sp_df,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
@@ -51,6 +57,7 @@ class TestXGBoostBatchInferenceInteg(registry_model_deployment_test_base.Registr
             num_workers=1,
             service_name=f"batch_inference_{name}",
             replicas=2,
+            expected_predictions=expected_predictions,
         )
 
 

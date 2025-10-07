@@ -268,7 +268,7 @@ def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_sp
                 # can't handle directories. Reduce the number of PUT operations by using
                 # wildcard patterns to batch upload files with the same extension.
                 upload_path_patterns = set()
-                for p in source_path.resolve().rglob("*"):
+                for p in source_path.rglob("*"):
                     if p.is_dir():
                         continue
                     if p.name.startswith("."):

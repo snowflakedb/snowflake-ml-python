@@ -7,7 +7,7 @@ from snowflake.ml._internal import env
 from snowflake.ml.jobs import remote
 from snowflake.snowpark import DataFrame
 from snowflake.snowpark.context import get_active_session
-from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
+from tests.integ.snowflake.ml.jobs.job_test_base import ModelingJobTestBase
 
 TEST_TABLE_NAME = "MULTINODE_CPU_LIGHTGBM_TRAIN_DS"
 
@@ -29,7 +29,7 @@ def split_dataset(snowpark_df: DataFrame) -> tuple[DataFrame, DataFrame, str, li
     return train_df, test_df, label_col, feature_cols
 
 
-class LightGBMDistributedTest(JobTestBase):
+class LightGBMDistributedTest(ModelingJobTestBase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()

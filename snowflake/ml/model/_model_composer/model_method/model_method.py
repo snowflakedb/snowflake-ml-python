@@ -11,6 +11,7 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from snowflake.ml.model._model_composer.model_method import (
     constants,
     function_generator,
+    utils,
 )
 from snowflake.ml.model._packager.model_meta import model_meta as model_meta_api
 from snowflake.ml.model.volatility import Volatility
@@ -34,9 +35,13 @@ def get_model_method_options_from_options(
     options: type_hints.ModelSaveOption, target_method: str
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+    method_option = options.get("method_options", {}).get(target_method, {})
+    case_sensitive = method_option.get("case_sensitive", False)
     if target_method == "explain":
         default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
-    method_option = options.get("method_options", {}).get(target_method, {})
+        case_sensitive = utils.determine_explain_case_sensitive_from_method_options(
+            options.get("method_options", {}), target_method
+        )
     global_function_type = options.get("function_type", default_function_type)
     function_type = method_option.get("function_type", global_function_type)
     if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:
@@ -48,7 +53,7 @@ def get_model_method_options_from_options(
 
     # Only include volatility if explicitly provided in method options
     result: ModelMethodOptions = ModelMethodOptions(
-        case_sensitive=method_option.get("case_sensitive", False),
+        case_sensitive=case_sensitive,
         function_type=function_type,
     )
     if resolved_volatility:

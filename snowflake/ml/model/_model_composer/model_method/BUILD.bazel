@@ -22,6 +22,11 @@ py_library(
 )
 
 py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+)
+
+py_library(
     name = "function_generator",
     srcs = ["function_generator.py"],
     data = [
@@ -53,6 +58,7 @@ py_library(
     deps = [
         ":constants",
         ":function_generator",
+        ":utils",
         "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:model_signature",

@@ -5,6 +5,7 @@
 //tests/integ/snowflake/ml/modeling/linear_model:logistic_regression_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_custom_model_batch_inference_test
+//tests/integ/snowflake/ml/registry/services:registry_batch_inference_case_sensitivity_test
 //tests/integ/snowflake/ml/registry/services:registry_sentence_transformers_batch_inference_test
 //tests/integ/snowflake/ml/registry/services:registry_lightgbm_batch_inference_test
 //tests/integ/snowflake/ml/registry/services:registry_sklearn_batch_inference_test

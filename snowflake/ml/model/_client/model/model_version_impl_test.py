@@ -21,7 +21,7 @@ from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
-from snowflake.snowpark import Session
+from snowflake.snowpark import Session, row
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -286,6 +286,7 @@ class ModelVersionImplTest(absltest.TestCase):
             self.m_mv.run(m_df)
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict"')
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -300,6 +301,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                explain_case_sensitive=False,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
@@ -317,6 +319,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                explain_case_sensitive=False,
             )
 
     def test_run_without_method_name(self) -> None:
@@ -336,6 +339,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.m_mv._functions = m_methods
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self._add_show_versions_mock()
             self.m_mv.run(m_df)
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -350,6 +354,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                explain_case_sensitive=False,
             )
 
     def test_run_strict(self) -> None:
@@ -369,6 +374,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.m_mv._functions = m_methods
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self._add_show_versions_mock()
             self.m_mv.run(m_df, strict_input_validation=True)
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -383,6 +389,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                explain_case_sensitive=False,
             )
 
     def test_run_table_function_method(self) -> None:
@@ -410,6 +417,7 @@ class ModelVersionImplTest(absltest.TestCase):
         self.m_mv._functions = m_methods
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_table"')
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict_table"',
@@ -424,9 +432,11 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_table"', partition_column="PARTITION_COLUMN")
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict_table"',
@@ -441,6 +451,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column="PARTITION_COLUMN",
                 statement_params=mock.ANY,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
 
     def test_run_table_function_method_no_partition(self) -> None:
@@ -467,7 +478,22 @@ class ModelVersionImplTest(absltest.TestCase):
         ]
         self.m_mv._functions = m_methods
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec",
+                return_value={
+                    "model_type": "huggingface_pipeline",
+                    "models": {
+                        "model1": {
+                            "model_type": "huggingface_pipeline",
+                            "options": {"task": "text-generation"},
+                        }
+                    },
+                },
+            ),
+        ):
             self.m_mv.run(m_df, function_name='"explain_table"')
             mock_invoke_method.assert_called_once_with(
                 method_name='"explain_table"',
@@ -482,6 +508,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_column=None,
                 statement_params=mock.ANY,
                 is_partitioned=False,
+                explain_case_sensitive=False,
             )
 
     def test_run_service(self) -> None:
@@ -1468,6 +1495,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=None,
             )
 
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
         # Test failure case - not a HuggingFace model
         with mock.patch.object(
             self.m_mv._model_ops,
@@ -1483,6 +1513,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 "Inference engine is only supported for HuggingFace text-generation models", str(cm.exception)
             )
             self.assertIn("Found model_type: sklearn", str(cm.exception))
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
 
         # Test failure case - HuggingFace model but wrong task
         with mock.patch.object(
@@ -1502,6 +1535,9 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._check_huggingface_text_generation_model()
             self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
             self.assertIn("Found task(s): image-classification", str(cm.exception))
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
 
         # Test failure case - HuggingFace model with no task
         with mock.patch.object(
@@ -1757,6 +1793,28 @@ class ModelVersionImplTest(absltest.TestCase):
                 completion_filename="_SUCCESS",  # OutputSpec default
                 statement_params=mock.ANY,
             )
+
+    def _add_show_versions_mock(self) -> None:
+        current_dir = os.path.dirname(__file__)
+        data_file_path = os.path.join(current_dir, "sample_model_spec.yaml")
+        with open(data_file_path) as f:
+            model_spec = f.read()
+        model_attributes = """{
+            "framework":"sklearn",
+            "task":"TABULAR_BINARY_CLASSIFICATION",
+            "client":"snowflake-ml-python 1.7.5"}"""
+        sql_result = [
+            row.Row(
+                name='"v1"',
+                comment=None,
+                metadata={},
+                model_spec=model_spec,
+                model_attributes=model_attributes,
+            ),
+        ]
+        self.m_session.add_mock_sql(
+            "SHOW VERSIONS LIKE 'v1' IN MODEL TEMP.\"test\".MODEL", result=mock_data_frame.MockDataFrame(sql_result)
+        )
 
 
 if __name__ == "__main__":

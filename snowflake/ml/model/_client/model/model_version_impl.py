@@ -19,7 +19,9 @@ from snowflake.ml.model._client.model import (
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._model_composer.model_method import utils as model_method_utils
 from snowflake.ml.model._packager.model_handlers import snowmlmodel
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
@@ -41,6 +43,7 @@ class ModelVersion(lineage_node.LineageNode):
     _model_name: sql_identifier.SqlIdentifier
     _version_name: sql_identifier.SqlIdentifier
     _functions: list[model_manifest_schema.ModelFunctionInfo]
+    _model_spec: Optional[model_meta_schema.ModelMetadataDict]
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -150,6 +153,7 @@ class ModelVersion(lineage_node.LineageNode):
         self._model_name = model_name
         self._version_name = version_name
         self._functions = self._get_functions()
+        self._model_spec = None
         super(cls, cls).__init__(
             self,
             session=model_ops._session,
@@ -437,6 +441,26 @@ class ModelVersion(lineage_node.LineageNode):
         """
         return self._functions
 
+    def _get_model_spec(self, statement_params: Optional[dict[str, Any]] = None) -> model_meta_schema.ModelMetadataDict:
+        """Fetch and cache the model spec for this model version.
+
+        Args:
+            statement_params: Optional dictionary of statement parameters to include
+                in the SQL command to fetch the model spec.
+
+        Returns:
+            The model spec as a dictionary for this model version.
+        """
+        if self._model_spec is None:
+            self._model_spec = self._model_ops._fetch_model_spec(
+                database_name=None,
+                schema_name=None,
+                model_name=self._model_name,
+                version_name=self._version_name,
+                statement_params=statement_params,
+            )
+        return self._model_spec
+
     @overload
     def run(
         self,
@@ -531,6 +555,8 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
             )
         else:
+            explain_case_sensitive = self._determine_explain_case_sensitivity(target_function_info, statement_params)
+
             return self._model_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
                 method_function_type=target_function_info["target_method_function_type"],
@@ -544,7 +570,19 @@ class ModelVersion(lineage_node.LineageNode):
                 partition_column=partition_column,
                 statement_params=statement_params,
                 is_partitioned=target_function_info["is_partitioned"],
+                explain_case_sensitive=explain_case_sensitive,
             )
+
+    def _determine_explain_case_sensitivity(
+        self,
+        target_function_info: model_manifest_schema.ModelFunctionInfo,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        model_spec = self._get_model_spec(statement_params)
+        method_options = model_spec.get("method_options", {})
+        return model_method_utils.determine_explain_case_sensitive_from_method_options(
+            method_options, target_function_info["name"]
+        )
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -803,13 +841,7 @@ class ModelVersion(lineage_node.LineageNode):
             ValueError: If the model is not a HuggingFace text-generation model.
         """
         # Fetch model spec
-        model_spec = self._model_ops._fetch_model_spec(
-            database_name=None,
-            schema_name=None,
-            model_name=self._model_name,
-            version_name=self._version_name,
-            statement_params=statement_params,
-        )
+        model_spec = self._get_model_spec(statement_params)
 
         # Check if model_type is huggingface_pipeline
         model_type = model_spec.get("model_type")

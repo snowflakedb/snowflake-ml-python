@@ -55,7 +55,7 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.WAREHOUSE.value],
-                "pip_requirements": ["prophet"],
+                "pip_requirements": ["prophet", "pandas==2.1.4"],  # Pin pandas version to override snowpark
                 "conda_dependencies": None,
                 "artifact_repository_map": True,
                 "expect_error": False,

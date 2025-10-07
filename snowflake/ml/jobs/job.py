@@ -12,12 +12,19 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
-from snowflake.ml.jobs._utils import constants, interop_utils, query_helper, types
+from snowflake.ml.jobs._interop import results as interop_result, utils as interop_utils
+from snowflake.ml.jobs._utils import (
+    constants,
+    payload_utils,
+    query_helper,
+    stage_utils,
+    types,
+)
 from snowflake.snowpark import Row, context as sp_context
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _PROJECT = "MLJob"
-TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "CANCELLED", "INTERNAL_ERROR"}
+TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "CANCELLED", "INTERNAL_ERROR", "DELETED"}
 
 T = TypeVar("T")
 
@@ -36,7 +43,12 @@ class MLJob(Generic[T], SerializableSessionMixin):
         self._session = session or sp_context.get_active_session()
 
         self._status: types.JOB_STATUS = "PENDING"
-        self._result: Optional[interop_utils.ExecutionResult] = None
+        self._result: Optional[interop_result.ExecutionResult] = None
+
+    @cached_property
+    def _service_info(self) -> types.ServiceInfo:
+        """Get the job's service info."""
+        return _resolve_service_info(self.id, self._session)
 
     @cached_property
     def name(self) -> str:
@@ -44,7 +56,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
     @cached_property
     def target_instances(self) -> int:
-        return _get_target_instances(self._session, self.id)
+        return self._service_info.target_instances
 
     @cached_property
     def min_instances(self) -> int:
@@ -69,8 +81,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
     @cached_property
     def _compute_pool(self) -> str:
         """Get the job's compute pool name."""
-        row = _get_service_info(self._session, self.id)
-        return cast(str, row["compute_pool"])
+        return self._service_info.compute_pool
 
     @property
     def _service_spec(self) -> dict[str, Any]:
@@ -82,7 +93,13 @@ class MLJob(Generic[T], SerializableSessionMixin):
     @property
     def _container_spec(self) -> dict[str, Any]:
         """Get the job's main container spec."""
-        containers = self._service_spec["spec"]["containers"]
+        try:
+            containers = self._service_spec["spec"]["containers"]
+        except SnowparkSQLException as e:
+            if e.sql_error_code == 2003:
+                # If the job is deleted, the service spec is not available
+                return {}
+            raise
         if len(containers) == 1:
             return cast(dict[str, Any], containers[0])
         try:
@@ -105,22 +122,28 @@ class MLJob(Generic[T], SerializableSessionMixin):
         if result_path_str is None:
             raise RuntimeError(f"Job {self.name} doesn't have a result path configured")
 
-        # If result path is relative, it is relative to the stage mount path
-        result_path = Path(result_path_str)
-        if not result_path.is_absolute():
-            return f"{self._stage_path}/{result_path.as_posix()}"
+        return self._transform_path(result_path_str)
 
-        # If result path is absolute, it is relative to the stage mount path
+    def _transform_path(self, path_str: str) -> str:
+        """Transform a local path within the container to a stage path."""
+        path = payload_utils.resolve_path(path_str)
+        if isinstance(path, stage_utils.StagePath):
+            # Stage paths need no transformation
+            return path.as_posix()
+        if not path.is_absolute():
+            # Assume relative paths are relative to stage mount path
+            return f"{self._stage_path}/{path.as_posix()}"
+
+        # If result path is absolute, rebase it onto the stage mount path
+        # TODO: Rather than matching by name, use the longest mount path which matches
         volume_mounts = self._container_spec["volumeMounts"]
         stage_mount_str = next(v for v in volume_mounts if v.get("name") == constants.STAGE_VOLUME_NAME)["mountPath"]
         stage_mount = Path(stage_mount_str)
         try:
-            relative_path = result_path.relative_to(stage_mount)
+            relative_path = path.relative_to(stage_mount)
             return f"{self._stage_path}/{relative_path.as_posix()}"
         except ValueError:
-            raise ValueError(
-                f"Result path {result_path} is absolute, but should be relative to stage mount {stage_mount}"
-            )
+            raise ValueError(f"Result path {path} is absolute, but should be relative to stage mount {stage_mount}")
 
     @overload
     def get_logs(
@@ -165,7 +188,14 @@ class MLJob(Generic[T], SerializableSessionMixin):
         Returns:
             The job's execution logs.
         """
-        logs = _get_logs(self._session, self.id, limit, instance_id, self._container_spec["name"], verbose)
+        logs = _get_logs(
+            self._session,
+            self.id,
+            limit,
+            instance_id,
+            self._container_spec["name"] if "name" in self._container_spec else constants.DEFAULT_CONTAINER_NAME,
+            verbose,
+        )
         assert isinstance(logs, str)  # mypy
         if as_list:
             return logs.splitlines()
@@ -218,7 +248,6 @@ class MLJob(Generic[T], SerializableSessionMixin):
             delay = min(delay * 1.2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
         return self.status
 
-    @snowpark._internal.utils.private_preview(version="1.8.2")
     @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
     def result(self, timeout: float = -1) -> T:
         """
@@ -237,13 +266,13 @@ class MLJob(Generic[T], SerializableSessionMixin):
         if self._result is None:
             self.wait(timeout)
             try:
-                self._result = interop_utils.fetch_result(self._session, self._result_path)
+                self._result = interop_utils.load_result(
+                    self._result_path, session=self._session, path_transform=self._transform_path
+                )
             except Exception as e:
-                raise RuntimeError(f"Failed to retrieve result for job (id={self.name})") from e
+                raise RuntimeError(f"Failed to retrieve result for job, error: {e!r}") from e
 
-        if self._result.success:
-            return cast(T, self._result.result)
-        raise RuntimeError(f"Job execution failed (id={self.name})") from self._result.exception
+        return cast(T, self._result.get_value())
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def cancel(self) -> None:
@@ -256,22 +285,28 @@ class MLJob(Generic[T], SerializableSessionMixin):
             self._session.sql(f"CALL {self.id}!spcs_cancel_job()").collect()
             logger.debug(f"Cancellation requested for job {self.id}")
         except SnowparkSQLException as e:
-            raise RuntimeError(f"Failed to cancel job {self.id}: {e.message}") from e
+            raise RuntimeError(f"Failed to cancel job, error: {e!r}") from e
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "instance_id"])
 def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[int] = None) -> types.JOB_STATUS:
     """Retrieve job or job instance execution status."""
-    if instance_id is not None:
-        # Get specific instance status
-        rows = session.sql("SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,)).collect()
-        for row in rows:
-            if row["instance_id"] == str(instance_id):
-                return cast(types.JOB_STATUS, row["status"])
-        raise ValueError(f"Instance {instance_id} not found in job {job_id}")
-    else:
-        row = _get_service_info(session, job_id)
-        return cast(types.JOB_STATUS, row["status"])
+    try:
+        if instance_id is not None:
+            # Get specific instance status
+            rows = query_helper.run_query(session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,))
+            for row in rows:
+                if row["instance_id"] == str(instance_id):
+                    return cast(types.JOB_STATUS, row["status"])
+            raise ValueError(f"Instance {instance_id} not found in job {job_id}")
+        else:
+            row = _get_service_info(session, job_id)
+            return cast(types.JOB_STATUS, row["status"])
+    except SnowparkSQLException as e:
+        if e.sql_error_code == 2003:
+            row = _get_service_info_spcs(session, job_id)
+            return cast(types.JOB_STATUS, row["STATUS"])
+        raise
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
@@ -542,8 +577,21 @@ def _get_compute_pool_info(session: snowpark.Session, compute_pool: str) -> Row:
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id"])
 def _get_target_instances(session: snowpark.Session, job_id: str) -> int:
-    row = _get_service_info(session, job_id)
-    return int(row["target_instances"])
+    try:
+        row = _get_service_info(session, job_id)
+        return int(row["target_instances"])
+    except SnowparkSQLException as e:
+        if e.sql_error_code == 2003:
+            row = _get_service_info_spcs(session, job_id)
+            try:
+                params = json.loads(row["PARAMETERS"])
+                if isinstance(params, dict):
+                    return int(params.get("REPLICAS", 1))
+                else:
+                    return 1
+            except (json.JSONDecodeError, ValueError):
+                return 1
+        raise
 
 
 def _get_logs_spcs(
@@ -581,3 +629,87 @@ def _get_logs_spcs(
         query.append(f" LIMIT {limit};")
     rows = session.sql("\n".join(query)).collect()
     return rows
+
+
+def _get_service_info_spcs(session: snowpark.Session, job_id: str) -> Any:
+    """
+    Retrieve the service info from the SPCS interface.
+
+    Args:
+        session (Session): The Snowpark session to use.
+        job_id (str): The job ID.
+
+    Returns:
+        Any: The service info.
+
+    Raises:
+        SnowparkSQLException: If the job does not exist or is too old to retrieve.
+    """
+    db, schema, name = identifier.parse_schema_level_object_identifier(job_id)
+    db = db or session.get_current_database()
+    schema = schema or session.get_current_schema()
+    rows = query_helper.run_query(
+        session,
+        """
+        select DATABASE_NAME, SCHEMA_NAME, NAME, STATUS, COMPUTE_POOL_NAME, PARAMETERS
+        from table(snowflake.spcs.get_job_history())
+        where database_name = ? and schema_name = ? and name = ?
+        """,
+        params=(db, schema, name),
+    )
+    if rows:
+        return rows[0]
+    else:
+        raise SnowparkSQLException(f"Job {job_id} does not exist or could not be retrieved", sql_error_code=2003)
+
+
+def _resolve_service_info(id: str, session: snowpark.Session) -> types.ServiceInfo:
+    try:
+        row = _get_service_info(session, id)
+    except SnowparkSQLException as e:
+        if e.sql_error_code == 2003:
+            row = _get_service_info_spcs(session, id)
+        else:
+            raise
+    if not row:
+        raise SnowparkSQLException(f"Job {id} does not exist or could not be retrieved", sql_error_code=2003)
+
+    if "compute_pool" in row:
+        compute_pool = row["compute_pool"]
+    elif "COMPUTE_POOL_NAME" in row:
+        compute_pool = row["COMPUTE_POOL_NAME"]
+    else:
+        raise ValueError(f"compute_pool not found in row: {row}")
+
+    if "status" in row:
+        status = row["status"]
+    elif "STATUS" in row:
+        status = row["STATUS"]
+    else:
+        raise ValueError(f"status not found in row: {row}")
+    # Normalize target_instances
+    target_instances: int
+    if "target_instances" in row and row["target_instances"] is not None:
+        try:
+            target_instances = int(row["target_instances"])
+        except (ValueError, TypeError):
+            target_instances = 1
+    elif "PARAMETERS" in row and row["PARAMETERS"]:
+        try:
+            params = json.loads(row["PARAMETERS"])
+            target_instances = int(params.get("REPLICAS", 1)) if isinstance(params, dict) else 1
+        except (json.JSONDecodeError, ValueError, TypeError):
+            target_instances = 1
+    else:
+        target_instances = 1
+
+    database_name = row["database_name"] if "database_name" in row else row["DATABASE_NAME"]
+    schema_name = row["schema_name"] if "schema_name" in row else row["SCHEMA_NAME"]
+
+    return types.ServiceInfo(
+        database_name=database_name,
+        schema_name=schema_name,
+        status=cast(types.JOB_STATUS, status),
+        compute_pool=cast(str, compute_pool),
+        target_instances=target_instances,
+    )

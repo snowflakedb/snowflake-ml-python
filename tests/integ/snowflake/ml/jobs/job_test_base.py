@@ -71,6 +71,8 @@ class JobTestBase(parameterized.TestCase):
             )
             return job
 
+
+class ModelingJobTestBase(JobTestBase):
     def get_inference(self, model: Any, module_path: str) -> Any:
         return reflection_utils.run_reflected_func(module_path, _PREDICT_FUNC, model)
 

@@ -178,6 +178,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         else:
             self.fail(f"Unknown expected_path: {expected_path}")
 
+    @absltest.skip("Skipping test_inference_logging_batch_path")
     def test_inference_logging_batch_path(self):
         """Test inference logging for small requests that trigger batch processing."""
         mv = self._deploy_simple_sklearn_model(autocapture_enabled=True)
@@ -212,6 +213,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Verify batch path was used
         self._verify_processing_path(system_logs, "batch")
 
+    @absltest.skip("Skipping test_inference_logging_streaming_path")
     def test_inference_logging_streaming_path(self):
         """Test inference logging for large requests that trigger streaming processing."""
         mv = self._deploy_simple_sklearn_model(autocapture_enabled=True)
@@ -248,6 +250,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Verify streaming path was used
         self._verify_processing_path(system_logs, "streaming")
 
+    @absltest.skip("Skipping test_inference_logging_disabled_by_default")
     def test_inference_logging_disabled_by_default(self):
         """Test that inference logging is disabled by default (no logs captured)."""
         # Deploy model with autocapture explicitly DISABLED

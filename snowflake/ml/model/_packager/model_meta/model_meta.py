@@ -116,6 +116,8 @@ def create_model_metadata(
     if embed_local_ml_library:
         env.snowpark_ml_version = f"{snowml_version.VERSION}+{file_utils.hash_directory(path_to_copy)}"
 
+    # Persist full method_options
+    method_options: dict[str, dict[str, Any]] = kwargs.pop("method_options", {})
     model_meta = ModelMetadata(
         name=name,
         env=env,
@@ -124,6 +126,7 @@ def create_model_metadata(
         signatures=signatures,
         function_properties=function_properties,
         task=task,
+        method_options=method_options,
     )
 
     code_dir_path = os.path.join(model_dir_path, MODEL_CODE_DIR)
@@ -256,6 +259,7 @@ class ModelMetadata:
         original_metadata_version: Optional[str] = model_meta_schema.MODEL_METADATA_VERSION,
         task: model_types.Task = model_types.Task.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
+        method_options: Optional[dict[str, dict[str, Any]]] = None,
     ) -> None:
         self.name = name
         self.signatures: dict[str, model_signature.ModelSignature] = dict()
@@ -283,6 +287,7 @@ class ModelMetadata:
 
         self.task: model_types.Task = task
         self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
+        self.method_options: dict[str, dict[str, Any]] = method_options or {}
 
     @property
     def min_snowpark_ml_version(self) -> str:
@@ -342,6 +347,7 @@ class ModelMetadata:
                     else None
                 ),
                 "function_properties": self.function_properties,
+                "method_options": self.method_options,
             }
         )
         with open(model_yaml_path, "w", encoding="utf-8") as out:
@@ -381,6 +387,7 @@ class ModelMetadata:
             task=loaded_meta.get("task", model_types.Task.UNKNOWN.value),
             explainability=loaded_meta.get("explainability", None),
             function_properties=loaded_meta.get("function_properties", {}),
+            method_options=loaded_meta.get("method_options", {}),
         )
 
     @classmethod
@@ -436,4 +443,5 @@ class ModelMetadata:
             task=model_types.Task(model_dict.get("task", model_types.Task.UNKNOWN.value)),
             explain_algorithm=explanation_algorithm,
             function_properties=model_dict.get("function_properties", {}),
+            method_options=model_dict.get("method_options", {}),
         )

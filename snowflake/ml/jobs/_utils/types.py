@@ -11,6 +11,7 @@ JOB_STATUS = Literal[
     "CANCELLING",
     "CANCELLED",
     "INTERNAL_ERROR",
+    "DELETED",
 ]
 
 
@@ -106,3 +107,12 @@ class ImageSpec:
     resource_requests: ComputeResources
     resource_limits: ComputeResources
     container_image: str
+
+
+@dataclass(frozen=True)
+class ServiceInfo:
+    database_name: str
+    schema_name: str
+    status: str
+    compute_pool: str
+    target_instances: int

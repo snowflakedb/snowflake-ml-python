@@ -55,19 +55,19 @@ class ModelTaskUtilsTest(absltest.TestCase):
 
     def test_model_task_and_output_xgb_for_single_class(self) -> None:
         # without objective
-        classifier = xgboost.XGBClassifier()
+        classifier = xgboost.XGBClassifier(base_score=0.5)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with binary objective
-        classifier = xgboost.XGBClassifier(objective="binary:logistic")
+        classifier = xgboost.XGBClassifier(objective="binary:logistic", base_score=0.5)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with multiclass objective
-        params = {"objective": "multi:softmax", "num_class": 3}
+        params = {"objective": "multi:softmax", "num_class": 3, "base_score": 0.5}
         classifier = xgboost.XGBClassifier(**params)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(

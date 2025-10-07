@@ -162,6 +162,37 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
+    def test_xgb_explain_case_sensitive(self) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X.rename(columns={"mean_radius": '"Mean Radius"'}, inplace=True)
+
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor.fit(cal_X_train, cal_y_train)
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
+        self._test_registry_model(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                '"explain"': (
+                    cal_X_test,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(expected_explanations, columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            options={
+                "enable_explainability": True,
+                "method_options": {"predict": {"case_sensitive": True}, "predict_proba": {"case_sensitive": True}},
+            },
+            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
+        )
+
     def test_xgb_sp_no_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]

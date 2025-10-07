@@ -1,9 +1,10 @@
 import uuid
 
+import pandas as pd
 import torch
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model._signatures import pytorch_handler, snowpark_handler
+from snowflake.ml.model._signatures import pytorch_handler
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -24,10 +25,13 @@ class TestPyTorchBatchInferenceInteg(registry_model_deployment_test_base.Registr
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float64)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         x_df.columns = [f"col_{i}" for i in range(data_x.shape[1])]
-        sp_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-            self.session,
-            x_df,
-        )
+
+        # Generate expected predictions using the original model
+        model_output = model.forward(data_x)
+        model_output_df = pd.DataFrame({"output_feature_0": model_output.detach().numpy().flatten()})
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(x_df, model_output_df)
 
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
@@ -35,7 +39,7 @@ class TestPyTorchBatchInferenceInteg(registry_model_deployment_test_base.Registr
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=x_df,
-            input_spec=sp_df,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
@@ -43,6 +47,8 @@ class TestPyTorchBatchInferenceInteg(registry_model_deployment_test_base.Registr
             num_workers=1,
             service_name=f"batch_inference_{name}",
             replicas=2,
+            function_name="forward",
+            expected_predictions=expected_predictions,
         )
 
 

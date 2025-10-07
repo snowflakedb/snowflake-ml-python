@@ -4,12 +4,13 @@ import pickle
 import sys
 import tempfile
 import time
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from unittest import mock
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import constants, interop_utils
+from snowflake.ml.jobs._interop import legacy
+from snowflake.ml.jobs._utils import constants
 from snowflake.ml.jobs._utils.scripts import mljob_launcher
 from snowflake.ml.jobs._utils.test_file_helper import resolve_path
 
@@ -31,6 +32,7 @@ class MLJobLauncherTests(parameterized.TestCase):
         self.error_script = os.path.join(self.test_dir, "error_script.py")
         self.complex_script = os.path.join(self.test_dir, "complex_result_script.py")
         self.argument_script = os.path.join(self.test_dir, "argument_script.py")
+        self.nonserializable_script = os.path.join(self.test_dir, "nonserializable_result_script.py")
 
     def tearDown(self) -> None:
         # Clean up
@@ -40,17 +42,16 @@ class MLJobLauncherTests(parameterized.TestCase):
 
     def test_run_script_simple(self) -> None:
         # Test running a simple script
-        result = mljob_launcher.main(self.simple_script)
-        self.assertTrue(result.success)
-        self.assertEqual(result.result["status"], "success")
-        self.assertEqual(result.result["value"], 42)
+        with self.assertNoLogs(level="WARNING"):
+            result = mljob_launcher.main(self.simple_script)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["value"], 42)
 
     def test_run_script_with_function(self) -> None:
         # Test running a script with a specified main function
         result = mljob_launcher.main(self.function_script, script_main_func="main_function")
-        self.assertTrue(result.success)
-        self.assertEqual(result.result["status"], "success from function")
-        self.assertEqual(result.result["value"], 100)
+        self.assertEqual(result["status"], "success from function")
+        self.assertEqual(result["value"], 100)
 
     @parameterized.parameters(  # type: ignore[misc]
         (100, {"status": "success from another function", "value": 100}),
@@ -61,8 +62,7 @@ class MLJobLauncherTests(parameterized.TestCase):
         # Test running a script with a function that takes arguments
         args = [] if arg_value is None else [arg_value]
         result = mljob_launcher.main(self.function_script, *args, script_main_func="another_function")
-        self.assertTrue(result.success)
-        self.assertEqual(result.result, expected)
+        self.assertEqual(result, expected)
 
     def test_run_script_invalid_function(self) -> None:
         # Test error when function doesn't exist
@@ -72,32 +72,30 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_run_script_with_args(self) -> None:
         # Test running a script with arguments
         result = mljob_launcher.main(self.argument_script, "arg1", "arg2", "--named_arg=value")
-        self.assertTrue(result.success)
-        self.assertListEqual(result.result["args"], ["arg1", "arg2", "--named_arg=value"])
+        self.assertListEqual(result["args"], ["arg1", "arg2", "--named_arg=value"])
 
     def test_main_success(self) -> None:
         # Test the main function with successful execution
         try:
-            result_obj = mljob_launcher.main(self.simple_script)
-            self.assertTrue(result_obj.success)
-            self.assertEqual(result_obj.result["value"], 42)
+            result = mljob_launcher.main(self.simple_script)
+            self.assertEqual(result["value"], 42)
+        except Exception as e:
+            self.fail(f"main() raised exception unexpectedly: {e}")
 
-            # Check serialized results
-            with open(self.result_path, "rb") as f:
-                pickled_result: dict[str, Any] = pickle.load(f)
-            pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
-            self.assertTrue(pickled_result_obj.success)
-            assert isinstance(pickled_result_obj.result, dict)
-            self.assertEqual(pickled_result_obj.result["value"], 42)
+        # Check serialized results
+        pickled_result = _load_result_dict(self.result_path)
+        pickled_result_obj = legacy.ExecutionResult.from_dict(pickled_result)
+        self.assertTrue(pickled_result_obj.success)
+        assert isinstance(pickled_result_obj.result, dict)
+        self.assertEqual(pickled_result_obj.result["value"], 42)
 
+        if not pickled_result.get("_converted_from_v2"):
             with open(self.result_json_path) as f:
                 json_result: dict[str, Any] = json.load(f)
-            json_result_obj = interop_utils.ExecutionResult.from_dict(json_result)
+            json_result_obj = legacy.ExecutionResult.from_dict(json_result)
             self.assertTrue(json_result_obj.success)
             assert isinstance(json_result_obj.result, dict)
             self.assertEqual(json_result_obj.result["value"], 42)
-        except Exception as e:
-            self.fail(f"main() raised exception unexpectedly: {e}")
 
     def test_main_error(self) -> None:
         # Test the main function with script that raises an error
@@ -105,9 +103,8 @@ class MLJobLauncherTests(parameterized.TestCase):
             mljob_launcher.main(self.error_script)
 
         # Check serialized error results
-        with open(self.result_path, "rb") as f:
-            pickled_result: dict[str, Any] = pickle.load(f)
-        pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
+        pickled_result = _load_result_dict(self.result_path)
+        pickled_result_obj = legacy.ExecutionResult.from_dict(pickled_result)
         self.assertFalse(pickled_result_obj.success)
         self.assertEqual(type(pickled_result_obj.exception), RuntimeError)
         self.assertIn("Test error from script", str(pickled_result_obj.exception))
@@ -116,16 +113,17 @@ class MLJobLauncherTests(parameterized.TestCase):
         self.assertNotIn("mljob_launcher.py", pickled_exc_tb)
         self.assertNotIn("runpy", pickled_exc_tb)
 
-        with open(self.result_json_path) as f:
-            json_result: dict[str, Any] = json.load(f)
-        json_result_obj = interop_utils.ExecutionResult.from_dict(json_result)
-        self.assertFalse(json_result_obj.success)
-        self.assertEqual(type(json_result_obj.exception), RuntimeError)
-        self.assertIn("Test error from script", str(json_result_obj.exception))
-        json_exc_tb = json_result.get("exc_tb")
-        self.assertIsInstance(json_exc_tb, str)
-        self.assertNotIn("mljob_launcher.py", json_exc_tb)
-        self.assertNotIn("runpy", json_exc_tb)
+        if not pickled_result.get("_converted_from_v2"):
+            with open(self.result_json_path) as f:
+                json_result: dict[str, Any] = json.load(f)
+            json_result_obj = legacy.ExecutionResult.from_dict(json_result)
+            self.assertFalse(json_result_obj.success)
+            self.assertEqual(type(json_result_obj.exception), RuntimeError)
+            self.assertIn("Test error from script", str(json_result_obj.exception))
+            json_exc_tb = json_result.get("exc_tb")
+            self.assertIsInstance(json_exc_tb, str)
+            self.assertNotIn("mljob_launcher.py", json_exc_tb)
+            self.assertNotIn("runpy", json_exc_tb)
 
     def test_function_error(self) -> None:
         # Test error in a function
@@ -133,9 +131,8 @@ class MLJobLauncherTests(parameterized.TestCase):
             mljob_launcher.main(self.error_script, script_main_func="error_function")
 
         # Check serialized error results
-        with open(self.result_path, "rb") as f:
-            pickled_result = pickle.load(f)
-        pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
+        pickled_result = _load_result_dict(self.result_path)
+        pickled_result_obj = legacy.ExecutionResult.from_dict(pickled_result)
         self.assertFalse(pickled_result_obj.success)
         self.assertEqual(type(pickled_result_obj.exception), ValueError)
         self.assertIn("Test error from function", str(pickled_result_obj.exception))
@@ -147,27 +144,26 @@ class MLJobLauncherTests(parameterized.TestCase):
 
         # Test handling of complex, non-JSON-serializable results
         try:
-            result_obj = mljob_launcher.main(self.complex_script)
-            self.assertTrue(result_obj.success)
+            _ = mljob_launcher.main(self.complex_script)
+        except Exception as e:
+            self.fail(f"main() raised exception unexpectedly: {e}")
 
-            # Check serialized results - pickle should handle complex objects
-            with open(self.result_path, "rb") as f:
-                pickled_result = pickle.load(f)
-            pickled_result_obj = interop_utils.ExecutionResult.from_dict(pickled_result)
-            self.assertTrue(pickled_result_obj.success)
-            assert isinstance(pickled_result_obj.result, dict)
-            self.assertIsInstance(pickled_result_obj.result["custom"], CustomObject)
+        # Check serialized results - pickle should handle complex objects
+        pickled_result = _load_result_dict(self.result_path)
+        pickled_result_obj = legacy.ExecutionResult.from_dict(pickled_result)
+        self.assertTrue(pickled_result_obj.success)
+        assert isinstance(pickled_result_obj.result, dict), pickled_result
+        self.assertIsInstance(pickled_result_obj.result["custom"], CustomObject)
 
-            # JSON should convert non-serializable objects to strings
+        # JSON should convert non-serializable objects to strings
+        if not pickled_result.get("_converted_from_v2"):
             with open(self.result_json_path) as f:
                 json_result = json.load(f)
-            json_result_obj = interop_utils.ExecutionResult.from_dict(json_result)
+            json_result_obj = legacy.ExecutionResult.from_dict(json_result)
             self.assertTrue(json_result_obj.success)
             assert isinstance(json_result_obj.result, dict)
             self.assertIsInstance(json_result_obj.result["custom"], str)
             self.assertIn("CustomObject", json_result_obj.result["custom"])
-        except Exception as e:
-            self.fail(f"main() raised exception unexpectedly: {e}")
 
     def test_invalid_script_path(self) -> None:
         # Test with non-existent script path
@@ -175,13 +171,11 @@ class MLJobLauncherTests(parameterized.TestCase):
         with self.assertRaises(FileNotFoundError):
             mljob_launcher.main(nonexistent_path)
 
-    @absltest.mock.patch("cloudpickle.dump")  # type: ignore[misc]
-    def test_result_pickling_error(self, mock_dump: absltest.mock.MagicMock) -> None:
-        # Test handling of pickling errors by creating an unpicklable result
-        # (by monkeypatching cloudpickle.dump to raise an exception)
-        mock_dump.side_effect = pickle.PicklingError("Mocked pickling error")
-        with self.assertWarns(RuntimeWarning):
-            mljob_launcher.main(self.simple_script)
+    def test_result_pickling_error(self) -> None:
+        with self.assertLogs(level="WARNING"):
+            result = mljob_launcher.main(self.nonserializable_script)
+        # Even with pickling error, main() should still return the result directly
+        self.assertEqual(str(result), "100")
 
     @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
     @mock.patch("common_utils.common_util")
@@ -298,6 +292,36 @@ class MLJobLauncherTests(parameterized.TestCase):
 
             self.assertIn("Timed out after 6s waiting for 2 instances", str(cm.exception))
             self.assertIn("only 1 available", str(cm.exception))
+
+
+def _load_result_dict(path: str) -> dict[str, Any]:
+    """Handle both v1 and v2 result formats, converting final result to v1 format."""
+    with open(path, "rb") as f:
+        try:
+            return cast(dict[str, Any], pickle.load(f))
+        except pickle.UnpicklingError:
+            f.seek(0)
+            result_v2_dict = json.load(f)
+            result_obj = None
+            if result_protocol := result_v2_dict.get("protocol", {}):
+                result_path = result_protocol["manifest"]["path"]
+                with open(result_path, "rb") as f2:
+                    result_obj = pickle.load(f2)
+            else:
+                result_obj = result_v2_dict["value"]
+
+            result_v1_dict = {
+                "success": result_v2_dict["success"],
+                "_converted_from_v2": True,
+            }
+            if result_v2_dict["success"]:
+                result_v1_dict["result_type"] = type(result_obj).__qualname__
+                result_v1_dict["result"] = result_obj
+            else:
+                result_v1_dict["exc_type"] = type(result_obj).__qualname__
+                result_v1_dict["exc_value"] = result_obj
+                result_v1_dict["exc_tb"] = result_v2_dict["metadata"]["traceback"]
+            return result_v1_dict
 
 
 if __name__ == "__main__":

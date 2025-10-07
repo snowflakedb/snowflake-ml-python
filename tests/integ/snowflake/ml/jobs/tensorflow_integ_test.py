@@ -2,14 +2,14 @@ from absl.testing import absltest
 from packaging import version
 
 from snowflake.ml._internal import env
-from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
+from tests.integ.snowflake.ml.jobs.job_test_base import ModelingJobTestBase
 
 """
 this integration test is only for tensorflow.
 """
 
 
-class TensorflowModelTest(JobTestBase):
+class TensorflowModelTest(ModelingJobTestBase):
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "only works for Python 3.10 and below due to pickle compatibility",

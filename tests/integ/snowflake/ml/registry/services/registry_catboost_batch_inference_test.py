@@ -2,6 +2,7 @@ import uuid
 
 import catboost
 import inflection
+import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
@@ -29,15 +30,21 @@ class TestCatboostBatchInferenceInteg(registry_model_deployment_test_base.Regist
 
         classifier = catboost.CatBoostClassifier()
         classifier.fit(cal_X_train, cal_y_train)
-        cal_data_sp_df_train = self.session.create_dataframe(cal_X_train)
+
+        # Generate expected predictions using the original model
+        model_output = classifier.predict(cal_X_test)
+        model_output_df = pd.DataFrame({"output_feature_0": model_output})
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(cal_X_test, model_output_df)
 
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
 
         self._test_registry_batch_inference(
             model=classifier,
-            sample_input_data=cal_data_sp_df_train,
-            input_spec=cal_data_sp_df_train,
+            sample_input_data=cal_X_test,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
@@ -46,6 +53,7 @@ class TestCatboostBatchInferenceInteg(registry_model_deployment_test_base.Regist
             service_name=f"batch_inference_{name}",
             replicas=2,
             function_name="predict",
+            expected_predictions=expected_predictions,
         )
 
 

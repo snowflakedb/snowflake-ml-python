@@ -292,7 +292,7 @@
   version_requirements: '>=4.1.0,<5'
 - name: xgboost
   dev_version: 2.1.4
-  version_requirements: '>=1.7.3,<3'
+  version_requirements: <4
   tags:
     - build_essential
 - name: werkzeug
