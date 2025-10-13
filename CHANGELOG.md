@@ -1,5 +1,26 @@
 # Release History
 
+## 1.17.0
+
+### Bug Fixes
+
+* ML Job: Added support for retrieving details of deleted jobs, including status, compute pool, and target instances.
+
+### Behavior Changes
+
+### New Features
+
+* Support xgboost 3.x.
+* ML Job: Overhauled the `MLJob.result()` API with broader cross-version
+  compatibility and support for additional data types, namely:
+  * Pandas DataFrames
+  * PyArrow Tables
+  * NumPy arrays
+  * NOTE: Requires `snowflake-ml-python>=1.17.0` to be installed inside remote container environment.
+* ML Job: Enabled job submission v2 by default
+  * Jobs submitted using v2 will automatically use the latest Container Runtime image
+  * v1 behavior can be restored by setting environment variable `MLRS_USE_SUBMIT_JOB_V2` to `false`
+
 ## 1.16.0
 
 ### Bug Fixes
@@ -34,9 +55,10 @@ options = {
             "function_type": "TABLE_FUNCTION",
             "volatility": Volatility.VOLATILE,
         },
+    },
 }
 
-````
+```
 
 ## 1.15.0 (09-29-2025)
 

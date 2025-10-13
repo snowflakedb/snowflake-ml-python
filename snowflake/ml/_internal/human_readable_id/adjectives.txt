@@ -1,3 +1,4 @@
+aerial
 afraid
 ancient
 angry
@@ -26,7 +27,6 @@ dull
 empty
 evil
 fast
-fat
 fluffy
 foolish
 fresh
@@ -57,10 +57,10 @@ lovely
 lucky
 massive
 mean
+metallic
 mighty
 modern
 moody
-nasty
 neat
 nervous
 new
@@ -85,7 +85,6 @@ rotten
 rude
 selfish
 serious
-shaggy
 sharp
 short
 shy
@@ -96,14 +95,15 @@ slippery
 smart
 smooth
 soft
+solid
 sour
 spicy
 splendid
 spotty
+squishy
 stale
 strange
 strong
-stupid
 sweet
 swift
 tall
@@ -116,7 +116,6 @@ tidy
 tiny
 tough
 tricky
-ugly
 warm
 weak
 wet
@@ -124,5 +123,6 @@ wicked
 wise
 witty
 wonderful
+wooden
 yellow
 young

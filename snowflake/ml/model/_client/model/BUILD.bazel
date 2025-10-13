@@ -51,6 +51,7 @@ py_library(
         "//snowflake/ml/model/_client/ops:model_ops",
         "//snowflake/ml/model/_client/ops:service_ops",
         "//snowflake/ml/model/_model_composer/model_manifest:model_manifest_schema",
+        "//snowflake/ml/model/_model_composer/model_method:utils",
         "//snowflake/ml/utils:html_utils",
     ],
 )
@@ -58,6 +59,7 @@ py_library(
 py_test(
     name = "model_version_impl_test",
     srcs = ["model_version_impl_test.py"],
+    data = ["sample_model_spec.yaml"],
     tags = ["feature:model_registry"],
     deps = [
         ":batch_inference_specs",

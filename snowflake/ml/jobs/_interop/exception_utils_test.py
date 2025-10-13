@@ -1,73 +1,110 @@
 import sys
 from types import TracebackType
-from typing import Any
+from typing import Any, Optional
 from unittest import mock
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import interop_utils
-from snowflake.snowpark import exceptions
+from snowflake.ml.jobs._interop import exception_utils
+from snowflake.snowpark import exceptions as sp_exceptions
 
 
-class TestInteropUtils(absltest.TestCase):
-    def test_load_exception_with_builtin_exception(self) -> None:
-        """Test loading a built-in exception type."""
-        exc = interop_utils.load_exception("ValueError", "test error message", "traceback info")
-        self.assertIsInstance(exc, ValueError)
-        self.assertEqual(str(exc), "test error message")
+class ComplexError(Exception):
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.code = code
 
-        remote_error = interop_utils._retrieve_remote_error_info(exc)
-        assert remote_error is not None
-        self.assertEqual(remote_error.exc_type, "ValueError")
-        self.assertEqual(remote_error.exc_msg, "test error message")
-        self.assertEqual(remote_error.exc_tb, "traceback info")
+    def __repr__(self) -> str:
+        return f"ComplexError(message={self.args[0]!r}, code={self.code})"
 
-    def test_load_exception_with_custom_exception_name(self) -> None:
-        """Test loading an exception with a custom exception name."""
-        # Create a non-existent exception type name
-        exc = interop_utils.load_exception("NonExistentError", "custom error", "traceback info")
-        self.assertIsInstance(exc, RuntimeError)
-        self.assertTrue("Exception deserialization failed" in str(exc))
 
-        remote_error = interop_utils._retrieve_remote_error_info(exc)
-        assert remote_error is not None
-        self.assertEqual(remote_error.exc_type, "NonExistentError")
-        self.assertEqual(remote_error.exc_msg, "custom error")
-        self.assertEqual(remote_error.exc_tb, "traceback info")
+class TestExceptionUtils(parameterized.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
 
-    def test_load_exception_with_qualified_name(self) -> None:
-        """Test loading an exception with a qualified name."""
-        # Use a common exception from a module
-        exc_type = exceptions.SnowparkClientException
-        exc = interop_utils.load_exception(f"{exc_type.__module__}.{exc_type.__name__}", "mock error", "traceback info")
-        self.assertIsInstance(exc, exceptions.SnowparkClientException)
-        self.assertEqual(str(exc), "mock error")
+        # Ensure hooks are installed for testing
+        exception_utils.install_exception_display_hooks()
 
-        remote_error = interop_utils._retrieve_remote_error_info(exc)
-        assert remote_error is not None
-        self.assertEqual(remote_error.exc_type, "SnowparkClientException")
-        self.assertEqual(remote_error.exc_msg, "mock error")
-        self.assertEqual(remote_error.exc_tb, "traceback info")
-
-    def test_load_exception_with_exception_instance(self) -> None:
-        """Test loading with an existing exception instance."""
-        original_exc = ValueError("original error")
-        exc = interop_utils.load_exception("ValueError", original_exc, "traceback info")
-        self.assertIs(exc, original_exc)  # Should be the same object
-
-        remote_error = interop_utils._retrieve_remote_error_info(exc)
-        assert remote_error is not None
-        self.assertEqual(remote_error.exc_type, "ValueError")
-        self.assertEqual(remote_error.exc_msg, "original error")
-        self.assertEqual(remote_error.exc_tb, "traceback info")
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("value_error", "ValueError", "test error message", "traceback info", None, ValueError("test error message")),
+        (
+            "not_implemented_error",
+            "NotImplementedError",
+            "test error message",
+            "traceback info",
+            None,
+            NotImplementedError("test error message"),
+        ),
+        (
+            "snowpark_error",
+            "snowflake.snowpark.exceptions.SnowparkSQLException",
+            "test error message",
+            "traceback info",
+            None,
+            sp_exceptions.SnowparkSQLException("test error message"),
+        ),
+        (
+            "not_exist_error",
+            "NonExistentError",
+            "custom error",
+            "traceback info",
+            None,
+            exception_utils.RemoteError("NonExistentError('custom error')"),
+        ),
+        (
+            "complex_ctor",
+            "__main__.ComplexError",
+            "custom error",
+            "traceback info",
+            repr(ComplexError("Execution failed with error: custom error", 100)),
+            exception_utils.RemoteError(repr(ComplexError("Execution failed with error: custom error", 100))),
+        ),
+        (
+            "custom_repr_NonExistentError",
+            "NonExistentError",
+            "custom error",
+            "traceback info",
+            "NonExistentError with custom repr: custom error",
+            exception_utils.RemoteError("NonExistentError with custom repr: custom error"),
+        ),
+        (
+            "custom_repr_complex_ctor",
+            "__main__.ComplexError",
+            "custom error",
+            "traceback info",
+            "ComplexError with custom repr: custom error",
+            exception_utils.RemoteError("ComplexError with custom repr: custom error"),
+        ),
+    )
+    def test_build_exception(
+        self,
+        exc_type: str,
+        exc_msg: str,
+        exc_tb: str,
+        exc_repr: Optional[str],
+        expected: BaseException,
+    ) -> None:
+        exc_value = exception_utils.build_exception(
+            type_str=exc_type,
+            message=exc_msg,
+            traceback=exc_tb,
+            original_repr=exc_repr,
+        )
+        self.assertEqual(type(exc_value), type(expected))
+        self.assertEqual(str(exc_value), str(expected))
+        self.assertEqual(
+            exception_utils.retrieve_remote_error_info(exc_value),
+            exception_utils.RemoteErrorInfo(exc_type.rsplit(".", 1)[-1], exc_msg, exc_tb),
+        )
 
     def test_attach_and_retrieve_traceback(self) -> None:
         """Test attaching and retrieving a traceback from an exception."""
         exc = ValueError("test error")
-        interop_utils._attach_remote_error_info(exc, type(exc).__name__, str(exc), "sample traceback")
+        exception_utils.attach_remote_error_info(exc, type(exc).__name__, str(exc), "sample traceback")
 
         # Test retrieval
-        remote_error = interop_utils._retrieve_remote_error_info(exc)
+        remote_error = exception_utils.retrieve_remote_error_info(exc)
         assert remote_error is not None
         self.assertEqual(remote_error.exc_type, "ValueError")
         self.assertEqual(remote_error.exc_msg, "test error")
@@ -75,7 +112,7 @@ class TestInteropUtils(absltest.TestCase):
 
         # Test retrieval on exception without traceback
         exc2 = RuntimeError("no traceback")
-        self.assertIsNone(interop_utils._retrieve_remote_error_info(exc2))
+        self.assertIsNone(exception_utils.retrieve_remote_error_info(exc2))
 
     def test_excepthook_installation(self) -> None:
         """Test that the excepthook is installed correctly."""
@@ -91,7 +128,7 @@ class TestInteropUtils(absltest.TestCase):
         custom_excepthook = sys.excepthook
 
         # Uninstall our custom excepthook
-        interop_utils._uninstall_sys_excepthook()
+        exception_utils._uninstall_sys_excepthook()
 
         # Verify the original excepthook is restored
         self.assertEqual(sys.excepthook, original_excepthook)
@@ -136,7 +173,7 @@ class TestInteropUtils(absltest.TestCase):
             IPython.core.ultratb.ListTB = mock_list_tb
 
             # Call the uninstall function
-            interop_utils._uninstall_ipython_hook()
+            exception_utils._uninstall_ipython_hook()
 
             # Verify that the original methods were restored
             self.assertEqual(mock_verbose_tb.format_exception_as_a_whole, original_format_exception)
@@ -153,7 +190,7 @@ class TestInteropUtils(absltest.TestCase):
         uninstall_func = mock.MagicMock()
 
         # Create the wrapped function
-        wrapped_func = interop_utils._revert_func_wrapper(patched_func, original_func, uninstall_func)
+        wrapped_func = exception_utils._revert_func_wrapper(patched_func, original_func, uninstall_func)
 
         # Call the wrapped function
         result = wrapped_func("arg1", kwarg1="value1")
@@ -181,8 +218,8 @@ class TestInteropUtils(absltest.TestCase):
 
         # Install our test hooks
         sys._original_excepthook = mock_original_excepthook  # type: ignore[attr-defined]
-        sys.excepthook = interop_utils._revert_func_wrapper(
-            failing_custom_excepthook, mock_original_excepthook, interop_utils._uninstall_sys_excepthook
+        sys.excepthook = exception_utils._revert_func_wrapper(
+            failing_custom_excepthook, mock_original_excepthook, exception_utils._uninstall_sys_excepthook
         )
 
         # Trigger the excepthook with an exception
@@ -225,13 +262,13 @@ class TestInteropUtils(absltest.TestCase):
 
             # Setup the class mocks with original methods saved
             mock_verbose_tb._original_format_exception_as_a_whole = original_format_exception
-            mock_verbose_tb.format_exception_as_a_whole = interop_utils._revert_func_wrapper(
-                failing_format_exception, original_format_exception, interop_utils._uninstall_ipython_hook
+            mock_verbose_tb.format_exception_as_a_whole = exception_utils._revert_func_wrapper(
+                failing_format_exception, original_format_exception, exception_utils._uninstall_ipython_hook
             )
 
             mock_list_tb._original_structured_traceback = original_structured_traceback
-            mock_list_tb.structured_traceback = interop_utils._revert_func_wrapper(
-                failing_structured_traceback, original_structured_traceback, interop_utils._uninstall_ipython_hook
+            mock_list_tb.structured_traceback = exception_utils._revert_func_wrapper(
+                failing_structured_traceback, original_structured_traceback, exception_utils._uninstall_ipython_hook
             )
 
             # Assign to IPython mock
@@ -250,8 +287,8 @@ class TestInteropUtils(absltest.TestCase):
 
             # Reset for second test
             mock_verbose_tb._original_format_exception_as_a_whole = original_format_exception
-            mock_verbose_tb.format_exception_as_a_whole = interop_utils._revert_func_wrapper(
-                failing_format_exception, original_format_exception, interop_utils._uninstall_ipython_hook
+            mock_verbose_tb.format_exception_as_a_whole = exception_utils._revert_func_wrapper(
+                failing_format_exception, original_format_exception, exception_utils._uninstall_ipython_hook
             )
 
             # Test ListTB structured_traceback fallback

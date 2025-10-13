@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# exclude_tests.sh [-b <bazel_path>] [-f <output_path>] [- merge_gate|continuous_run|release]
+# exclude_tests.sh [-b <bazel_path>] [-f <output_path>] [- merge_gate|continuous_run|release] [-a <feature_areas>]
 #
 # Flags
 # -b: specify path to bazel
@@ -17,6 +17,7 @@
 # -g: specify the group (default: "core") Test group could be found in bazel/platforms/optional_dependency_groups.bzl.
 #     `core` group is the default group that includes all tests that does not have a group specified.
 #     `all` group includes all tests.
+# -a: specify comma-separated list of feature areas to INCLUDE (exclude all others) (e.g., "core,modeling,data")
 
 set -o pipefail
 set -u
@@ -25,7 +26,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} [-b <bazel_path>] [-f <output_path>] [-m merge_gate|continuous_run|quarantined] [-e <env>] [-g <group>]"
+    echo "Usage: ${PROG} [-b <bazel_path>] [-f <output_path>] [-m merge_gate|continuous_run|quarantined] [-e <env>] [-g <group>] [-a <feature_areas>]"
     exit "${exit_code}"
 }
 
@@ -36,8 +37,9 @@ output_path="/tmp/files_to_exclude"
 mode="continuous_run"
 SF_ENV="prod3"
 group="core"
+feature_areas=""
 
-while getopts "b:f:m:e:g:h" opt; do
+while getopts "b:f:m:e:g:a:h" opt; do
     case "${opt}" in
     b)
         bazel=${OPTARG}
@@ -56,6 +58,9 @@ while getopts "b:f:m:e:g:h" opt; do
         ;;
     g)
         group=${OPTARG}
+        ;;
+    a)
+        feature_areas=${OPTARG}
         ;;
     h)
         help 0
@@ -158,6 +163,40 @@ if [[ $group != "all" ]]; then
     sort -u "${targets_to_exclude_file}.tmp" "${incompatible_targets_file}" | uniq -u >"${targets_to_exclude_file}"
 fi
 
+# Handle feature area exclusions if specified
+if [[ -n "${feature_areas}" ]]; then
+    feature_area_query_file="${working_dir}/feature_area_query"
+
+    # Convert comma-separated feature areas to bazel query format
+    IFS=',' read -ra AREAS <<< "${feature_areas}"
+    include_conditions=""
+
+    for area in "${AREAS[@]}"; do
+        # Trim whitespace
+        area=$(echo "${area}" | xargs)
+        if [[ -z "${include_conditions}" ]]; then
+            include_conditions="attr(tags, \"feature:${area}\", //tests/...)"
+        else
+            include_conditions="${include_conditions} + attr(tags, \"feature:${area}\", //tests/...)"
+        fi
+    done
+
+    # Create bazel query to find py_test targets NOT in the specified feature areas
+    # This excludes everything that doesn't have the specified feature tags
+    cat >"${feature_area_query_file}" <<EndOfMessage
+labels(srcs, kind('py_test rule', //tests/... - (${include_conditions})))
+EndOfMessage
+
+    feature_area_test_targets=$("${bazel}" query --query_file="${feature_area_query_file}")
+
+    # Add feature area exclusions to existing exclusions
+    if [[ -n "${feature_area_test_targets}" ]]; then
+        echo "${feature_area_test_targets}" >>"${targets_to_exclude_file}"
+        echo "Feature area filtering: added $(echo "${feature_area_test_targets}" | wc -l) non-${feature_areas} test exclusions"
+    fi
+
+fi
+
 excluded_test_source_rule_file=${working_dir}/excluded_test_source_rule
 
 # -- Begin of Query Rules Heredoc --
@@ -174,6 +213,19 @@ ${bazel} query --query_file="${excluded_test_source_rule_file}" \
     awk -F// '{print $2}' |
     sed -e 's/:/\//g' >"${output_path}"
 
+# Special handling for modeling tests: exclude all modeling feature area tests if feature areas specified and "modeling" not included
+if [[ -n "${feature_areas}" && ",${feature_areas}," != *",modeling,"* ]]; then
+    modeling_query_file="${working_dir}/modeling_query"
+    cat >"${modeling_query_file}" <<EndOfMessage
+labels(srcs, attr(tags, "feature:modeling", //tests/...))
+EndOfMessage
+    modeling_tests=$("${bazel}" query --query_file="${modeling_query_file}")
+    if [[ -n "${modeling_tests}" ]]; then
+        # Transform generate_test_* files to *_test.py files (the actual generated test files)
+        echo "${modeling_tests}" | sed 's|^//||' | sed 's|:|/|g' | sed 's|generate_test_\([^.]*\)$|\1_test.py|g' >>"${output_path}"
+    fi
+fi
+
 # This is for modeling model tests that are automatically generated and not part of the build.
 if [[ -n "${incompatible_targets}" ]]; then
     echo "${incompatible_targets}" | sed 's|^//||' | sed 's|:|/|g' | sed 's|$|.py|' >>"${output_path}"
@@ -189,6 +241,8 @@ grep ':' "ci/targets/quarantine/${SF_ENV}.txt" | \
 fi
 echo "Tests getting excluded:"
 
+# Sort and deduplicate the exclusion file
+sort -u "${output_path}" -o "${output_path}"
 cat "${output_path}"
 
 echo "Done running ${PROG}"

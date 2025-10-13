@@ -93,7 +93,7 @@ def get_data_iterator(
             cache_dir_name = tempfile.mkdtemp()
             super().__init__(cache_prefix=os.path.join(cache_dir_name, "cache"))
 
-        def next(self, batch_consumer_fn) -> int:  # type: ignore[no-untyped-def]
+        def next(self, batch_consumer_fn) -> bool | int:  # type: ignore[no-untyped-def]
             """Advance the iterator by 1 step and pass the data to XGBoost's batch_consumer_fn.
             This function is called by XGBoost during the construction of ``DMatrix``
 
@@ -101,7 +101,7 @@ def get_data_iterator(
                 batch_consumer_fn: batch consumer function
 
             Returns:
-                0 if there is no more data, else 1.
+                False/0 if there is no more data, else True/1.
             """
             while (self._df is None) or (self._df.shape[0] < self._batch_size):
                 # Read files and append data to temp df until batch size is reached.
@@ -117,7 +117,7 @@ def get_data_iterator(
 
             if (self._df is None) or (self._df.shape[0] == 0):
                 # No more data
-                return 0
+                return False
 
             # Slice the temp df and save the remainder in the temp df
             batch_end_index = min(self._batch_size, self._df.shape[0])
@@ -133,8 +133,8 @@ def get_data_iterator(
                 func_args["weight"] = batch_df[self._sample_weight_col].squeeze()
 
             batch_consumer_fn(**func_args)
-            # Return 1 to let XGBoost know we haven't seen all the files yet.
-            return 1
+            # Return True to let XGBoost know we haven't seen all the files yet.
+            return True
 
         def reset(self) -> None:
             """Reset the iterator to its beginning"""

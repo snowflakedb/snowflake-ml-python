@@ -15,6 +15,7 @@ py_library(
     srcs = ["job.py"],
     deps = [
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/jobs/_interop:interop",
         "//snowflake/ml/jobs/_utils:job_utils",
     ],
 )

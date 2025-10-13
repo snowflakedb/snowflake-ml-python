@@ -1601,6 +1601,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
             mock_convert_from_df.assert_called_once_with(
                 self.c_session,
@@ -1621,6 +1622,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1654,6 +1656,7 @@ class ModelOpsTest(absltest.TestCase):
                 partition_column=partition_column,
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
             mock_convert_from_df.assert_called_once_with(
                 self.c_session,
@@ -1674,6 +1677,7 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
+                explain_case_sensitive=False,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params

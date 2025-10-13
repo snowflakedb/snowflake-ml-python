@@ -2,6 +2,7 @@ import uuid
 
 import inflection
 import lightgbm
+import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
@@ -29,20 +30,27 @@ class TestLightGbmModelBatchInferenceInteg(registry_model_deployment_test_base.R
         classifier = lightgbm.LGBMClassifier()
         classifier.fit(cal_X_train, cal_y_train)
 
-        sp_df = self.session.create_dataframe(cal_X_test)
+        # Generate expected predictions using the original model
+        model_output = classifier.predict(cal_X_test)
+        model_output_df = pd.DataFrame({"output_feature_0": model_output})
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(cal_X_test, model_output_df)
+
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
 
         self._test_registry_batch_inference(
             model=classifier,
-            sample_input_data=sp_df,
-            input_spec=sp_df,
+            sample_input_data=cal_X_test,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=2,
             service_name=f"batch_inference_{name}",
             replicas=replicas,
             function_name="predict",
+            expected_predictions=expected_predictions,
         )
 
 

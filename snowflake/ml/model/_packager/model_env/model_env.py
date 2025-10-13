@@ -240,14 +240,31 @@ class ModelEnv:
                 self._conda_dependencies[channel].remove(spec)
 
     def generate_env_for_cuda(self) -> None:
+
+        # Insert py-xgboost-gpu only for XGBoost versions < 3.0.0
         xgboost_spec = env_utils.find_dep_spec(
-            self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=True
+            self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=False
         )
         if xgboost_spec:
-            self.include_if_absent(
-                [ModelDependency(requirement=f"py-xgboost-gpu{xgboost_spec.specifier}", pip_name="xgboost")],
-                check_local_version=False,
-            )
+            # Only handle explicitly pinned versions. Insert GPU variant iff pinned major < 3.
+            pinned_major: Optional[int] = None
+            for spec in xgboost_spec.specifier:
+                if spec.operator in ("==", "===", ">", ">="):
+                    try:
+                        pinned_major = version.parse(spec.version).major
+                    except version.InvalidVersion:
+                        pinned_major = None
+                    break
+
+            if pinned_major is not None and pinned_major < 3:
+                xgboost_spec = env_utils.find_dep_spec(
+                    self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=True
+                )
+                if xgboost_spec:
+                    self.include_if_absent(
+                        [ModelDependency(requirement=f"py-xgboost-gpu{xgboost_spec.specifier}", pip_name="xgboost")],
+                        check_local_version=False,
+                    )
 
         tf_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="tensorflow", remove_spec=True

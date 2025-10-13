@@ -236,7 +236,7 @@ pushd ${SNOWML_DIR}
 VERSION=$(grep -oE "VERSION = \"[0-9]+\\.[0-9]+\\.[0-9]+.*\"" snowflake/ml/version.py| cut -d'"' -f2)
 echo "Extracted Package Version from code: ${VERSION}"
 
-# Generate and copy auto-gen tests with pytest marks.
+# Generate and copy auto-gen tests.
 "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" build --config=build "${BAZEL_ADDITIONAL_BUILD_FLAGS[@]+"${BAZEL_ADDITIONAL_BUILD_FLAGS[@]}"}" //tests/integ/...
 
 # Rsync cannot work well with path that has drive letter in Windows,
@@ -244,14 +244,8 @@ echo "Extracted Package Version from code: ${VERSION}"
 
 rsync -av --exclude '*.runfiles_manifest' --exclude '*.runfiles/**' "bazel-bin/tests" .
 
-if [[ -n "${FEATURE_AREAS}" ]]; then
-    # Add pytest marks to all test files based on their feature: tags
-    echo "Adding pytest marks to test files..."
-    ${PYTHON_EXECUTABLE} bazel/add_pytest_marks.py --targets //tests/integ/... --bazel-path "${BAZEL}"
-fi
-
 # Read environments from optional_dependency_groups.bzl
-groups=()
+groups=("core")
 while IFS= read -r line; do
     groups+=("$line")
 done < <(python3 -c '
@@ -265,26 +259,35 @@ with open("bazel/platforms/optional_dependency_groups.bzl", "r") as f:
                 print(group)
 ')
 
-groups+=("core")
-
 for i in "${!groups[@]}"; do
     group="${groups[$i]}"
 
     # Compare test required dependencies with wheel pkg dependencies and exclude tests if necessary
     EXCLUDE_TESTS=$(mktemp "${TEMP_TEST_DIR}/exclude_tests_${group}_XXXXX")
-    ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}" -g "${group}"
+
+    # Add feature area filtering if FEATURE_AREAS is set
+    if [[ -n "${FEATURE_AREAS}" ]]; then
+        echo "Applying feature area filter: ${FEATURE_AREAS}"
+        ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}" -g "${group}" -a "${FEATURE_AREAS}"
+    else
+        ./ci/get_excluded_tests.sh -f "${EXCLUDE_TESTS}" -m "${MODE}" -b "${BAZEL}" -e "${SF_ENV}" -g "${group}"
+    fi
 
     # Copy tests into temp directory
     pushd "${TEMP_TEST_DIR}"
-    rsync -av --exclude-from "${EXCLUDE_TESTS}" "../${SNOWML_DIR}/tests" "${group}"
+
+    # Copy from snowml root so exclude patterns can use "tests/integ/..." format
+    rsync -av --exclude-from "${EXCLUDE_TESTS}" --include="tests/***" --exclude="*" "../${SNOWML_DIR}/" "${group}/"
     popd
 done
 
 "${BAZEL}" "${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]+"${BAZEL_ADDITIONAL_STARTUP_FLAGS[@]}"}" clean --expunge
 popd
 
+
 # Build snowml package
 if [ "${ENV}" = "pip" ]; then
+    echo "Building snowml package: pip"
     # Clean build workspace
     rm -f "${WORKSPACE}"/*.whl
 
@@ -340,6 +343,7 @@ if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
 fi
 
 # Start testing
+echo "Starting testing..."
 pushd "${TEMP_TEST_DIR}"
 
 # Set up common pytest flag
@@ -349,24 +353,6 @@ COMMON_PYTEST_FLAG+=(--import-mode=append)
 COMMON_PYTEST_FLAG+=(--log-cli-level=INFO)
 COMMON_PYTEST_FLAG+=(-n logical)
 COMMON_PYTEST_FLAG+=(--timeout=3600)
-
-# Add feature area filtering if specified
-if [[ -n "${FEATURE_AREAS}" ]]; then
-    # Convert comma-separated list to pytest mark expression
-    # e.g., "jobs,core" becomes "feature_area_jobs or feature_area_core"
-    IFS=',' read -ra AREAS <<< "${FEATURE_AREAS}"
-    MARK_EXPR=""
-    for i in "${!AREAS[@]}"; do
-        area="${AREAS[$i]}"
-        if [[ $i -eq 0 ]]; then
-            MARK_EXPR="feature_area_${area}"
-        else
-            MARK_EXPR="${MARK_EXPR} or feature_area_${area}"
-        fi
-    done
-    COMMON_PYTEST_FLAG+=(-m "${MARK_EXPR}")
-    echo "Running tests with feature area filter: ${MARK_EXPR}"
-fi
 
 group_exit_codes=()
 group_coverage_report_files=()
@@ -385,6 +371,7 @@ for i in "${!groups[@]}"; do
 
     pushd "${group}"
     if [ "${ENV}" = "pip" ]; then
+        echo "Testing with pip environment: ${group}"
         if [ "${WITH_SPCS_IMAGE}" = true ]; then
             COMMON_PYTEST_FLAG+=(-m "spcs_deployment_image and not pip_incompatible")
         else
@@ -414,6 +401,7 @@ for i in "${!groups[@]}"; do
         python -m pip list
 
         # Run the tests
+        echo "Running tests with pytest flags: ${COMMON_PYTEST_FLAG[*]}"
         set +e
         TEST_SRCDIR="${TEMP_TEST_DIR}" python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
         group_exit_codes[$i]=$?
@@ -447,6 +435,7 @@ for i in "${!groups[@]}"; do
         "${_MICROMAMBA_BIN}" list -p ./testenv
 
         # Run integration tests
+        echo "Running tests with pytest flags: ${COMMON_PYTEST_FLAG[*]}"
         set +e
         TEST_SRCDIR="${TEMP_TEST_DIR}" ${CONDA} run -p ./testenv --no-capture-output python -m pytest "${COMMON_PYTEST_FLAG[@]}" tests/integ/
         group_exit_codes[$i]=$?
@@ -510,7 +499,9 @@ fi
 
 # Check all group exit codes
 for exit_code in "${group_exit_codes[@]}"; do
-    if [[ (${MODE} = "merge_gate" || ${MODE} = "quarantined" || ${WITH_SPCS_IMAGE} = "true" ) && ${exit_code} -eq 5 ]]; then
+    # Allow exit code 5 (no tests found) for all modes, as this is expected
+    # when an optional dependency group has no tests
+    if [[ ${exit_code} -eq 5 ]]; then
         continue
     fi
     if [[ ${exit_code} -ne 0 ]]; then

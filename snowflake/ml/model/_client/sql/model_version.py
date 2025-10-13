@@ -438,6 +438,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         partition_column: Optional[sql_identifier.SqlIdentifier],
         statement_params: Optional[dict[str, Any]] = None,
         is_partitioned: bool = True,
+        explain_case_sensitive: bool = False,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -505,7 +506,8 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         cols_to_drop = []
 
         for output_name, output_type, output_col_name in returns:
-            output_identifier = sql_identifier.SqlIdentifier(output_name).identifier()
+            case_sensitive = "explain" in method_name.resolved().lower() and explain_case_sensitive
+            output_identifier = sql_identifier.SqlIdentifier(output_name, case_sensitive=case_sensitive).identifier()
             if output_identifier != output_col_name:
                 cols_to_drop.append(output_identifier)
             output_cols.append(F.col(output_identifier).astype(output_type))

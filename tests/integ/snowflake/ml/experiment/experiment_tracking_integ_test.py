@@ -111,7 +111,8 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         saved_schema = exp._session.get_current_schema()
 
         pickled = pickle.dumps(exp)
-        session = snowpark_session._active_sessions.pop()  # Simulate having no active session
+        session_set = snowpark_session._active_sessions.copy()
+        snowpark_session._active_sessions.clear()  # Simulate having no active session
         new_exp = pickle.loads(pickled)
 
         # Check that the session is None and the session state is populated correctly
@@ -122,7 +123,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(new_exp._session_state.schema, saved_schema)
 
         # Restore the session and check for equality
-        snowpark_session._active_sessions.add(session)
+        snowpark_session._active_sessions.update(session_set)
         new_exp.set_experiment("TEST_EXPERIMENT")  # set_experiment is decorated with @_restore_session
         self.assertIsNone(new_exp._session_state)
         self.assert_experiment_tracking_equality(exp, new_exp)

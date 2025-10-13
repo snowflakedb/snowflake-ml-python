@@ -54,7 +54,7 @@ class MultiNodeJobsTest(JobTestBase):
                 return socket.gethostname()
 
             ray.init(address="auto", ignore_reinit_error=True)
-            hosts = [compute_heavy.remote(10_000) for _ in range(10)]
+            hosts = [compute_heavy.remote(20) for _ in range(10)]
             unique_hosts = set(ray.get(hosts))
             assert (
                 len(unique_hosts) >= 2

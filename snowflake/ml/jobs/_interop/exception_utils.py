@@ -1,19 +1,12 @@
 import builtins
 import functools
 import importlib
-import json
-import os
-import pickle
 import re
 import sys
 import traceback
 from collections import namedtuple
-from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Callable, Optional, Union, cast
-
-from snowflake import snowpark
-from snowflake.snowpark import exceptions as sp_exceptions
+from typing import Any, Callable, Optional, cast
 
 _TRACEBACK_ENTRY_PATTERN = re.compile(
     r'File "(?P<filename>[^"]+)", line (?P<lineno>\d+), in (?P<name>[^\n]+)(?:\n(?!^\s*File)^\s*(?P<line>[^\n]+))?\n',
@@ -21,175 +14,46 @@ _TRACEBACK_ENTRY_PATTERN = re.compile(
 )
 _REMOTE_ERROR_ATTR_NAME = "_remote_error"
 
-RemoteError = namedtuple("RemoteError", ["exc_type", "exc_msg", "exc_tb"])
+RemoteErrorInfo = namedtuple("RemoteErrorInfo", ["exc_type", "exc_msg", "exc_tb"])
 
 
-@dataclass(frozen=True)
-class ExecutionResult:
-    result: Any = None
-    exception: Optional[BaseException] = None
-
-    @property
-    def success(self) -> bool:
-        return self.exception is None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return the serializable dictionary."""
-        if isinstance(self.exception, BaseException):
-            exc_type = type(self.exception)
-            return {
-                "success": False,
-                "exc_type": f"{exc_type.__module__}.{exc_type.__name__}",
-                "exc_value": self.exception,
-                "exc_tb": "".join(traceback.format_tb(self.exception.__traceback__)),
-            }
-        return {
-            "success": True,
-            "result_type": type(self.result).__qualname__,
-            "result": self.result,
-        }
-
-    @classmethod
-    def from_dict(cls, result_dict: dict[str, Any]) -> "ExecutionResult":
-        if not isinstance(result_dict.get("success"), bool):
-            raise ValueError("Invalid result dictionary")
-
-        if result_dict["success"]:
-            # Load successful result
-            return cls(result=result_dict.get("result"))
-
-        # Load exception
-        exc_type = result_dict.get("exc_type", "RuntimeError")
-        exc_value = result_dict.get("exc_value", "Unknown error")
-        exc_tb = result_dict.get("exc_tb", "")
-        return cls(exception=load_exception(exc_type, exc_value, exc_tb))
+class RemoteError(RuntimeError):
+    """Base exception for errors from remote execution environment which could not be reconstructed locally."""
 
 
-def fetch_result(session: snowpark.Session, result_path: str) -> ExecutionResult:
-    """
-    Fetch the serialized result from the specified path.
-
-    Args:
-        session: Snowpark Session to use for file operations.
-        result_path: The path to the serialized result file.
-
-    Returns:
-        A dictionary containing the execution result if available, None otherwise.
-
-    Raises:
-        RuntimeError: If both pickle and JSON result retrieval fail.
-    """
+def build_exception(type_str: str, message: str, traceback: str, original_repr: Optional[str] = None) -> BaseException:
+    """Build an exception from metadata, attaching remote error info."""
+    if not original_repr:
+        original_repr = f"{type_str}('{message}')"
     try:
-        # TODO: Check if file exists
-        with session.file.get_stream(result_path) as result_stream:
-            return ExecutionResult.from_dict(pickle.load(result_stream))
-    except (
-        sp_exceptions.SnowparkSQLException,
-        pickle.UnpicklingError,
-        TypeError,
-        ImportError,
-        AttributeError,
-        MemoryError,
-    ) as pickle_error:
-        # Fall back to JSON result if loading pickled result fails for any reason
-        try:
-            result_json_path = os.path.splitext(result_path)[0] + ".json"
-            with session.file.get_stream(result_json_path) as result_stream:
-                return ExecutionResult.from_dict(json.load(result_stream))
-        except Exception as json_error:
-            # Both pickle and JSON failed - provide helpful error message
-            raise RuntimeError(_fetch_result_error_message(pickle_error, result_path, json_error)) from pickle_error
+        ex = reconstruct_exception(type_str=type_str, message=message)
+    except Exception as e:
+        # Fallback to a generic error type if reconstruction fails
+        ex = RemoteError(original_repr)
+        ex.__cause__ = e
+    return attach_remote_error_info(ex, type_str, message, traceback)
 
 
-def _fetch_result_error_message(error: Exception, result_path: str, json_error: Optional[Exception] = None) -> str:
-    """Create helpful error messages for common result retrieval failures."""
-
-    # Package import issues
-    if isinstance(error, ImportError):
-        return f"Failed to retrieve job result: Package not installed in your local environment. Error: {str(error)}"
-
-    # Package versions differ between runtime and local environment
-    if isinstance(error, AttributeError):
-        return f"Failed to retrieve job result: Package version mismatch. Error: {str(error)}"
-
-    # Serialization issues
-    if isinstance(error, TypeError):
-        return f"Failed to retrieve job result: Non-serializable objects were returned. Error: {str(error)}"
-
-    # Python version pickling incompatibility
-    if isinstance(error, pickle.UnpicklingError) and "protocol" in str(error).lower():
-        # TODO: Update this once we support different Python versions
-        client_version = f"Python {sys.version_info.major}.{sys.version_info.minor}"
-        runtime_version = "Python 3.10"
-        return (
-            f"Failed to retrieve job result: Python version mismatch - job ran on {runtime_version}, "
-            f"local environment using Python {client_version}. Error: {str(error)}"
-        )
-
-    # File access issues
-    if isinstance(error, sp_exceptions.SnowparkSQLException):
-        if "not found" in str(error).lower() or "does not exist" in str(error).lower():
-            return (
-                f"Failed to retrieve job result: No result file found. Check job.get_logs() for execution "
-                f"errors. Error: {str(error)}"
-            )
+def reconstruct_exception(type_str: str, message: str) -> BaseException:
+    """Best effort reconstruction of an exception from metadata."""
+    try:
+        type_split = type_str.rsplit(".", 1)
+        if len(type_split) == 1:
+            module = builtins
         else:
-            return f"Failed to retrieve job result: Cannot access result file. Error: {str(error)}"
+            module = importlib.import_module(type_split[0])
+        exc_type = getattr(module, type_split[-1])
+    except (ImportError, AttributeError):
+        raise ModuleNotFoundError(
+            f"Unrecognized exception type '{type_str}', likely due to a missing or unavailable package"
+        ) from None
 
-    if isinstance(error, MemoryError):
-        return f"Failed to retrieve job result: Result too large for memory. Error: {str(error)}"
-
-    # Generic fallback
-    base_message = f"Failed to retrieve job result: {str(error)}"
-    if json_error:
-        base_message += f" (JSON fallback also failed: {str(json_error)})"
-    return base_message
-
-
-def load_exception(exc_type_name: str, exc_value: Union[Exception, str], exc_tb: str) -> Exception:
-    """
-    Create an exception with a string-formatted traceback.
-
-    When this exception is raised and not caught, it will display the original traceback.
-    When caught, it behaves like a regular exception without showing the traceback.
-
-    Args:
-        exc_type_name: Name of the exception type (e.g., 'ValueError', 'RuntimeError')
-        exc_value: The deserialized exception value or exception string (i.e. message)
-        exc_tb: String representation of the traceback
-
-    Returns:
-        An exception object with the original traceback information
-
-    # noqa: DAR401
-    """
-    if isinstance(exc_value, Exception):
-        exception = exc_value
-    else:
-        # Try to load the original exception type if possible
-        try:
-            # First check built-in exceptions
-            exc_type = getattr(builtins, exc_type_name, None)
-            if exc_type is None and "." in exc_type_name:
-                # Try to import from module path if it's a qualified name
-                module_path, class_name = exc_type_name.rsplit(".", 1)
-                module = importlib.import_module(module_path)
-                exc_type = getattr(module, class_name)
-            if exc_type is None or not issubclass(exc_type, Exception):
-                raise TypeError(f"{exc_type_name} is not a known exception type")
-            # Create the exception instance
-            exception = exc_type(exc_value)
-        except (ImportError, AttributeError, TypeError):
-            # Fall back to a generic exception
-            exception = RuntimeError(
-                f"Exception deserialization failed, original exception: {exc_type_name}: {exc_value}"
-            )
-
-    # Attach the traceback information to the exception
-    return _attach_remote_error_info(exception, exc_type_name, str(exc_value), exc_tb)
+    if not issubclass(exc_type, BaseException):
+        raise TypeError(f"Imported type {type_str} is not a known exception type, possibly due to a name conflict")
+    return cast(BaseException, exc_type(message))
 
 
-def _attach_remote_error_info(ex: Exception, exc_type: str, exc_msg: str, traceback_str: str) -> Exception:
+def attach_remote_error_info(ex: BaseException, exc_type: str, exc_msg: str, traceback_str: str) -> BaseException:
     """
     Attach a string-formatted traceback to an exception.
 
@@ -207,11 +71,11 @@ def _attach_remote_error_info(ex: Exception, exc_type: str, exc_msg: str, traceb
     """
     # Store the traceback information
     exc_type = exc_type.rsplit(".", 1)[-1]  # Remove module path
-    setattr(ex, _REMOTE_ERROR_ATTR_NAME, RemoteError(exc_type=exc_type, exc_msg=exc_msg, exc_tb=traceback_str))
+    setattr(ex, _REMOTE_ERROR_ATTR_NAME, RemoteErrorInfo(exc_type=exc_type, exc_msg=exc_msg, exc_tb=traceback_str))
     return ex
 
 
-def _retrieve_remote_error_info(ex: Optional[BaseException]) -> Optional[RemoteError]:
+def retrieve_remote_error_info(ex: Optional[BaseException]) -> Optional[RemoteErrorInfo]:
     """
     Retrieve the string-formatted traceback from an exception if it exists.
 
@@ -285,7 +149,7 @@ def _install_sys_excepthook() -> None:
     sys.excepthook is the global hook that Python calls when an unhandled exception occurs.
     By default it prints the exception type, message and traceback to stderr.
 
-    We override sys.excepthook to intercept exceptions that contain our special RemoteError
+    We override sys.excepthook to intercept exceptions that contain our special RemoteErrorInfo
     attribute. These exceptions come from deserialized remote execution results and contain
     the original traceback information from where they occurred.
 
@@ -327,7 +191,7 @@ def _install_sys_excepthook() -> None:
                     "\nDuring handling of the above exception, another exception occurred:\n", file=sys.stderr
                 )
 
-            if (remote_err := _retrieve_remote_error_info(exc_value)) and isinstance(remote_err, RemoteError):
+            if (remote_err := retrieve_remote_error_info(exc_value)) and isinstance(remote_err, RemoteErrorInfo):
                 # Display stored traceback for deserialized exceptions
                 print("Traceback (from remote execution):", file=sys.stderr)  # noqa: T201
                 print(remote_err.exc_tb, end="", file=sys.stderr)  # noqa: T201
@@ -408,7 +272,7 @@ def _install_ipython_hook() -> bool:
             tb_offset: Optional[int],
             **kwargs: Any,
         ) -> list[list[str]]:
-            if (remote_err := _retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteError):
+            if (remote_err := retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteErrorInfo):
                 # Implementation forked from IPython.core.ultratb.VerboseTB.format_exception_as_a_whole
                 head = self.prepare_header(remote_err.exc_type, long_version=False).replace(
                     "(most recent call last)",
@@ -448,7 +312,7 @@ def _install_ipython_hook() -> bool:
             tb_offset: Optional[int] = None,
             **kwargs: Any,
         ) -> list[str]:
-            if (remote_err := _retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteError):
+            if (remote_err := retrieve_remote_error_info(evalue)) and isinstance(remote_err, RemoteErrorInfo):
                 tb_list = [
                     (m.group("filename"), m.group("lineno"), m.group("name"), m.group("line"))
                     for m in re.finditer(_TRACEBACK_ENTRY_PATTERN, remote_err.exc_tb or "")
@@ -493,9 +357,16 @@ def _uninstall_ipython_hook() -> None:
 
 
 def install_exception_display_hooks() -> None:
+    """Install custom exception display hooks for improved remote error reporting.
+
+    This function should be called once during package initialization to set up
+    enhanced error handling for remote job execution errors. The hooks will:
+
+    - Display original remote tracebacks instead of local deserialization traces
+    - Work in both standard Python and IPython/Jupyter environments
+    - Safely fall back to original behavior if errors occur
+
+    Note: This function is idempotent and safe to call multiple times.
+    """
     if not _install_ipython_hook():
         _install_sys_excepthook()
-
-
-# ------ Install the custom traceback hooks by default ------ #
-install_exception_display_hooks()

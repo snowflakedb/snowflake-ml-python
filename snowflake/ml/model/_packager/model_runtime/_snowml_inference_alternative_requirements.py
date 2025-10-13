@@ -30,5 +30,5 @@ REQUIREMENTS = [
     "sqlparse>=0.4,<1",
     "tqdm<5",
     "typing-extensions>=4.1.0,<5",
-    "xgboost>=1.7.3,<3",
+    "xgboost<4",
 ]

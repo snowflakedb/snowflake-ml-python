@@ -1,10 +1,9 @@
 anaconda
 ant
-ape
-baboon
 badger
 bat
 bear
+beetle
 bird
 bobcat
 bulldog
@@ -73,7 +72,6 @@ lobster
 mayfly
 mamba
 mole
-monkey
 moose
 moth
 mouse
@@ -114,6 +112,7 @@ swan
 termite
 tiger
 treefrog
+tuna
 turkey
 turtle
 vampirebat
@@ -126,3 +125,4 @@ worm
 yak
 yeti
 zebra
+zebrafish

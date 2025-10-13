@@ -1,0 +1,144 @@
+---
+version: '2023-12-01'
+method_options:
+  predict:
+    case_sensitive: true
+min_snowpark_ml_version: 1.0.12
+creation_timestamp: '2025-07-24 18:31:40.087360'
+env:
+  conda: env/conda.yml
+  cuda_version:
+  pip: env/requirements.txt
+  python_version: '3.9'
+  snowpark_ml_version: 1.7.5
+explainability:
+  algorithm: shap
+model_type: sklearn
+models:
+  MODEL:
+    artifacts: {}
+    function_properties: {}
+    handler_version: '2023-12-01'
+    model_type: sklearn
+    name: MODEL
+    options: {}
+    path: model.pkl
+name: MODEL
+function_properties: {}
+metadata:
+task: TABULAR_MULTI_CLASSIFICATION
+runtimes:
+  cpu:
+    dependencies:
+      conda: runtimes/cpu/env/conda.yml
+      pip: runtimes/cpu/env/requirements.txt
+    imports: []
+signatures:
+  explain:
+    inputs:
+      - name: feature_1
+        nullable: true
+        type: DOUBLE
+      - name: feature_2
+        nullable: true
+        type: DOUBLE
+      - name: feature_3
+        nullable: true
+        type: DOUBLE
+      - name: feature_4
+        nullable: true
+        type: DOUBLE
+      - name: feature_5
+        nullable: true
+        type: DOUBLE
+    outputs:
+      - name: feature_1_explanation
+        nullable: true
+        type: STRING
+      - name: feature_2_explanation
+        nullable: true
+        type: STRING
+      - name: feature_3_explanation
+        nullable: true
+        type: STRING
+      - name: feature_4_explanation
+        nullable: true
+        type: STRING
+      - name: feature_5_explanation
+        nullable: true
+        type: STRING
+  predict:
+    inputs:
+      - name: feature_1
+        nullable: true
+        type: DOUBLE
+      - name: feature_2
+        nullable: true
+        type: DOUBLE
+      - name: feature_3
+        nullable: true
+        type: DOUBLE
+      - name: feature_4
+        nullable: true
+        type: DOUBLE
+      - name: feature_5
+        nullable: true
+        type: DOUBLE
+    outputs:
+      - name: output_feature_0
+        nullable: false
+        type: INT64
+  predict_log_proba:
+    inputs:
+      - name: feature_1
+        nullable: true
+        type: DOUBLE
+      - name: feature_2
+        nullable: true
+        type: DOUBLE
+      - name: feature_3
+        nullable: true
+        type: DOUBLE
+      - name: feature_4
+        nullable: true
+        type: DOUBLE
+      - name: feature_5
+        nullable: true
+        type: DOUBLE
+    outputs:
+      - name: output_feature_0
+        nullable: false
+        type: DOUBLE
+      - name: output_feature_1
+        nullable: false
+        type: DOUBLE
+      - name: output_feature_2
+        nullable: false
+        type: DOUBLE
+  predict_proba:
+    inputs:
+      - name: feature_1
+        nullable: true
+        type: DOUBLE
+      - name: feature_2
+        nullable: true
+        type: DOUBLE
+      - name: feature_3
+        nullable: true
+        type: DOUBLE
+      - name: feature_4
+        nullable: true
+        type: DOUBLE
+      - name: feature_5
+        nullable: true
+        type: DOUBLE
+    outputs:
+      - name: output_feature_0
+        nullable: false
+        type: DOUBLE
+      - name: output_feature_1
+        nullable: false
+        type: DOUBLE
+      - name: output_feature_2
+        nullable: false
+        type: DOUBLE

@@ -10,6 +10,8 @@ from unittest import mock
 from uuid import uuid4
 
 import cloudpickle as cp
+import numpy as np
+import pandas as pd
 from absl.testing import absltest, parameterized
 from packaging import version
 
@@ -18,6 +20,7 @@ from snowflake.ml import jobs
 from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jd
+from snowflake.ml.jobs._interop import results as interop_result
 from snowflake.ml.jobs._utils import (
     constants,
     feature_flags,
@@ -149,23 +152,27 @@ class JobManagerTest(JobTestBase):
         ]
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
-                with self.assertRaisesRegex(ValueError, "does not exist"):
+                with self.assertRaises(sp_exceptions.SnowparkSQLException) as cm:
                     jobs.get_job(id, session=self.session)
+                self.assertRegex(str(cm.exception), "does not exist")
+                self.assertEqual(cm.exception.sql_error_code, 2003)
 
     def test_delete_job_negative(self) -> None:
         nonexistent_job_ids = [
             f"{self.db}.non_existent_schema.nonexistent_job_id",
             f"{self.db}.{self.schema}.nonexistent_job_id",
             "nonexistent_job_id",
-            *INVALID_IDENTIFIERS,
         ]
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
                 job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(ValueError, msg=f"id={id}"):
-                    jobs.delete_job(job.id, session=self.session)
                 with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
                     jobs.delete_job(job, session=self.session)
+        for id in INVALID_IDENTIFIERS:
+            with self.subTest(f"id={id}"):
+                job = jobs.MLJob[None](id, session=self.session)
+                with self.assertRaises(ValueError, msg=f"id={id}"):
+                    jobs.delete_job(job.id, session=self.session)
 
     def test_get_status_negative(self) -> None:
         nonexistent_job_ids = [
@@ -177,7 +184,7 @@ class JobManagerTest(JobTestBase):
         for id in nonexistent_job_ids:
             with self.subTest(f"id={id}"):
                 job = jobs.MLJob[None](id, session=self.session)
-                with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={id}"):
+                with self.assertRaises((sp_exceptions.SnowparkSQLException, ValueError), msg=f"id={id}"):
                     job.status
 
     def test_get_logs(self) -> None:
@@ -232,30 +239,40 @@ class JobManagerTest(JobTestBase):
         finally:
             constants.JOB_POLL_MAX_DELAY_SECONDS = max_backoff
 
-    def test_job_execution(self) -> None:
-        payload = TestAsset("src/main.py")
+    @parameterized.product(  # type: ignore[misc]
+        USE_SUBMIT_JOB_V2=[True, False],
+        ENABLE_RUNTIME_VERSIONS=[True, False],
+    )
+    def test_job_execution(self, **feature_flag_kwargs: bool) -> None:
+        env_vars = {}
+        for param_name, param_value in feature_flag_kwargs.items():
+            flag = getattr(feature_flags.FeatureFlags, param_name.upper())
+            env_vars[flag.value] = str(param_value).lower()
 
-        # Create a job
-        job = jobs.submit_file(
-            payload.path,
-            self.compute_pool,
-            stage_name="payload_stage",
-            args=["foo", "--delay", "1"],
-            session=self.session,
-        )
+        with mock.patch.dict(os.environ, env_vars):
+            payload = TestAsset("src/main.py")
 
-        # Wait for job to finish
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
-        self.assertEqual(job.status, "DONE")
-        self.assertIn("Job complete", job.get_logs())
-        self.assertIsNone(job.result())
+            # Create a job
+            job = jobs.submit_file(
+                payload.path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                args=["foo", "--delay", "1"],
+                session=self.session,
+            )
 
-        # Test loading job by ID
-        loaded_job = jobs.get_job(job.id, session=self.session)
-        self.assertEqual(loaded_job.status, "DONE")
-        self.assertIn("Job start", loaded_job.get_logs())
-        self.assertIn("Job complete", loaded_job.get_logs())
-        self.assertIsNone(loaded_job.result())
+            # Wait for job to finish
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertEqual(job.status, "DONE")
+            self.assertIn("Job complete", job.get_logs())
+            self.assertIsNone(job.result())
+
+            # Test loading job by ID
+            loaded_job = jobs.get_job(job.id, session=self.session)
+            self.assertEqual(loaded_job.status, "DONE")
+            self.assertIn("Job start", loaded_job.get_logs())
+            self.assertIn("Job complete", loaded_job.get_logs())
+            self.assertIsNone(loaded_job.result())
 
     def test_job_execution_metrics(self) -> None:
         payload = TestAsset("src/main.py")
@@ -325,7 +342,13 @@ class JobManagerTest(JobTestBase):
         """Dedicated test for MLJob pickling and unpickling functionality."""
         payload = TestAsset("src/main.py")
 
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            # ML Job pickling only guaranteed for matching SnowML version
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+            session=self.session,
+        )
         def check_job_status(job: jobs.MLJob[Any]) -> str:
             return job.status
 
@@ -346,7 +369,7 @@ class JobManagerTest(JobTestBase):
         original_logs = job.get_logs()
         original_result = job.result()
         original_target_instances = job.target_instances
-
+        cp.register_pickle_by_value(types)
         pickled_data = cp.dumps(job)
         self.assertIsInstance(pickled_data, bytes)
         self.assertGreater(len(pickled_data), 0)
@@ -390,6 +413,126 @@ class JobManagerTest(JobTestBase):
         with mock.patch("snowflake.snowpark.session._get_active_sessions", return_value=set()):
             with self.assertRaisesRegex(RuntimeError, "No active Snowpark session available"):
                 cp.loads(pickled_data)
+
+    def test_job_result_v2(self) -> None:
+        """Test that v2 job results can be saved and loaded correctly."""
+
+        def func_with_return_value() -> None:
+            return {"key": "value", "number": 123}
+
+        job = self._submit_func_as_file(
+            func_with_return_value,
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+
+        # Validate result
+        result: Any = job.result()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("key"), "value")
+        self.assertEqual(result.get("number"), 123)
+
+        # Ensure the result was saved with v2 (v1 results get loaded as normal ExecutionResults)
+        self.assertIsInstance(job._result, interop_result.LoadedExecutionResult)
+
+    def test_job_result_v2_pandas(self) -> None:
+        """Test that v2 job results can save and load Pandas DataFrames correctly."""
+
+        def func_with_dataframe_return() -> None:
+            import numpy as np
+            import pandas as pd
+
+            # Create a DataFrame with random data but fixed seed for reproducibility
+            np.random.seed(42)
+            data = {
+                "col1": np.random.randn(10),
+                "col2": np.random.randint(1, 100, 10),
+                "col3": ["value_" + str(i) for i in range(10)],
+            }
+            return pd.DataFrame(data)
+
+        job = self._submit_func_as_file(
+            func_with_dataframe_return,
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+
+        # Validate result
+        result: Any = job.result()
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertEqual(result.shape, (10, 3))
+
+        # Validate actual values by recreating the expected DataFrame
+        np.random.seed(42)
+        expected_data = {
+            "col1": np.random.randn(10),
+            "col2": np.random.randint(1, 100, 10),
+            "col3": ["value_" + str(i) for i in range(10)],
+        }
+        expected_df = pd.DataFrame(expected_data)
+        pd.testing.assert_frame_equal(result, expected_df)
+
+        # Ensure the result was saved with v2 (v1 results get loaded as normal ExecutionResults)
+        self.assertIsInstance(job._result, interop_result.LoadedExecutionResult)
+
+    def test_job_result_v2_numpy(self) -> None:
+        """Test that v2 job results can save and load NumPy arrays correctly."""
+
+        def func_with_numpy_return() -> None:
+            import numpy as np
+
+            # Create a NumPy array with random data but fixed seed for reproducibility
+            np.random.seed(42)
+            return np.random.randn(5, 3)
+
+        job = self._submit_func_as_file(
+            func_with_numpy_return,
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+
+        # Validate result
+        result: Any = job.result()
+        self.assertIsInstance(result, np.ndarray)
+        self.assertEqual(result.shape, (5, 3))
+
+        # Validate actual values by recreating the expected array
+        np.random.seed(42)
+        expected_array = np.random.randn(5, 3)
+        np.testing.assert_array_equal(result, expected_array)
+
+        # Ensure the result was saved with v2 (v1 results get loaded as normal ExecutionResults)
+        self.assertIsInstance(job._result, interop_result.LoadedExecutionResult)
+
+    def test_job_result_backcompat(self) -> None:
+        """Test that v1 job results can still be loaded correctly."""
+
+        def func_with_return_value() -> None:
+            return {"key": "value", "number": 123}
+
+        job = self._submit_func_as_file(
+            func_with_return_value,
+            spec_overrides={
+                "spec": {
+                    "containers": [
+                        {
+                            "name": constants.DEFAULT_CONTAINER_NAME,
+                            "image": f"{constants.DEFAULT_IMAGE_REPO}/{constants.DEFAULT_IMAGE_CPU}:1.7.1",
+                        }
+                    ]
+                }
+            },
+        )
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+
+        # Validate result
+        result: Any = job.result()
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("key"), "value")
+        self.assertEqual(result.get("number"), 123)
+
+        # Ensure the result was saved with v1 (v2 results get loaded as LoadedExecutionResults)
+        self.assertEqual(type(job._result), interop_result.ExecutionResult)
 
     # TODO(SNOW-1911482): Enable test for Python 3.11+
     @absltest.skipIf(
@@ -457,9 +600,11 @@ class JobManagerTest(JobTestBase):
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
-    def test_job_execution_in_stored_procedure(self) -> None:
-        jobs_import_src = os.path.dirname(jobs.__file__)
-
+    @parameterized.parameters(  # type: ignore[misc]
+        "owner",
+        "caller",
+    )
+    def test_job_execution_in_stored_procedure(self, sproc_rights: str) -> None:
         @jobs.remote(self.compute_pool, stage_name="payload_stage")
         def job_fn() -> None:
             print("Hello from remote function!")
@@ -467,9 +612,8 @@ class JobManagerTest(JobTestBase):
         @F.sproc(
             session=self.session,
             packages=["snowflake-snowpark-python", "snowflake-ml-python"],
-            imports=[
-                (jobs_import_src, "snowflake.ml.jobs"),
-            ],
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+            execute_as=sproc_rights,
         )
         def job_sproc(session: snowpark.Session) -> None:
             job = job_fn()
@@ -736,8 +880,10 @@ class JobManagerTest(JobTestBase):
                     self.assertEqual(job_schema, identifier.resolve_identifier(schema or self.schema))
 
                     if schema == temp_schema:
-                        with self.assertRaisesRegex(ValueError, "does not exist"):
+                        with self.assertRaisesRegex(sp_exceptions.SnowparkSQLException, "does not exist") as cm:
                             jobs.get_job(job_name, session=self.session)
+                        self.assertRegex(str(cm.exception), "does not exist")
+                        self.assertEqual(cm.exception.sql_error_code, 2003)
                     else:
                         self.assertIsNotNone(jobs.get_job(job_name, session=self.session))
         finally:
@@ -1080,7 +1226,7 @@ class JobManagerTest(JobTestBase):
         except Exception:
             expected_runtime_image = None
 
-        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_IMAGE_VERSION_ENV_VAR.value: "true"}):
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.value: "true"}):
             job = jobs.submit_file(
                 TestAsset("src/check_python.py").path,
                 self.compute_pool,
@@ -1155,24 +1301,25 @@ class JobManagerTest(JobTestBase):
         ("/snowflake/images/snowflake_images/st_plat/runtime/x86/runtime_image/snowbooks:1.7.1"),
     )
     def test_job_with_runtime_environment(self, runtime_environment: str) -> None:
-        job_v1 = self._submit_func_as_file(dummy_function, runtime_environment=runtime_environment)
-        self.assertEqual(job_v1.wait(), "DONE", job_v1.get_logs())
-        self.assertIn(runtime_environment, job_v1._container_spec["image"])
+        def check_runtime_version() -> None:
+            from snowflake.runtime._version import __version__ as mlrs_version
 
-        rows = self.session.sql("SHOW PARAMETERS LIKE 'ENABLE_EXECUTE_ML_JOB_FUNCTION'").collect()
-        if not rows or rows[0]["value"] == "false":
-            self.skipTest("ENABLE_EXECUTE_ML_JOB_FUNCTION is disabled.")
+            print(mlrs_version)
 
-        try:
-            self.session.sql("ALTER SESSION SET ENABLE_EXECUTE_ML_JOB_FUNCTION = TRUE").collect()
-            with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
-                job_v2 = self._submit_func_as_file(dummy_function, runtime_environment=runtime_environment)
-                self.assertEqual(job_v2.wait(), "DONE", job_v2.get_logs())
-                self.assertIn(runtime_environment, job_v2._container_spec["image"])
-        except sp_exceptions.SnowparkSQLException:
-            self.skipTest("Unable to enable required session parameters for runtime_environment. Skipping test.")
-        finally:
-            self.session.sql("ALTER SESSION SET ENABLE_EXECUTE_ML_JOB_FUNCTION = FALSE").collect()
+        job = self._submit_func_as_file(check_runtime_version, runtime_environment=runtime_environment)
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertIn(runtime_environment, job._container_spec["image"])
+        self.assertEqual("1.7.1", job.get_logs())
+
+    def test_get_job_after_job_deleted(self) -> None:
+        job = self._submit_func_as_file(dummy_function)
+        job.wait()
+        jobs.delete_job(job.id, session=self.session)
+        loaded_job = jobs.get_job(job.id, session=self.session)
+        self.assertIsNotNone(loaded_job.status)
+        self.assertIsNotNone(loaded_job.get_logs())
+        self.assertEqual(loaded_job.target_instances, 1)
+        self.assertEqual(loaded_job._compute_pool, self.compute_pool)
 
 
 if __name__ == "__main__":

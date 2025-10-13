@@ -260,6 +260,73 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self.registry.delete_model(model_name=name)
 
+    def test_skl_pipeline_explain_case_sensitive_with_quoted_identifiers_ignore_case(self) -> None:
+        # Build a pipeline with OneHotEncoder to simulate transformed feature names
+        data = {
+            "Color": ["red eyes", "blue", "green", "red eyes", "blue", "green"],
+            "size": [1, 2, 2, 4, 3, 1],
+            "price": [10, 15, 20, 25, 18, 12],
+            "target": [0, 1, 1, 0, 1, 0],
+        }
+        df = pd.DataFrame(data)
+        df["Color"] = df["Color"].astype("category")
+        input_features = ["Color", "size", "price"]
+
+        preprocessor = compose.ColumnTransformer(
+            transformers=[
+                ("cat", preprocessing.OneHotEncoder(), ["Color"]),
+            ],
+            remainder="passthrough",
+        )
+
+        pipeline = SK_pipeline.Pipeline(
+            [
+                ("preprocessor", preprocessor),
+                ("classifier", linear_model.LogisticRegression(max_iter=1000)),
+            ]
+        )
+
+        pipeline.fit(df[input_features], df["target"])
+
+        name = "skl_pipeline_test_quoted_identifiers_case_sensitive_explain"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=pipeline,
+            model_name=name,
+            version_name=version,
+            sample_input_data=df[input_features],
+            options={
+                "enable_explainability": True,
+                # Ensure some methods are registered as case-sensitive, including explain
+                "method_options": {
+                    "predict": {"case_sensitive": True},
+                    "predict_proba": {"case_sensitive": True},
+                },
+            },
+        )
+
+        functions = mv._functions
+        find_method: Callable[[model_manifest_schema.ModelFunctionInfo], bool] = (
+            lambda method: "explain" in method["name"]
+        )
+        target_function_info = next(
+            filter(find_method, functions),
+            None,
+        )
+        self.assertIsNotNone(target_function_info, "explain function not found")
+
+        result = mv.run(
+            df[input_features],
+            function_name=target_function_info["name"],
+            strict_input_validation=False,
+        )
+
+        self.assertIsInstance(result, pd.DataFrame)
+        self.assertTrue(len(result) > 0, "Result should not be empty")
+
+        self.registry.delete_model(model_name=name)
+
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
 
     def test_skl_model_with_signature_and_sample_data(self) -> None:

@@ -150,10 +150,21 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_case_sensitivity_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_case_sensitivity_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
     name = "registry_custom_model_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_batch_inference_test.py"],
-    shard_count = 2,
+    shard_count = 3,
     tags = ["feature:model_registry"],
     deps = [
         ":registry_model_deployment_test_base",

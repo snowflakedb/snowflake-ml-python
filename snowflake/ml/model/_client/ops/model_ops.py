@@ -952,6 +952,7 @@ class ModelOperator:
         partition_column: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
+        explain_case_sensitive: bool = False,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -967,6 +968,7 @@ class ModelOperator:
         service_name: sql_identifier.SqlIdentifier,
         strict_input_validation: bool = False,
         statement_params: Optional[dict[str, str]] = None,
+        explain_case_sensitive: bool = False,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -986,6 +988,7 @@ class ModelOperator:
         partition_column: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
+        explain_case_sensitive: bool = False,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
@@ -1068,6 +1071,7 @@ class ModelOperator:
                     version_name=version_name,
                     statement_params=statement_params,
                     is_partitioned=is_partitioned or False,
+                    explain_case_sensitive=explain_case_sensitive,
                 )
 
         if keep_order:

@@ -125,6 +125,7 @@ class ModelMetadataDict(TypedDict):
     task: Required[str]
     explainability: NotRequired[Optional[ExplainabilityMetadataDict]]
     function_properties: NotRequired[dict[str, dict[str, Any]]]
+    method_options: NotRequired[dict[str, dict[str, Any]]]
 
 
 class ModelExplainAlgorithm(Enum):

@@ -1,0 +1,106 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "dto_schema",
+    srcs = ["dto_schema.py"],
+)
+
+py_library(
+    name = "results",
+    srcs = ["results.py"],
+)
+
+py_library(
+    name = "data_utils",
+    srcs = ["data_utils.py"],
+    deps = [
+        ":dto_schema",
+    ],
+)
+
+py_library(
+    name = "protocols",
+    srcs = ["protocols.py"],
+    deps = [
+        ":data_utils",
+        ":dto_schema",
+    ],
+)
+
+py_library(
+    name = "exception_utils",
+    srcs = ["exception_utils.py"],
+)
+
+py_library(
+    name = "legacy",
+    srcs = ["legacy.py"],
+    deps = [
+        ":exception_utils",
+        ":results",
+    ],
+)
+
+py_library(
+    name = "utils",
+    srcs = ["utils.py"],
+    deps = [
+        ":data_utils",
+        ":dto_schema",
+        ":exception_utils",
+        ":legacy",
+        ":protocols",
+        ":results",
+    ],
+)
+
+py_test(
+    name = "protocols_test",
+    srcs = ["protocols_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":protocols",
+    ],
+)
+
+py_test(
+    name = "exception_utils_test",
+    srcs = ["exception_utils_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":exception_utils",
+    ],
+)
+
+py_test(
+    name = "utils_test",
+    srcs = ["utils_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":utils",
+    ],
+)
+
+py_test(
+    name = "legacy_test",
+    srcs = ["legacy_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":exception_utils",
+        ":legacy",
+    ],
+)
+
+py_library(
+    name = "interop",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        ":dto_schema",
+        ":protocols",
+        ":utils",
+    ],
+)
