@@ -786,6 +786,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             pd.testing.assert_index_equal(
                 res.columns,
                 pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
             )
 
             for row in res["choices"]:
@@ -867,6 +868,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             pd.testing.assert_index_equal(
                 res.columns,
                 pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
             )
 
             for row in res["choices"]:

@@ -1591,6 +1591,7 @@ class FeatureStore:
         spine_timestamp_col: Optional[str] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
         Enrich spine dataframe with feature values. Mainly used to generate inference data input.
@@ -1604,6 +1605,8 @@ class FeatureStore:
             exclude_columns: Column names to exclude from the result dataframe.
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+            join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
+                "cte" for CTE method. (Internal use only - subject to change)
 
         Returns:
             Snowpark DataFrame containing the joined results.
@@ -1641,6 +1644,7 @@ class FeatureStore:
             cast(list[Union[FeatureView, FeatureViewSlice]], features),
             spine_timestamp_col,
             include_feature_view_timestamp_col,
+            join_method,
         )
 
         if exclude_columns is not None:
@@ -1659,6 +1663,7 @@ class FeatureStore:
         spine_label_cols: Optional[list[str]] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
         Generate a training set from the specified Spine DataFrame and Feature Views. Result is
@@ -1676,6 +1681,8 @@ class FeatureStore:
             exclude_columns: Name of column(s) to exclude from the resulting training set.
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+            join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
+                "cte" for CTE method. (Internal use only - subject to change)
 
         Returns:
             Returns a Snowpark DataFrame representing the training set.
@@ -1709,7 +1716,7 @@ class FeatureStore:
             spine_label_cols = to_sql_identifiers(spine_label_cols)  # type: ignore[assignment]
 
         result_df, join_keys = self._join_features(
-            spine_df, features, spine_timestamp_col, include_feature_view_timestamp_col
+            spine_df, features, spine_timestamp_col, include_feature_view_timestamp_col, join_method
         )
 
         if exclude_columns is not None:
@@ -1757,6 +1764,7 @@ class FeatureStore:
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
         output_type: Literal["dataset"] = "dataset",
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> dataset.Dataset:
         ...
 
@@ -1774,6 +1782,7 @@ class FeatureStore:
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         ...
 
@@ -1791,6 +1800,7 @@ class FeatureStore:
         include_feature_view_timestamp_col: bool = False,
         desc: str = "",
         output_type: Literal["dataset", "table"] = "dataset",
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> Union[dataset.Dataset, DataFrame]:
         """
         Generate dataset by given source table and feature views.
@@ -1811,6 +1821,8 @@ class FeatureStore:
                 (if feature view has timestamp column) if set true. Default to false.
             desc: A description about this dataset.
             output_type: (Deprecated) The type of Snowflake storage to use for the generated training data.
+            join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
+                "cte" for CTE method. (Internal use only - subject to change)
 
         Returns:
             If output_type is "dataset" (default), returns a Dataset object.
@@ -1874,6 +1886,7 @@ class FeatureStore:
             exclude_columns=exclude_columns,
             include_feature_view_timestamp_col=include_feature_view_timestamp_col,
             save_as=table_name,
+            join_method=join_method,
         )
         if output_type == "table":
             warnings.warn(
@@ -2596,91 +2609,229 @@ class FeatureStore:
         found_rows = self._find_object("TAGS", full_entity_tag_name)
         return len(found_rows) == 1
 
+    def _build_cte_query(
+        self,
+        feature_views: list[FeatureView],
+        spine_ref: str,
+        entity_key_columns: list[SqlIdentifier],
+        timestamp_column: SqlIdentifier,
+        include_feature_view_timestamp_col: bool = False,
+    ) -> str:
+        """
+        Build a CTE query with the spine query and the feature views.
+
+        Note: this function assumes that (1) all feature views have the same join keys and
+        (2) all feature views and spine have a timestamp column.
+
+        Args:
+            feature_views: A list of feature views to join.
+            spine_ref: The spine query.
+            entity_key_columns: The join keys of the feature views.
+            timestamp_column: The timestamp column.
+            include_feature_view_timestamp_col: Whether to include the timestamp column of
+                the feature view in the result. Default to false.
+
+        Returns:
+            A SQL query string with CTE structure for joining feature views.
+
+        Raises:
+            ValueError: If a feature view does not have a timestamp column.
+        """
+        if not feature_views:
+            return f"SELECT * FROM ({spine_ref})"
+
+        # Create spine CTE with the spine query for reuse
+        spine_cte = f"""SPINE AS (
+    SELECT {", ".join([f'"{col}"' for col in entity_key_columns])}, "{timestamp_column}"
+    FROM ({spine_ref})
+)"""
+
+        ctes = [spine_cte]
+        cte_names = []
+        for i, feature_view in enumerate(feature_views):
+            cte_name = f"FV{i:03d}"
+            cte_names.append(cte_name)
+            # Use the feature view's own timestamp column, not the spine's timestamp column
+            feature_timestamp_col = feature_view.timestamp_col
+            if feature_timestamp_col is None:
+                raise ValueError(f"Feature view {feature_view.name} does not have a timestamp column")
+            ctes.append(
+                f"""{cte_name} AS (
+    SELECT
+        FEATURE.*
+    FROM
+        SPINE
+    ASOF JOIN {feature_view.fully_qualified_name()} FEATURE
+    MATCH_CONDITION (SPINE."{timestamp_column}" >= FEATURE."{feature_timestamp_col}")
+    ON {" AND ".join([f'SPINE."{col}" = FEATURE."{col}"' for col in entity_key_columns])}
+)"""
+            )
+
+        # Build final SELECT with individual joins to each FV CTE
+        select_columns = ["SPINE.*"]
+        join_clauses = []
+
+        for i, cte_name in enumerate(cte_names):
+            # Each feature view has its own timestamp column to exclude
+            feature_view = feature_views[i]
+            feature_timestamp_col = feature_view.timestamp_col
+            exclude_columns = [f'"{col}"' for col in entity_key_columns]
+
+            if feature_timestamp_col is not None:
+                if include_feature_view_timestamp_col:
+                    # Include timestamp column with alias, but exclude the original column
+                    assert feature_view.version is not None, f"Feature view {feature_view.name} must have a version"
+                    f_ts_col_alias = identifier.concat_names(
+                        [str(feature_view.name), "_", str(feature_view.version), "_", str(feature_timestamp_col)]
+                    )
+                    select_columns.append(f'{cte_name}."{feature_timestamp_col}" AS {f_ts_col_alias}')
+                exclude_columns.append(f'"{feature_timestamp_col}"')
+
+            select_columns.append(f"{cte_name}.* EXCLUDE ({', '.join(exclude_columns)})")
+            join_clauses.append(
+                f"""
+    INNER JOIN {cte_name}
+    ON {" AND ".join([f'SPINE."{col}" = {cte_name}."{col}"' for col in entity_key_columns])}"""
+            )
+
+        query = f"""WITH
+{', '.join(ctes)}
+SELECT
+    {', '.join(select_columns)}
+FROM SPINE{' '.join(join_clauses)}
+"""
+
+        return query
+
     def _join_features(
         self,
         spine_df: DataFrame,
         features: list[Union[FeatureView, FeatureViewSlice]],
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool,
+        join_method: Literal["sequential", "cte"] = "sequential",
     ) -> tuple[DataFrame, list[SqlIdentifier]]:
-        for f in features:
-            f = f.feature_view_ref if isinstance(f, FeatureViewSlice) else f
-            if f.status == FeatureViewStatus.DRAFT:
+        # Validate join_method parameter
+        if join_method not in ["sequential", "cte"]:
+            raise ValueError(f"Invalid join_method '{join_method}'. Must be 'sequential' or 'cte'.")
+
+        for feature in features:
+            feature = feature.feature_view_ref if isinstance(feature, FeatureViewSlice) else feature
+            if feature.status == FeatureViewStatus.DRAFT:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
-                    original_exception=ValueError(f"FeatureView {f.name} has not been registered."),
+                    original_exception=ValueError(f"FeatureView {feature.name} has not been registered."),
                 )
-            for e in f.entities:
+            for e in feature.entities:
                 for k in e.join_keys:
                     if k not in to_sql_identifiers(spine_df.columns):
                         raise snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INVALID_ARGUMENT,
                             original_exception=ValueError(
-                                f"join_key {k} from Entity {e.name} in FeatureView {f.name} is not found in spine_df."
+                                f"join_key {k} from Entity {e.name} in FeatureView {feature.name} "
+                                "is not found in spine_df."
                             ),
                         )
 
+        # TODO (SNOW-2396184): remove this check and the non-ASOF join path as ASOF join is enabled by default now.
         if self._asof_join_enabled is None:
             self._asof_join_enabled = self._is_asof_join_enabled()
 
         # TODO: leverage Snowpark dataframe for more concise syntax once it supports AsOfJoin
         query = spine_df.queries["queries"][-1]
-        layer = 0
-        for f in features:
-            if isinstance(f, FeatureViewSlice):
-                cols = f.names
-                f = f.feature_view_ref
-            else:
-                cols = f.feature_names
+        join_keys: list[SqlIdentifier] = []
+        feature_views = [
+            feature.feature_view_ref if isinstance(feature, FeatureViewSlice) else feature for feature in features
+        ]
 
-            join_keys = list({k for e in f.entities for k in e.join_keys})
-            join_keys_str = ", ".join(join_keys)
-            assert f.version is not None
-            join_table_name = f.fully_qualified_name()
+        # We can only use the CTE method if all feature views have the same join keys
+        def get_entities(feature: Union[FeatureView, FeatureViewSlice]) -> list[Entity]:
+            return feature.feature_view_ref.entities if isinstance(feature, FeatureViewSlice) else feature.entities
 
-            if spine_timestamp_col is not None and f.timestamp_col is not None:
-                if self._asof_join_enabled:
-                    if include_feature_view_timestamp_col:
-                        f_ts_col_alias = identifier.concat_names([f.name, "_", f.version, "_", f.timestamp_col])
-                        f_ts_col_str = f"r_{layer}.{f.timestamp_col} AS {f_ts_col_alias},"
+        # Get the join keys from the first feature view as reference
+        reference_join_keys = {k for e in get_entities(features[0]) for k in e.join_keys}
+
+        if join_method == "cte":
+            if not all(
+                {k for e in get_entities(feature) for k in e.join_keys} == reference_join_keys for feature in features
+            ):
+                raise ValueError(
+                    "The CTE method is not supported for this case "
+                    "because not all feature views have the same join keys."
+                )
+            if spine_timestamp_col is None or not all(feature.timestamp_col is not None for feature in feature_views):
+                raise ValueError(
+                    "The CTE method is not supported for this case "
+                    "because not all feature views and spine have timestamp columns."
+                )
+            join_keys = list({k for e in feature_views[0].entities for k in e.join_keys})
+            logger.info(f"Using the CTE method with {len(features)} feature views and {len(join_keys)} join keys")
+            query = self._build_cte_query(
+                feature_views,
+                spine_df.queries["queries"][-1],
+                join_keys,
+                spine_timestamp_col,
+                include_feature_view_timestamp_col,
+            )
+        else:
+            # Use sequential joins layer by layer
+            logger.info(f"Using the sequential join method with {len(features)} feature views")
+            layer = 0
+            for f in features:
+                if isinstance(f, FeatureViewSlice):
+                    cols = f.names
+                    f = f.feature_view_ref
+                else:
+                    cols = f.feature_names
+
+                join_keys = list({k for e in f.entities for k in e.join_keys})
+                join_keys_str = ", ".join(join_keys)
+                assert f.version is not None
+                join_table_name = f.fully_qualified_name()
+
+                if spine_timestamp_col is not None and f.timestamp_col is not None:
+                    if self._asof_join_enabled:
+                        if include_feature_view_timestamp_col:
+                            f_ts_col_alias = identifier.concat_names([f.name, "_", f.version, "_", f.timestamp_col])
+                            f_ts_col_str = f"r_{layer}.{f.timestamp_col} AS {f_ts_col_alias},"
+                        else:
+                            f_ts_col_str = ""
+                        query = f"""
+                            SELECT
+                                l_{layer}.*,
+                                {f_ts_col_str}
+                                r_{layer}.* EXCLUDE ({join_keys_str}, {f.timestamp_col})
+                            FROM ({query}) l_{layer}
+                            ASOF JOIN (
+                                SELECT {join_keys_str}, {f.timestamp_col}, {', '.join(cols)}
+                                FROM {join_table_name}
+                            ) r_{layer}
+                            MATCH_CONDITION (l_{layer}.{spine_timestamp_col} >= r_{layer}.{f.timestamp_col})
+                            ON {' AND '.join([f'l_{layer}.{k} = r_{layer}.{k}' for k in join_keys])}
+                        """
                     else:
-                        f_ts_col_str = ""
+                        query = self._composed_union_window_join_query(
+                            layer=layer,
+                            s_query=query,
+                            s_ts_col=spine_timestamp_col,
+                            f_df=f.feature_df,
+                            f_table_name=join_table_name,
+                            f_ts_col=f.timestamp_col,
+                            join_keys=join_keys,
+                        )
+                else:
                     query = f"""
                         SELECT
                             l_{layer}.*,
-                            {f_ts_col_str}
-                            r_{layer}.* EXCLUDE ({join_keys_str}, {f.timestamp_col})
+                            r_{layer}.* EXCLUDE ({join_keys_str})
                         FROM ({query}) l_{layer}
-                        ASOF JOIN (
-                            SELECT {join_keys_str}, {f.timestamp_col}, {', '.join(cols)}
+                        LEFT JOIN (
+                            SELECT {join_keys_str}, {', '.join(cols)}
                             FROM {join_table_name}
                         ) r_{layer}
-                        MATCH_CONDITION (l_{layer}.{spine_timestamp_col} >= r_{layer}.{f.timestamp_col})
                         ON {' AND '.join([f'l_{layer}.{k} = r_{layer}.{k}' for k in join_keys])}
                     """
-                else:
-                    query = self._composed_union_window_join_query(
-                        layer=layer,
-                        s_query=query,
-                        s_ts_col=spine_timestamp_col,
-                        f_df=f.feature_df,
-                        f_table_name=join_table_name,
-                        f_ts_col=f.timestamp_col,
-                        join_keys=join_keys,
-                    )
-            else:
-                query = f"""
-                    SELECT
-                        l_{layer}.*,
-                        r_{layer}.* EXCLUDE ({join_keys_str})
-                    FROM ({query}) l_{layer}
-                    LEFT JOIN (
-                        SELECT {join_keys_str}, {', '.join(cols)}
-                        FROM {join_table_name}
-                    ) r_{layer}
-                    ON {' AND '.join([f'l_{layer}.{k} = r_{layer}.{k}' for k in join_keys])}
-                """
-            layer += 1
+                layer += 1
 
         # TODO: construct result dataframe with datframe APIs once ASOF join is supported natively.
         # Below code manually construct result dataframe from private members of spine dataframe, which

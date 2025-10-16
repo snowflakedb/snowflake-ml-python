@@ -53,8 +53,8 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                             "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
                         },
                     ],
-                    "max_completion_tokens": 250,
                     "temperature": 0.9,
+                    "max_completion_tokens": 250,
                     "stop": None,
                     "n": NUM_CHOICES,
                     "stream": False,
@@ -69,6 +69,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             pd.testing.assert_index_equal(
                 res.columns,
                 pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
             )
 
             for row in res["choices"]:

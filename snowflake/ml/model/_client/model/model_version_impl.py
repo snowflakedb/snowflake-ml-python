@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
 
+from snowflake import snowpark
 from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
@@ -593,7 +594,8 @@ class ModelVersion(lineage_node.LineageNode):
             "job_spec",
         ],
     )
-    def _run_batch(
+    @snowpark._internal.utils.private_preview(version="1.18.0")
+    def run_batch(
         self,
         *,
         compute_pool: str,
@@ -601,6 +603,68 @@ class ModelVersion(lineage_node.LineageNode):
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
     ) -> jobs.MLJob[Any]:
+        """Execute batch inference on datasets as an SPCS job.
+
+        Args:
+            compute_pool (str): Name of the compute pool to use for building the image containers and batch
+                inference execution.
+            input_spec (dataframe.DataFrame): Snowpark DataFrame containing the input data for inference.
+                The DataFrame should contain all required features for model prediction and passthrough columns.
+            output_spec (batch_inference_specs.OutputSpec): Configuration for where and how to save
+                the inference results. Specifies the stage location and file handling behavior.
+            job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
+                execution parameters such as compute resources, worker counts, and job naming.
+                If None, default values will be used.
+
+        Returns:
+            jobs.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
+                lifecycle.
+
+        Raises:
+            ValueError: If warehouse is not set in job_spec and no current warehouse is available.
+            RuntimeError: If the input_spec cannot be processed or written to the staging location.
+
+        Example:
+            >>> # Prepare input data - Example 1: From a table
+            >>> input_df = session.table("my_input_table")
+            >>>
+            >>> # Prepare input data - Example 2: From a SQL query
+            >>> input_df = session.sql(
+            ...     "SELECT id, feature_1, feature_2 FROM feature_table WHERE feature_1 > 100"
+            ... )
+            >>>
+            >>> # Prepare input data - Example 3: From Parquet files in a stage
+            >>> input_df = session.read.option("pattern", ".*\\.parquet").parquet(
+            ...     "@my_stage/input_data/"
+            ... ).select("id", "feature_1", "feature_2")
+            >>>
+            >>> # Configure output location
+            >>> output_spec = OutputSpec(
+            ...     stage_location='@My_DB.PUBLIC.MY_STAGE/someth/path/',
+            ...     mode=SaveMode.OVERWRITE
+            ... )
+            >>>
+            >>> # Configure job parameters
+            >>> job_spec = JobSpec(
+            ...     job_name="my_batch_inference",
+            ...     num_workers=4,
+            ...     cpu_requests="2",
+            ...     memory_requests="8Gi"
+            ... )
+            >>>
+            >>> # Run batch inference
+            >>> job = model_version.run_batch(
+            ...     compute_pool="my_compute_pool",
+            ...     input_spec=input_df,
+            ...     output_spec=output_spec,
+            ...     job_spec=job_spec
+            ... )
+
+        Note:
+            This method is currently in private preview and requires Snowflake version 1.18.0 or later.
+            The input data is temporarily stored in the output stage location under /_temporary before
+            inference execution.
+        """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,

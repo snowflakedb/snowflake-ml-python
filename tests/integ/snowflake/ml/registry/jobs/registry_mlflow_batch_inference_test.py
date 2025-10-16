@@ -7,12 +7,10 @@ from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
 from snowflake.ml.model._signatures import numpy_handler, snowpark_handler
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
-class TestMlflowBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"cpu_requests": "4", "memory_requests": "4Gi"},
         # todo: add tests for gpu

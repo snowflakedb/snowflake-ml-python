@@ -5,12 +5,10 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, svm
 
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
-class TestRegistrySklearnBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestRegistrySklearnBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters({"pip_requirements": None}, {"pip_requirements": ["scikit-learn"]})  # type: ignore[misc]
     def test_sklearn(self, pip_requirements: Optional[list[str]]) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)

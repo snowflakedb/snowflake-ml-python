@@ -73,6 +73,7 @@ COMMON_INSTANCE_FAMILIES = {
     "CPU_X64_XS": ComputeResources(cpu=1, memory=6),
     "CPU_X64_S": ComputeResources(cpu=3, memory=13),
     "CPU_X64_M": ComputeResources(cpu=6, memory=28),
+    "CPU_X64_SL": ComputeResources(cpu=14, memory=54),
     "CPU_X64_L": ComputeResources(cpu=28, memory=116),
     "HIGHMEM_X64_S": ComputeResources(cpu=6, memory=58),
 }

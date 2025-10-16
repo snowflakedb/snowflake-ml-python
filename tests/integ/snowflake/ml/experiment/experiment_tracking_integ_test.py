@@ -200,6 +200,54 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertNotIn(run_name_to_delete, run_names)
         self.assertEqual(len(run_names), 1)
 
+    def test_start_run_resumes_running_run_across_instances(self) -> None:
+        """A RUNNING run should be resumable from a new ExperimentTracking instance."""
+        experiment_name = "TEST_EXPERIMENT_RESUME"
+        target_run_name = "RUN_TO_RESUME"
+
+        # Set up experiment and start a run (leave it RUNNING by not closing the context)
+        self.exp.set_experiment(experiment_name=experiment_name)
+        run = self.exp.start_run(run_name=target_run_name)
+        self.assertEqual(run.name, target_run_name)
+
+        # New ExperimentTracking instance in the same DB/Schema resumes the same run
+        exp2 = ExperimentTracking(self._session, database_name=self._db_name, schema_name=self._schema_name)
+        exp2.set_experiment(experiment_name=experiment_name)
+        resumed = exp2.start_run(run_name=target_run_name)
+        self.assertEqual(resumed.name, target_run_name)
+
+        # Verify no duplicate runs were created
+        runs = self._session.sql(
+            f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}"
+        ).collect()
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["name"], target_run_name)
+
+        # Cleanup: end the run
+        self.exp.end_run()
+
+    def test_start_run_existing_non_running_raises(self) -> None:
+        """If a run exists but is not RUNNING, starting with same name should raise."""
+        experiment_name = "TEST_EXPERIMENT_NON_RUNNING"
+        run_name = "FINISHED_RUN"
+
+        # Create and finish a run
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            pass
+
+        runs = self._session.sql(
+            f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}"
+        ).collect()
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(json.loads(runs[0]["metadata"])["status"], "FINISHED")
+
+        # New instance attempting to start the same (non-running) run should error
+        exp2 = ExperimentTracking(self._session, database_name=self._db_name, schema_name=self._schema_name)
+        exp2.set_experiment(experiment_name=experiment_name)
+        with self.assertRaises(RuntimeError):
+            exp2.start_run(run_name=run_name)
+
     def test_log_metrics_and_params_comprehensive(self) -> None:
         """Comprehensive test for logging metrics and parameters with various scenarios."""
         experiment_name = "TEST_EXPERIMENT_METRICS_PARAMS"

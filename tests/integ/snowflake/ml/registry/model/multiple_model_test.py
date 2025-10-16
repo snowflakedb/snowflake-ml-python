@@ -60,7 +60,10 @@ class MultipleModelTest(registry_model_test_base.RegistryModelTestBase):
             .select('"output"')
             .to_pandas()
         )
-        pd.testing.assert_frame_equal(res, pd.DataFrame({"output": [31, 34]}))
+        pd.testing.assert_frame_equal(
+            res.sort_values(by="output").reset_index(drop=True),
+            pd.DataFrame({"output": [31, 34]}),
+        )
 
 
 if __name__ == "__main__":

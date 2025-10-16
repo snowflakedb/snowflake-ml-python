@@ -6,12 +6,11 @@ from snowflake.ml.model._client.sql import _base
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import file_operation, row, session
 
+RUN_NAME_COL_NAME = "name"
+RUN_METADATA_COL_NAME = "metadata"
+
 
 class ExperimentTrackingSQLClient(_base._BaseSQLClient):
-
-    RUN_NAME_COL_NAME = "name"
-    RUN_METADATA_COL_NAME = "metadata"
-
     def __init__(
         self,
         session: session.Session,
@@ -45,16 +44,10 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
             expected_rows=1, expected_cols=1
         ).validate()
 
-    def add_run(
-        self,
-        *,
-        experiment_name: sql_identifier.SqlIdentifier,
-        run_name: sql_identifier.SqlIdentifier,
-        live: bool = True,
-    ) -> None:
+    def add_run(self, *, experiment_name: sql_identifier.SqlIdentifier, run_name: sql_identifier.SqlIdentifier) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
         query_result_checker.SqlResultValidator(
-            self._session, f"ALTER EXPERIMENT {experiment_fqn} ADD {'LIVE' if live else ''} RUN {run_name}"
+            self._session, f"ALTER EXPERIMENT {experiment_fqn} ADD RUN {run_name}"
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     def commit_run(

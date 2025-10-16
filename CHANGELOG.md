@@ -20,6 +20,7 @@
 * ML Job: Enabled job submission v2 by default
   * Jobs submitted using v2 will automatically use the latest Container Runtime image
   * v1 behavior can be restored by setting environment variable `MLRS_USE_SUBMIT_JOB_V2` to `false`
+* Registry (PrPr): Introducing `ModelVersion.run_batch` for batch inference in Snowpark Container Services.
 
 ## 1.16.0
 

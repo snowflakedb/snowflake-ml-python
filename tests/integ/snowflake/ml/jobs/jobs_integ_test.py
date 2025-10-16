@@ -854,7 +854,7 @@ class JobManagerTest(JobTestBase):
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
 
-    def test_submit_job_fully_qualified_name(self):
+    def test_submit_job_fully_qualified_name(self) -> None:
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
         self.dbm.use_schema(self.schema)  # Stay on default schema
 
@@ -889,7 +889,7 @@ class JobManagerTest(JobTestBase):
         finally:
             self.dbm.drop_schema(temp_schema, if_exists=True)
 
-    def test_submit_job_negative(self):
+    def test_submit_job_negative(self) -> None:
         test_cases = [
             ("not_valid_database", self.schema, sp_exceptions.SnowparkSQLException, "does not exist"),
             (self.db, "not_valid_schema", sp_exceptions.SnowparkSQLException, "does not exist"),
@@ -1320,6 +1320,28 @@ class JobManagerTest(JobTestBase):
         self.assertIsNotNone(loaded_job.get_logs())
         self.assertEqual(loaded_job.target_instances, 1)
         self.assertEqual(loaded_job._compute_pool, self.compute_pool)
+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )  # type: ignore[misc]
+    def test_job_name(self) -> None:
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+
+            @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+            def test_function() -> None:
+                print("hello world")
+
+            job = test_function()
+            self.assertRegex(job.name.lower(), r"test_function_\w+")
+
+            job1 = jobs.submit_file(
+                TestAsset("src/main.py").path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+            )
+            self.assertRegex(job1.name.lower(), r"main_\w+")
 
 
 if __name__ == "__main__":

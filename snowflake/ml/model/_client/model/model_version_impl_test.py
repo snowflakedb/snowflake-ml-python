@@ -1588,7 +1588,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
         ):
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="CUSTOM_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1648,7 +1648,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
 
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1690,7 +1690,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
             ) as mock_get_warehouse,
         ):
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1731,7 +1731,7 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
             ):
-                self.m_mv._run_batch(
+                self.m_mv.run_batch(
                     compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
                 )
 
@@ -1761,7 +1761,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
 
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=None
             )
 

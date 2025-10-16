@@ -1,0 +1,193 @@
+load("@rules_python//python:defs.bzl", "py_library")
+load("//bazel:py_rules.bzl", "py_test")
+
+package(default_visibility = [
+    "//tests/integ/snowflake/ml:__subpackages__",
+    "//tests/perf:__subpackages__",
+])
+
+py_library(
+    name = "registry_batch_inference_test_base",
+    testonly = True,
+    srcs = ["registry_batch_inference_test_base.py"],
+    deps = [
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/registry",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_additional_import_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_additional_import_test.py"],
+    data = ["//tests/integ/snowflake/ml/registry/model:ext_module"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_case_sensitivity_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_case_sensitivity_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_functional_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_functional_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_custom_model_batch_inference_test.py"],
+    shard_count = 3,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_xgboost_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_xgboost_batch_inference_test.py"],
+    shard_count = 3,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_sentence_transformers_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_sentence_transformers_batch_inference_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_lightgbm_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_lightgbm_batch_inference_test.py"],
+    optional_dependencies = ["lightgbm"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_tensorflow_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_tensorflow_batch_inference_test.py"],
+    optional_dependencies = [
+        "tensorflow",
+    ],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//snowflake/ml/model/_signatures:tensorflow_handler",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "registry_pytorch_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_pytorch_batch_inference_test.py"],
+    optional_dependencies = [
+        "torch",
+    ],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "registry_catboost_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_catboost_batch_inference_test.py"],
+    optional_dependencies = [
+        "catboost",
+    ],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_keras_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_keras_batch_inference_test.py"],
+    optional_dependencies = [
+        "keras",
+    ],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+    ],
+)
+
+py_test(
+    name = "registry_mlflow_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_mlflow_batch_inference_test.py"],
+    optional_dependencies = ["mlflow"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/_internal:env",
+        "//snowflake/ml/model/_signatures:numpy_handler",
+    ],
+)
+
+py_test(
+    name = "registry_sklearn_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_sklearn_batch_inference_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
