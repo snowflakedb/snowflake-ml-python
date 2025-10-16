@@ -164,7 +164,7 @@ class LogLossTest(parameterized.TestCase):
 
     @parameterized.product(  # type: ignore[misc]
         data_index=list(range(len(_REGULAR_MULTICLASS_DATA_LIST))),
-        labels=[None, [2, 0, 4]],
+        labels=[None, [0, 1, 2]],
     )
     def test_labels(self, data_index: int, labels: Optional[npt.ArrayLike]) -> None:
         pandas_df, input_df = utils.get_df(self._session, _REGULAR_MULTICLASS_DATA_LIST[data_index], _SF_SCHEMA)
