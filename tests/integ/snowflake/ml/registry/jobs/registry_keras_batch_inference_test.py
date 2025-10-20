@@ -7,9 +7,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._signatures import numpy_handler
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
 def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]:
@@ -26,7 +24,7 @@ def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.A
     return model, x, y
 
 
-class TestKerasBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestKerasBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
         # uncomment this after https://snowflakecomputing.atlassian.net/browse/SNOW-2369772 is fixed

@@ -3,7 +3,7 @@ load("//bazel:py_rules.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-SHARD_COUNT = 3
+SHARD_COUNT = 6
 
 TIMEOUT = "long"  # 900s
 

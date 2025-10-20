@@ -158,6 +158,11 @@
   version_requirements: '>=2.1.4,<3'
 - name: protobuf
   dev_version: 4.25.3
+- name: prophet
+  dev_version: 1.1.5
+  version_requirements: '>=1.1.0, <2'
+  requirements_extra_tags:
+    - prophet
 - name: psutil
   dev_version: 5.9.0
   tags:
@@ -231,8 +236,8 @@
     - transformers
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.16.0
-  version_requirements: '>=3.16.0,<4'
+  dev_version: 3.17.0
+  version_requirements: '>=3.17.0,<4'
 - name: snowflake.core
   dev_version: 1.0.5
   version_requirements: '>=1.0.2,<2'

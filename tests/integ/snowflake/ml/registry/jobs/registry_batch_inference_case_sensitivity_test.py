@@ -4,9 +4,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
 class TestModel(custom_model.CustomModel):
@@ -20,7 +18,7 @@ class TestModel(custom_model.CustomModel):
         return pd.DataFrame({"output": [1] * len(input)})
 
 
-class RegistryBatchInferenceCaseSensitivityTest(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     def test_case_sensitive_1(self) -> None:
         model = TestModel(custom_model.ModelContext())
 

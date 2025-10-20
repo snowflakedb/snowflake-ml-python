@@ -50,7 +50,7 @@ class SnowflakeCallbackTest(parameterized.TestCase):
         for epoch in range(0, self.num_steps, log_every_n_epochs):
             self.experiment_tracking.log_metric.assert_any_call(key=ANY, value=ANY, step=epoch)
 
-    def _log_model(self, model_class: type[Any], model_name: Optional[str]) -> None:
+    def _log_model(self, model_class: type[Any], model_name: Optional[str], version_name: Optional[str]) -> None:
         """Test that model is autologged."""
 
         callback = self._get_callback(
@@ -59,6 +59,7 @@ class SnowflakeCallbackTest(parameterized.TestCase):
             log_metrics=False,
             log_params=False,
             model_name=model_name,
+            version_name=version_name,
             model_signature=self.model_signature,
         )
 
@@ -70,7 +71,10 @@ class SnowflakeCallbackTest(parameterized.TestCase):
 
         expected_model_name = model_name or mock_experiment.name + "_model"
         self.experiment_tracking.log_model.assert_called_once_with(
-            model=ANY, model_name=expected_model_name, signatures={"predict": self.model_signature}
+            model=ANY,
+            model_name=expected_model_name,
+            version_name=version_name,
+            signatures={"predict": self.model_signature},
         )
 
     def _log_param(self, model_class: type[Any]) -> None:

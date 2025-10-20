@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
 
+from snowflake import snowpark
 from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
@@ -593,7 +594,8 @@ class ModelVersion(lineage_node.LineageNode):
             "job_spec",
         ],
     )
-    def _run_batch(
+    @snowpark._internal.utils.private_preview(version="1.18.0")
+    def run_batch(
         self,
         *,
         compute_pool: str,
@@ -601,6 +603,68 @@ class ModelVersion(lineage_node.LineageNode):
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
     ) -> jobs.MLJob[Any]:
+        """Execute batch inference on datasets as an SPCS job.
+
+        Args:
+            compute_pool (str): Name of the compute pool to use for building the image containers and batch
+                inference execution.
+            input_spec (dataframe.DataFrame): Snowpark DataFrame containing the input data for inference.
+                The DataFrame should contain all required features for model prediction and passthrough columns.
+            output_spec (batch_inference_specs.OutputSpec): Configuration for where and how to save
+                the inference results. Specifies the stage location and file handling behavior.
+            job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
+                execution parameters such as compute resources, worker counts, and job naming.
+                If None, default values will be used.
+
+        Returns:
+            jobs.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
+                lifecycle.
+
+        Raises:
+            ValueError: If warehouse is not set in job_spec and no current warehouse is available.
+            RuntimeError: If the input_spec cannot be processed or written to the staging location.
+
+        Example:
+            >>> # Prepare input data - Example 1: From a table
+            >>> input_df = session.table("my_input_table")
+            >>>
+            >>> # Prepare input data - Example 2: From a SQL query
+            >>> input_df = session.sql(
+            ...     "SELECT id, feature_1, feature_2 FROM feature_table WHERE feature_1 > 100"
+            ... )
+            >>>
+            >>> # Prepare input data - Example 3: From Parquet files in a stage
+            >>> input_df = session.read.option("pattern", ".*\\.parquet").parquet(
+            ...     "@my_stage/input_data/"
+            ... ).select("id", "feature_1", "feature_2")
+            >>>
+            >>> # Configure output location
+            >>> output_spec = OutputSpec(
+            ...     stage_location='@My_DB.PUBLIC.MY_STAGE/someth/path/',
+            ...     mode=SaveMode.OVERWRITE
+            ... )
+            >>>
+            >>> # Configure job parameters
+            >>> job_spec = JobSpec(
+            ...     job_name="my_batch_inference",
+            ...     num_workers=4,
+            ...     cpu_requests="2",
+            ...     memory_requests="8Gi"
+            ... )
+            >>>
+            >>> # Run batch inference
+            >>> job = model_version.run_batch(
+            ...     compute_pool="my_compute_pool",
+            ...     input_spec=input_df,
+            ...     output_spec=output_spec,
+            ...     job_spec=job_spec
+            ... )
+
+        Note:
+            This method is currently in private preview and requires Snowflake version 1.18.0 or later.
+            The input data is temporarily stored in the output stage location under /_temporary before
+            inference execution.
+        """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
@@ -827,6 +891,51 @@ class ModelVersion(lineage_node.LineageNode):
             version_name=sql_identifier.SqlIdentifier(version),
         )
 
+    def _can_run_on_gpu(
+        self,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Check if the model has GPU runtime support.
+
+        Args:
+            statement_params: Optional dictionary of statement parameters to include
+                in the SQL command to fetch model spec.
+
+        Returns:
+            True if the model has GPU runtime configured, False otherwise.
+        """
+        # Fetch model spec
+        model_spec = self._get_model_spec(statement_params)
+
+        # Check if runtimes section exists and has gpu runtime
+        runtimes = model_spec.get("runtimes", {})
+        return "gpu" in runtimes
+
+    def _throw_error_if_gpu_is_not_supported(
+        self,
+        gpu_requests: Optional[Union[str, int]] = None,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Check if the model has GPU runtime support.
+
+        Args:
+            gpu_requests: The gpu limit for GPU based inference. Can be integer, fractional or string values. Use CPU
+                if None.
+            statement_params: Optional dictionary of statement parameters to include
+                in the SQL command to fetch model spec.
+
+        Raises:
+            ValueError: If the model does not have GPU runtime support.
+        """
+        if gpu_requests is not None and not self._can_run_on_gpu(statement_params):
+            raise ValueError(
+                f"GPU resources requested (gpu_requests={gpu_requests}), but the model "
+                f"{self.fully_qualified_model_name} version {self.version_name} does not have GPU runtime support. "
+                "Please ensure the model was logged with GPU runtime configuration or do not provide gpu_requests. "
+                "To log the model with GPU runtime configuration, provide `cuda_version` in the `options` while calling"
+                " the `log_model` function."
+            )
+
     def _check_huggingface_text_generation_model(
         self,
         statement_params: Optional[dict[str, Any]] = None,
@@ -926,9 +1035,10 @@ class ModelVersion(lineage_node.LineageNode):
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
             experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
                 `inference_engine` is the name of the inference engine to use.
                 `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+                `autocapture` is a boolean to enable/disable inference table.
         """
         ...
 
@@ -984,9 +1094,10 @@ class ModelVersion(lineage_node.LineageNode):
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
             experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
                 `inference_engine` is the name of the inference engine to use.
                 `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+                `autocapture` is a boolean to enable/disable inference table.
         """
         ...
 
@@ -1059,21 +1170,20 @@ class ModelVersion(lineage_node.LineageNode):
                 When it is False, this function executes the underlying service creation asynchronously
                 and returns an AsyncJob.
             experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
+                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
                 `inference_engine` is the name of the inference engine to use.
                 `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+                `autocapture` is a boolean to enable/disable inference table.
 
 
         Raises:
-            ValueError: Illegal external access integration arguments.
+            ValueError: Illegal external access integration arguments, or if GPU resources are requested
+                but the model does not have GPU runtime support.
             exceptions.SnowparkSQLException: if service already exists.
 
         Returns:
             If `block=True`, return result information about service creation from server.
             Otherwise, return the service creation AsyncJob.
-
-        Raises:
-            ValueError: Illegal external access integration arguments.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -1096,11 +1206,15 @@ class ModelVersion(lineage_node.LineageNode):
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
 
-        # Check if model is HuggingFace text-generation before doing inference engine checks
-        if experimental_options:
-            self._check_huggingface_text_generation_model(statement_params)
+        # Validate GPU support if GPU resources are requested
+        self._throw_error_if_gpu_is_not_supported(gpu_requests, statement_params)
 
         inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+
+        # Check if model is HuggingFace text-generation before doing inference engine checks
+        # Only validate if inference engine is actually specified
+        if inference_engine_args is not None:
+            self._check_huggingface_text_generation_model(statement_params)
 
         # Enrich inference engine args if inference engine is specified
         if inference_engine_args is not None:
@@ -1108,6 +1222,9 @@ class ModelVersion(lineage_node.LineageNode):
                 inference_engine_args,
                 gpu_requests,
             )
+
+        # Extract autocapture from experimental_options
+        autocapture = experimental_options.get("autocapture") if experimental_options else None
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions
@@ -1148,6 +1265,7 @@ class ModelVersion(lineage_node.LineageNode):
                     statement_params=statement_params,
                     progress_status=status,
                     inference_engine_args=inference_engine_args,
+                    autocapture=autocapture,
                 )
                 status.update(label="Model service created successfully", state="complete", expanded=False)
                 return result

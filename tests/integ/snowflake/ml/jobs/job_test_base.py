@@ -38,7 +38,7 @@ class JobTestBase(parameterized.TestCase):
         cls.schema = cls.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
             cls.compute_pool = cls.dbm.create_compute_pool(
-                test_constants._TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=5
+                test_constants._TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=20
             )
         except sp_exceptions.SnowparkSQLException:
             if not cls.dbm.show_compute_pools(test_constants._TEST_COMPUTE_POOL).count() > 0:

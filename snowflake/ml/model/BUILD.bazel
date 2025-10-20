@@ -137,3 +137,12 @@ py_test(
         ":event_handler",
     ],
 )
+
+py_test(
+    name = "deprecation_warning_test",
+    srcs = ["deprecation_warning_test.py"],
+    tags = ["feature:model_registry"],
+    deps = [
+        ":model",
+    ],
+)

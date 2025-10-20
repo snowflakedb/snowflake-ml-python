@@ -24,6 +24,10 @@ class PayloadPath(Protocol):
         ...
 
     @property
+    def stem(self) -> str:
+        ...
+
+    @property
     def suffix(self) -> str:
         ...
 
@@ -92,6 +96,7 @@ class UploadedPayload:
     stage_path: PurePath
     entrypoint: list[Union[str, PurePath]]
     env_vars: dict[str, str] = field(default_factory=dict)
+    payload_name: Optional[str] = None
 
 
 @dataclass(frozen=True)

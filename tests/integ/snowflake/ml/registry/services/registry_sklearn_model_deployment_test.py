@@ -151,6 +151,41 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             options={"enable_explainability": False},
         )
 
+    def test_sklearn_gpu_request_without_cuda_version(self) -> None:
+        """Test that creating a service with gpu_requests fails when model was logged without cuda_version."""
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        svc = svm.LinearSVC()
+        svc.fit(iris_X, iris_y)
+
+        # Log model WITHOUT cuda_version
+        name = f"model_{self.test_sklearn_gpu_request_without_cuda_version.__name__}"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=svc,
+            model_name=name,
+            version_name=version,
+            sample_input_data=iris_X,
+            options={"enable_explainability": False},
+            # Note: NOT providing cuda_version in options
+        )
+
+        # Attempt to create service with gpu_requests - this should raise ValueError
+        with self.assertRaises(ValueError) as context:
+            mv.create_service(
+                service_name=f"service_{self._run_id}",
+                service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+                gpu_requests="1",
+                force_rebuild=True,
+            )
+
+        # Validate the error message
+        error_message = str(context.exception)
+        self.assertIn("GPU resources requested", error_message)
+        self.assertIn("does not have GPU runtime support", error_message)
+        self.assertIn("cuda_version", error_message)
+        self.assertIn("log_model", error_message)
+
 
 if __name__ == "__main__":
     absltest.main()

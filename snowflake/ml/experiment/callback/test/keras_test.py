@@ -25,9 +25,9 @@ class SnowflakeKerasCallbackTest(SnowflakeCallbackTest, parameterized.TestCase):
     def test_log_metrics(self, log_every_n_epochs: int) -> None:
         super()._log_metrics(keras.Sequential, log_every_n_epochs=log_every_n_epochs)
 
-    @parameterized.parameters(None, "custom_model_name")  # type: ignore[misc]
-    def test_log_model(self, model_name: Optional[str] = None) -> None:
-        super()._log_model(keras.Sequential, model_name)
+    @parameterized.product(model_name=[None, "custom_model_name"], version_name=[None, "v1"])  # type: ignore[misc]
+    def test_log_model(self, model_name: Optional[str] = None, version_name: Optional[str] = None) -> None:
+        super()._log_model(keras.Sequential, model_name, version_name)
 
     def test_log_param(self) -> None:
         super()._log_param(keras.Sequential)

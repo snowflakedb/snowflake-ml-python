@@ -7,17 +7,14 @@ from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
 from snowflake.ml.model._signatures import numpy_handler, snowpark_handler
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
-class TestMlflowBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"cpu_requests": "4", "memory_requests": "4Gi"},
         # todo: add tests for gpu
     )
-    @absltest.skip("Test disabled for https://snowflakecomputing.atlassian.net/browse/SNOW-2369887")
     def test_mlflow(
         self,
         cpu_requests: str,
@@ -59,25 +56,31 @@ class TestMlflowBatchInferenceInteg(registry_model_deployment_test_base.Registry
             run_id = run.info.run_id
 
         X_test_df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df([X_test])
-        # Convert integer column names to strings for Snowpark compatibility
+        predictions_df = numpy_handler.SeqOfNumpyArrayHandler.convert_to_df([predictions])
+
         X_test_df.columns = X_test_df.columns.astype(str)
+        predictions_df.columns = predictions_df.columns.astype(str)
+
         x_df_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
             self.session,
             X_test_df,
         )
 
-        # Rename columns using withColumnRenamed in a loop
+        # Rename columns
         for old_name in x_df_sp.columns:
             clean_old_name = old_name.replace('"', "")
             new_name = f'"input_feature_{clean_old_name}"'
             x_df_sp = x_df_sp.withColumnRenamed(old_name, new_name)
+        predictions_df.columns = [f"output_feature_{col}" for col in predictions_df.columns]
 
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
 
+        input_spec, expected_predictions = self._prepare_batch_inference_data(x_df_sp.to_pandas(), predictions_df)
+
         self._test_registry_batch_inference(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
-            input_spec=x_df_sp,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,
@@ -85,6 +88,7 @@ class TestMlflowBatchInferenceInteg(registry_model_deployment_test_base.Registry
             service_name=f"batch_inference_{name}",
             replicas=2,
             function_name="predict",
+            expected_predictions=expected_predictions,
         )
 
 

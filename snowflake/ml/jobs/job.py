@@ -120,7 +120,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         """Get the job's result file location."""
         result_path_str = self._container_spec["env"].get(constants.RESULT_PATH_ENV_VAR)
         if result_path_str is None:
-            raise RuntimeError(f"Job {self.name} doesn't have a result path configured")
+            raise NotImplementedError(f"Job {self.name} doesn't have a result path configured")
 
         return self._transform_path(result_path_str)
 
@@ -229,8 +229,22 @@ class MLJob(Generic[T], SerializableSessionMixin):
         Raises:
             TimeoutError: If the job does not complete within the specified timeout.
         """
-        delay = constants.JOB_POLL_INITIAL_DELAY_SECONDS  # Start with 100ms delay
         start_time = time.monotonic()
+        try:
+            # spcs_wait_for() is a synchronous query, it’s more effective to do polling with exponential
+            # backoff. If the job is running for a long time. We want a hybrid option: use spcs_wait_for()
+            # for the first 30 seconds, then switch to polling for long running jobs
+            min_timeout = (
+                int(min(timeout, constants.JOB_SPCS_TIMEOUT_SECONDS))
+                if timeout >= 0
+                else constants.JOB_SPCS_TIMEOUT_SECONDS
+            )
+            query_helper.run_query(self._session, f"call {self.id}!spcs_wait_for('DONE', {min_timeout})")
+            return self.status
+        except SnowparkSQLException:
+            # if the function does not support for this environment
+            pass
+        delay: float = float(constants.JOB_POLL_INITIAL_DELAY_SECONDS)  # Start with 5s delay
         warning_shown = False
         while (status := self.status) not in TERMINAL_JOB_STATUSES:
             elapsed = time.monotonic() - start_time

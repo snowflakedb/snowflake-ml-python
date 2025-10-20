@@ -18,6 +18,7 @@ py_test(
         "catboost",
         "lightgbm",
     ],
+    shard_count = 2,
     tags = ["feature:model_registry"],
     deps = [
         ":model_task_utils",

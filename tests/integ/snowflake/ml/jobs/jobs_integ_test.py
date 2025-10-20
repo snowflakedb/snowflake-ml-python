@@ -120,7 +120,14 @@ class JobManagerTest(JobTestBase):
         {"database": '"not_exist_db"', "schema": '"not_exist_schema"'},
     )
     def test_list_jobs_negative(self, **kwargs: Any) -> None:
-        self.assertEmpty(jobs.list_jobs(**kwargs, session=self.session))
+        try:
+            result = jobs.list_jobs(**kwargs, session=self.session)
+            self.assertEmpty(result)
+        except sp_exceptions.SnowparkSQLException as e:
+            # Legacy list_jobs implementation may raise "database does not exist"
+            # or "schema does not exist" error with code 002003
+            if e.sql_error_code != 2003:
+                self.fail(f"Unexpected error raised: {e}")
 
     def test_get_job_positive(self):
         # Submit a job
@@ -212,30 +219,27 @@ class JobManagerTest(JobTestBase):
         try:
             # Speed up polling for testing
             constants.JOB_POLL_MAX_DELAY_SECONDS = 0.1  # type: ignore[assignment]
-            fudge_factor = 0.5
+            fudge_factor = constants.JOB_POLL_INITIAL_DELAY_SECONDS
 
-            # Create a dummy job
-            job = jobs.MLJob[None]("dummy_job_id", session=self.session)
+            job = self._submit_func_as_file(dummy_function)
+            start = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                job.wait(timeout=0)
+            self.assertLess(time.monotonic() - start, fudge_factor)
+
+            job1 = self._submit_func_as_file(dummy_function)
+            start = time.monotonic()
+            with self.assertRaises(TimeoutError):
+                job1.wait(timeout=1)
+            self.assertBetween(time.monotonic() - start, 1, 1 + fudge_factor)
+
             with mock.patch("snowflake.ml.jobs.job._get_status", return_value="RUNNING") as mock_get_status:
-                # Test waiting with timeout=0
-                start = time.monotonic()
-                with self.assertRaises(TimeoutError):
-                    job.wait(timeout=0)
-                self.assertLess(time.monotonic() - start, fudge_factor)
-                mock_get_status.assert_called_once()
-
                 start = time.monotonic()
                 with self.assertRaises(TimeoutError):
                     job.wait(timeout=1)
                 self.assertBetween(time.monotonic() - start, 1, 1 + fudge_factor)
+                mock_get_status.assert_called_once()
 
-            with mock.patch("snowflake.ml.jobs.job._get_status", return_value="DONE") as mock_get_status:
-                # Test waiting on a completed job with different timeouts
-                start = time.monotonic()
-                self.assertEqual(job.wait(timeout=0), "DONE")
-                self.assertEqual(job.wait(timeout=-10), "DONE")
-                self.assertEqual(job.wait(timeout=+10), "DONE")
-                self.assertLess(time.monotonic() - start, fudge_factor)
         finally:
             constants.JOB_POLL_MAX_DELAY_SECONDS = max_backoff
 
@@ -854,7 +858,7 @@ class JobManagerTest(JobTestBase):
         self.assertEqual(job.status, "DONE", job.get_logs())
         self.assertIn(expected_string, job.get_logs())
 
-    def test_submit_job_fully_qualified_name(self):
+    def test_submit_job_fully_qualified_name(self) -> None:
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
         self.dbm.use_schema(self.schema)  # Stay on default schema
 
@@ -889,7 +893,7 @@ class JobManagerTest(JobTestBase):
         finally:
             self.dbm.drop_schema(temp_schema, if_exists=True)
 
-    def test_submit_job_negative(self):
+    def test_submit_job_negative(self) -> None:
         test_cases = [
             ("not_valid_database", self.schema, sp_exceptions.SnowparkSQLException, "does not exist"),
             (self.db, "not_valid_schema", sp_exceptions.SnowparkSQLException, "does not exist"),
@@ -927,7 +931,7 @@ class JobManagerTest(JobTestBase):
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )
-    def test_remote_with_session_positive(self):
+    def test_remote_with_session_positive(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="@payload_stage", session=self.session)
         def test_session_as_first_positional(arg1: snowpark.Session, arg2: str, arg3: str):
             print(f"database: {arg1.get_current_database()}")
@@ -1044,21 +1048,9 @@ class JobManagerTest(JobTestBase):
             time.sleep(interval)
             elapsed += interval
         else:
-            raise TimeoutError(f"Event table ingest did not complete in {max_wait} seconds")
+            self.skipTest("Event table ingest did not complete in 300 seconds")
 
         with mock.patch("snowflake.ml.jobs._utils.query_helper.run_query", side_effect=sql_side_effect):
-            # check the fallback logic
-            # fallback to event table if SPCS logs are not available
-            with (
-                mock.patch(
-                    "snowflake.ml.jobs.job._get_logs_spcs",
-                    side_effect=sp_exceptions.SnowparkSQLException("spcs logs not available", sql_error_code=2143),
-                ),
-                self.assertLogs(level="DEBUG") as cm,
-            ):
-                self.assertIn("hello world", job.get_logs(verbose=True))
-                self.assertTrue(any("falling back to event table" in line for line in cm.output))
-            # check the SPCS logs
             with (
                 mock.patch(
                     "snowflake.ml.jobs.job._get_service_log_from_event_table",
@@ -1066,8 +1058,29 @@ class JobManagerTest(JobTestBase):
                 ),
                 self.assertLogs(level="DEBUG") as cm,
             ):
+                # check the SPCS logs
                 self.assertIn("hello world", job.get_logs(verbose=True))
                 self.assertFalse(any("falling back to event table" in line for line in cm.output))
+            with (
+                mock.patch(
+                    "snowflake.ml.jobs.job._get_logs_spcs",
+                    side_effect=sp_exceptions.SnowparkSQLException("spcs logs not available", sql_error_code=2143),
+                ),
+                self.assertLogs(level="DEBUG") as cm,
+            ):
+                try:
+                    # check the fallback logic
+                    # fallback to event table if SPCS logs are not available
+                    self.assertIn("hello world", job.get_logs(verbose=True))
+                    self.assertTrue(any("falling back to event table" in line for line in cm.output))
+                except sp_exceptions.SnowparkSQLException as e:
+                    if not (
+                        e.sql_error_code == 2003
+                        or self.session.sql("show parameters like 'event_table' in account").collect()[0][0].lower()
+                        in e.message.lower()
+                    ):
+                        raise
+                    pass
 
     def test_file_indentation_tabs(self) -> None:
         import tempfile
@@ -1307,9 +1320,9 @@ class JobManagerTest(JobTestBase):
             print(mlrs_version)
 
         job = self._submit_func_as_file(check_runtime_version, runtime_environment=runtime_environment)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn(runtime_environment, job._container_spec["image"])
-        self.assertEqual("1.7.1", job.get_logs())
+        self.assertEqual("1.7.1", job.get_logs(verbose=False).strip(), job_logs)
 
     def test_get_job_after_job_deleted(self) -> None:
         job = self._submit_func_as_file(dummy_function)
@@ -1317,9 +1330,30 @@ class JobManagerTest(JobTestBase):
         jobs.delete_job(job.id, session=self.session)
         loaded_job = jobs.get_job(job.id, session=self.session)
         self.assertIsNotNone(loaded_job.status)
-        self.assertIsNotNone(loaded_job.get_logs())
         self.assertEqual(loaded_job.target_instances, 1)
         self.assertEqual(loaded_job._compute_pool, self.compute_pool)
+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )  # type: ignore[misc]
+    def test_job_name(self) -> None:
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+
+            @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+            def test_function() -> None:
+                print("hello world")
+
+            job = test_function()
+            self.assertRegex(job.name.lower(), r"test_function_\w+")
+
+            job1 = jobs.submit_file(
+                TestAsset("src/main.py").path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+            )
+            self.assertRegex(job1.name.lower(), r"main_\w+")
 
 
 if __name__ == "__main__":

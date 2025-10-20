@@ -488,10 +488,13 @@ class JobPayload:
                 " comment = 'Created by snowflake.ml.jobs Python API'",
                 params=[stage_name],
             )
-
+        payload_name = None
         # Upload payload to stage - organize into app/ subdirectory
         app_stage_path = stage_path.joinpath(constants.APP_STAGE_SUBPATH)
         if not isinstance(source, types.PayloadPath):
+            if isinstance(source, function_payload_utils.FunctionPayload):
+                payload_name = source.function.__name__
+
             source_code = generate_python_code(source, source_code_display=True)
             _ = session.file.put_stream(
                 io.BytesIO(source_code.encode()),
@@ -502,12 +505,14 @@ class JobPayload:
             source = Path(entrypoint.file_path.parent)
 
         elif isinstance(source, stage_utils.StagePath):
+            payload_name = entrypoint.file_path.stem
             # copy payload to stage
             if source == entrypoint.file_path:
                 source = source.parent
             upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
 
         elif isinstance(source, Path):
+            payload_name = entrypoint.file_path.stem
             upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
             if source.is_file():
                 source = source.parent
@@ -562,6 +567,7 @@ class JobPayload:
                 *python_entrypoint,
             ],
             env_vars=env_vars,
+            payload_name=payload_name,
         )
 
 

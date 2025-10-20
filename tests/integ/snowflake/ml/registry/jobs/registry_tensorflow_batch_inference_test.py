@@ -4,13 +4,11 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._signatures import tensorflow_handler
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import model_factory
 
 
-class TestTensorFlowBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestTensorFlowBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
         {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},

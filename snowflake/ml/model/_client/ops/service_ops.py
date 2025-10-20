@@ -206,6 +206,8 @@ class ServiceOperator:
         hf_model_args: Optional[HFModelArgs] = None,
         # inference engine model
         inference_engine_args: Optional[InferenceEngineArgs] = None,
+        # inference table
+        autocapture: Optional[bool] = None,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Generate operation ID for this deployment
@@ -261,6 +263,7 @@ class ServiceOperator:
             gpu=gpu_requests,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
+            autocapture=autocapture,
         )
         if hf_model_args:
             # hf model

@@ -92,6 +92,7 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
+    shard_count = 2,
     tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model:model_signature",
@@ -163,6 +164,7 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
+    shard_count = 2,
     tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model:model_signature",
@@ -227,5 +229,18 @@ py_test(
         "//snowflake/ml/model/_packager:model_packager",
         "//snowflake/ml/model/_signatures:numpy_handler",
         "//snowflake/ml/model/_signatures:utils",
+    ],
+)
+
+py_test(
+    name = "prophet_test",
+    srcs = ["prophet_test.py"],
+    optional_dependencies = ["prophet"],
+    tags = ["feature:model_registry"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_packager/model_handlers:prophet",
+        "//snowflake/ml/model/_packager/model_meta",
     ],
 )

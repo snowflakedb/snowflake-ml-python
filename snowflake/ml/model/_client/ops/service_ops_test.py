@@ -206,6 +206,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
                 inference_engine_args=None,
+                autocapture=None,
             )
             mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -225,6 +226,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+                autocapture=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -383,6 +385,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+                autocapture=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -542,6 +545,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
+                autocapture=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -894,6 +898,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
+                autocapture=None,
             )
 
             # This is the key assertion - verify add_inference_engine_spec was called
@@ -1058,6 +1063,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
+                autocapture=None,
             )
 
             # key assertions -- image build is not called and inference engine model is called

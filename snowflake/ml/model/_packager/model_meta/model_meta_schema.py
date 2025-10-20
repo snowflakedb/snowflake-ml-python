@@ -84,6 +84,11 @@ class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
     batch_size: Required[int]
 
 
+class ProphetModelBlobOptions(BaseModelBlobOptions):
+    date_column: NotRequired[Optional[str]]
+    target_column: NotRequired[Optional[str]]
+
+
 ModelBlobOptions = Union[
     BaseModelBlobOptions,
     CatBoostModelBlobOptions,
@@ -94,6 +99,7 @@ ModelBlobOptions = Union[
     TorchScriptModelBlobOptions,
     TensorflowModelBlobOptions,
     SentenceTransformersModelBlobOptions,
+    ProphetModelBlobOptions,
 ]
 
 
