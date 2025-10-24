@@ -204,9 +204,10 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         )
 
         # Test getting offline refresh history explicitly
+        # Note: offline refresh could happen between initial history check and current history check, so use >= check
         offline_history_explicit = self.fs.get_refresh_history(registered_fv, store_type=feature_view.StoreType.OFFLINE)
         offline_rows_explicit = offline_history_explicit.collect()
-        self.assertEqual(len(offline_rows), len(offline_rows_explicit))
+        self.assertGreaterEqual(len(offline_rows_explicit), len(offline_rows))
 
         # Test getting online refresh history
         online_history = self.fs.get_refresh_history(registered_fv, store_type=feature_view.StoreType.ONLINE)
@@ -221,7 +222,7 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         # Test with string store_type parameter
         offline_history_str = self.fs.get_refresh_history(registered_fv, store_type="offline")
         offline_rows_str = offline_history_str.collect()
-        self.assertEqual(len(offline_rows), len(offline_rows_str))
+        self.assertGreaterEqual(len(offline_rows_str), len(offline_rows))
 
         online_history_str = self.fs.get_refresh_history(registered_fv, store_type="online")
         online_rows_str = online_history_str.collect()
@@ -243,7 +244,7 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         # Test with name and version strings
         offline_history_name = self.fs.get_refresh_history(fv_name, "v1", store_type=feature_view.StoreType.OFFLINE)
         offline_rows_name = offline_history_name.collect()
-        self.assertEqual(len(offline_rows), len(offline_rows_name))
+        self.assertGreaterEqual(len(offline_rows_name), len(offline_rows))
 
         online_history_name = self.fs.get_refresh_history(fv_name, "v1", store_type=feature_view.StoreType.ONLINE)
         online_rows_name = online_history_name.collect()

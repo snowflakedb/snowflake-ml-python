@@ -1,10 +1,10 @@
 import json
 import time
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import pytest
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn.ensemble import RandomForestRegressor
 
 from snowflake.ml.model import ModelVersion
@@ -14,32 +14,47 @@ from tests.integ.snowflake.ml.registry.services.registry_model_deployment_test_b
 
 
 @pytest.mark.spcs_deployment_image
-class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
-    """Integration tests for inference request/response logging in the proxy."""
+class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
+    """Integration tests for inference request/response data capture to inference table."""
 
     def setUp(self) -> None:
         """Set up test environment."""
         super().setUp()
-        self.model_name = f"inference_logging_model_{self._run_id}"
+
+        # Skip tests if image override environment variables are not set
+        # These tests require custom proxy image with inference table support
+        if not self._has_image_override() or not self.PROXY_IMAGE_PATH:
+            self.skipTest(
+                "Skipping inference table tests: image override environment variables not set. "
+                "Required: BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, PROXY_IMAGE_PATH"
+            )
+
+        self.model_name = f"inference_table_model_{self._run_id}"
         self.version_name = "v1"
 
-    def _deploy_simple_sklearn_model(self, autocapture_enabled: bool = True) -> ModelVersion:
+    def _deploy_simple_sklearn_model(
+        self, autocapture_param: Optional[bool] = None, autocapture_deployment: Optional[bool] = None
+    ) -> ModelVersion:
         """Deploy a simple sklearn model for testing.
 
         Args:
-            autocapture_enabled: Whether to enable inference logging (default: True)
+            autocapture_param: Whether to set session parameter FEATURE_MODEL_INFERENCE_AUTOCAPTURE
+                (True=ENABLED, False=DISABLED, None=don't set)
+            autocapture_deployment: Whether to enable autocapture in deployment spec
+                (True/False/None passed to experimental_options)
         """
-        # Set Snowflake parameter based on autocapture_enabled
-        parameter_value = "ENABLED" if autocapture_enabled else "DISABLED"
-        param = "FEATURE_MODEL_INFERENCE_AUTOCAPTURE"
-        try:
-            self.session.sql(f"ALTER SESSION SET {param} = {parameter_value}").collect()
-        except Exception as e:
-            if autocapture_enabled:
-                self.skipTest(f"Failed to set {param} parameter: {e}")
-            else:
-                # If we can't set to DISABLED, that's fine - it defaults to DISABLED
-                print(f"DEBUG: Note: Could not set {param} to DISABLED: {e}")
+        # Set Snowflake session parameter if specified
+        if autocapture_param is not None:
+            parameter_value = "ENABLED" if autocapture_param else "DISABLED"
+            param = "FEATURE_MODEL_INFERENCE_AUTOCAPTURE"
+            try:
+                self.session.sql(f"ALTER SESSION SET {param} = {parameter_value}").collect()
+            except Exception as e:
+                if autocapture_param:
+                    self.skipTest(f"Failed to set {param} parameter: {e}")
+                else:
+                    # If we can't set to DISABLED, that's fine - it defaults to DISABLED
+                    print(f"DEBUG: Note: Could not set {param} to DISABLED: {e}")
 
         # Create simple model
         model = RandomForestRegressor(n_estimators=2, random_state=42, max_depth=2)
@@ -54,11 +69,17 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
             )
         }
 
-        # Use the base class method for deployment
+        # Build experimental_options based on autocapture_deployment
+        experimental_options = None
+        if autocapture_deployment is not None:
+            experimental_options = {"autocapture": autocapture_deployment}
+
+        # Use the base class method for deployment with autocapture in experimental_options
         return self._test_registry_model_deployment(
             model=model,
             prediction_assert_fns=prediction_assert_fns,
             sample_input_data=X,
+            experimental_options=experimental_options,
         )
 
     def _extract_logs(self, mv: ModelVersion, max_wait_seconds: int = 30) -> tuple[list[dict[str, Any]], list[str]]:
@@ -134,7 +155,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         return inference_logs, system_logs
 
     def _verify_log_structure(self, log_entry: dict[str, Any]) -> None:
-        """Verify the slog JSON has our required schema."""
+        """Verify the slog JSON has the expected inference table schema with flat attributes."""
         # Standard slog fields
         self.assertIn("time", log_entry)
         self.assertIn("level", log_entry)
@@ -144,22 +165,36 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         self.assertEqual(log_entry["severity_text"], "INFO")
         self.assertEqual(log_entry["body"], "inference_logs")
         self.assertIn("attributes", log_entry)
-        self.assertIn("scope", log_entry)
 
-        # Verify attributes structure
+        # Verify attributes structure with flat dot-notation keys
         attrs = log_entry["attributes"]
-        self.assertIn("request", attrs)
-        self.assertIn("response", attrs)
 
-        # Verify request/response structure
-        req = attrs["request"]
-        resp = attrs["response"]
+        # Verify request data fields (at least one request data field should exist)
+        request_data_keys = [k for k in attrs.keys() if k.startswith("snow.model_serving.request.data.")]
+        self.assertGreater(len(request_data_keys), 0, "Should have at least one request data field")
 
-        for item_name, item in [("request", req), ("response", resp)]:
-            self.assertIn("data", item, f"{item_name} should have data field")
-            self.assertIn("timestamp", item, f"{item_name} should have timestamp field")
-            self.assertIsInstance(item["data"], str, f"{item_name}.data should be string")
-            self.assertIsInstance(item["timestamp"], str, f"{item_name}.timestamp should be string")
+        # Verify request timestamp
+        self.assertIn("snow.model_serving.request.timestamp", attrs, "Should have request timestamp")
+        self.assertIsInstance(attrs["snow.model_serving.request.timestamp"], str, "Request timestamp should be string")
+
+        # Verify response data fields (at least one response data field should exist)
+        response_data_keys = [k for k in attrs.keys() if k.startswith("snow.model_serving.response.data.")]
+        self.assertGreater(len(response_data_keys), 0, "Should have at least one response data field")
+
+        # Verify response timestamp and code
+        self.assertIn("snow.model_serving.response.timestamp", attrs, "Should have response timestamp")
+        self.assertIsInstance(
+            attrs["snow.model_serving.response.timestamp"], str, "Response timestamp should be string"
+        )
+        self.assertIn("snow.model_serving.response.code", attrs, "Should have response code")
+        self.assertIsInstance(attrs["snow.model_serving.response.code"], int, "Response code should be integer")
+
+        # Verify model metadata
+        self.assertIn("snow.model.function.name", attrs, "Should have model function name")
+        self.assertIn("snow.model.id", attrs, "Should have model id")
+        self.assertIn("snow.model.name", attrs, "Should have model name")
+        self.assertIn("snow.model.version.id", attrs, "Should have model version id")
+        self.assertIn("snow.model.version.name", attrs, "Should have model version name")
 
     def _verify_processing_path(self, system_logs: list[str], expected_path: str) -> None:
         """Verify the correct processing path was taken."""
@@ -178,10 +213,9 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         else:
             self.fail(f"Unknown expected_path: {expected_path}")
 
-    @absltest.skip("Skipping test_inference_logging_batch_path")
-    def test_inference_logging_batch_path(self):
-        """Test inference logging for small requests that trigger batch processing."""
-        mv = self._deploy_simple_sklearn_model(autocapture_enabled=True)
+    def test_inference_table_batch_path(self):
+        """Test inference data capture to table for small requests that trigger batch processing."""
+        mv = self._deploy_simple_sklearn_model(autocapture_param=True, autocapture_deployment=True)
         endpoint = self._ensure_ingress_url(mv)
 
         # Small request < 1KB -> should trigger batch path
@@ -203,7 +237,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Extract both inference and system logs in one pass
         inference_logs, system_logs = self._extract_logs(mv)
 
-        # Verify inference logging worked
+        # Verify inference data capture worked
         self.assertGreater(len(inference_logs), 0, "Should have inference logs for batch request")
 
         # Verify log structure
@@ -213,10 +247,9 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Verify batch path was used
         self._verify_processing_path(system_logs, "batch")
 
-    @absltest.skip("Skipping test_inference_logging_streaming_path")
-    def test_inference_logging_streaming_path(self):
-        """Test inference logging for large requests that trigger streaming processing."""
-        mv = self._deploy_simple_sklearn_model(autocapture_enabled=True)
+    def test_inference_table_streaming_path(self):
+        """Test inference data capture to table for large requests that trigger streaming processing."""
+        mv = self._deploy_simple_sklearn_model(autocapture_param=True, autocapture_deployment=True)
         endpoint = self._ensure_ingress_url(mv)
 
         # Large request > 1KB -> should trigger streaming path
@@ -240,7 +273,7 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Extract both inference and system logs in one pass
         inference_logs, system_logs = self._extract_logs(mv)
 
-        # Verify inference logging worked
+        # Verify inference data capture worked
         self.assertGreater(len(inference_logs), 0, "Should have inference logs for streaming request")
 
         # Verify log structure
@@ -250,14 +283,37 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Verify streaming path was used
         self._verify_processing_path(system_logs, "streaming")
 
-    @absltest.skip("Skipping test_inference_logging_disabled_by_default")
-    def test_inference_logging_disabled_by_default(self):
-        """Test that inference logging is disabled by default (no logs captured)."""
-        # Deploy model with autocapture explicitly DISABLED
-        mv = self._deploy_simple_sklearn_model(autocapture_enabled=False)
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "autocapture_param": False,
+            "autocapture_deployment": False,
+            "test_description": "both param and deployment disabled",
+        },
+        {
+            "autocapture_param": True,
+            "autocapture_deployment": False,
+            "test_description": "deployment spec overrides session param (param=ENABLED, deployment=False)",
+        },
+    )
+    def test_inference_table_disabled_scenarios(
+        self,
+        autocapture_param: Optional[bool],
+        autocapture_deployment: Optional[bool],
+        test_description: str,
+    ):
+        """Test scenarios where inference data capture should be disabled.
+
+        Args:
+            autocapture_param: Session parameter setting (True/False/None)
+            autocapture_deployment: Deployment spec setting (True/False/None)
+            test_description: Description of the test scenario
+        """
+        mv = self._deploy_simple_sklearn_model(
+            autocapture_param=autocapture_param, autocapture_deployment=autocapture_deployment
+        )
         endpoint = self._ensure_ingress_url(mv)
 
-        # Small request that would normally trigger batch logging
+        # Small request that would normally trigger batch data capture
         test_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
 
         # Send request and verify response works
@@ -268,11 +324,11 @@ class RegistryInferenceLoggingTest(RegistryModelDeploymentTestBase):
         # Wait for any potential logs
         time.sleep(3)
 
-        # Extract logs - should be empty since autocapture is disabled
+        # Extract logs
         inference_logs, system_logs = self._extract_logs(mv)
 
-        # Verify NO inference logs are captured when disabled
-        self.assertEqual(len(inference_logs), 0, "Should have NO inference logs when autocapture is disabled")
+        # Verify NO inference logs are captured in all disabled scenarios
+        self.assertEqual(len(inference_logs), 0, f"Should have NO inference logs when {test_description}")
 
         # But system logs should still exist (proxy still works)
         self.assertGreater(len(system_logs), 0, "System logs should still exist when autocapture is disabled")

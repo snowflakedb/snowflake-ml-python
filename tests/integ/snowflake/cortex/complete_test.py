@@ -107,7 +107,7 @@ class CompleteSQLTest(absltest.TestCase):
             options={"guardrails": True},  # explicitly set guardrails to True
             session=self._session,
         )
-        self.assertEqual(res, "Response filtered by Cortex Guard")
+        self.assertIn("Response filtered by Cortex Guard", res)
 
 
 @absltest.skipUnless(

@@ -20,8 +20,21 @@ Acknowledgements
    | **lightgbm** Copyright © Microsoft Corporation.
    |
 
-Table of Contents
-=================
+Container Runtime for ML APIs
+=============================
+
+The following APIs are available only in the version of ``snowpark-ml-python`` available in the Container Runtime for ML, accessible in Snowflake Notebooks running on Snowpark Container Services (SPCS).
+
+.. toctree::
+   :maxdepth: 2
+
+   distributors
+   data_sharded_data_connector
+
+Standard APIs
+=============
+
+The following APIs are available in both the Container Runtime for ML and in the standalone client version of ``snowpark-ml-python`` accessible through conda and pip, in Snowsight Python worksheets, and in Snowflake notebooks running on a warehouse.
 
 .. toctree::
    :maxdepth: 3

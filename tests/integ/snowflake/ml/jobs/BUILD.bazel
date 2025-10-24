@@ -81,8 +81,13 @@ py_test(
     name = "multi_node_jobs_integ_test",
     timeout = "long",
     srcs = ["multi_node_jobs_integ_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
     shard_count = 1,
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+    ],
     deps = [
         ":job_test_base",
         "//snowflake/ml/jobs",
@@ -146,33 +151,6 @@ py_test(
         ":job_test_base",
         "//snowflake/ml/jobs",
         "//snowflake/ml/registry",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_test(
-    name = "xgb_distributed_integ_test",
-    timeout = "long",
-    srcs = ["xgb_distributed_integ_test.py"],
-    tags = ["feature:jobs"],
-    deps = [
-        ":job_test_base",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_test(
-    name = "lightgbm_distributed_integ_test",
-    timeout = "long",
-    srcs = ["lightgbm_distributed_integ_test.py"],
-    optional_dependencies = [
-        "lightgbm",
-    ],
-    tags = ["feature:jobs"],
-    deps = [
-        ":job_test_base",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

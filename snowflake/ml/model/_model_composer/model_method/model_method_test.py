@@ -461,6 +461,14 @@ class ModelMethodOptionsTest(absltest.TestCase):
             method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
         )
 
+        # Prophet models should automatically default to table function.
+        method_options = model_method.get_model_method_options_from_options(
+            options={}, target_method="predict", model_type="prophet"
+        )
+        self.assertEqual(
+            method_options["function_type"], model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        )
+
     def test_get_model_method_options_with_volatility(self) -> None:
         """Test that get_model_method_options_from_options properly handles volatility."""
         # Test unset volatility

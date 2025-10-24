@@ -697,10 +697,21 @@ def _do_submit_job_v2(
         "MIN_INSTANCES": min_instances,
         "ASYNC": use_async,
     }
+    if payload.payload_name:
+        job_options["GENERATE_SUFFIX"] = True
     job_options = {k: v for k, v in job_options.items() if v is not None}
 
     query_template = "CALL SYSTEM$EXECUTE_ML_JOB(?, ?, ?, ?)"
-    params = [job_id, compute_pool, json.dumps(spec_options), json.dumps(job_options)]
+    if job_id:
+        database, schema, _ = identifier.parse_schema_level_object_identifier(job_id)
+    params = [
+        job_id
+        if payload.payload_name is None
+        else identifier.get_schema_level_object_identifier(database, schema, payload.payload_name) + "_",
+        compute_pool,
+        json.dumps(spec_options),
+        json.dumps(job_options),
+    ]
     actual_job_id = query_helper.run_query(session, query_template, params=params)[0][0]
 
     return get_job(actual_job_id, session=session)

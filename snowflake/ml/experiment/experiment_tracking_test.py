@@ -28,6 +28,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.mock_sql_client_class = self.sql_client_patcher.start()
         self.mock_sql_client = MagicMock()
         self.mock_sql_client_class.return_value = self.mock_sql_client
+        self.mock_sql_client.show_runs_in_experiment.return_value = []
 
         # Create a patcher for the Registry
         self.registry_patcher = patch("snowflake.ml.experiment.experiment_tracking.registry.Registry")
@@ -122,6 +123,52 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertIn(
             "A run is already active. Please end the current run before starting a new one.", str(context.exception)
         )
+
+    def test_start_run_resumes_when_existing_run_is_running(self) -> None:
+        """If a run exists with RUNNING status, start_run should resume it and not add a new one."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        experiment = exp.set_experiment("TEST_EXPERIMENT")
+
+        # Mock existing run metadata as RUNNING
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "RUNNING"})}]
+
+        run = exp.start_run("RESUME_ME")
+
+        # Validate resume path
+        self.mock_sql_client.show_runs_in_experiment.assert_called_once()
+        show_kwargs = self.mock_sql_client.show_runs_in_experiment.call_args[1]
+        self.assertEqual(show_kwargs["experiment_name"], experiment.name)
+        self.assertEqual(show_kwargs["like"], "RESUME_ME")
+
+        # No new run should be added on resume
+        self.mock_sql_client.add_run.assert_not_called()
+
+        # Active run reflects resumed name
+        self.assertIsInstance(run, entities.Run)
+        self.assertEqual(run.name.identifier(), "RESUME_ME")
+        self.assertIs(exp._run, run)
+
+    def test_start_run_existing_non_running_raises(self) -> None:
+        """If an existing run is not RUNNING, attempting to start with same name raises."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        experiment = exp.set_experiment("TEST_EXPERIMENT")
+
+        # Mock existing run metadata as FINISHED
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"metadata": json.dumps({"status": "FINISHED"})}]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.start_run("TEST_RUN")
+        self.assertIn(
+            "Run TEST_RUN exists but cannot be resumed as it is no longer running.",
+            str(ctx.exception),
+        )
+
+        # Ensure we checked existing runs and did not add a new one
+        self.mock_sql_client.show_runs_in_experiment.assert_called_once()
+        show_kwargs = self.mock_sql_client.show_runs_in_experiment.call_args[1]
+        self.assertEqual(show_kwargs["experiment_name"], experiment.name)
+        self.assertEqual(show_kwargs["like"], "TEST_RUN")
+        self.mock_sql_client.add_run.assert_not_called()
 
     def test_end_run(self) -> None:
         """Test ending a run"""

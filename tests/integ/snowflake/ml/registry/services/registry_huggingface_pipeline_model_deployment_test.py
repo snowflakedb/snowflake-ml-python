@@ -6,6 +6,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import openai_signatures
+from snowflake.ml.model.models import huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -53,8 +54,8 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                             "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
                         },
                     ],
-                    "max_completion_tokens": 250,
                     "temperature": 0.9,
+                    "max_completion_tokens": 250,
                     "stop": None,
                     "n": NUM_CHOICES,
                     "stream": False,
@@ -69,6 +70,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             pd.testing.assert_index_equal(
                 res.columns,
                 pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
             )
 
             for row in res["choices"]:
@@ -88,6 +90,43 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             options={},
             pip_requirements=pip_requirements,
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+        )
+
+    def test_token_classification_with_model_logging(self) -> None:
+        model = huggingface_pipeline.HuggingFacePipelineModel(
+            task="token-classification",
+            model="hf-internal-testing/tiny-bert-for-token-classification",
+            download_snapshot=False,
+        )
+
+        x_df = pd.DataFrame(
+            [
+                ["My name is Izumi and I live in Tokyo, Japan."],
+            ],
+            columns=["inputs"],
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("entity", row[0])
+                self.assertIn("score", row[0])
+                self.assertIn("index", row[0])
+                self.assertIn("word", row[0])
+                self.assertIn("start", row[0])
+                self.assertIn("end", row[0])
+
+        self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns={
+                "__call__": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            use_model_logging=True,
         )
 
 

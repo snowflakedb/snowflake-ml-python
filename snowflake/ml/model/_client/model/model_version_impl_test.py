@@ -796,6 +796,7 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
         ):
             mock_event_handler = mock_event_handler_cls.return_value
             mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
@@ -839,6 +840,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
+                autocapture=None,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -846,6 +848,7 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
         ):
             mock_event_handler = mock_event_handler_cls.return_value
             mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
@@ -888,6 +891,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
+                autocapture=None,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -895,6 +899,7 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
         ):
             mock_event_handler = mock_event_handler_cls.return_value
             mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
@@ -937,6 +942,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
+                autocapture=None,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -944,6 +950,7 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
         ):
             mock_event_handler = mock_event_handler_cls.return_value
             mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
@@ -987,6 +994,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
+                autocapture=None,
             )
 
     def test_list_services(self) -> None:
@@ -1060,6 +1068,11 @@ class ModelVersionImplTest(absltest.TestCase):
                             "options": {"task": "text-generation"},
                         }
                     },
+                    "runtimes": {
+                        "gpu": {
+                            "cuda_version": "11.8",
+                        }
+                    },
                 },
             ),
         ):
@@ -1101,7 +1114,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_create_service_without_experimental_options(self) -> None:
         """Test create_service without experimental options to ensure existing behavior is preserved."""
-        with mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service:
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
+        ):
             # Test without experimental_options
             self.m_mv.create_service(
                 service_name="SERVICE",
@@ -1336,10 +1352,10 @@ class ModelVersionImplTest(absltest.TestCase):
         inference_engine_args = inference_engine_utils._get_inference_engine_args({})
         self.assertIsNone(inference_engine_args)
 
-        # Test with experimental_options missing inference_engine key
-        with self.assertRaises(ValueError) as cm:
-            inference_engine_utils._get_inference_engine_args({"other_key": "value"})
-        self.assertEqual(str(cm.exception), "inference_engine is required in experimental_options")
+        # Test with experimental_options missing inference_engine key (e.g., autocapture only)
+        # Should return None instead of raising error to support other experimental options like autocapture
+        inference_engine_args = inference_engine_utils._get_inference_engine_args({"autocapture": True})
+        self.assertIsNone(inference_engine_args)
 
         # Test with only inference_engine (no args_override)
         experimental_options: dict[str, Any] = {"inference_engine": inference_engine.InferenceEngine.VLLM}
@@ -1469,6 +1485,106 @@ class ModelVersionImplTest(absltest.TestCase):
                 gpu_requests=-1,
             )
 
+    def test_can_run_on_gpu(self) -> None:
+        """Test _can_run_on_gpu method."""
+        # Test successful case - model spec with gpu runtime
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "runtimes": {
+                    "gpu": {
+                        "version": "1.0",
+                    }
+                },
+            },
+        ) as mock_fetch:
+            result = self.m_mv._can_run_on_gpu()
+            self.assertTrue(result)
+            mock_fetch.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=self.m_mv._model_name,
+                version_name=self.m_mv._version_name,
+                statement_params=None,
+            )
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test case - model spec without runtimes section
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "sklearn",
+            },
+        ):
+            result = self.m_mv._can_run_on_gpu()
+            self.assertFalse(result)
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test case - model spec with runtimes but no gpu
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "tensorflow",
+                "runtimes": {
+                    "cpu": {
+                        "version": "1.0",
+                    }
+                },
+            },
+        ):
+            result = self.m_mv._can_run_on_gpu()
+            self.assertFalse(result)
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test case - model spec with empty runtimes
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "pytorch",
+                "runtimes": {},
+            },
+        ):
+            result = self.m_mv._can_run_on_gpu()
+            self.assertFalse(result)
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test with statement_params
+        test_statement_params = {"test_key": "test_value"}
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "runtimes": {
+                    "gpu": {
+                        "version": "1.0",
+                    }
+                },
+            },
+        ) as mock_fetch:
+            result = self.m_mv._can_run_on_gpu(statement_params=test_statement_params)
+            self.assertTrue(result)
+            mock_fetch.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=self.m_mv._model_name,
+                version_name=self.m_mv._version_name,
+                statement_params=test_statement_params,
+            )
+
     def test_check_huggingface_text_generation_model(self) -> None:
         """Test _check_huggingface_text_generation_model method."""
         # Test successful case - HuggingFace text-generation model
@@ -1588,7 +1704,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
         ):
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="CUSTOM_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1648,7 +1764,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
 
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1690,7 +1806,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
             ) as mock_get_warehouse,
         ):
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
             )
 
@@ -1731,7 +1847,7 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
             ):
-                self.m_mv._run_batch(
+                self.m_mv.run_batch(
                     compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
                 )
 
@@ -1761,7 +1877,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
 
-            result = self.m_mv._run_batch(
+            result = self.m_mv.run_batch(
                 compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=None
             )
 

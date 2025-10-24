@@ -35,6 +35,7 @@ py_test(
 py_test(
     name = "grid_search_test",
     srcs = ["grid_search_test.py"],
+    shard_count = 2,
     tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/linear_model:logistic_regression",

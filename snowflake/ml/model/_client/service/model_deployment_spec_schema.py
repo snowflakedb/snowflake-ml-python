@@ -32,6 +32,7 @@ class Service(BaseModel):
     gpu: Optional[str] = None
     num_workers: Optional[int] = None
     max_batch_rows: Optional[int] = None
+    autocapture: Optional[bool] = None
     inference_engine_spec: Optional[InferenceEngineSpec] = None
 
 

@@ -36,9 +36,12 @@ class SnowflakeXgboostCallbackTest(SnowflakeCallbackTest, parameterized.TestCase
     @parameterized.product(
         model_class=supported_model_classes,
         model_name=[None, "custom_model_name"],
+        version_name=[None, "v1"],
     )  # type: ignore[misc]
-    def test_log_model(self, model_class: type[ModelClass], model_name: Optional[str] = None) -> None:
-        super()._log_model(model_class, model_name)
+    def test_log_model(
+        self, model_class: type[ModelClass], model_name: Optional[str] = None, version_name: Optional[str] = None
+    ) -> None:
+        super()._log_model(model_class, model_name, version_name)
 
     @parameterized.parameters(*supported_model_classes)  # type: ignore[misc]
     def test_log_param(self, model_class: type[ModelClass]) -> None:

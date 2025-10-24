@@ -305,3 +305,73 @@ def get_default_cuda_version() -> str:
 
         return torch.version.cuda or model_env.DEFAULT_CUDA_VERSION
     return model_env.DEFAULT_CUDA_VERSION
+
+
+def normalize_column_name(column_name: str) -> str:
+    """Normalize a column name to be a valid unquoted Snowflake SQL identifier.
+
+    Converts column names with spaces and special characters (e.g., "Christmas Day")
+    into valid lowercase unquoted SQL identifiers (e.g., "christmas_day") that can be used
+    without quotes in SQL queries. This follows Snowflake's unquoted identifier rules:
+    https://docs.snowflake.com/en/sql-reference/identifiers-syntax
+
+    The normalization approach is preferred over quoted identifiers because:
+    - Unquoted identifiers are simpler and more readable
+    - They don't require special handling in SQL contexts
+    - They avoid case-sensitivity complications
+    - Lowercase convention improves readability and follows Python/pandas conventions
+
+    This utility is useful for model handlers that need to ensure output column names
+    from models (e.g., Prophet holiday columns, feature names) are SQL-safe.
+
+    Args:
+        column_name: Original column name (may contain spaces, special chars, etc.)
+
+    Returns:
+        Normalized lowercase column name that is a valid unquoted SQL identifier matching
+        the pattern [a-z_][a-z0-9_$]*
+
+    Examples:
+        >>> normalize_column_name_for_snowflake("Christmas Day")
+        'christmas_day'
+        >>> normalize_column_name_for_snowflake("New Year's Day")
+        'new_year_s_day'
+        >>> normalize_column_name_for_snowflake("__private")
+        '__private'
+        >>> normalize_column_name_for_snowflake("2023_data")
+        '_2023_data'
+    """
+    import re
+
+    # Convert to lowercase for readability and consistency
+    normalized = column_name.lower()
+
+    # Replace spaces and special characters with underscores
+    # Keep only alphanumeric characters, underscores, and dollar signs (valid in unquoted identifiers)
+    normalized = re.sub(r"[^a-z0-9_$]", "_", normalized)
+
+    # Collapse consecutive underscores while preserving leading underscores
+    # This handles cases like "A  B" → "a__b" → "a_b" while preserving "__name" → "__name"
+    if len(normalized) > 1:
+        # Count and preserve leading underscores, collapse the rest
+        leading_underscores = len(normalized) - len(normalized.lstrip("_"))
+        rest_of_string = normalized[leading_underscores:]
+        rest_collapsed = re.sub(r"_+", "_", rest_of_string)
+        normalized = "_" * leading_underscores + rest_collapsed
+
+    if normalized == "_":
+        return "_"
+
+    normalized = normalized.rstrip("_")
+
+    # Ensure it starts with a letter or underscore (SQL requirement)
+    # Unquoted identifiers must match: [a-z_][a-z0-9_$]*
+    if normalized and normalized[0].isdigit():
+        normalized = "_" + normalized
+
+    # If normalization resulted in empty string, use a default
+    # (This happens when input was only underscores like "___")
+    if not normalized:
+        normalized = "column"
+
+    return normalized

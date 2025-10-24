@@ -1,8 +1,8 @@
 import time
-from typing import Optional, cast
+from typing import Literal, Optional, cast
 from uuid import uuid4
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from common_utils import (
     FS_INTEG_TEST_DATASET_SCHEMA,
     FS_INTEG_TEST_DB,
@@ -27,7 +27,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import DataFrame, Session, functions as F
 
 
-class FeatureStoreLargeScaleTest(absltest.TestCase):
+class FeatureStoreLargeScaleTest(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -94,7 +94,11 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         time.sleep(90)
         self.assertEqual(len(fs.read_feature_view(fv).collect()), 1699)
 
-    def test_external_table(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_external_table(self, join_method: Literal["sequential", "cte"]) -> None:
         current_schema = create_random_schema(self._session, "TEST_EXTERNAL_TABLE")
         fs = self._create_feature_store(current_schema)
 
@@ -119,11 +123,22 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
         location_features = fs.register_feature_view(feature_view=location_features, version="V1")
 
         def create_select_query(start: str, end: str) -> str:
-            return f"""SELECT
-                    DISTINCT DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) AS DROPOFF_TIME,
-                    PULOCATIONID, TIP_AMOUNT, TOTAL_AMOUNT
+            return f"""
+            SELECT
+                DROPOFF_TIME,
+                PULOCATIONID,
+                MIN(TIP_AMOUNT) AS TIP_AMOUNT,
+                MIN(TOTAL_AMOUNT) AS TOTAL_AMOUNT
+            FROM (
+                SELECT
+                    DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) AS DROPOFF_TIME,
+                    PULOCATIONID,
+                    TIP_AMOUNT,
+                    TOTAL_AMOUNT
                 FROM {raw_dataset}
                 WHERE DROPOFF_TIME >= '{start}' AND DROPOFF_TIME < '{end}'
+            ) filtered_data
+            GROUP BY DROPOFF_TIME, PULOCATIONID
             """
 
         spine_df_1 = self._session.sql(create_select_query("2016-01-01 00:00:00", "2016-01-03 00:00:00"))
@@ -140,6 +155,7 @@ class FeatureStoreLargeScaleTest(absltest.TestCase):
             spine_timestamp_col="DROPOFF_TIME",
             spine_label_cols=None,
             output_type="dataset",
+            join_method=join_method,
         )
 
         # verify dataset metadata is correct

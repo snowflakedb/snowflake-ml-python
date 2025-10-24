@@ -87,7 +87,9 @@ class ModelManifest:
                     model_meta_schema.FunctionProperties.PARTITIONED.value, False
                 ),
                 wide_input=len(model_meta.signatures[target_method].inputs) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT,
-                options=model_method.get_model_method_options_from_options(options, target_method),
+                options=model_method.get_model_method_options_from_options(
+                    options, target_method, model_meta.model_type
+                ),
             )
 
             self.methods.append(method)

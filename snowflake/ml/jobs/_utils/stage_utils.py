@@ -33,6 +33,10 @@ class StagePath:
         self._path = Path(relpath or "")
 
     @property
+    def stem(self) -> str:
+        return self._path.stem
+
+    @property
     def parts(self) -> tuple[str, ...]:
         return self._path.parts
 

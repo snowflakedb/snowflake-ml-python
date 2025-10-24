@@ -146,6 +146,7 @@ class ModelDeploymentSpec:
         gpu: Optional[Union[str, int]] = None,
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
+        autocapture: Optional[bool] = None,
     ) -> "ModelDeploymentSpec":
         """Add service specification to the deployment spec.
 
@@ -161,6 +162,7 @@ class ModelDeploymentSpec:
             gpu: GPU requirement.
             num_workers: Number of workers.
             max_batch_rows: Maximum batch rows for inference.
+            autocapture: Whether to enable inference table.
 
         Raises:
             ValueError: If a job spec already exists.
@@ -186,6 +188,7 @@ class ModelDeploymentSpec:
             compute_pool=inference_compute_pool_name.identifier(),
             ingress_enabled=ingress_enabled,
             max_instances=max_instances,
+            autocapture=autocapture,
             **self._inference_spec,
         )
         return self

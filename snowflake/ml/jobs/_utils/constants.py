@@ -56,8 +56,9 @@ ENABLE_HEALTH_CHECKS_ENV_VAR = "ENABLE_HEALTH_CHECKS"
 ENABLE_HEALTH_CHECKS = "false"
 
 # Job status polling constants
-JOB_POLL_INITIAL_DELAY_SECONDS = 0.1
+JOB_POLL_INITIAL_DELAY_SECONDS = 5
 JOB_POLL_MAX_DELAY_SECONDS = 30
+JOB_SPCS_TIMEOUT_SECONDS = 30
 
 # Log start and end messages
 LOG_START_MSG = "--------------------------------\nML job started\n--------------------------------"
@@ -73,6 +74,7 @@ COMMON_INSTANCE_FAMILIES = {
     "CPU_X64_XS": ComputeResources(cpu=1, memory=6),
     "CPU_X64_S": ComputeResources(cpu=3, memory=13),
     "CPU_X64_M": ComputeResources(cpu=6, memory=28),
+    "CPU_X64_SL": ComputeResources(cpu=14, memory=54),
     "CPU_X64_L": ComputeResources(cpu=28, memory=116),
     "HIGHMEM_X64_S": ComputeResources(cpu=6, memory=58),
 }
@@ -85,6 +87,7 @@ AWS_INSTANCE_FAMILIES = {
 }
 AZURE_INSTANCE_FAMILIES = {
     "HIGHMEM_X64_M": ComputeResources(cpu=28, memory=244),
+    "HIGHMEM_X64_SL": ComputeResources(cpu=92, memory=654),
     "HIGHMEM_X64_L": ComputeResources(cpu=92, memory=654),
     "GPU_NV_XS": ComputeResources(cpu=3, memory=26, gpu=1, gpu_type="T4"),
     "GPU_NV_SM": ComputeResources(cpu=32, memory=424, gpu=1, gpu_type="A10"),
@@ -92,7 +95,15 @@ AZURE_INSTANCE_FAMILIES = {
     "GPU_NV_3M": ComputeResources(cpu=44, memory=424, gpu=2, gpu_type="A100"),
     "GPU_NV_SL": ComputeResources(cpu=92, memory=858, gpu=4, gpu_type="A100"),
 }
+GCP_INSTANCE_FAMILIES = {
+    "HIGHMEM_X64_M": ComputeResources(cpu=28, memory=244),
+    "HIGHMEM_X64_SL": ComputeResources(cpu=92, memory=654),
+    "GPU_GCP_NV_L4_1_24G": ComputeResources(cpu=6, memory=28, gpu=1, gpu_type="L4"),
+    "GPU_GCP_NV_L4_4_24G": ComputeResources(cpu=44, memory=178, gpu=4, gpu_type="L4"),
+    "GPU_GCP_NV_A100_8_40G": ComputeResources(cpu=92, memory=654, gpu=8, gpu_type="A100"),
+}
 CLOUD_INSTANCE_FAMILIES = {
     SnowflakeCloudType.AWS: AWS_INSTANCE_FAMILIES,
     SnowflakeCloudType.AZURE: AZURE_INSTANCE_FAMILIES,
+    SnowflakeCloudType.GCP: GCP_INSTANCE_FAMILIES,
 }

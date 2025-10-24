@@ -6,12 +6,10 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
-class TestLightGbmModelBatchInferenceInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestLightGbmModelBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"cpu_requests": None, "replicas": 1},
         {"cpu_requests": "3", "replicas": 2},

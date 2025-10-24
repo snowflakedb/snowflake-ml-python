@@ -32,7 +32,7 @@ class ModelMethodOptions(TypedDict):
 
 
 def get_model_method_options_from_options(
-    options: type_hints.ModelSaveOption, target_method: str
+    options: type_hints.ModelSaveOption, target_method: str, model_type: Optional[str] = None
 ) -> ModelMethodOptions:
     default_function_type = model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
     method_option = options.get("method_options", {}).get(target_method, {})
@@ -42,6 +42,9 @@ def get_model_method_options_from_options(
         case_sensitive = utils.determine_explain_case_sensitive_from_method_options(
             options.get("method_options", {}), target_method
         )
+    elif model_type == "prophet":
+        # Prophet models always require TABLE_FUNCTION because they need entire time series context
+        default_function_type = model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
     global_function_type = options.get("function_type", default_function_type)
     function_type = method_option.get("function_type", global_function_type)
     if function_type not in [function_type.value for function_type in model_manifest_schema.ModelMethodFunctionTypes]:

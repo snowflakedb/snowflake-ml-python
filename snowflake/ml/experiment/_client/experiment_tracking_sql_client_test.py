@@ -63,17 +63,10 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
         run_name = sql_identifier.SqlIdentifier("TEST_RUN")
 
-        # test live run (default)
         self.m_session.add_mock_sql(
-            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD LIVE RUN TEST_RUN", self._create_mock_df()
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD RUN TEST_RUN", self._create_mock_df()
         )
         self.client.add_run(experiment_name=experiment_name, run_name=run_name)
-
-        # test non-live run
-        self.m_session.add_mock_sql(
-            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD  RUN TEST_RUN", self._create_mock_df()
-        )
-        self.client.add_run(experiment_name=experiment_name, run_name=run_name, live=False)
 
     def test_commit_run(self) -> None:
         # Test committing a run

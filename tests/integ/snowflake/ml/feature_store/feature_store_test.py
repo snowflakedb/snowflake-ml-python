@@ -2,7 +2,7 @@ import datetime
 import json as _json
 import random
 import string
-from typing import Optional, Union, cast
+from typing import Any, Literal, Optional, Union, cast
 from uuid import uuid4
 
 import pandas as pd
@@ -33,7 +33,7 @@ from snowflake.ml.feature_store.feature_view import (
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.ml.version import VERSION
-from snowflake.snowpark import Session, exceptions as snowpark_exceptions
+from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
 
 
@@ -1003,7 +1003,11 @@ class FeatureStoreTest(parameterized.TestCase):
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
 
-    def test_retrieve_time_series_feature_values(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_retrieve_time_series_feature_values(self, join_method: Literal["sequential", "cte"]) -> None:
         fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
@@ -1044,6 +1048,7 @@ class FeatureStoreTest(parameterized.TestCase):
             features=cast(list[Union[FeatureView, FeatureViewSlice]], [fv1, fv2, fv3]),
             spine_timestamp_col="ts",
             include_feature_view_timestamp_col=True,
+            join_method=join_method,
         )
 
         compare_dataframe(
@@ -1361,7 +1366,11 @@ class FeatureStoreTest(parameterized.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Failed to lookup tagged objects for"):
             fs.list_feature_views(entity_name="foo")
 
-    def test_generate_training_set(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_generate_training_set(self, join_method: Literal["sequential", "cte"]) -> None:
         fs = self._create_feature_store()
 
         e = Entity('"fOO"', ["id"])
@@ -1392,6 +1401,7 @@ class FeatureStoreTest(parameterized.TestCase):
             spine_df=spine_df,
             features=[fv1, fv2],
             spine_timestamp_col="ts",
+            join_method=join_method,
         )
 
         compare_dataframe(
@@ -1412,6 +1422,7 @@ class FeatureStoreTest(parameterized.TestCase):
             features=[fv1, fv2],
             save_as="foobar",
             spine_timestamp_col="ts",
+            join_method=join_method,
         )
 
         compare_dataframe(
@@ -1437,6 +1448,7 @@ class FeatureStoreTest(parameterized.TestCase):
             save_as="foobar2",
             spine_timestamp_col="ts",
             exclude_columns=["id", "ts"],
+            join_method=join_method,
         )
         compare_dataframe(
             actual_df=ds4.to_pandas(),
@@ -1454,6 +1466,7 @@ class FeatureStoreTest(parameterized.TestCase):
             spine_timestamp_col="ts",
             exclude_columns=["id", "ts"],
             save_as="test_ds",
+            join_method=join_method,
         )
         compare_dataframe(
             actual_df=ds5.to_pandas(),
@@ -1472,6 +1485,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 features=[fv1, fv2],
                 save_as="foobar",
                 spine_timestamp_col="ts",
+                join_method=join_method,
             )
 
         # Invalid dataset names should be rejected
@@ -1481,6 +1495,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 features=[fv1, fv2],
                 save_as=".bar",
                 spine_timestamp_col="ts",
+                join_method=join_method,
             )
 
         # invalid columns in exclude_columns should fail
@@ -1491,6 +1506,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 save_as="foobar3",
                 spine_timestamp_col="ts",
                 exclude_columns=["foo"],
+                join_method=join_method,
             )
 
     def test_generate_dataset_as_table(self) -> None:
@@ -2135,7 +2151,11 @@ class FeatureStoreTest(parameterized.TestCase):
         )
         fs.register_feature_view(feature_view=non_existing_fv, version="v1", overwrite=True)
 
-    def test_generate_dataset_point_in_time_join(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_generate_dataset_point_in_time_join(self, join_method: Literal["sequential", "cte"]) -> None:
         fs = self._create_feature_store()
 
         # Below test requires ASOF join is activated.
@@ -2207,6 +2227,7 @@ class FeatureStoreTest(parameterized.TestCase):
             spine_timestamp_col="EVENT_TS",
             spine_label_cols=[],
             include_feature_view_timestamp_col=True,
+            join_method=join_method,
             output_type="table",
         )
         actual_df = dataset.to_pandas()
@@ -2232,7 +2253,11 @@ class FeatureStoreTest(parameterized.TestCase):
             sort_cols=["CUSTOMER_ID"],
         )
 
-    def test_cross_feature_store_interop(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_cross_feature_store_interop(self, join_method: Literal["sequential", "cte"]) -> None:
         # create first feature store and register feature views
         first_fs = self._create_feature_store()
 
@@ -2271,6 +2296,7 @@ class FeatureStoreTest(parameterized.TestCase):
                 spine_df=spine_df,
                 features=[first_fv, second_fv],
                 spine_timestamp_col="ts",
+                join_method=join_method,
                 name="test_ds",
                 output_type="table",
             )
@@ -2287,7 +2313,11 @@ class FeatureStoreTest(parameterized.TestCase):
                 sort_cols=["ID"],
             )
 
-    def test_generate_dataset_left_join(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {"join_method": "cte"},
+        {"join_method": "sequential"},
+    )
+    def test_generate_dataset_left_join(self, join_method: Literal["sequential", "cte"]) -> None:
         # testing case for join features without timestamp, which is a left join with the spine
         fs = self._create_feature_store()
 
@@ -2321,6 +2351,7 @@ class FeatureStoreTest(parameterized.TestCase):
             features=[fv1, fv2],
             name="test_ds",
             output_type="table",
+            join_method=join_method,
         )
 
         compare_dataframe(
@@ -2604,7 +2635,8 @@ class FeatureStoreTest(parameterized.TestCase):
         fv3_slice = fv3.slice(fv3.feature_names[::-2])  # type: ignore[arg-type]
 
         spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
-        ds = fs.generate_dataset("my_ds", spine_df, [fv1, fv2, fv3_slice])
+        # Do not test CTE join method here as 2000 features make the test super slow on CTE
+        ds = fs.generate_dataset("my_ds", spine_df, [fv1, fv2, fv3_slice], join_method="sequential")
         self.assertEqual(1, len(ds.read.to_pandas()))
 
         fvs = fs.load_feature_views_from_dataset(ds)
@@ -2845,6 +2877,533 @@ class FeatureStoreTest(parameterized.TestCase):
         expected = ["C1", "C3"]
         result = FeatureStore._extract_cluster_by_columns(clause)
         self.assertEqual(result, expected, "Failed on parentheses with multiple identifiers")
+
+    def _setup_cte_test_data(self, fs: FeatureStore) -> tuple[Entity, FeatureView, FeatureView, FeatureView]:
+        """Set up common test data for CTE method tests."""
+        # Create shared entity with common join keys
+        entity = Entity("CUSTOMER", ["CUSTOMER_ID"])
+        fs.register_entity(entity)
+
+        # Create test data tables with overlapping time periods
+        # Table 1: Customer demographics
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {fs._config.full_schema_path}.CUSTOMER_DEMOGRAPHICS (
+                CUSTOMER_ID NUMBER,
+                DEMO_TS TIMESTAMP_NTZ,
+                AGE NUMBER,
+                INCOME NUMBER,
+                REGION VARCHAR(50)
+            )
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {fs._config.full_schema_path}.CUSTOMER_DEMOGRAPHICS VALUES
+                (1, '2023-01-01', 25, 50000, 'WEST'),
+                (1, '2023-01-15', 25, 52000, 'WEST'),
+                (2, '2023-01-01', 35, 75000, 'EAST'),
+                (2, '2023-01-10', 35, 76000, 'EAST'),
+                (3, '2023-01-05', 45, 90000, 'NORTH'),
+                (3, '2023-01-20', 45, 92000, 'NORTH')
+            """
+        ).collect()
+
+        # Table 2: Customer behavior
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {fs._config.full_schema_path}.CUSTOMER_BEHAVIOR (
+                CUSTOMER_ID NUMBER,
+                BEHAVIOR_TS TIMESTAMP_NTZ,
+                PURCHASE_COUNT NUMBER,
+                TOTAL_SPENT NUMBER,
+                LAST_PURCHASE_DAYS NUMBER
+            )
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {fs._config.full_schema_path}.CUSTOMER_BEHAVIOR VALUES
+                (1, '2023-01-02', 5, 250.50, 2),
+                (1, '2023-01-16', 7, 350.75, 1),
+                (2, '2023-01-03', 12, 800.25, 5),
+                (2, '2023-01-12', 15, 950.00, 3),
+                (3, '2023-01-06', 8, 600.00, 10),
+                (3, '2023-01-22', 10, 750.25, 7)
+            """
+        ).collect()
+
+        # Table 3: Customer preferences
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {fs._config.full_schema_path}.CUSTOMER_PREFERENCES (
+                CUSTOMER_ID NUMBER,
+                PREF_TS TIMESTAMP_NTZ,
+                PREFERRED_CATEGORY VARCHAR(50),
+                COMMUNICATION_CHANNEL VARCHAR(50),
+                LOYALTY_SCORE NUMBER
+            )
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {fs._config.full_schema_path}.CUSTOMER_PREFERENCES VALUES
+                (1, '2023-01-03', 'ELECTRONICS', 'EMAIL', 85),
+                (1, '2023-01-17', 'ELECTRONICS', 'SMS', 88),
+                (2, '2023-01-04', 'CLOTHING', 'EMAIL', 92),
+                (2, '2023-01-14', 'CLOTHING', 'PHONE', 95),
+                (3, '2023-01-07', 'HOME', 'EMAIL', 78),
+                (3, '2023-01-23', 'HOME', 'EMAIL', 82)
+            """
+        ).collect()
+
+        # Create feature views with same join keys and timestamp columns
+        demographics_fv = FeatureView(
+            name="CUSTOMER_DEMOGRAPHICS_FV",
+            entities=[entity],
+            feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.CUSTOMER_DEMOGRAPHICS"),
+            timestamp_col="DEMO_TS",
+            refresh_freq=None,
+        )
+        demographics_fv = fs.register_feature_view(feature_view=demographics_fv, version="V1")
+
+        behavior_fv = FeatureView(
+            name="CUSTOMER_BEHAVIOR_FV",
+            entities=[entity],
+            feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.CUSTOMER_BEHAVIOR"),
+            timestamp_col="BEHAVIOR_TS",
+            refresh_freq=None,
+        )
+        behavior_fv = fs.register_feature_view(feature_view=behavior_fv, version="V1")
+
+        preferences_fv = FeatureView(
+            name="CUSTOMER_PREFERENCES_FV",
+            entities=[entity],
+            feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.CUSTOMER_PREFERENCES"),
+            timestamp_col="PREF_TS",
+            refresh_freq=None,
+        )
+        preferences_fv = fs.register_feature_view(feature_view=preferences_fv, version="V1")
+
+        return entity, demographics_fv, behavior_fv, preferences_fv
+
+    def _get_test_spine_df(self) -> DataFrame:
+        """Get standard test spine DataFrame."""
+        return cast(
+            DataFrame,
+            self._session.create_dataframe(
+                [
+                    (1, "2023-01-18"),
+                    (2, "2023-01-13"),
+                    (3, "2023-01-25"),
+                ],
+                schema=["CUSTOMER_ID", "EVENT_TS"],
+            ),
+        )
+
+    def _compare_cte_vs_sequential(
+        self,
+        fs: FeatureStore,
+        spine_df: DataFrame,
+        features: list[Union[FeatureView, FeatureViewSlice]],
+        test_name: str,
+        **kwargs: Any,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Helper to compare CTE vs sequential methods and return both results."""
+        sequential_ds = fs.generate_dataset(
+            name=f"test_sequential_{test_name}",
+            spine_df=spine_df,
+            features=features,
+            output_type="table",
+            join_method="sequential",
+            **kwargs,
+        )
+        sequential_result = sequential_ds.to_pandas().sort_values("CUSTOMER_ID").reset_index(drop=True)
+
+        cte_ds = fs.generate_dataset(
+            name=f"test_cte_{test_name}",
+            spine_df=spine_df,
+            features=features,
+            output_type="table",
+            join_method="cte",
+            **kwargs,
+        )
+        cte_result = cte_ds.to_pandas().sort_values("CUSTOMER_ID").reset_index(drop=True)
+
+        # Validate columns match
+        self.assertEqual(
+            sorted(sequential_result.columns.tolist()),
+            sorted(cte_result.columns.tolist()),
+            f"CTE and sequential methods should produce same columns for {test_name}",
+        )
+
+        # Reorder columns for comparison
+        column_order = sequential_result.columns.tolist()
+        cte_result_reordered = cte_result[column_order]
+
+        # Compare data
+        compare_dataframe(
+            actual_df=cte_result_reordered,
+            target_data=sequential_result.to_dict("list"),
+            sort_cols=["CUSTOMER_ID"],
+        )
+
+        return cte_result, sequential_result
+
+    def test_cte_method_basic_functionality(self) -> None:
+        """Test basic CTE method functionality with same join keys."""
+        fs = self._create_feature_store()
+        self.assertTrue(fs._is_asof_join_enabled())
+
+        _, demographics_fv, behavior_fv, preferences_fv = self._setup_cte_test_data(fs)
+        spine_df = self._get_test_spine_df()
+
+        # Test basic CTE vs sequential comparison
+        cte_result, _ = self._compare_cte_vs_sequential(
+            fs,
+            spine_df,
+            [demographics_fv, behavior_fv, preferences_fv],
+            "basic",
+            spine_timestamp_col="EVENT_TS",
+            include_feature_view_timestamp_col=True,
+        )
+
+        # Validate timestamp columns are included with correct aliases
+        expected_timestamp_cols = [
+            "CUSTOMER_DEMOGRAPHICS_FV_V1_DEMO_TS",
+            "CUSTOMER_BEHAVIOR_FV_V1_BEHAVIOR_TS",
+            "CUSTOMER_PREFERENCES_FV_V1_PREF_TS",
+        ]
+        for ts_col in expected_timestamp_cols:
+            self.assertIn(ts_col, cte_result.columns, f"Timestamp column {ts_col} should be included")
+
+    def test_cte_method_point_in_time_correctness(self) -> None:
+        """Test point-in-time correctness of CTE method."""
+        fs = self._create_feature_store()
+        _, demographics_fv, behavior_fv, preferences_fv = self._setup_cte_test_data(fs)
+        spine_df = self._get_test_spine_df()
+
+        cte_result, _ = self._compare_cte_vs_sequential(
+            fs,
+            spine_df,
+            [demographics_fv, behavior_fv, preferences_fv],
+            "point_in_time",
+            spine_timestamp_col="EVENT_TS",
+            include_feature_view_timestamp_col=True,
+        )
+
+        # Validate point-in-time correctness
+        # Customer 1 at 2023-01-18 should get demographics from 2023-01-15, behavior from 2023-01-16,
+        # prefs from 2023-01-17
+        customer_1_row = cte_result[cte_result["CUSTOMER_ID"] == 1].iloc[0]
+        self.assertEqual(customer_1_row["INCOME"], 52000, "Customer 1 should have income from 2023-01-15")
+        self.assertEqual(customer_1_row["PURCHASE_COUNT"], 7, "Customer 1 should have purchase count from 2023-01-16")
+        self.assertEqual(customer_1_row["LOYALTY_SCORE"], 88, "Customer 1 should have loyalty score from 2023-01-17")
+
+        # Customer 2 at 2023-01-13 should get demographics from 2023-01-10, behavior from 2023-01-12,
+        # prefs from 2023-01-04
+        customer_2_row = cte_result[cte_result["CUSTOMER_ID"] == 2].iloc[0]
+        self.assertEqual(customer_2_row["INCOME"], 76000, "Customer 2 should have income from 2023-01-10")
+        self.assertEqual(customer_2_row["PURCHASE_COUNT"], 15, "Customer 2 should have purchase count from 2023-01-12")
+        self.assertEqual(
+            customer_2_row["PREFERRED_CATEGORY"], "CLOTHING", "Customer 2 should have category from 2023-01-04"
+        )
+
+    def test_cte_method_with_feature_view_slices(self) -> None:
+        """Test CTE method with FeatureViewSlice."""
+        fs = self._create_feature_store()
+        _, demographics_fv, behavior_fv, _ = self._setup_cte_test_data(fs)
+        spine_df = self._get_test_spine_df()
+
+        # Test with FeatureViewSlice
+        demographics_slice = demographics_fv.slice(["AGE", "REGION"])
+        behavior_slice = behavior_fv.slice(["PURCHASE_COUNT", "TOTAL_SPENT"])
+
+        # Compare retrieve_feature_values with slices
+        cte_slice_result = (
+            fs.retrieve_feature_values(
+                spine_df=spine_df,
+                features=cast(list[Union[FeatureView, FeatureViewSlice]], [demographics_slice, behavior_slice]),
+                spine_timestamp_col="EVENT_TS",
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("CUSTOMER_ID")
+            .reset_index(drop=True)
+        )
+
+        sequential_slice_result = (
+            fs.retrieve_feature_values(
+                spine_df=spine_df,
+                features=cast(list[Union[FeatureView, FeatureViewSlice]], [demographics_slice, behavior_slice]),
+                spine_timestamp_col="EVENT_TS",
+                join_method="sequential",
+            )
+            .to_pandas()
+            .sort_values("CUSTOMER_ID")
+            .reset_index(drop=True)
+        )
+
+        self.assertEqual(
+            sorted(sequential_slice_result.columns.tolist()),
+            sorted(cte_slice_result.columns.tolist()),
+            "CTE and sequential methods should produce same columns with slices",
+        )
+
+        slice_column_order = sequential_slice_result.columns.tolist()
+        cte_slice_result_reordered = cte_slice_result[slice_column_order]
+
+        compare_dataframe(
+            actual_df=cte_slice_result_reordered,
+            target_data=sequential_slice_result.to_dict("list"),
+            sort_cols=["CUSTOMER_ID"],
+        )
+
+        # Verify only sliced columns are included
+        expected_columns = {"CUSTOMER_ID", "EVENT_TS", "AGE", "REGION", "PURCHASE_COUNT", "TOTAL_SPENT"}
+        actual_columns = set(cte_slice_result.columns)
+        self.assertEqual(
+            expected_columns, actual_columns, "CTE method should respect FeatureViewSlice column selection"
+        )
+
+    def test_cte_method_with_different_join_keys(self) -> None:
+        """Test CTE method with feature views having different join keys."""
+        fs = self._create_feature_store()
+        _, demographics_fv, _, _ = self._setup_cte_test_data(fs)
+
+        # Create entities with different single join keys
+        # demographics_fv uses CUSTOMER_ID (from _setup_cte_test_data)
+        product_entity = Entity("PRODUCT", ["PRODUCT_ID"])
+        fs.register_entity(product_entity)
+
+        # Change session entity to use single join key USER_ID (different from CUSTOMER_ID and PRODUCT_ID)
+        user_entity = Entity("USER", ["USER_ID"])
+        fs.register_entity(user_entity)
+
+        # Create test data for different join key scenarios
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {fs._config.full_schema_path}.PRODUCT_FEATURES (
+                PRODUCT_ID NUMBER, PRODUCT_TS TIMESTAMP_NTZ, CATEGORY VARCHAR(50), PRICE NUMBER, RATING NUMBER
+            )
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {fs._config.full_schema_path}.PRODUCT_FEATURES VALUES
+                (101, '2023-01-01', 'ELECTRONICS', 300, 4.5),
+                (101, '2023-01-10', 'ELECTRONICS', 280, 4.6),
+                (102, '2023-01-02', 'CLOTHING', 50, 4.2),
+                (102, '2023-01-12', 'CLOTHING', 45, 4.3),
+                (103, '2023-01-03', 'HOME', 90, 4.1),
+                (103, '2023-01-15', 'HOME', 85, 4.2)
+            """
+        ).collect()
+
+        # Create user features table with USER_ID as single join key
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {fs._config.full_schema_path}.USER_FEATURES (
+                USER_ID NUMBER, USER_TS TIMESTAMP_NTZ,
+                PAGE_VIEWS NUMBER, DURATION_MINUTES NUMBER, DEVICE_TYPE VARCHAR(50)
+            )
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {fs._config.full_schema_path}.USER_FEATURES VALUES
+                (1001, '2023-01-05', 15, 25, 'MOBILE'),
+                (1001, '2023-01-12', 18, 30, 'MOBILE'),
+                (2001, '2023-01-06', 8, 12, 'DESKTOP'),
+                (2001, '2023-01-14', 10, 15, 'DESKTOP'),
+                (3001, '2023-01-08', 22, 45, 'TABLET'),
+                (3001, '2023-01-20', 25, 50, 'TABLET')
+            """
+        ).collect()
+
+        # Create feature views with different single join keys
+        product_fv = FeatureView(
+            name="PRODUCT_FV",
+            entities=[product_entity],
+            feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.PRODUCT_FEATURES"),
+            timestamp_col="PRODUCT_TS",
+            refresh_freq=None,
+        )
+        product_fv = fs.register_feature_view(feature_view=product_fv, version="V1")
+
+        user_fv = FeatureView(
+            name="USER_FV",
+            entities=[user_entity],
+            feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.USER_FEATURES"),
+            timestamp_col="USER_TS",
+            refresh_freq=None,
+        )
+        user_fv = fs.register_feature_view(feature_view=user_fv, version="V1")
+
+        # Create spine with all required join keys (each feature view has different single join key)
+        mixed_spine_df = self._session.create_dataframe(
+            [
+                (1, 1001, 101, "2023-01-18"),
+                (2, 2001, 102, "2023-01-16"),
+                (3, 3001, 103, "2023-01-25"),
+            ],
+            schema=["CUSTOMER_ID", "USER_ID", "PRODUCT_ID", "EVENT_TS"],
+        )
+
+        # Test CTE method with different join keys
+        cte_mixed_result, _ = self._compare_cte_vs_sequential(
+            fs,
+            mixed_spine_df,
+            [demographics_fv, user_fv, product_fv],
+            "different_join_keys",
+            spine_timestamp_col="EVENT_TS",
+            include_feature_view_timestamp_col=True,
+        )
+
+        # Validate specific point-in-time correctness with different join keys
+        customer_1_row = cte_mixed_result[cte_mixed_result["CUSTOMER_ID"] == 1].iloc[0]
+        self.assertEqual(customer_1_row["INCOME"], 52000, "Customer 1 should have income from 2023-01-15")
+        self.assertEqual(customer_1_row["PAGE_VIEWS"], 18, "Customer 1 should have page views from 2023-01-12")
+        self.assertEqual(customer_1_row["PRICE"], 280, "Customer 1 should have price from 2023-01-10")
+
+    def test_cte_method_retrieve_feature_values(self) -> None:
+        """Test CTE method with retrieve_feature_values API."""
+        fs = self._create_feature_store()
+        _, demographics_fv, behavior_fv, preferences_fv = self._setup_cte_test_data(fs)
+        spine_df = self._get_test_spine_df()
+
+        # Test retrieve_feature_values with CTE method
+        cte_retrieve_result = (
+            fs.retrieve_feature_values(
+                spine_df=spine_df,
+                features=cast(
+                    list[Union[FeatureView, FeatureViewSlice]], [demographics_fv, behavior_fv, preferences_fv]
+                ),
+                spine_timestamp_col="EVENT_TS",
+                include_feature_view_timestamp_col=True,
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("CUSTOMER_ID")
+            .reset_index(drop=True)
+        )
+
+        sequential_retrieve_result = (
+            fs.retrieve_feature_values(
+                spine_df=spine_df,
+                features=cast(
+                    list[Union[FeatureView, FeatureViewSlice]], [demographics_fv, behavior_fv, preferences_fv]
+                ),
+                spine_timestamp_col="EVENT_TS",
+                include_feature_view_timestamp_col=True,
+                join_method="sequential",
+            )
+            .to_pandas()
+            .sort_values("CUSTOMER_ID")
+            .reset_index(drop=True)
+        )
+
+        compare_dataframe(
+            actual_df=cte_retrieve_result,
+            target_data=sequential_retrieve_result.to_dict("list"),
+            sort_cols=["CUSTOMER_ID"],
+        )
+
+    def test_cte_method_mixed_timestamp_columns(self) -> None:
+        """Test CTE method with mixed timestamp columns - some feature views have timestamps, some don't."""
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        # Feature view WITH timestamp
+        fv_with_ts = FeatureView(
+            name="fv_with_ts",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT id, name, title, ts FROM {self._mock_table}"),
+            timestamp_col="ts",
+            refresh_freq="DOWNSTREAM",
+        )
+        fv_with_ts = fs.register_feature_view(feature_view=fv_with_ts, version="v1")
+
+        # Feature view WITHOUT timestamp
+        fv_without_ts = FeatureView(
+            name="fv_without_ts",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT id, age, dept FROM {self._mock_table}"),
+            refresh_freq=None,
+        )
+        fv_without_ts = fs.register_feature_view(feature_view=fv_without_ts, version="v1")
+
+        spine_df = self._session.create_dataframe([(1, 150), (2, 250)], schema=["id", "ts"])
+
+        # Test CTE method
+        cte_result = fs.generate_dataset(
+            name="test_cte_mixed",
+            spine_df=spine_df,
+            features=[fv_with_ts, fv_without_ts],
+            spine_timestamp_col="ts",
+            output_type="table",
+            join_method="cte",
+        )
+
+        # Test sequential method
+        sequential_result = fs.generate_dataset(
+            name="test_sequential_mixed",
+            spine_df=spine_df,
+            features=[fv_with_ts, fv_without_ts],
+            spine_timestamp_col="ts",
+            output_type="table",
+            join_method="sequential",
+        )
+
+        # Compare results - both methods should produce the same data
+        cte_df = cte_result.to_pandas().sort_values("ID").reset_index(drop=True)
+        sequential_df = sequential_result.to_pandas().sort_values("ID").reset_index(drop=True)
+
+        compare_dataframe(
+            actual_df=cte_df,
+            target_data=sequential_df.to_dict("list"),
+            sort_cols=["ID"],
+        )
+
+        # Test case 2: Spine has NO timestamp column
+        spine_no_ts_df = self._session.create_dataframe([(1,), (2,)], schema=["id"])
+
+        # Test CTE method with no spine timestamp
+        cte_no_ts_result = fs.generate_dataset(
+            name="test_cte_no_spine_ts",
+            spine_df=spine_no_ts_df,
+            features=[fv_with_ts, fv_without_ts],
+            spine_timestamp_col=None,
+            output_type="table",
+            join_method="cte",
+        )
+
+        # Test sequential method with no spine timestamp
+        sequential_no_ts_result = fs.generate_dataset(
+            name="test_sequential_no_spine_ts",
+            spine_df=spine_no_ts_df,
+            features=[fv_with_ts, fv_without_ts],
+            spine_timestamp_col=None,
+            output_type="table",
+            join_method="sequential",
+        )
+
+        # Compare results - both methods should produce the same data when spine has no timestamp
+        cte_no_ts_df = cte_no_ts_result.to_pandas().sort_values("ID").reset_index(drop=True)
+        sequential_no_ts_df = sequential_no_ts_result.to_pandas().sort_values("ID").reset_index(drop=True)
+
+        compare_dataframe(
+            actual_df=cte_no_ts_df,
+            target_data=sequential_no_ts_df.to_dict("list"),
+            sort_cols=["ID"],
+        )
 
 
 if __name__ == "__main__":

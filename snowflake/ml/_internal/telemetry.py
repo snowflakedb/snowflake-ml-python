@@ -73,6 +73,7 @@ def _get_snowflake_connection() -> Optional[connector.SnowflakeConnection]:
 class TelemetryProject(enum.Enum):
     MLOPS = "MLOps"
     MODELING = "ModelDevelopment"
+    EXPERIMENT_TRACKING = "ExperimentTracking"
     # TODO: Update with remaining projects.
 
 
@@ -464,14 +465,14 @@ def send_api_usage_telemetry(
 
     # noqa: DAR402
     """
-    start_time = time.perf_counter()
-
     if subproject is not None and subproject_extractor is not None:
         raise ValueError("Specifying both subproject and subproject_extractor is not allowed")
 
     def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, _ReturnValue]:
         @functools.wraps(func)
         def wrap(*args: Any, **kwargs: Any) -> _ReturnValue:
+            start_time = time.perf_counter()
+
             params = _get_func_params(func, func_params_to_log, args, kwargs) if func_params_to_log else None
 
             api_calls: list[Union[dict[str, Union[Callable[..., Any], str]], Callable[..., Any], str]] = []

@@ -8,16 +8,14 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._packager.model_env import model_env
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 MODEL_NAMES = ["intfloat/e5-base-v2"]
 SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 
 
 class TestRegistrySentenceTransformerBatchInferenceInteg(
-    registry_model_deployment_test_base.RegistryModelDeploymentTestBase
+    registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
     @classmethod
     def setUpClass(self) -> None:
@@ -54,23 +52,33 @@ class TestRegistrySentenceTransformerBatchInferenceInteg(
                 ]
             }
         )
-        sp_df = self.session.create_dataframe(sentences)
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
 
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
+
+        # Generate expected predictions using the original model
+        model_output = model.encode(sentences["SENTENCES"].tolist())
+        # Convert numpy arrays to lists of floats
+        model_output_normalized = [embedding.tolist() for embedding in model_output]
+        model_output_df = pd.DataFrame({"output_feature_0": model_output_normalized})
+
+        # Prepare input data and expected predictions using common function
+        input_spec, expected_predictions = self._prepare_batch_inference_data(sentences, model_output_df)
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sentences,
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
-            input_spec=sp_df,
+            input_spec=input_spec,
             output_stage_location=output_stage_location,
             num_workers=1,
             service_name=f"batch_inference_{name}",
             replicas=1,
             gpu_requests=gpu_requests,
+            function_name="encode",
+            expected_predictions=expected_predictions,
         )
 
 

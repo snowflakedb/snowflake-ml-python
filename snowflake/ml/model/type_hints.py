@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     import mlflow
     import numpy as np
     import pandas as pd
+    import prophet
     import sentence_transformers
     import sklearn.base
     import sklearn.pipeline
@@ -81,6 +82,7 @@ SupportedRequireSignatureModelType = Union[
     "catboost.CatBoost",
     "lightgbm.LGBMModel",
     "lightgbm.Booster",
+    "prophet.Prophet",
     "snowflake.ml.model.custom_model.CustomModel",
     "sklearn.base.BaseEstimator",
     "sklearn.pipeline.Pipeline",
@@ -113,6 +115,7 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | snowflake.ml.model.custom_model.CustomModel | custom.py    | _CustomModelHandler |
 | sklearn.base.BaseEstimator      | sklearn.py   | _SKLModelHandler    |
 | sklearn.pipeline.Pipeline       | sklearn.py   | _SKLModelHandler    |
+| prophet.Prophet       | prophet.py   | ProphetHandler    |
 | xgboost.XGBModel       | xgboost.py   | _XGBModelHandler    |
 | xgboost.Booster        | xgboost.py   | _XGBModelHandler    |
 | lightgbm.LGBMModel       | lightgbm.py   | _LGBMModelHandler    |
@@ -134,6 +137,7 @@ SupportedModelHandlerType = Literal[
     "huggingface_pipeline",
     "lightgbm",
     "mlflow",
+    "prophet",
     "pytorch",
     "sentence_transformers",
     "sklearn",
@@ -248,11 +252,18 @@ class KerasSaveOptions(BaseModelSaveOption):
     cuda_version: NotRequired[str]
 
 
+class ProphetSaveOptions(BaseModelSaveOption):
+    target_methods: NotRequired[Sequence[str]]
+    date_column: NotRequired[str]
+    target_column: NotRequired[str]
+
+
 ModelSaveOption = Union[
     BaseModelSaveOption,
     CatBoostModelSaveOptions,
     CustomModelSaveOption,
     LGBMModelSaveOptions,
+    ProphetSaveOptions,
     SKLModelSaveOptions,
     XGBModelSaveOptions,
     SNOWModelSaveOptions,
@@ -327,11 +338,16 @@ class KerasLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
 
 
+class ProphetLoadOptions(BaseModelLoadOption):
+    ...
+
+
 ModelLoadOption = Union[
     BaseModelLoadOption,
     CatBoostModelLoadOptions,
     CustomModelLoadOption,
     LGBMModelLoadOptions,
+    ProphetLoadOptions,
     SKLModelLoadOptions,
     XGBModelLoadOptions,
     SNOWModelLoadOptions,

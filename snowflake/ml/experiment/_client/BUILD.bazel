@@ -12,6 +12,7 @@ py_library(
         "experiment_tracking_sql_client.py",
     ],
     deps = [
+        "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/sql:_base",

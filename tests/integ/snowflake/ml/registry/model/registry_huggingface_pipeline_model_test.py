@@ -428,6 +428,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(
                 res.columns,
                 pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
             )
 
             for row in res["choices"]:

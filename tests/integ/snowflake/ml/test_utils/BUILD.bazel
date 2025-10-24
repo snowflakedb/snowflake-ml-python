@@ -71,19 +71,6 @@ py_library(
     ],
 )
 
-py_library(
-    name = "spcs_integ_test_base",
-    testonly = True,
-    srcs = ["spcs_integ_test_base.py"],
-    deps = [
-        ":test_env_utils",
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/_internal/utils:snowflake_env",
-        "//snowflake/ml/utils:connection_params",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-    ],
-)
-
 py_test(
     name = "common_test_base_test",
     timeout = "long",

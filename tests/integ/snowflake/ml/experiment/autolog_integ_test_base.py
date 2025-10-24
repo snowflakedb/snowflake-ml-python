@@ -62,6 +62,7 @@ class AutologIntegrationTest:
         """Test that autologging works."""
         experiment_name = "TEST_EXPERIMENT_AUTOLOG"
         model_name = "TEST_AUTOLOG_MODEL"
+        version_name = "V1"
 
         callback = callback_class(
             self.exp,
@@ -70,6 +71,7 @@ class AutologIntegrationTest:
             log_params=True,
             log_every_n_epochs=log_every_n_epochs,
             model_name=model_name,
+            version_name=version_name,
             model_signature=self.model_sig,
         )
         self.exp.set_experiment(experiment_name=experiment_name)
@@ -99,3 +101,4 @@ class AutologIntegrationTest:
         # Verify that the model was logged
         models = self._session.sql(f"SHOW MODELS LIKE '{model_name}'").collect()
         self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]["versions"], f'["{version_name}"]')

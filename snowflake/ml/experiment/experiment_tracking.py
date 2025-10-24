@@ -193,23 +193,35 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         run_name: Optional[str] = None,
     ) -> entities.Run:
         """
-        Start a new run.
+        Start a new run. If a run name of an existing run is provided, resumes the run if it is running.
 
         Args:
             run_name: The name of the run. If None, a default name will be generated.
 
         Returns:
-            Run: The run that was started.
+            Run: The run that was started or resumed.
 
         Raises:
-            RuntimeError: If a run is already active.
+            RuntimeError: If a run is already active. If a run with the same name exists but is not running.
         """
         if self._run:
             raise RuntimeError("A run is already active. Please end the current run before starting a new one.")
         experiment = self._get_or_set_experiment()
-        run_name = (
-            sql_identifier.SqlIdentifier(run_name) if run_name is not None else self._generate_run_name(experiment)
-        )
+
+        if run_name is None:
+            run_name = self._generate_run_name(experiment)
+        elif runs := self._sql_client.show_runs_in_experiment(experiment_name=experiment.name, like=run_name):
+            if "RUNNING" != json.loads(runs[0][sql_client.RUN_METADATA_COL_NAME])["status"]:
+                raise RuntimeError(f"Run {run_name} exists but cannot be resumed as it is no longer running.")
+            else:
+                self._run = entities.Run(
+                    experiment_tracking=self,
+                    experiment_name=experiment.name,
+                    run_name=sql_identifier.SqlIdentifier(run_name),
+                )
+                return self._run
+
+        run_name = sql_identifier.SqlIdentifier(run_name)
         self._sql_client.add_run(
             experiment_name=experiment.name,
             run_name=run_name,
@@ -444,7 +456,7 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
     def _generate_run_name(self, experiment: entities.Experiment) -> sql_identifier.SqlIdentifier:
         generator = hrid_generator.HRID16()
         existing_runs = self._sql_client.show_runs_in_experiment(experiment_name=experiment.name)
-        existing_run_names = [row[sql_client.ExperimentTrackingSQLClient.RUN_NAME_COL_NAME] for row in existing_runs]
+        existing_run_names = [row[sql_client.RUN_NAME_COL_NAME] for row in existing_runs]
         for _ in range(1000):
             run_name = generator.generate()[1]
             if run_name not in existing_run_names:

@@ -1,5 +1,24 @@
 # Release History
 
+## 1.18.0
+
+### Bug Fixes
+
+* Registry: The create_service API now validates that a model has a GPU runtime configuration and will throw a
+  descriptive error if the configuration is missing.
+
+### Behavior Changes
+
+### New Features
+
+* Registry (PrPr): Introducing `ModelVersion.run_batch` for batch inference in Snowpark Container Services.
+* Experiment Tracking (PrPr): Added `version_name` argument to the autologging callbacks
+  to specify the version name for the autologged model.
+
+### Deprecations
+
+* `Python 3.9` is deprecated.
+
 ## 1.17.0
 
 ### Bug Fixes
@@ -20,6 +39,8 @@
 * ML Job: Enabled job submission v2 by default
   * Jobs submitted using v2 will automatically use the latest Container Runtime image
   * v1 behavior can be restored by setting environment variable `MLRS_USE_SUBMIT_JOB_V2` to `false`
+
+### Deprecations
 
 ## 1.16.0
 
