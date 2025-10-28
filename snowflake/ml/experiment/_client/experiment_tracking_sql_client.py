@@ -128,13 +128,7 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         run_name: sql_identifier.SqlIdentifier,
         artifact_path: str,
     ) -> list[artifact.ArtifactInfo]:
-        results = (
-            query_result_checker.SqlResultValidator(
-                self._session, f"LIST {self._build_snow_uri(experiment_name, run_name, artifact_path)}"
-            )
-            .has_dimensions(expected_cols=4)
-            .validate()
-        )
+        results = self._session.sql(f"LIST {self._build_snow_uri(experiment_name, run_name, artifact_path)}").collect()
         return [
             artifact.ArtifactInfo(
                 name=str(result.name).removeprefix(f"/versions/{run_name}/"),

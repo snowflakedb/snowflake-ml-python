@@ -2621,9 +2621,10 @@ class FeatureStore:
 
         This method supports feature views with different join keys by:
         1. Creating a spine CTE that includes all possible join keys
-        2. Performing ASOF JOINs for each feature view using only its specific join keys when timestamp columns exist
-        3. Performing LEFT JOINs for each feature view when timestamp columns are missing
-        4. Combining results using INNER JOINs on each feature view's specific join keys
+        2. For each feature view, creating a deduplicated spine subquery with only that FV's join keys
+        3. Performing ASOF JOINs on the deduplicated spine when timestamp columns exist
+        4. Performing LEFT JOINs on the deduplicated spine when timestamp columns are missing
+        5. Combining results by LEFT JOINing each FV CTE back to the original SPINE
 
         Args:
             feature_views: A list of feature views to join.
@@ -2632,9 +2633,6 @@ class FeatureStore:
             spine_timestamp_col: The timestamp column from spine. Can be None if spine has no timestamp column.
             include_feature_view_timestamp_col: Whether to include the timestamp column of
                 the feature view in the result. Default to false.
-
-        Note: This method does NOT work when there are duplicate combinations of join keys and timestamp columns
-        in spine.
 
         Returns:
             A SQL query string with CTE structure for joining feature views.
@@ -2659,11 +2657,17 @@ class FeatureStore:
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
             join_keys_str = ", ".join(fv_join_keys)
 
-            # Build the JOIN condition using only this feature view's join keys
-            join_conditions = [f'SPINE."{col}" = FEATURE."{col}"' for col in fv_join_keys]
-
             # Use ASOF JOIN if both spine and feature view have timestamp columns, otherwise use LEFT JOIN
             if spine_timestamp_col is not None and feature_timestamp_col is not None:
+                # Build the deduplicated spine columns set (join keys + timestamp)
+                spine_dedup_cols_set = set(fv_join_keys)
+                if spine_timestamp_col not in spine_dedup_cols_set:
+                    spine_dedup_cols_set.add(spine_timestamp_col)
+                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in spine_dedup_cols_set)
+
+                # Build the JOIN condition using only this feature view's join keys
+                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+
                 if include_feature_view_timestamp_col:
                     f_ts_col_alias = identifier.concat_names(
                         [feature_view.name, "_", str(feature_view.version), "_", feature_timestamp_col]
@@ -2674,36 +2678,46 @@ class FeatureStore:
                 ctes.append(
                     f"""{cte_name} AS (
     SELECT
-        SPINE.*,
+        SPINE_DEDUP.*,
         {f_ts_col_str}
         FEATURE.* EXCLUDE ({join_keys_str}, {feature_timestamp_col})
-    FROM
-        SPINE
+    FROM (
+        SELECT DISTINCT {spine_dedup_cols_str}
+        FROM SPINE
+    ) SPINE_DEDUP
     ASOF JOIN (
         SELECT {join_keys_str}, {feature_timestamp_col}, {feature_columns[i]}
         FROM {feature_view.fully_qualified_name()}
     ) FEATURE
-    MATCH_CONDITION (SPINE."{spine_timestamp_col}" >= FEATURE."{feature_timestamp_col}")
-    ON {" AND ".join(join_conditions)}
+    MATCH_CONDITION (SPINE_DEDUP."{spine_timestamp_col}" >= FEATURE."{feature_timestamp_col}")
+    ON {" AND ".join(join_conditions_dedup)}
 )"""
                 )
             else:
+                # Build the deduplicated spine columns list (just join keys, no timestamp)
+                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in fv_join_keys)
+
+                # Build the JOIN condition using only this feature view's join keys
+                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+
                 ctes.append(
                     f"""{cte_name} AS (
     SELECT
-        SPINE.*,
+        SPINE_DEDUP.*,
         FEATURE.* EXCLUDE ({join_keys_str})
-    FROM
-        SPINE
+    FROM (
+        SELECT DISTINCT {spine_dedup_cols_str}
+        FROM SPINE
+    ) SPINE_DEDUP
     LEFT JOIN (
         SELECT {join_keys_str}, {feature_columns[i]}
         FROM {feature_view.fully_qualified_name()}
     ) FEATURE
-    ON {" AND ".join(join_conditions)}
+    ON {" AND ".join(join_conditions_dedup)}
 )"""
                 )
 
-        # Build final SELECT with individual joins to each FV CTE
+        # Build final SELECT with LEFT joins to each FV CTE
         select_columns = []
         join_clauses = []
 
@@ -2711,19 +2725,29 @@ class FeatureStore:
             feature_view = feature_views[i]
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
             join_conditions = [f'SPINE."{col}" = {cte_name}."{col}"' for col in fv_join_keys]
-            if spine_timestamp_col is not None:
+            # Only include spine timestamp in join condition if both spine and FV have timestamps
+            if spine_timestamp_col is not None and feature_view.timestamp_col is not None:
                 join_conditions.append(f'SPINE."{spine_timestamp_col}" = {cte_name}."{spine_timestamp_col}"')
+
             if include_feature_view_timestamp_col and feature_view.timestamp_col is not None:
                 f_ts_col_alias = identifier.concat_names(
                     [feature_view.name, "_", str(feature_view.version), "_", feature_view.timestamp_col]
                 )
                 f_ts_col_str = f"{cte_name}.{f_ts_col_alias} AS {f_ts_col_alias}"
                 select_columns.append(f_ts_col_str)
-            select_columns.append(feature_columns[i])
+
+            # Select features from the CTE
+            # feature_columns[i] is already a comma-separated string of column names
+            feature_cols_from_cte = []
+            for col in feature_columns[i].split(", "):
+                col_clean = col.strip()
+                feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
+            select_columns.extend(feature_cols_from_cte)
+
             # Create join condition using only this feature view's join keys
             join_clauses.append(
                 f"""
-    INNER JOIN {cte_name}
+    LEFT JOIN {cte_name}
     ON {" AND ".join(join_conditions)}"""
             )
 

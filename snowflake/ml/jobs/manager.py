@@ -192,12 +192,12 @@ def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Sessio
     """Delete a job service from the backend. Status and logs will be lost."""
     job = job if isinstance(job, jb.MLJob) else get_job(job, session=session)
     session = job._session
-    try:
-        stage_path = job._stage_path
-        session.sql(f"REMOVE {stage_path}/").collect()
-        logger.info(f"Successfully cleaned up stage files for job {job.id} at {stage_path}")
-    except Exception as e:
-        logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
+    if job._stage_path:
+        try:
+            session.sql(f"REMOVE {job._stage_path}/").collect()
+            logger.debug(f"Successfully cleaned up stage files for job {job.id} at {job._stage_path}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
     query_helper.run_query(session, "DROP SERVICE IDENTIFIER(?)", params=(job.id,))
 
 

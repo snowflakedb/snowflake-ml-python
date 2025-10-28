@@ -218,47 +218,52 @@ class PayloadUtilsTests(parameterized.TestCase):
             self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").collect(),
         )
 
-    def test_upload_payload_additional_packages_stage(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "source": f"@{_TEST_STAGE}/",
+            "entrypoint": f"@{_TEST_STAGE}/subdir/sub_main.py",
+            "additional_payloads": [(f"@{_TEST_STAGE}/subdir/utils", "remote.subdir.utils")],
+            "expected_entrypoint": "/mnt/job_stage/app/subdir/sub_main.py",
+            "expected_file_count": 21,
+        },
+        {
+            "source": f"@{_TEST_STAGE}/subdir",
+            "entrypoint": f"@{_TEST_STAGE}/subdir/sub_main.py",
+            "additional_payloads": [(f"@{_TEST_STAGE}/subdir2/", "subdir2")],
+            "expected_entrypoint": "/mnt/job_stage/app/sub_main.py",
+            "expected_file_count": 4,
+        },
+    )
+    def test_upload_payload_additional_packages_stage(
+        self,
+        source: str,
+        entrypoint: str,
+        additional_payloads: list,
+        expected_entrypoint: str,
+        expected_file_count: int,
+    ) -> None:
         upload_files = TestAsset("src")
         payload_utils.upload_payloads(
             self.session, pathlib.Path(_TEST_STAGE), types.PayloadSpec(upload_files.path, None)
         )
 
-        test_cases = [
-            (
-                f"@{_TEST_STAGE}/",
-                f"@{_TEST_STAGE}/subdir/sub_main.py",
-                [(f"@{_TEST_STAGE}/subdir/utils", "remote.subdir.utils")],
-                "/mnt/job_stage/app/subdir/sub_main.py",
-                21,
-            ),
-            (
-                f"@{_TEST_STAGE}/subdir",
-                f"@{_TEST_STAGE}/subdir/sub_main.py",
-                [(f"@{_TEST_STAGE}/subdir2/", "subdir2")],
-                "/mnt/job_stage/app/sub_main.py",
-                4,
-            ),
-        ]
-        for source, entrypoint, additional_payloads, expected_entrypoint, expected_file_count in test_cases:
-            with self.subTest(source=source, entrypoint=entrypoint, additional_payloads=additional_payloads):
-                stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
-                payload = payload_utils.JobPayload(
-                    source=source,
-                    entrypoint=entrypoint,
-                    additional_payloads=additional_payloads,
-                )
+        stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+        payload = payload_utils.JobPayload(
+            source=source,
+            entrypoint=entrypoint,
+            additional_payloads=additional_payloads,
+        )
 
-                uploaded_payload = payload.upload(self.session, stage_path)
-                actual_entrypoint = next(
-                    item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
-                )
-                self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
-                self.assertEqual(
-                    self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").count(),
-                    expected_file_count,
-                    self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").collect(),
-                )
+        uploaded_payload = payload.upload(self.session, stage_path)
+        actual_entrypoint = next(
+            item for item in reversed(uploaded_payload.entrypoint) if isinstance(item, pathlib.PurePath)
+        )
+        self.assertEqual(actual_entrypoint.as_posix(), expected_entrypoint)
+        self.assertEqual(
+            self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").count(),
+            expected_file_count,
+            self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").collect(),
+        )
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import re
 import warnings
 from collections import OrderedDict
@@ -248,6 +247,7 @@ class FeatureView(lineage_node.LineageNode):
                 - If `timestamp_col` is provided, it is added to the default clustering keys.
             online_config: Optional configuration for online storage. If provided with enable=True,
                 online storage will be enabled. Defaults to None (no online storage).
+                NOTE: this feature is currently in Public Preview.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -289,8 +289,6 @@ class FeatureView(lineage_node.LineageNode):
 
         # noqa: DAR401
         """
-        if online_config is not None:
-            logging.warning("'online_config' is in private preview since 1.12.0. Do not use it in production.")
 
         self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: list[Entity] = entities

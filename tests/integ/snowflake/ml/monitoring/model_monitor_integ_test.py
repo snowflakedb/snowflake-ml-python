@@ -157,15 +157,38 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         mv = self._add_sample_model_version(model_name=model_name, version_name=version_name)
         self._add_sample_monitor(monitor_name=monitor_name, source=table_name, model_version=mv)
 
-    def test_show_model_monitors(self):
+    def test_show_and_get_monitors(self):
+        # Test show returns empty initially
         res = self.registry.show_model_monitors()
         self.assertEqual(len(res), 0)
+
+        # Create monitor
         self._create_sample_table_model_and_monitor(
-            monitor_name="monitor", table_name="source_table", model_name="model_name"
+            monitor_name="monitor", table_name="source_table", model_name="model_name", version_name="V1"
         )
+
+        # Test show returns the monitor with correct name
         res = self.registry.show_model_monitors()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["name"], "MONITOR")
+
+        # Test get by name
+        monitor = self.registry.get_monitor(name="monitor")
+        self.assertEqual(monitor.name, "MONITOR")
+
+        # Test get by model_version
+        model_version = self.registry.get_model("model_name").version("V1")
+        monitor2 = self.registry.get_monitor(model_version=model_version)
+        self.assertEqual(monitor2.name, "MONITOR")
+
+        # Test get by name, doesn't exist
+        with self.assertRaisesRegex(ValueError, "Unable to find model monitor 'non_existent_monitor'"):
+            self.registry.get_monitor(name="non_existent_monitor")
+
+        # Test get by model_version, doesn't exist
+        model_version_not_monitored = self._add_sample_model_version(model_name="fake_model_name", version_name="V2")
+        with self.assertRaisesRegex(ValueError, "Unable to find model monitor for the given model version."):
+            self.registry.get_monitor(model_version=model_version_not_monitored)
 
     def test_add_monitor_duplicate_fails(self):
         source_table_name = "source_table"
@@ -210,28 +233,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         self.assertEqual(self.registry.show_model_monitors()[0]["monitor_state"], "SUSPENDED")
         monitor.resume()  # resume after suspending
         self.assertTrue(self.registry.show_model_monitors()[0]["monitor_state"] in ["ACTIVE", "RUNNING"])
-
-    def test_get_monitor(self):
-        self._create_sample_table_model_and_monitor(
-            monitor_name="monitor", table_name="source_table", model_name="model_name", version_name="V1"
-        )
-        # Test get by name.
-        monitor = self.registry.get_monitor(name="monitor")
-        self.assertEqual(monitor.name, "MONITOR")
-
-        # Test get by model_version.
-        model_version = self.registry.get_model("model_name").version("V1")
-        monitor2 = self.registry.get_monitor(model_version=model_version)
-        self.assertEqual(monitor2.name, "MONITOR")
-
-        # Test get by name, doesn't exist
-        with self.assertRaisesRegex(ValueError, "Unable to find model monitor 'non_existent_monitor'"):
-            self.registry.get_monitor(name="non_existent_monitor")
-
-        # Test get by model_version, doesn't exist
-        model_version_not_monitored = self._add_sample_model_version(model_name="fake_model_name", version_name="V2")
-        with self.assertRaisesRegex(ValueError, "Unable to find model monitor for the given model version."):
-            self.registry.get_monitor(model_version=model_version_not_monitored)
 
     def test_delete_monitor(self) -> None:
         self._create_sample_table_model_and_monitor(
@@ -341,45 +342,6 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
         monitor_names = [m["name"] for m in monitors]
         self.assertIn(monitor_name.upper(), monitor_names)
 
-    def test_create_monitor_with_custom_metric_columns(self):
-        """Test creating a monitor with valid custom_metric_columns."""
-
-        self._session.sql("ALTER SESSION SET ENABLE_MODEL_MONITOR_CUSTOM_METRICS = TRUE").collect()
-
-        source_table_name = "source_table_with_custom_metrics"
-        model_name = "model_with_custom_metrics"
-        monitor_name = "monitor_with_custom_metrics"
-
-        # Create table with custom metric columns
-        self._create_test_table(
-            f"{self._db_name}.{self._schema_name}.{source_table_name}", custom_metric_columns=["custom_metric"]
-        )
-
-        # Create model version
-        mv = self._add_sample_model_version(model_name=model_name, version_name="V1")
-
-        # Create monitor with custom metric columns - this should succeed
-        monitor = self._add_sample_monitor(
-            monitor_name=monitor_name,
-            source=source_table_name,
-            model_version=mv,
-            custom_metric_columns=["custom_metric"],
-        )
-
-        # Verify monitor was created successfully
-        self.assertEqual(monitor.name, monitor_name.upper())
-
-        # Verify it appears in the list of monitors
-        monitors = self.registry.show_model_monitors()
-        monitor_names = [m["name"] for m in monitors]
-        self.assertIn(monitor_name.upper(), monitor_names)
-
-        # Verify describe monitor shows custom metric column
-        describe_result = self._session.sql(
-            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
-        ).collect()
-        self.assertIn("CUSTOM_METRIC", describe_result[0]["columns"])
-
     def test_create_monitor_with_segment_columns_missing_in_source(self):
         """Test creating a monitor with invalid segment_columns should fail."""
 
@@ -435,6 +397,9 @@ class ModelMonitorRegistryIntegrationTest(parameterized.TestCase):
             model_version=mv,
             custom_metric_columns=["initial_metric"],
         )
+
+        # Verify monitor was created successfully
+        self.assertEqual(monitor.name, monitor_name.upper())
 
         # Verify monitor was created successfully with initial custom metric
         describe_result = self._session.sql(

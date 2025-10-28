@@ -1,3 +1,4 @@
+import json
 import pathlib
 from typing import cast
 from unittest import mock
@@ -80,7 +81,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_models_or_versions_1(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="MODEL",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -89,7 +90,7 @@ class ModelOpsTest(absltest.TestCase):
                 default_version_name="V1",
             ),
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="Model",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -118,14 +119,14 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_models_or_versions_2(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
                 is_default_version=True,
             ),
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="V1",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -156,7 +157,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_list_models_or_versions_1(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="MODEL",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -165,7 +166,7 @@ class ModelOpsTest(absltest.TestCase):
                 default_version_name="V1",
             ),
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="Model",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -197,14 +198,14 @@ class ModelOpsTest(absltest.TestCase):
     def test_list_models_or_versions_2(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
                 is_default_version=True,
             ),
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="V1",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -238,7 +239,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_validate_existence_1(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="Model",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -284,7 +285,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_validate_existence_3(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1213,7 +1214,7 @@ class ModelOpsTest(absltest.TestCase):
         mock_composer.stage_path = '@TEMP."test".MODEL/V1'
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="Model",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1254,7 +1255,7 @@ class ModelOpsTest(absltest.TestCase):
         mock_composer.stage_path = '@TEMP."test".MODEL/V1'
         m_list_res_models = (
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="Model",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1723,7 +1724,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_get_comment_1(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1748,7 +1749,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_get_comment_2(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="V1",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1815,7 +1816,7 @@ class ModelOpsTest(absltest.TestCase):
     def test_get_default_version(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="MODEL",
                 comment="This is a comment",
                 model_name="MODEL",
@@ -1842,18 +1843,18 @@ class ModelOpsTest(absltest.TestCase):
     def test_system_aliases(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
-                aliases=["FIRST", "DEFAULT"],
+                aliases=json.dumps(["FIRST", "DEFAULT"]),
             ),
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v2",
                 comment="This is a comment",
                 model_name="MODEL",
-                aliases=["LAST"],
+                aliases=json.dumps(["LAST"]),
             ),
         ]
         with mock.patch.object(
@@ -1878,21 +1879,141 @@ class ModelOpsTest(absltest.TestCase):
             self.assertEqual(res, sql_identifier.SqlIdentifier("v2", case_sensitive=True))
             self.assertEqual(mock_show_versions.call_count, 2)
 
+    def test_get_version_by_alias_exact_match_only(self) -> None:
+        """Test that partial matches are rejected and only exact matches work."""
+        m_list_res = [
+            Row(
+                created_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=json.dumps(["Production", "DEFAULT"]),
+            ),
+        ]
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions:
+            # Exact match should work
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("Production"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
+            # Partial match should NOT work
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("P"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNone(res)
+
+            self.assertEqual(mock_show_versions.call_count, 2)
+
+    def test_get_version_by_alias_case_insensitive(self) -> None:
+        """Test that alias matching follows Snowflake identifier semantics."""
+        m_list_res = [
+            Row(
+                created_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=json.dumps(["Production", "DEFAULT", "Staging"]),
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res):
+            # Test case-insensitive matching for unquoted identifiers
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("production"),  # lowercase should match "Production"
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNotNone(res, "Unquoted identifiers should be case-insensitive")
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
+    def test_get_version_by_alias_quoted_identifiers(self) -> None:
+        """Test that quoted identifiers are case-sensitive and exact match only."""
+        m_list_res = [
+            Row(
+                created_on="06/01",
+                name="v1",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=json.dumps(['"production"', '"Staging"', "DEFAULT"]),
+            ),
+            Row(
+                created_on="06/02",
+                name="v2",
+                comment="This is a comment",
+                model_name="MODEL",
+                aliases=json.dumps(['"Production"']),
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res):
+            # Quoted identifier - exact case match should work
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier('"production"'),
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNotNone(res, "Quoted identifier with exact case should match")
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
+            # Quoted identifier - case-sensitive match with different case matches different version
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier('"Production"'),
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNotNone(res, "Quoted identifier 'Production' should match v2")
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v2", case_sensitive=True))
+
+            # Unquoted identifier should NOT match quoted lowercase identifier
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("production"),  # Unquoted normalizes to PRODUCTION
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNone(res, "Unquoted 'production' should not match quoted identifier")
+
+            # Unquoted identifier should match unquoted identifier (case-insensitive)
+            res = self.m_ops.get_version_by_alias(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                alias_name=sql_identifier.SqlIdentifier("default"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertIsNotNone(res, "Unquoted 'default' should match 'DEFAULT'")
+            self.assertEqual(res, sql_identifier.SqlIdentifier("v1", case_sensitive=True))
+
     def test_set_default_version_1(self) -> None:
         m_list_res = [
             Row(
-                create_on="06/01",
+                created_on="06/01",
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
                 is_default_version=True,
             ),
         ]
-        with mock.patch.object(
-            self.m_ops._model_client, "show_versions", return_value=m_list_res
-        ) as mock_show_versions, mock.patch.object(
-            self.m_ops._model_version_client, "set_default_version"
-        ) as mock_set_default_version:
+        with (
+            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
+            mock.patch.object(self.m_ops._model_version_client, "set_default_version") as mock_set_default_version,
+        ):
             self.m_ops.set_default_version(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),

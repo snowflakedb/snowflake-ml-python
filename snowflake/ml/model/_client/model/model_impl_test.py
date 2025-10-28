@@ -1,3 +1,4 @@
+import json
 from typing import cast
 from unittest import mock
 
@@ -245,14 +246,14 @@ class ModelImplTest(absltest.TestCase):
                 name="v1",
                 comment="This is a comment",
                 model_name="MODEL",
-                aliases=["FIRST", "DEFAULT"],
+                aliases=json.dumps(["FIRST", "DEFAULT"]),
             ),
             Row(
                 create_on="06/01",
                 name="v2",
                 comment="This is a comment",
                 model_name="MODEL",
-                aliases=["LAST"],
+                aliases=json.dumps(["LAST"]),
             ),
         ]
         with (

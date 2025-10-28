@@ -299,40 +299,44 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(metadata["status"], "FINISHED")
 
         # Check metrics
-        self.assertIn("metrics", metadata)
+        metrics = self._session.sql(
+            f"""SHOW RUN METRICS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}
+                RUN {run_name}"""
+        ).collect()
         # Should have: accuracy(updated), precision, recall, f1_score, loss(3 steps), train_accuracy = 8 total
-        self.assertEqual(len(metadata["metrics"]), 8)
-
-        metric_dict = {}
-        for m in metadata["metrics"]:
-            key = f"{m['name']}_step_{m['step']}"
-            metric_dict[key] = m
-
+        self.assertEqual(len(metrics), 8)
+        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
         # Verify single metric (updated value)
-        self.assertEqual(metric_dict["accuracy_step_1"]["value"], 0.97)  # Updated value
+        self.assertEqual(metric_dict[("accuracy", 1)], 0.97)  # Updated value
 
         # Verify batch metrics
-        self.assertEqual(metric_dict["precision_step_5"]["value"], 0.92)
-        self.assertEqual(metric_dict["recall_step_5"]["value"], 0.88)
-        self.assertEqual(metric_dict["f1_score_step_5"]["value"], 0.90)
+        self.assertEqual(metric_dict[("precision", 5)], 0.92)
+        self.assertEqual(metric_dict[("recall", 5)], 0.88)
+        self.assertEqual(metric_dict[("f1_score", 5)], 0.90)
 
         # Verify multi-step metrics
-        self.assertEqual(metric_dict["loss_step_1"]["value"], 0.8)
-        self.assertEqual(metric_dict["loss_step_2"]["value"], 0.6)
-        self.assertEqual(metric_dict["loss_step_3"]["value"], 0.4)
+        self.assertEqual(metric_dict[("loss", 1)], 0.8)
+        self.assertEqual(metric_dict[("loss", 2)], 0.6)
+        self.assertEqual(metric_dict[("loss", 3)], 0.4)
 
         # Verify additional metric
-        self.assertEqual(metric_dict["train_accuracy_step_10"]["value"], 0.85)
+        self.assertEqual(metric_dict[("train_accuracy", 10)], 0.85)
 
         # Check parameters
-        self.assertEqual(len(metadata["parameters"]), 6)
-        param_dict = {p["name"]: p["value"] for p in metadata["parameters"]}
-        self.assertEqual(param_dict["learning_rate"], "0.001")
-        self.assertEqual(param_dict["batch_size"], "64")  # Updated value
-        self.assertEqual(param_dict["model_type"], "transformer")
-        self.assertEqual(param_dict["dropout"], "0.1")
-        self.assertEqual(param_dict["use_attention"], "True")
-        self.assertEqual(param_dict["optimizer"], "adam")
+        parameters = self._session.sql(
+            f"""SHOW RUN PARAMETERS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(6, len(parameters))
+        parameter_dict = {p["name"]: p["value"] for p in parameters}
+        self.assertEqual(parameter_dict["learning_rate"], "0.001")
+        self.assertEqual(parameter_dict["batch_size"], "64")
+        self.assertEqual(parameter_dict["model_type"], "transformer")
+        self.assertEqual(parameter_dict["dropout"], "0.1")
+        self.assertEqual(parameter_dict["use_attention"], "True")
+        self.assertEqual(parameter_dict["optimizer"], "adam")
 
     def test_log_metrics_params_auto_run_creation(self) -> None:
         """Test that logging metrics/params without an active run creates a new run automatically."""
@@ -351,28 +355,33 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         runs = self._session.sql(f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT").collect()
         self.assertEqual(len(runs), 1)
 
-        # Parse and verify metadata contains all logged data
-        metadata = json.loads(runs[0]["metadata"])
-        self.assertEqual(metadata["status"], "RUNNING")
+        # Parse and verify run is RUNNING
+        self.assertEqual(json.loads(runs[0]["metadata"])["status"], "RUNNING")
+        run_name = runs[0]["name"]
 
         # Check metrics
-        self.assertIn("metrics", metadata)
-        self.assertEqual(len(metadata["metrics"]), 3)
-        metric_dict = {m["name"]: m for m in metadata["metrics"]}
-        self.assertEqual(metric_dict["accuracy"]["value"], 0.95)
-        self.assertEqual(metric_dict["accuracy"]["step"], 0)  # Default step
-        self.assertEqual(metric_dict["precision"]["value"], 0.92)
-        self.assertEqual(metric_dict["precision"]["step"], 2)
-        self.assertEqual(metric_dict["recall"]["value"], 0.88)
-        self.assertEqual(metric_dict["recall"]["step"], 2)
+        metrics = self._session.sql(
+            f"""SHOW RUN METRICS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(len(metrics), 3)
+        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
+        self.assertEqual(metric_dict[("accuracy", 0)], 0.95)
+        self.assertEqual(metric_dict[("precision", 2)], 0.92)
+        self.assertEqual(metric_dict[("recall", 2)], 0.88)
 
         # Check parameters
-        self.assertIn("parameters", metadata)
-        self.assertEqual(len(metadata["parameters"]), 3)
-        param_dict = {p["name"]: p["value"] for p in metadata["parameters"]}
-        self.assertEqual(param_dict["model"], "bert")
-        self.assertEqual(param_dict["epochs"], "10")
-        self.assertEqual(param_dict["learning_rate"], "0.001")
+        parameters = self._session.sql(
+            f"""SHOW RUN PARAMETERS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(len(parameters), 3)
+        parameter_dict = {p["name"]: p["value"] for p in parameters}
+        self.assertEqual(parameter_dict["model"], "bert")
+        self.assertEqual(parameter_dict["epochs"], "10")
+        self.assertEqual(parameter_dict["learning_rate"], "0.001")
 
         # End run
         self.exp.end_run()
@@ -419,6 +428,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
         self.exp.set_experiment(experiment_name=experiment_name)
         with self.exp.start_run(run_name=run_name):
+            self.assertEqual(0, len(self.exp.list_artifacts(run_name=run_name)))
             self.exp.log_artifact(local_path)
 
         # Test that the artifact is logged correctly

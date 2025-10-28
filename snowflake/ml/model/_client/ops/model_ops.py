@@ -515,10 +515,17 @@ class ModelOperator:
             statement_params=statement_params,
         )
         for r in res:
-            if alias_name in r[self._model_client.MODEL_VERSION_ALIASES_COL_NAME]:
-                return sql_identifier.SqlIdentifier(
-                    r[self._model_client.MODEL_VERSION_NAME_COL_NAME], case_sensitive=True
-                )
+            aliases_data = r[self._model_client.MODEL_VERSION_ALIASES_COL_NAME]
+            if aliases_data:
+                aliases_list = json.loads(aliases_data)
+
+                # Compare using Snowflake identifier semantics for exact match
+                for alias in aliases_list:
+                    if sql_identifier.SqlIdentifier(alias) == alias_name:
+                        return sql_identifier.SqlIdentifier(
+                            r[self._model_client.MODEL_VERSION_NAME_COL_NAME], case_sensitive=True
+                        )
+
         return None
 
     def get_tag_value(

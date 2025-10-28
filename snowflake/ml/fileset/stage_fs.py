@@ -1,5 +1,6 @@
 import inspect
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional, Union, cast
@@ -27,6 +28,8 @@ _PRESIGNED_URL_LIFETIME_SEC = 14400
 # The threshold of when the presigned url should get refreshed before its expiration.
 _PRESIGNED_URL_HEADROOM_SEC = 3600
 
+# Regex pattern to match cloud storage prefixes (s3://, gcs://, azure://) and bucket/container name at start of string
+_CLOUD_PATH_PREFIX_PATTERN = re.compile(r"^(s3|gcs|azure)://[^/]+/", re.IGNORECASE)
 
 _PROJECT = "FileSet"
 
@@ -355,8 +358,16 @@ class SFStageFileSystem(fsspec.AbstractFileSystem):
 
         Returns:
             A string of the relative stage path.
+
+        Raises:
+            ValueError: If the stage path format is invalid.
         """
-        return stage_path[len(self._stage) + 1 :]
+        if stage_path.lower().startswith(self._stage.lower()):
+            return stage_path[len(self._stage) + 1 :]
+        elif match := _CLOUD_PATH_PREFIX_PATTERN.match(stage_path):
+            return stage_path[match.end() :]
+
+        raise ValueError(f"Invalid stage path: {stage_path}")
 
     def _add_file_info_helper(
         self,
