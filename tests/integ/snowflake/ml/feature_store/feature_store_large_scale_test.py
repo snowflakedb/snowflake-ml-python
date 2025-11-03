@@ -125,20 +125,13 @@ class FeatureStoreLargeScaleTest(parameterized.TestCase):
         def create_select_query(start: str, end: str) -> str:
             return f"""
             SELECT
-                DROPOFF_TIME,
+                DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) AS DROPOFF_TIME,
                 PULOCATIONID,
-                MIN(TIP_AMOUNT) AS TIP_AMOUNT,
-                MIN(TOTAL_AMOUNT) AS TOTAL_AMOUNT
-            FROM (
-                SELECT
-                    DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) AS DROPOFF_TIME,
-                    PULOCATIONID,
-                    TIP_AMOUNT,
-                    TOTAL_AMOUNT
-                FROM {raw_dataset}
-                WHERE DROPOFF_TIME >= '{start}' AND DROPOFF_TIME < '{end}'
-            ) filtered_data
-            GROUP BY DROPOFF_TIME, PULOCATIONID
+                TIP_AMOUNT,
+                TOTAL_AMOUNT
+            FROM {raw_dataset}
+            WHERE DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) >= '{start}'
+                AND DATE_TRUNC('second', TO_TIMESTAMP(TO_VARCHAR(TPEP_DROPOFF_DATETIME))) < '{end}'
             """
 
         spine_df_1 = self._session.sql(create_select_query("2016-01-01 00:00:00", "2016-01-03 00:00:00"))

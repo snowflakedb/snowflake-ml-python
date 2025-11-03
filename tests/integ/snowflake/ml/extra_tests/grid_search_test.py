@@ -2,8 +2,7 @@ from typing import Any
 
 import inflection
 import numpy as np
-from absl.testing.absltest import main
-from absl.testing.parameterized import TestCase, parameters
+from absl.testing import absltest, parameterized
 from sklearn.datasets import load_diabetes
 from sklearn.model_selection import GridSearchCV as SkGridSearchCV
 from sklearn.svm import SVR as SkSVR
@@ -17,7 +16,7 @@ from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
 
 
-class GridSearchCVTest(TestCase):
+class GridSearchCVTest(parameterized.TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
@@ -25,7 +24,7 @@ class GridSearchCVTest(TestCase):
     def tearDown(self):
         self._session.close()
 
-    @parameters(
+    @parameterized.parameters(
         (SVR, SkSVR, {"C": [1, 10], "kernel": ("linear", "rbf")}),
         (XGBRegressor, xgboost_regressor, {"n_estimators": [5, 10]}),
     )
@@ -83,4 +82,4 @@ class GridSearchCVTest(TestCase):
 
 
 if __name__ == "__main__":
-    main()
+    absltest.main()

@@ -48,7 +48,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
     Class to manage experiments in Snowflake.
     """
 
-    @snowpark._internal.utils.private_preview(version="1.9.1")
     def __init__(
         self,
         session: snowpark.Session,

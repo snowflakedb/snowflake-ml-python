@@ -420,6 +420,19 @@ for i in "${!groups[@]}"; do
 
         # Create testing env
         "${_MICROMAMBA_BIN}" create -y -p ./testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python==${VERSION}
+
+        if [ "${WITH_SNOWPARK}" = true ]; then
+            # When building with Snowpark, explicitly install the locally built Snowpark package
+            # This ensures we use the Snowpark version built from the specific git revision
+            # rather than the version from conda-forge/Snowflake channels
+
+            echo "== Finding locally built snowpark package =="
+            SNOWPARK_PKG=$(find "${WORKSPACE}/conda-bld" -name "snowflake-snowpark-python-*.conda" -o -name "snowflake-snowpark-python-*.tar.bz2" | head -n 1)
+
+            echo "Found snowpark package: ${SNOWPARK_PKG}"
+            echo "Installing locally built snowpark-python directly from file..."
+            "${_MICROMAMBA_BIN}" install -y -p ./testenv -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "${SNOWPARK_PKG}"
+        fi
         if [[ "${group}" != "core" ]]; then
             sed -i "/^channels:/a\  - ${WORKSPACE}/conda-bld" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
             sed -i "/^dependencies:/a\  - snowflake-ml-python==${VERSION}" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"

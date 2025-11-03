@@ -16,7 +16,7 @@ from tests.integ.snowflake.ml.test_utils import common_test_base, db_manager
 
 
 class ExplainVisualizeTest(common_test_base.CommonTestBase):
-    def _setup_data(self):
+    def _setup_data(self) -> None:
         np.random.seed(42)
         n_samples = 10
 
@@ -66,8 +66,12 @@ class ExplainVisualizeTest(common_test_base.CommonTestBase):
         ).upper()
         self._db_manager.create_database(self._db_name)
 
-        self._db_manager.cleanup_databases(expire_hours=6)
         self._setup_data()
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._db_name)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        super().tearDown()
 
     def _assert_plot_columns(self, plot: alt.LayerChart, expected_columns: list[str]) -> None:
         assert plot is not None

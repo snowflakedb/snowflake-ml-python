@@ -474,8 +474,8 @@ class FeatureStore:
             feature_view: FeatureView instance to materialize.
             version: version of the registered FeatureView.
                 NOTE: Version only accepts letters, numbers and underscore. Also version will be capitalized.
-            block: Specify whether the FeatureView backend materialization should be blocking or not. If blocking then
-                the API will wait until the initial FeatureView data is generated. Default to true.
+            block: Deprecated. To make the initial refresh asynchronous, set the `initialize`
+                argument on the `FeatureView` to `"ON_SCHEDULE"`. Default is true.
             overwrite: Overwrite the existing FeatureView with same version. This is the same as dropping the
                 FeatureView first then recreate. NOTE: there will be backfill cost associated if the FeatureView is
                 being continuously maintained.
@@ -520,6 +520,15 @@ class FeatureStore:
 
         """
         version = FeatureViewVersion(version)
+
+        if block is False:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    'block=False is deprecated. Use FeatureView(..., initialize="ON_SCHEDULE") '
+                    "for async initial refresh."
+                ),
+            )
 
         if feature_view.status != FeatureViewStatus.DRAFT:
             try:
@@ -2094,26 +2103,48 @@ class FeatureStore:
     def _plan_online_update(
         self, feature_view: FeatureView, online_config: Optional[fv_mod.OnlineConfig]
     ) -> _OnlineUpdateStrategy:
-        """Plan online update operations based on current state and target config."""
+        """Plan online update operations based on current state and target config.
+
+        Handles three cases:
+        - enable is None: Preserve current online state, only update if currently online
+        - enable is True: Enable online storage (create if needed, update if exists)
+        - enable is False: Disable online storage (drop if exists)
+
+        Args:
+            feature_view: The FeatureView object to check current online state.
+            online_config: The OnlineConfig with target enable and lag settings.
+
+        Returns:
+            _OnlineUpdateStrategy containing operations and their rollbacks.
+        """
         if online_config is None:
             return self._OnlineUpdateStrategy([], [], None)
 
         current_online = feature_view.online
         target_online = online_config.enable
 
-        # Enable online (create table)
+        # Case 1: enable is None - preserve current online state, only update if currently online
+        if target_online is None:
+            if current_online and (online_config.target_lag is not None):
+                # Online is currently enabled and user wants to update lag
+                return self._plan_online_update_existing(feature_view, online_config)
+            else:
+                # No online changes needed (either not online, or lag not specified)
+                return self._OnlineUpdateStrategy([], [], None)
+
+        # Case 2: Enable online (create table)
         if target_online and not current_online:
             return self._plan_online_enable(feature_view, online_config)
 
-        # Disable online (drop table)
+        # Case 3: Disable online (drop table)
         elif not target_online and current_online:
             return self._plan_online_disable(feature_view)
 
-        # Update existing online table
+        # Case 4: Update existing online table
         elif target_online and current_online:
             return self._plan_online_update_existing(feature_view, online_config)
 
-        # No change needed
+        # Case 5: No change needed
         else:
             return self._OnlineUpdateStrategy([], [], online_config)
 
@@ -2621,9 +2652,10 @@ class FeatureStore:
 
         This method supports feature views with different join keys by:
         1. Creating a spine CTE that includes all possible join keys
-        2. Performing ASOF JOINs for each feature view using only its specific join keys when timestamp columns exist
-        3. Performing LEFT JOINs for each feature view when timestamp columns are missing
-        4. Combining results using INNER JOINs on each feature view's specific join keys
+        2. For each feature view, creating a deduplicated spine subquery with only that FV's join keys
+        3. Performing ASOF JOINs on the deduplicated spine when timestamp columns exist
+        4. Performing LEFT JOINs on the deduplicated spine when timestamp columns are missing
+        5. Combining results by LEFT JOINing each FV CTE back to the original SPINE
 
         Args:
             feature_views: A list of feature views to join.
@@ -2632,9 +2664,6 @@ class FeatureStore:
             spine_timestamp_col: The timestamp column from spine. Can be None if spine has no timestamp column.
             include_feature_view_timestamp_col: Whether to include the timestamp column of
                 the feature view in the result. Default to false.
-
-        Note: This method does NOT work when there are duplicate combinations of join keys and timestamp columns
-        in spine.
 
         Returns:
             A SQL query string with CTE structure for joining feature views.
@@ -2659,11 +2688,17 @@ class FeatureStore:
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
             join_keys_str = ", ".join(fv_join_keys)
 
-            # Build the JOIN condition using only this feature view's join keys
-            join_conditions = [f'SPINE."{col}" = FEATURE."{col}"' for col in fv_join_keys]
-
             # Use ASOF JOIN if both spine and feature view have timestamp columns, otherwise use LEFT JOIN
             if spine_timestamp_col is not None and feature_timestamp_col is not None:
+                # Build the deduplicated spine columns set (join keys + timestamp)
+                spine_dedup_cols_set = set(fv_join_keys)
+                if spine_timestamp_col not in spine_dedup_cols_set:
+                    spine_dedup_cols_set.add(spine_timestamp_col)
+                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in spine_dedup_cols_set)
+
+                # Build the JOIN condition using only this feature view's join keys
+                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+
                 if include_feature_view_timestamp_col:
                     f_ts_col_alias = identifier.concat_names(
                         [feature_view.name, "_", str(feature_view.version), "_", feature_timestamp_col]
@@ -2674,36 +2709,46 @@ class FeatureStore:
                 ctes.append(
                     f"""{cte_name} AS (
     SELECT
-        SPINE.*,
+        SPINE_DEDUP.*,
         {f_ts_col_str}
         FEATURE.* EXCLUDE ({join_keys_str}, {feature_timestamp_col})
-    FROM
-        SPINE
+    FROM (
+        SELECT DISTINCT {spine_dedup_cols_str}
+        FROM SPINE
+    ) SPINE_DEDUP
     ASOF JOIN (
         SELECT {join_keys_str}, {feature_timestamp_col}, {feature_columns[i]}
         FROM {feature_view.fully_qualified_name()}
     ) FEATURE
-    MATCH_CONDITION (SPINE."{spine_timestamp_col}" >= FEATURE."{feature_timestamp_col}")
-    ON {" AND ".join(join_conditions)}
+    MATCH_CONDITION (SPINE_DEDUP."{spine_timestamp_col}" >= FEATURE."{feature_timestamp_col}")
+    ON {" AND ".join(join_conditions_dedup)}
 )"""
                 )
             else:
+                # Build the deduplicated spine columns list (just join keys, no timestamp)
+                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in fv_join_keys)
+
+                # Build the JOIN condition using only this feature view's join keys
+                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+
                 ctes.append(
                     f"""{cte_name} AS (
     SELECT
-        SPINE.*,
+        SPINE_DEDUP.*,
         FEATURE.* EXCLUDE ({join_keys_str})
-    FROM
-        SPINE
+    FROM (
+        SELECT DISTINCT {spine_dedup_cols_str}
+        FROM SPINE
+    ) SPINE_DEDUP
     LEFT JOIN (
         SELECT {join_keys_str}, {feature_columns[i]}
         FROM {feature_view.fully_qualified_name()}
     ) FEATURE
-    ON {" AND ".join(join_conditions)}
+    ON {" AND ".join(join_conditions_dedup)}
 )"""
                 )
 
-        # Build final SELECT with individual joins to each FV CTE
+        # Build final SELECT with LEFT joins to each FV CTE
         select_columns = []
         join_clauses = []
 
@@ -2711,19 +2756,29 @@ class FeatureStore:
             feature_view = feature_views[i]
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
             join_conditions = [f'SPINE."{col}" = {cte_name}."{col}"' for col in fv_join_keys]
-            if spine_timestamp_col is not None:
+            # Only include spine timestamp in join condition if both spine and FV have timestamps
+            if spine_timestamp_col is not None and feature_view.timestamp_col is not None:
                 join_conditions.append(f'SPINE."{spine_timestamp_col}" = {cte_name}."{spine_timestamp_col}"')
+
             if include_feature_view_timestamp_col and feature_view.timestamp_col is not None:
                 f_ts_col_alias = identifier.concat_names(
                     [feature_view.name, "_", str(feature_view.version), "_", feature_view.timestamp_col]
                 )
                 f_ts_col_str = f"{cte_name}.{f_ts_col_alias} AS {f_ts_col_alias}"
                 select_columns.append(f_ts_col_str)
-            select_columns.append(feature_columns[i])
+
+            # Select features from the CTE
+            # feature_columns[i] is already a comma-separated string of column names
+            feature_cols_from_cte = []
+            for col in feature_columns[i].split(", "):
+                col_clean = col.strip()
+                feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
+            select_columns.extend(feature_cols_from_cte)
+
             # Create join condition using only this feature view's join keys
             join_clauses.append(
                 f"""
-    INNER JOIN {cte_name}
+    LEFT JOIN {cte_name}
     ON {" AND ".join(join_conditions)}"""
             )
 
@@ -3388,7 +3443,7 @@ FROM SPINE{' '.join(join_clauses)}
         online_table_name = FeatureView._get_online_table_name(feature_view_name)
 
         fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
-        source_table_name = feature_view_name
+        source_table_name = self._get_fully_qualified_name(feature_view_name)
 
         # Extract join keys for PRIMARY KEY (preserve order and ensure unique)
         ordered_join_keys: list[str] = []

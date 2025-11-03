@@ -1,6 +1,7 @@
 import importlib
 import inspect
 import itertools
+import logging
 import os
 import tempfile
 from typing import Any, Callable, Literal, Optional, TypeVar, Union
@@ -11,6 +12,7 @@ from packaging import requirements, specifiers
 from typing_extensions import Concatenate, ParamSpec
 
 from snowflake.ml._internal import env, env_utils, file_utils
+from snowflake.ml._internal.utils import snowflake_env
 from snowflake.snowpark import functions as F, session
 from snowflake.snowpark._internal import udf_utils, utils as snowpark_utils
 from tests.integ.snowflake.ml.test_utils import _snowml_requirements, test_env_utils
@@ -57,6 +59,12 @@ class CommonTestBase(parameterized.TestCase):
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         self.session = test_env_utils.get_available_session()
+
+        try:
+            snowflake_version = snowflake_env.get_current_snowflake_version(self.session)
+            logging.info(f"Snowflake version: {str(snowflake_version)}")
+        except Exception as e:
+            logging.warning(f"Failed to retrieve the Snowflake version: {e}")
 
     def tearDown(self) -> None:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]

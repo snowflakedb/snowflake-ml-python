@@ -54,12 +54,30 @@ class DBManager:
         self._session.sql(f"DROP DATABASE{if_exists_sql} {actual_db_name}").collect()
 
     def cleanup_databases(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 72) -> None:
+        current_role = self._session.get_current_role()
         databases_df = self.show_databases(f"{prefix}%")
         stale_databases = databases_df.filter(
             f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
         ).collect()
         for stale_db in stale_databases:
-            self.drop_database(stale_db.name, if_exists=True)
+            try:
+                db_grants_df = self.show_grants_on_database(stale_db.name)
+                has_ownership = (
+                    db_grants_df.filter(
+                        (db_grants_df['"privilege"'] == "OWNERSHIP") & (db_grants_df['"grantee_name"'] == current_role)
+                    ).count()
+                    > 0
+                )
+                if has_ownership:
+                    self.drop_database(stale_db.name, if_exists=True)
+            except Exception:
+                # Database may have been deleted by another process or is not accessible
+                # Skip to the next database
+                pass
+
+    def show_grants_on_database(self, db_name: str) -> snowpark.DataFrame:
+        sql = f"SHOW GRANTS ON DATABASE {db_name}"
+        return self._session.sql(sql)
 
     def create_schema(
         self,

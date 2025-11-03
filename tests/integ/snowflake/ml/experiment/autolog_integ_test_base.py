@@ -1,4 +1,3 @@
-import json
 import uuid
 from typing import Any
 
@@ -78,25 +77,23 @@ class AutologIntegrationTest:
         self._train_model(model_class, callback)
 
         # Verify all data was logged correctly
-        runs = self._session.sql(
-            f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}"
-        ).collect()
+        experiment_fqn = f"{self._db_name}.{self._schema_name}.{experiment_name}"
+        runs = self._session.sql(f"SHOW RUNS IN EXPERIMENT {experiment_fqn}").collect()
         self.assertEqual(len(runs), 1)
+        run_name = runs[0]["name"]
 
-        # Parse and verify metadata
-        metadata = json.loads(runs[0]["metadata"])
-        self.assertIn("metrics", metadata)
-        metric_set = {f"{m['name']}_step_{m['step']}" for m in metadata["metrics"]}
+        metrics = self._session.sql(f"SHOW RUN METRICS IN EXPERIMENT {experiment_fqn} RUN {run_name}").collect()
+        metric_set = {(m["name"], m["step"]) for m in metrics}
         # Verify that the specified metric was logged at all expected epochs
         for epoch in range(0, self.num_steps, log_every_n_epochs):
-            self.assertIn(f"{metric_name}_step_{epoch}", metric_set)
+            self.assertIn((metric_name, epoch), metric_set)
         # Verify that no metrics were logged at epochs that are not multiples of `log_every_n_epochs`
-        for metric in metadata["metrics"]:
+        for metric in metrics:
             self.assertIn(metric["step"], range(0, self.num_steps, log_every_n_epochs))
 
         # Verify that params were logged
-        self.assertIn("parameters", metadata)
-        self.assertGreater(len(metadata["parameters"]), 0)
+        parameters = self._session.sql(f"SHOW RUN PARAMETERS IN EXPERIMENT {experiment_fqn} RUN {run_name}").collect()
+        self.assertGreater(len(parameters), 0)
 
         # Verify that the model was logged
         models = self._session.sql(f"SHOW MODELS LIKE '{model_name}'").collect()

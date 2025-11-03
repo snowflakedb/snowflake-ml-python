@@ -1,11 +1,26 @@
 # Release History
 
+## 1.19.0
+
+### Bug Fixes
+
+### Behavior Changes
+
+### New Features
+
+* Online feature serving in Feature Store is in public preview.
+* Experiment Tracking (`snowflake.ml.experiment`) is in public preview.
+
+### Deprecations
+
 ## 1.18.0
 
 ### Bug Fixes
 
 * Registry: The create_service API now validates that a model has a GPU runtime configuration and will throw a
   descriptive error if the configuration is missing.
+* Experiment Tracking (PrPr): No longer throw an exception in `list_artifacts` when run does not have artifacts.
+* Registry: Fix `get_version_by_alias`: now requires an exact match of snowflake identifier.
 
 ### Behavior Changes
 
