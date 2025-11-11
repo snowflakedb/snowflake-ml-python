@@ -196,8 +196,10 @@ py_test(
 
 py_test(
     name = "sample_weight_col_test",
+    timeout = "long",
     srcs = ["sample_weight_col_test.py"],
     data = ["//tests/integ/snowflake/ml/test_data:UCI_BANK_MARKETING_20COLUMNS.csv"],
+    shard_count = 2,
     tags = ["feature:modeling"],
     deps = [
         "//snowflake/ml/modeling/framework",

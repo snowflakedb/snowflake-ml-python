@@ -1,3 +1,4 @@
+import uuid
 from typing import Any, Union, cast, overload
 
 import altair as alt
@@ -319,7 +320,8 @@ def _prepare_feature_values_for_streamlit(
     import streamlit as st
 
     feature_columns = feature_values_df.columns
-    chosen_ft: str = st.selectbox("Feature:", feature_columns)
+    unique_key = f"ml-explain-feature-select-{uuid.uuid4()}"
+    chosen_ft: str = st.selectbox("Feature:", feature_columns, key=unique_key)
     feature_values = feature_values_df[chosen_ft]
     shap_values = shap_values.iloc[:, feature_columns.get_loc(chosen_ft)]
     return feature_values, shap_values, st

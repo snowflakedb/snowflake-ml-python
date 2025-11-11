@@ -23,7 +23,7 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         name = f"model_{self._run_id}"
         version = f"ver_{import_method}"
 
-        X, y = datasets.make_classification()
+        X, y = datasets.make_classification(random_state=42)
         X = pd.DataFrame(X, columns=["X" + str(i) for i in range(20)])
         log_trans = pipeline.Pipeline(
             [
@@ -47,7 +47,7 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         preproc_pipe.fit(X, y)
 
         xgb_data = xgb.DMatrix(preproc_pipe.transform(X), y)
-        booster = xgb.train(dict(max_depth=5), xgb_data, num_boost_round=10)
+        booster = xgb.train(dict(max_depth=5, seed=42), xgb_data, num_boost_round=10)
 
         # Generate expected predictions for batch inference validation
         model_output = booster.predict(xgb.DMatrix(preproc_pipe.transform(X)))

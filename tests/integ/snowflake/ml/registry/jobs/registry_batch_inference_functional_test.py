@@ -84,7 +84,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         )
 
         # the same job in another MLJob wrapper
-        job2 = get_job(job.id)
+        job2 = get_job(job.id, session=self.session)
         delete_job(job2)
 
         # the job will not be queryable any more

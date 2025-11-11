@@ -44,7 +44,6 @@ class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryB
                                 "cloudpickle",
                                 "numpy",
                                 "scikit-learn",
-                                "scipy",
                                 "typing-extensions",
                             ],
                         )

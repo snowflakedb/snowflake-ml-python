@@ -61,6 +61,23 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_dataset_perf_test",
+    timeout = "eternal",
+    srcs = [
+        "feature_store_dataset_perf_test.py",
+    ],
+    tags = [
+        "feature:feature_store",
+        "manual",  # Run manually due to large data size and long duration
+    ],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "feature_store_case_sensitivity_test",
     timeout = "long",
     srcs = [
@@ -167,6 +184,20 @@ py_test(
         "feature_store_rollback_test.py",
     ],
     shard_count = 1,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_online_lag_update_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_online_lag_update_test.py",
+    ],
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",

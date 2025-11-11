@@ -119,6 +119,18 @@ if [ "${RUN_GRYPE}" = true ] && [ "${WITH_SPCS_IMAGE}" = false ]; then
     help 1
 fi
 
+# Check if version.py is the only Python file modified - if so, skip all tests
+if [[ "${MODE}" = "merge_gate" ]]; then
+    changed_files=$(git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo "")
+    if echo "${changed_files}" | grep -q "snowflake/ml/version.py"; then
+        python_files_count=$(echo "${changed_files}" | grep -c '\.py$' || true)
+        if [[ ${python_files_count} -eq 1 ]]; then
+            echo "Detected changes to version.py as the only Python file - skipping all tests"
+            exit 0
+        fi
+    fi
+fi
+
 echo "Running build_and_run_tests with PYTHON_VERSION ${PYTHON_VERSION}"
 
 EXT=""
@@ -420,6 +432,19 @@ for i in "${!groups[@]}"; do
 
         # Create testing env
         "${_MICROMAMBA_BIN}" create -y -p ./testenv -c "${WORKSPACE}/conda-bld" -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "python=${PYTHON_VERSION}" snowflake-ml-python==${VERSION}
+
+        if [ "${WITH_SNOWPARK}" = true ]; then
+            # When building with Snowpark, explicitly install the locally built Snowpark package
+            # This ensures we use the Snowpark version built from the specific git revision
+            # rather than the version from conda-forge/Snowflake channels
+
+            echo "== Finding locally built snowpark package =="
+            SNOWPARK_PKG=$(find "${WORKSPACE}/conda-bld" -name "snowflake-snowpark-python-*.conda" -o -name "snowflake-snowpark-python-*.tar.bz2" | head -n 1)
+
+            echo "Found snowpark package: ${SNOWPARK_PKG}"
+            echo "Installing locally built snowpark-python directly from file..."
+            "${_MICROMAMBA_BIN}" install -y -p ./testenv -c "https://repo.anaconda.com/pkgs/snowflake/" --override-channels "${SNOWPARK_PKG}"
+        fi
         if [[ "${group}" != "core" ]]; then
             sed -i "/^channels:/a\  - ${WORKSPACE}/conda-bld" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"
             sed -i "/^dependencies:/a\  - snowflake-ml-python==${VERSION}" "${WORKSPACE}/${SNOWML_DIR}/bazel/environments/conda-optional-dependency-${group}.yml"

@@ -1,13 +1,13 @@
-from typing import cast
+from typing import Any, cast
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import table_manager
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 
 
-class TableManagerTest(absltest.TestCase):
+class TableManagerTest(parameterized.TestCase):
     """Testing table manager util functions."""
 
     def setUp(self) -> None:
@@ -18,30 +18,28 @@ class TableManagerTest(absltest.TestCase):
         """Complete test case. Ensure all expected operations have been observed."""
         self._session.finalize()
 
-    def test_get_fully_qualified_schema_name(self) -> None:
-        test_cases = [
-            ("testdb", "testschema", "testdb.testschema"),
-            ('"testdb"', '"testschema"', '"testdb"."testschema"'),
-        ]
-        for database_name, schema_name, expected_res in test_cases:
-            with self.subTest():
-                self.assertEqual(
-                    table_manager.get_fully_qualified_schema_name(database_name, schema_name),
-                    expected_res,
-                )
+    @parameterized.parameters(  # type: ignore[misc]
+        ("testdb", "testschema", "testdb.testschema"),
+        ('"testdb"', '"testschema"', '"testdb"."testschema"'),
+    )
+    def test_get_fully_qualified_schema_name(self, database_name: str, schema_name: str, expected_res: str) -> None:
+        self.assertEqual(
+            table_manager.get_fully_qualified_schema_name(database_name, schema_name),
+            expected_res,
+        )
 
-    def test_get_fully_qualified_table_name(self) -> None:
-        test_cases = [
-            ("testdb", "testschema", "table", "testdb.testschema.table"),
-            ('"testdb"', '"testschema"', '"table"', '"testdb"."testschema"."table"'),
-            ("testdb", "testschema", '"table"', 'testdb.testschema."table"'),
-        ]
-        for database_name, schema_name, table_name, expected_res in test_cases:
-            with self.subTest():
-                self.assertEqual(
-                    table_manager.get_fully_qualified_table_name(database_name, schema_name, table_name),
-                    expected_res,
-                )
+    @parameterized.parameters(  # type: ignore[misc]
+        ("testdb", "testschema", "table", "testdb.testschema.table"),
+        ('"testdb"', '"testschema"', '"table"', '"testdb"."testschema"."table"'),
+        ("testdb", "testschema", '"table"', 'testdb.testschema."table"'),
+    )
+    def test_get_fully_qualified_table_name(
+        self, database_name: str, schema_name: str, table_name: str, expected_res: str
+    ) -> None:
+        self.assertEqual(
+            table_manager.get_fully_qualified_table_name(database_name, schema_name, table_name),
+            expected_res,
+        )
 
     def test_create_single_table(self) -> None:
         schema_list = [("ID", "VARCHAR"), ("TYPE", "VARCHAR")]
@@ -72,24 +70,22 @@ class TableManagerTest(absltest.TestCase):
         )
         table_manager.insert_table_entry(cast(snowpark.Session, self._session), table_name, {"ID": 1, "TYPE": "a"})
 
-    def test_validate_table_exist(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        ([], False),
+        ([{"number of rows inserted": 1}], True),
+    )
+    def test_validate_table_exist(self, row_data: list[dict[str, Any]], expected_res: bool) -> None:
         table_name = "testtable"
         schema_name = "testschema"
-        empty_row_list: list[snowpark.Row] = []
-        test_cases = [
-            (empty_row_list, False),
-            ([snowpark.Row(**{"number of rows inserted": 1})], True),
-        ]
-        for snowpark_res, expected_res in test_cases:
-            with self.subTest():
-                self._session.add_mock_sql(
-                    query=f"SHOW TABLES LIKE '{table_name}' IN {schema_name}",
-                    result=mock_data_frame.MockDataFrame(snowpark_res),
-                )
-                self.assertEqual(
-                    table_manager.validate_table_exist(cast(snowpark.Session, self._session), table_name, schema_name),
-                    expected_res,
-                )
+        snowpark_res = [snowpark.Row(**data) for data in row_data]
+        self._session.add_mock_sql(
+            query=f"SHOW TABLES LIKE '{table_name}' IN {schema_name}",
+            result=mock_data_frame.MockDataFrame(snowpark_res),
+        )
+        self.assertEqual(
+            table_manager.validate_table_exist(cast(snowpark.Session, self._session), table_name, schema_name),
+            expected_res,
+        )
 
 
 if __name__ == "__main__":

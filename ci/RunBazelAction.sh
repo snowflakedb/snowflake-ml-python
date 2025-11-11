@@ -128,6 +128,18 @@ fi
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT
 
+# Check if version.py is the only Python file modified - if so, skip all tests
+if [[ "${mode}" = "merge_gate" ]]; then
+    changed_files=$(git diff --name-only origin/main...HEAD 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo "")
+    if echo "${changed_files}" | grep -q "snowflake/ml/version.py"; then
+        python_files_count=$(echo "${changed_files}" | grep -c '\.py$' || true)
+        if [[ ${python_files_count} -eq 1 ]]; then
+            echo "Detected changes to version.py as the only Python file - skipping all tests"
+            exit 0
+        fi
+    fi
+fi
+
 # Set up tag filtering
 if [[ -n "${TAG_FILTERS:-}" ]]; then
     tag_filter="--test_tag_filters=${TAG_FILTERS}"

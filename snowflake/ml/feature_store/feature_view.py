@@ -1,7 +1,7 @@
+"""Feature view module for Snowflake ML Feature Store."""
 from __future__ import annotations
 
 import json
-import logging
 import re
 import warnings
 from collections import OrderedDict
@@ -52,7 +52,7 @@ _RESULT_SCAN_QUERY_PATTERN = re.compile(
 class OnlineConfig:
     """Configuration for online feature storage."""
 
-    enable: bool = False
+    enable: Optional[bool] = None
     target_lag: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -248,6 +248,7 @@ class FeatureView(lineage_node.LineageNode):
                 - If `timestamp_col` is provided, it is added to the default clustering keys.
             online_config: Optional configuration for online storage. If provided with enable=True,
                 online storage will be enabled. Defaults to None (no online storage).
+                NOTE: this feature is currently in Public Preview.
             _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
@@ -289,8 +290,6 @@ class FeatureView(lineage_node.LineageNode):
 
         # noqa: DAR401
         """
-        if online_config is not None:
-            logging.warning("'online_config' is in private preview since 1.12.0. Do not use it in production.")
 
         self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: list[Entity] = entities
@@ -533,8 +532,15 @@ class FeatureView(lineage_node.LineageNode):
         return self._feature_desc
 
     @property
-    def online(self) -> bool:
-        return self._online_config.enable if self._online_config else False
+    def online(self) -> bool:  # noqa: DAR101
+        """Check if online storage is enabled for this feature view.
+
+        Returns:
+            True if online storage is enabled, False otherwise.
+        """
+        if self._online_config and self._online_config.enable is True:
+            return True
+        return False
 
     @property
     def online_config(self) -> Optional[OnlineConfig]:

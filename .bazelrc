@@ -51,7 +51,8 @@ run:all --config=_all
 # Environment variables for Hugging Face
 build --action_env=HF_HUB_ETAG_TIMEOUT=86400
 build --action_env=HF_HUB_DOWNLOAD_TIMEOUT=86400
-build --action_env=HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/huggingfaceml/huggingface-remote
+build --action_env=HF_ENDPOINT=https://huggingface.co
+build --action_env=HF_TOKEN
 
 # Below are auto-generated settings, do not modify them directly
 
@@ -60,6 +61,12 @@ cquery:keras --config=_keras
 build:keras --config=_keras
 test:keras --config=_keras
 run:keras --config=_keras
+
+build:_llm --platforms //bazel/platforms:llm_conda_env --host_platform //bazel/platforms:llm_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=llm
+cquery:llm --config=_llm
+build:llm --config=_llm
+test:llm --config=_llm
+run:llm --config=_llm
 
 build:_ml --platforms //bazel/platforms:ml_conda_env --host_platform //bazel/platforms:ml_conda_env --repo_env=BAZEL_CONDA_ENV_NAME=ml
 cquery:ml --config=_ml
