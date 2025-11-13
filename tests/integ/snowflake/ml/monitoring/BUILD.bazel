@@ -1,17 +1,60 @@
-load("//bazel:py_rules.bzl", "py_test")
+load("//bazel:py_rules.bzl", "py_library", "py_test")
 
-py_test(
-    name = "model_monitor_integ_test",
-    timeout = "long",
-    srcs = ["model_monitor_integ_test.py"],
-    tags = ["feature:observability"],
+py_library(
+    name = "model_monitor_integ_test_base",
+    testonly = True,
+    srcs = ["model_monitor_integ_test_base.py"],
     deps = [
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/registry:registry_impl",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
-        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "model_monitor_integ_basic_test",
+    timeout = "long",
+    srcs = ["model_monitor_integ_basic_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":model_monitor_integ_test_base",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/registry:registry_impl",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "model_monitor_integ_segment_test",
+    timeout = "long",
+    srcs = ["model_monitor_integ_segment_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":model_monitor_integ_test_base",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/registry:registry_impl",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
+    ],
+)
+
+py_test(
+    name = "model_monitor_integ_custom_metric_test",
+    timeout = "long",
+    srcs = ["model_monitor_integ_custom_metric_test.py"],
+    tags = ["feature:observability"],
+    deps = [
+        ":model_monitor_integ_test_base",
+        "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/registry:registry_impl",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:model_factory",
     ],
 )
 

@@ -58,6 +58,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                     lambda res: res.equals(embeddings),
                 ),
             },
+            additional_dependencies=["datasets>=2.15"],
         )
 
     def test_sentence_transformers_sp(self) -> None:
@@ -89,6 +90,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, atol=1e-6),
                 ),
             },
+            additional_dependencies=["datasets>=2.15"],
         )
 
 

@@ -23,11 +23,12 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
         # Skip tests if image override environment variables are not set
         # These tests require custom proxy image with inference table support
-        if not self._has_image_override() or not self.PROXY_IMAGE_PATH:
-            self.skipTest(
-                "Skipping inference table tests: image override environment variables not set. "
-                "Required: BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, PROXY_IMAGE_PATH"
-            )
+        # if not self._has_image_override() or not self.PROXY_IMAGE_PATH:
+        #     self.skipTest(
+        #         "Skipping inference table tests: image override environment variables not set. "
+        #         "Required: BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, PROXY_IMAGE_PATH"
+        #     )
+        self.skipTest("Skipping inference table tests. Pending SPCS cluster upgrade.")
 
         self.model_name = f"inference_table_model_{self._run_id}"
         self.version_name = "v1"

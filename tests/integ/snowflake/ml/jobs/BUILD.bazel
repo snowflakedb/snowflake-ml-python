@@ -38,6 +38,7 @@ py_library(
 py_test(
     name = "payload_utils_integ_test",
     srcs = ["payload_utils_integ_test.py"],
+    shard_count = 3,
     tags = ["feature:jobs"],
     deps = [
         ":test_file_helper",

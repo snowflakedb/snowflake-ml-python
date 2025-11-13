@@ -1,114 +1,28 @@
 import http
 import inspect
 import logging
-import os
-import pathlib
 import random
 import string
-import tempfile
 import time
-import uuid
 from typing import Any, Callable, Optional, cast
 
 import numpy as np
 import pandas as pd
-import pytest
 import requests
 import retrying
-import yaml
-from cryptography.hazmat import backends
-from cryptography.hazmat.primitives import serialization
 
-from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
+from snowflake.ml.model._client.model import inference_engine_utils
 from snowflake.ml.model._client.ops import service_ops
-from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model.models import huggingface_pipeline
-from snowflake.ml.registry import registry
-from snowflake.ml.utils import authentication, connection_params
+from snowflake.ml.utils import authentication
 from snowflake.snowpark import row
-from snowflake.snowpark._internal import utils as snowpark_utils
-from tests.integ.snowflake.ml.test_utils import (
-    common_test_base,
-    db_manager,
-    test_env_utils,
-)
+from tests.integ.snowflake.ml.registry import registry_spcs_test_base
+from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 
-@pytest.mark.spcs_deployment_image
-class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
-    _TEST_CPU_COMPUTE_POOL = "REGTEST_INFERENCE_CPU_POOL"
-    _TEST_GPU_COMPUTE_POOL = "REGTEST_INFERENCE_GPU_POOL"
-    _TEST_SPCS_WH = "REGTEST_ML_SMALL"
-
-    BUILDER_IMAGE_PATH = os.getenv("BUILDER_IMAGE_PATH", None)
-    BASE_CPU_IMAGE_PATH = os.getenv("BASE_CPU_IMAGE_PATH", None)
-    BASE_GPU_IMAGE_PATH = os.getenv("BASE_GPU_IMAGE_PATH", None)
-    PROXY_IMAGE_PATH = os.getenv("PROXY_IMAGE_PATH", None)
-    MODEL_LOGGER_PATH = os.getenv("MODEL_LOGGER_PATH", None)
-
-    def setUp(self) -> None:
-        """Creates Snowpark and Snowflake environments for testing."""
-        # Get login options BEFORE session creation (which clears password for security)
-        login_options = connection_params.SnowflakeLoginOptions()
-
-        # Capture password from login options before session creation clears it
-        pat_token = login_options.get("password")
-
-        # Now create session (this will clear password in session._conn._lower_case_parameters)
-        super().setUp()
-
-        # Set log level to INFO so that service logs are visible
-        logging.basicConfig(level=logging.INFO)
-
-        # Read private_key_path from session connection parameters (after session creation)
-        conn_params = self.session._conn._lower_case_parameters
-        private_key_path = conn_params.get("private_key_path")
-
-        if private_key_path:
-            # Try to load private key for JWT authentication
-            with open(private_key_path, "rb") as f:
-                self.private_key = serialization.load_pem_private_key(
-                    f.read(), password=None, backend=backends.default_backend()
-                )
-            self.pat_token = None
-        elif pat_token:
-            # Use PAT token from password parameter
-            self.private_key = None
-            self.pat_token = pat_token
-        else:
-            # No authentication credentials available
-            self.private_key = None
-            self.pat_token = None
-            raise ValueError("No authentication credentials found: neither private_key_path nor password parameter set")
-
-        self.snowflake_account_url = self.session._conn._lower_case_parameters.get("host", None)
-        if self.snowflake_account_url:
-            self.snowflake_account_url = f"https://{self.snowflake_account_url}"
-
-        self._run_id = uuid.uuid4().hex[:4]
-        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
-        self._test_schema = "PUBLIC"
-        self._test_image_repo = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-            self._run_id, "image_repo"
-        ).upper()
-        self._test_stage = "TEST_STAGE"
-
-        if not self.session.get_current_warehouse():
-            self.session.sql(f"USE WAREHOUSE {self._TEST_SPCS_WH}").collect()
-
-        self._db_manager = db_manager.DBManager(self.session)
-        self._db_manager.create_database(self._test_db)
-        self._db_manager.create_stage(self._test_stage)
-        self._db_manager.create_image_repo(self._test_image_repo)
-        self._db_manager.cleanup_databases(expire_hours=6)
-        self.registry = registry.Registry(self.session)
-
-    def tearDown(self) -> None:
-        self._db_manager.drop_database(self._test_db)
-        super().tearDown()
-
+class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
     def _has_image_override(self) -> bool:
         """Check if image override environment variables are set.
 
@@ -134,140 +48,6 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 "Please set or unset BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, "
                 "and MODEL_LOGGER_PATH at the same time."
             )
-
-    def _deploy_model_with_image_override(
-        self,
-        mv: ModelVersion,
-        service_name: str,
-        service_compute_pool: str,
-        gpu_requests: Optional[str] = None,
-        num_workers: Optional[int] = None,
-        max_instances: int = 1,
-        max_batch_rows: Optional[int] = None,
-        force_rebuild: bool = True,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-    ) -> None:
-        """Deploy model with image override."""
-        # Extract autocapture from experimental_options
-        autocapture = experimental_options.get("autocapture") if experimental_options else None
-        is_gpu = gpu_requests is not None
-        image_path = self.BASE_GPU_IMAGE_PATH if is_gpu else self.BASE_CPU_IMAGE_PATH
-        build_compute_pool = sql_identifier.SqlIdentifier(self._TEST_CPU_COMPUTE_POOL)
-
-        # create a temp stage
-        database_name_id, schema_name_id, service_name_id = sql_identifier.parse_fully_qualified_name(service_name)
-        database_name_id = database_name_id or sql_identifier.SqlIdentifier(self._test_db)
-        schema_name_id = schema_name_id or sql_identifier.SqlIdentifier(self._test_schema)
-        stage_name = sql_identifier.SqlIdentifier(
-            snowpark_utils.random_name_for_temp_object(snowpark_utils.TempObjectType.STAGE)
-        )
-        image_repo_name = sql_identifier.SqlIdentifier(self._test_image_repo)
-
-        mv._service_ops._model_deployment_spec.add_model_spec(
-            database_name=mv._model_ops._model_version_client._database_name,
-            schema_name=mv._model_ops._model_version_client._schema_name,
-            model_name=mv._model_name,
-            version_name=mv._version_name,
-        )
-
-        image_repo_fqn = identifier.get_schema_level_object_identifier(
-            database_name_id.identifier(), schema_name_id.identifier(), image_repo_name.identifier()
-        )
-        mv._service_ops._model_deployment_spec.add_image_build_spec(
-            image_build_compute_pool_name=build_compute_pool,
-            fully_qualified_image_repo_name=image_repo_fqn,
-            force_rebuild=force_rebuild,
-            external_access_integrations=None,
-        )
-
-        mv._service_ops._model_deployment_spec.add_service_spec(
-            service_name=service_name_id,
-            inference_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
-            service_database_name=database_name_id,
-            service_schema_name=schema_name_id,
-            ingress_enabled=True,
-            max_instances=max_instances,
-            num_workers=num_workers,
-            cpu=cpu_requests,
-            memory=memory_requests,
-            gpu=gpu_requests,
-            max_batch_rows=max_batch_rows,
-            autocapture=autocapture,
-        )
-
-        deploy_spec = mv._service_ops._model_deployment_spec.save()
-
-        inline_deploy_spec_enabled = pc.PlatformCapabilities.get_instance().is_inlined_deployment_spec_enabled()
-        if mv._service_ops._model_deployment_spec.workspace_path:
-            with pathlib.Path(deploy_spec).open("r", encoding="utf-8") as f:
-                deploy_spec_dict = yaml.safe_load(f)
-        else:
-            deploy_spec_dict = yaml.safe_load(deploy_spec)
-
-        deploy_spec_dict["image_build"]["builder_image"] = self.BUILDER_IMAGE_PATH
-        deploy_spec_dict["image_build"]["base_image"] = image_path
-        deploy_spec_dict["service"]["proxy_image"] = self.PROXY_IMAGE_PATH
-
-        if inline_deploy_spec_enabled:
-            # dict to yaml string
-            deploy_spec_yaml_str = yaml.dump(deploy_spec_dict)
-            # deploy the model service
-            query_id, async_job = mv._service_ops._service_client.deploy_model(
-                model_deployment_spec_yaml_str=deploy_spec_yaml_str,
-            )
-        else:
-            temp_dir = tempfile.TemporaryDirectory()
-            workspace_path = pathlib.Path(temp_dir.name)
-            deploy_spec_file_rel_path = model_deployment_spec.ModelDeploymentSpec.DEPLOY_SPEC_FILE_REL_PATH
-            stage_path = mv._service_ops._stage_client.create_tmp_stage(
-                database_name=database_name_id,
-                schema_name=schema_name_id,
-                stage_name=stage_name,
-            )
-            with (workspace_path / deploy_spec_file_rel_path).open("w", encoding="utf-8") as f:
-                yaml.dump(deploy_spec_dict, f)
-            file_utils.upload_directory_to_stage(
-                self.session,
-                local_path=workspace_path,
-                stage_path=pathlib.PurePosixPath(stage_path),
-            )
-            # deploy the model service
-            query_id, async_job = mv._service_ops._service_client.deploy_model(
-                stage_path=stage_path, model_deployment_spec_file_rel_path=deploy_spec_file_rel_path
-            )
-
-        # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(
-            mv._service_ops._get_service_id_from_deployment_step(query_id, service_ops.DeploymentStep.MODEL_BUILD)
-        )
-        model_build_service = service_ops.ServiceLogInfo(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            service_name=model_build_service_name,
-            deployment_step=service_ops.DeploymentStep.MODEL_BUILD,
-        )
-        model_inference_service = service_ops.ServiceLogInfo(
-            database_name=database_name_id,
-            schema_name=schema_name_id,
-            service_name=service_name_id,
-            deployment_step=service_ops.DeploymentStep.MODEL_INFERENCE,
-        )
-
-        log_thread = mv._service_ops._start_service_log_streaming(
-            async_job=async_job,
-            model_logger_service=None,
-            model_build_service=model_build_service,
-            model_inference_service=model_inference_service,
-            model_inference_service_exists=False,
-            force_rebuild=True,
-            operation_id=query_id,
-        )
-        log_thread.join()
-
-        res = cast(str, cast(list[row.Row], async_job.result())[0][0])
-        logging.info(f"Inference service {service_name} deployment complete: {res}")
 
     def _test_registry_model_deployment(
         self,
@@ -301,6 +81,11 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         name = f"model_{inspect.stack()[1].function}"
         version = f"ver_{self._run_id}"
 
+        # Set embed_local_ml_library to True explicitly because if we set target_platforms to
+        # SNOWPARK_CONTAINER_SERVICES, we will skip the logic which automatically sets it to
+        # True when the snowml package is not available in the Snowflake Anaconda Channel.
+        options = options or {}
+        options["embed_local_ml_library"] = True
         mv = None
         if not use_model_logging:
             mv = self.registry.log_model(
@@ -310,7 +95,9 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
                 sample_input_data=sample_input_data,
                 conda_dependencies=conda_dependencies,
                 pip_requirements=pip_requirements,
+                target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
                 options=options,
+                signatures=signatures,
             )
 
         return self._deploy_model_service(
@@ -330,6 +117,99 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             pip_requirements=pip_requirements,
             conda_dependencies=conda_dependencies,
         )
+
+    def _deploy_model_with_image_override(
+        self,
+        mv: ModelVersion,
+        *,
+        service_name: str,
+        service_compute_pool: str,
+        gpu_requests: Optional[str] = None,
+        num_workers: Optional[int] = None,
+        max_instances: int = 1,
+        max_batch_rows: Optional[int] = None,
+        force_rebuild: bool = True,
+        cpu_requests: Optional[str] = None,
+        memory_requests: Optional[str] = None,
+        experimental_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Deploy model with image override."""
+        # Extract autocapture from experimental_options
+        autocapture = experimental_options.get("autocapture") if experimental_options else None
+        is_gpu = gpu_requests is not None
+        image_path = self.BASE_GPU_IMAGE_PATH if is_gpu else self.BASE_CPU_IMAGE_PATH
+        assert image_path is not None, "Base image path must be set for image override deployment."
+        database, schema, service = self._get_fully_qualified_service_or_job_name(service_name)
+        compute_pool = sql_identifier.SqlIdentifier(service_compute_pool)
+
+        self._add_common_model_deployment_spec_options(
+            mv=mv, database=database, schema=schema, force_rebuild=force_rebuild
+        )
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        # Set inference engine spec if specified
+        if inference_engine_args is not None:
+            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
+                inference_engine_args,
+                gpu_requests,
+            )
+            mv._service_ops._model_deployment_spec.add_inference_engine_spec(
+                inference_engine=inference_engine_args.inference_engine,
+                inference_engine_args=inference_engine_args.inference_engine_args_override,
+            )
+
+        mv._service_ops._model_deployment_spec.add_service_spec(
+            service_name=service,
+            inference_compute_pool_name=compute_pool,
+            service_database_name=database,
+            service_schema_name=schema,
+            ingress_enabled=True,
+            max_instances=max_instances,
+            num_workers=num_workers,
+            cpu=cpu_requests,
+            memory=memory_requests,
+            gpu=gpu_requests,
+            max_batch_rows=max_batch_rows,
+            autocapture=autocapture,
+        )
+
+        query_id, async_job = self._deploy_override_model(
+            mv=mv,
+            database=database,
+            schema=schema,
+            inference_image=image_path,
+            is_batch_inference=False,
+        )
+
+        # stream service logs in a thread
+        model_build_service_name = sql_identifier.SqlIdentifier(
+            mv._service_ops._get_service_id_from_deployment_step(query_id, service_ops.DeploymentStep.MODEL_BUILD)
+        )
+        model_build_service = service_ops.ServiceLogInfo(
+            database_name=database,
+            schema_name=schema,
+            service_name=model_build_service_name,
+            deployment_step=service_ops.DeploymentStep.MODEL_BUILD,
+        )
+        model_inference_service = service_ops.ServiceLogInfo(
+            database_name=database,
+            schema_name=schema,
+            service_name=service,
+            deployment_step=service_ops.DeploymentStep.MODEL_INFERENCE,
+        )
+
+        log_thread = mv._service_ops._start_service_log_streaming(
+            async_job=async_job,
+            model_logger_service=None,
+            model_build_service=model_build_service,
+            model_inference_service=model_inference_service,
+            model_inference_service_exists=False,
+            force_rebuild=True,
+            operation_id=query_id,
+        )
+        log_thread.join()
+
+        res = cast(str, cast(list[row.Row], async_job.result())[0][0])
+        logging.info(f"Inference service {service_name} deployment complete: {res}")
 
     def _deploy_model_service(
         self,
@@ -390,35 +270,44 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
         else:
             assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
             assert model is not None
+            image_overrides = {
+                "SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL": self.MODEL_LOGGER_PATH,
+                "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL": self.BASE_GPU_IMAGE_PATH,
+                "SPCS_MODEL_BASE_CPU_INFERENCE_CONTAINER_URL": self.BASE_CPU_IMAGE_PATH,
+                "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,
+                "SPCS_MODEL_BUILD_CONTAINER_URL": self.BUILDER_IMAGE_PATH,
+                "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS": f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}',
+            }
             if with_image_override:
-                self.session.sql(
-                    f"ALTER SESSION SET SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL = '{self.MODEL_LOGGER_PATH}'"
-                ).collect()
-            model_name = "".join(random.choices(string.ascii_uppercase, k=5))
-            version_name = "".join(random.choices(string.ascii_uppercase, k=5))
-            model.log_model_and_create_service(
-                session=self.session,
-                model_name=model_name,
-                version_name=version_name,
-                pip_requirements=pip_requirements,
-                conda_dependencies=conda_dependencies,
-                service_name=service_name,
-                service_compute_pool=service_compute_pool,
-                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
-                gpu_requests=gpu_requests,
-                force_rebuild=True,
-                num_workers=num_workers,
-                max_instances=max_instances,
-                max_batch_rows=max_batch_rows,
-                ingress_enabled=True,
-                cpu_requests=cpu_requests,
-                memory_requests=memory_requests,
-                experimental_options=experimental_options,
-            )
-
-            mv = self.registry.get_model(model_name).version(version_name)
-            if with_image_override:
-                self.session.sql("ALTER SESSION UNSET SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL").collect()
+                for key, value in image_overrides.items():
+                    self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
+            try:
+                model_name = "".join(random.choices(string.ascii_uppercase, k=5))
+                version_name = "".join(random.choices(string.ascii_uppercase, k=5))
+                model.log_model_and_create_service(
+                    session=self.session,
+                    model_name=model_name,
+                    version_name=version_name,
+                    pip_requirements=pip_requirements,
+                    conda_dependencies=conda_dependencies,
+                    service_name=service_name,
+                    service_compute_pool=service_compute_pool,
+                    image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                    gpu_requests=gpu_requests,
+                    force_rebuild=True,
+                    num_workers=num_workers,
+                    max_instances=max_instances,
+                    max_batch_rows=max_batch_rows,
+                    ingress_enabled=True,
+                    cpu_requests=cpu_requests,
+                    memory_requests=memory_requests,
+                    experimental_options=experimental_options,
+                )
+                mv = self.registry.get_model(model_name).version(version_name)
+            finally:
+                if with_image_override:
+                    for key in image_overrides.keys():
+                        self.session.sql(f"ALTER SESSION UNSET {key}").collect()
 
         assert mv is not None
         while True:
@@ -428,8 +317,34 @@ class RegistryModelDeploymentTestBase(common_test_base.CommonTestBase):
             time.sleep(10)
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
-            res = mv.run(test_input, function_name=target_method, service_name=service_name)
-            check_func(res)
+            # Retry logic for inference calls as Proxy doesn't wait for model loading in the inference server.
+            # The inference server status could be RUNNING but the model might not be loaded in memory yet.
+            max_retries = 3
+            retry_delays = [30, 60, 90]
+
+            for attempt in range(max_retries):
+                try:
+                    res = mv.run(test_input, function_name=target_method, service_name=service_name)
+                    check_func(res)
+                    break
+                except Exception as e:
+                    error_str = str(e)
+
+                    # Check if it's a connection refused error (inference server not ready yet)
+                    if "connection refused" in error_str.lower() or "502" in error_str:
+                        if attempt < max_retries - 1:
+                            wait_time = retry_delays[attempt]
+                            logging.warning(
+                                f"Inference failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                                f"Retrying in {wait_time} seconds..."
+                            )
+                            time.sleep(wait_time)
+                        else:
+                            logging.error(f"Inference failed after {max_retries} attempts")
+                            raise
+                    else:
+                        # Not a connection error, raise immediately
+                        raise
 
         endpoint = RegistryModelDeploymentTestBase._ensure_ingress_url(mv)
         jwt_token_generator = self._get_jwt_token_generator()

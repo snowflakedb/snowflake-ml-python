@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.18.0
+  version: 1.19.0
 requirements:
   build:
     - python
@@ -45,7 +45,7 @@ requirements:
     - scikit-learn<1.8
     - scipy>=1.9,<2
     - shap>=0.46.0,<1
-    - snowflake-connector-python>=3.17.0,<4
+    - snowflake-connector-python>=3.17.3,<4
     - snowflake-snowpark-python>=1.17.0,<2,!=1.26.0
     - snowflake.core>=1.0.2,<2
     - sqlparse>=0.4,<1

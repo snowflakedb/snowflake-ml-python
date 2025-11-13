@@ -109,11 +109,11 @@ class MLJob(Generic[T], SerializableSessionMixin):
         return cast(dict[str, Any], container_spec)
 
     @property
-    def _stage_path(self) -> str:
+    def _stage_path(self) -> Optional[str]:
         """Get the job's artifact storage stage location."""
         volumes = self._service_spec["spec"]["volumes"]
-        stage_path = next(v for v in volumes if v["name"] == constants.STAGE_VOLUME_NAME)["source"]
-        return cast(str, stage_path)
+        stage_volume = next((v for v in volumes if v["name"] == constants.STAGE_VOLUME_NAME), None)
+        return cast(str, stage_volume["source"]) if stage_volume else None
 
     @property
     def _result_path(self) -> str:

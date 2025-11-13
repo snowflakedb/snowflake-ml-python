@@ -10,6 +10,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @absltest.skip("Skipping test until vLLM PrPr")
     def test_xgb_booster_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data

@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from absl.testing import absltest, parameterized
 from sklearn.linear_model import LinearRegression as SkLinearRegression
@@ -61,20 +61,18 @@ class EstimatorsUtilsTest(parameterized.TestCase):
         else:
             validate_sklearn_args(param_dict, SkLinearRegression)
 
-    def test_transform_snowml_obj_to_sklearn_obj(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        ("direct", lambda estimator: estimator, lambda result, sk_estimator: result == sk_estimator),
+        ("list", lambda estimator: [estimator], lambda result, sk_estimator: result[0] == sk_estimator),
+        ("tuple", lambda estimator: (estimator,), lambda result, sk_estimator: result[0] == sk_estimator),
+    )
+    def test_transform_snowml_obj_to_sklearn_obj(
+        self, test_name: str, wrapper: Callable[[Any], Any], assertion: Callable[[Any, Any], bool]
+    ) -> None:
         sk_estimator = SkLinearRegression()
         estimator = TestEstimator(estimator=sk_estimator)
-        with self.subTest("Test transformer directly"):
-            sk_transform = transform_snowml_obj_to_sklearn_obj(estimator)
-            self.assertEqual(sk_transform, sk_estimator)
-
-        with self.subTest("Test transformer in list"):
-            sk_transform = transform_snowml_obj_to_sklearn_obj([estimator])
-            self.assertEqual(sk_transform[0], sk_estimator)
-
-        with self.subTest("Test transformer in tuple"):
-            sk_transform = transform_snowml_obj_to_sklearn_obj((estimator,))
-            self.assertEqual(sk_transform[0], sk_estimator)
+        sk_transform = transform_snowml_obj_to_sklearn_obj(wrapper(estimator))
+        self.assertTrue(assertion(sk_transform, sk_estimator))
 
     def test_original_estimator_has_callable(self) -> None:
         sk_estimator = SkLinearRegression()

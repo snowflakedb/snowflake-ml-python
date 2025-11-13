@@ -48,45 +48,49 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         """Helper method to assert equality of two ExperimentTracking instances."""
         self.assertEqual(exp1._database_name, exp2._database_name)
         self.assertEqual(exp1._schema_name, exp2._schema_name)
-        self.assertEqual(exp1._session, exp2._session)
         self.assertEqual(exp1._sql_client, exp2._sql_client)
+        # The session doesn't have an __eq__ method, so we just check for existence
+        self.assertEqual(exp1._session is None, exp2._session is None)
         # The experiment and run do not have __eq__ methods, so we check their attributes manually
         self.assertEqual(exp1._experiment.name, exp2._experiment.name)
         self.assertEqual(exp1._run.experiment_name, exp2._run.experiment_name)
         self.assertEqual(exp1._run.name, exp2._run.name)
         # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
-        self.assertEqual(exp1._registry._database_name, exp2._registry._database_name)
-        self.assertEqual(exp1._registry._schema_name, exp2._registry._schema_name)
-        self.assertEqual(exp1._registry.enable_monitoring, exp2._registry.enable_monitoring)
-        # Model manager
-        self.assertEqual(exp1._registry._model_manager._database_name, exp2._registry._model_manager._database_name)
-        self.assertEqual(exp1._registry._model_manager._schema_name, exp2._registry._model_manager._schema_name)
-        self.assertEqual(exp1._registry._model_manager._model_ops, exp2._registry._model_manager._model_ops)
-        self.assertEqual(exp1._registry._model_manager._service_ops, exp2._registry._model_manager._service_ops)
-        # Model monitor manager
-        self.assertEqual(
-            exp1._registry._model_monitor_manager._database_name, exp2._registry._model_monitor_manager._database_name
-        )
-        self.assertEqual(
-            exp1._registry._model_monitor_manager._schema_name, exp2._registry._model_monitor_manager._schema_name
-        )
-        self.assertEqual(
-            exp1._registry._model_monitor_manager.statement_params,
-            exp2._registry._model_monitor_manager.statement_params,
-        )
-        # Model monitor client
-        self.assertEqual(
-            exp1._registry._model_monitor_manager._model_monitor_client._sql_client,
-            exp2._registry._model_monitor_manager._model_monitor_client._sql_client,
-        )
-        self.assertEqual(
-            exp1._registry._model_monitor_manager._model_monitor_client._database_name,
-            exp2._registry._model_monitor_manager._model_monitor_client._database_name,
-        )
-        self.assertEqual(
-            exp1._registry._model_monitor_manager._model_monitor_client._schema_name,
-            exp2._registry._model_monitor_manager._model_monitor_client._schema_name,
-        )
+        self.assertEqual(exp1._registry is None, exp2._registry is None)
+        if exp1._registry is not None and exp2._registry is not None:
+            self.assertEqual(exp1._registry._database_name, exp2._registry._database_name)
+            self.assertEqual(exp1._registry._schema_name, exp2._registry._schema_name)
+            self.assertEqual(exp1._registry.enable_monitoring, exp2._registry.enable_monitoring)
+            # Model manager
+            self.assertEqual(exp1._registry._model_manager._database_name, exp2._registry._model_manager._database_name)
+            self.assertEqual(exp1._registry._model_manager._schema_name, exp2._registry._model_manager._schema_name)
+            self.assertEqual(exp1._registry._model_manager._model_ops, exp2._registry._model_manager._model_ops)
+            self.assertEqual(exp1._registry._model_manager._service_ops, exp2._registry._model_manager._service_ops)
+            # Model monitor manager
+            self.assertEqual(
+                exp1._registry._model_monitor_manager._database_name,
+                exp2._registry._model_monitor_manager._database_name,
+            )
+            self.assertEqual(
+                exp1._registry._model_monitor_manager._schema_name, exp2._registry._model_monitor_manager._schema_name
+            )
+            self.assertEqual(
+                exp1._registry._model_monitor_manager.statement_params,
+                exp2._registry._model_monitor_manager.statement_params,
+            )
+            # Model monitor client
+            self.assertEqual(
+                exp1._registry._model_monitor_manager._model_monitor_client._sql_client,
+                exp2._registry._model_monitor_manager._model_monitor_client._sql_client,
+            )
+            self.assertEqual(
+                exp1._registry._model_monitor_manager._model_monitor_client._database_name,
+                exp2._registry._model_monitor_manager._model_monitor_client._database_name,
+            )
+            self.assertEqual(
+                exp1._registry._model_monitor_manager._model_monitor_client._schema_name,
+                exp2._registry._model_monitor_manager._model_monitor_client._schema_name,
+            )
 
     def test_experiment_getstate_and_setstate(self) -> None:
         """Test getstate and setstate methods by pickling and then unpickling"""
@@ -96,37 +100,28 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
         pickled = pickle.dumps(exp)
         new_exp = pickle.loads(pickled)
-
         self.assert_experiment_tracking_equality(exp, new_exp)
 
     def test_experiment_getstate_and_setstate_no_session(self) -> None:
-        """Test getstate and setstate methods by pickling and then unpickling without an active session"""
+        """Test that _restore_session decorator creates a new session if no session is found"""
         exp = ExperimentTracking(session=self._session)
         exp.set_experiment("TEST_EXPERIMENT")
         exp.start_run("TEST_RUN")
-
-        saved_account = exp._session.get_current_account()
-        saved_role = exp._session.get_current_role()
-        saved_database = exp._session.get_current_database()
-        saved_schema = exp._session.get_current_schema()
 
         pickled = pickle.dumps(exp)
         session_set = snowpark_session._active_sessions.copy()
         snowpark_session._active_sessions.clear()  # Simulate having no active session
         new_exp = pickle.loads(pickled)
-
-        # Check that the session is None and the session state is populated correctly
-        self.assertIsNone(new_exp._session)
-        self.assertEqual(new_exp._session_state.account, saved_account)
-        self.assertEqual(new_exp._session_state.role, saved_role)
-        self.assertEqual(new_exp._session_state.database, saved_database)
-        self.assertEqual(new_exp._session_state.schema, saved_schema)
-
-        # Restore the session and check for equality
-        snowpark_session._active_sessions.update(session_set)
-        new_exp.set_experiment("TEST_EXPERIMENT")  # set_experiment is decorated with @_restore_session
-        self.assertIsNone(new_exp._session_state)
         self.assert_experiment_tracking_equality(exp, new_exp)
+
+        # Check that a new session has been created
+        self.assertEqual(len(snowpark_session._active_sessions), 1)
+        self.assertIs(new_exp._session, snowpark_session._active_sessions.pop())
+        self.assertIsNot(new_exp._session, self._session)
+
+        # Clean up the newly created session
+        new_exp._session.close()
+        snowpark_session._active_sessions = session_set
 
     def test_experiment_creation_and_deletion(self) -> None:
         # set_experiment with a new experiment name creates an experiment
@@ -299,40 +294,44 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(metadata["status"], "FINISHED")
 
         # Check metrics
-        self.assertIn("metrics", metadata)
+        metrics = self._session.sql(
+            f"""SHOW RUN METRICS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}
+                RUN {run_name}"""
+        ).collect()
         # Should have: accuracy(updated), precision, recall, f1_score, loss(3 steps), train_accuracy = 8 total
-        self.assertEqual(len(metadata["metrics"]), 8)
-
-        metric_dict = {}
-        for m in metadata["metrics"]:
-            key = f"{m['name']}_step_{m['step']}"
-            metric_dict[key] = m
-
+        self.assertEqual(len(metrics), 8)
+        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
         # Verify single metric (updated value)
-        self.assertEqual(metric_dict["accuracy_step_1"]["value"], 0.97)  # Updated value
+        self.assertEqual(metric_dict[("accuracy", 1)], 0.97)  # Updated value
 
         # Verify batch metrics
-        self.assertEqual(metric_dict["precision_step_5"]["value"], 0.92)
-        self.assertEqual(metric_dict["recall_step_5"]["value"], 0.88)
-        self.assertEqual(metric_dict["f1_score_step_5"]["value"], 0.90)
+        self.assertEqual(metric_dict[("precision", 5)], 0.92)
+        self.assertEqual(metric_dict[("recall", 5)], 0.88)
+        self.assertEqual(metric_dict[("f1_score", 5)], 0.90)
 
         # Verify multi-step metrics
-        self.assertEqual(metric_dict["loss_step_1"]["value"], 0.8)
-        self.assertEqual(metric_dict["loss_step_2"]["value"], 0.6)
-        self.assertEqual(metric_dict["loss_step_3"]["value"], 0.4)
+        self.assertEqual(metric_dict[("loss", 1)], 0.8)
+        self.assertEqual(metric_dict[("loss", 2)], 0.6)
+        self.assertEqual(metric_dict[("loss", 3)], 0.4)
 
         # Verify additional metric
-        self.assertEqual(metric_dict["train_accuracy_step_10"]["value"], 0.85)
+        self.assertEqual(metric_dict[("train_accuracy", 10)], 0.85)
 
         # Check parameters
-        self.assertEqual(len(metadata["parameters"]), 6)
-        param_dict = {p["name"]: p["value"] for p in metadata["parameters"]}
-        self.assertEqual(param_dict["learning_rate"], "0.001")
-        self.assertEqual(param_dict["batch_size"], "64")  # Updated value
-        self.assertEqual(param_dict["model_type"], "transformer")
-        self.assertEqual(param_dict["dropout"], "0.1")
-        self.assertEqual(param_dict["use_attention"], "True")
-        self.assertEqual(param_dict["optimizer"], "adam")
+        parameters = self._session.sql(
+            f"""SHOW RUN PARAMETERS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(6, len(parameters))
+        parameter_dict = {p["name"]: p["value"] for p in parameters}
+        self.assertEqual(parameter_dict["learning_rate"], "0.001")
+        self.assertEqual(parameter_dict["batch_size"], "64")
+        self.assertEqual(parameter_dict["model_type"], "transformer")
+        self.assertEqual(parameter_dict["dropout"], "0.1")
+        self.assertEqual(parameter_dict["use_attention"], "True")
+        self.assertEqual(parameter_dict["optimizer"], "adam")
 
     def test_log_metrics_params_auto_run_creation(self) -> None:
         """Test that logging metrics/params without an active run creates a new run automatically."""
@@ -351,28 +350,33 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         runs = self._session.sql(f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT").collect()
         self.assertEqual(len(runs), 1)
 
-        # Parse and verify metadata contains all logged data
-        metadata = json.loads(runs[0]["metadata"])
-        self.assertEqual(metadata["status"], "RUNNING")
+        # Parse and verify run is RUNNING
+        self.assertEqual(json.loads(runs[0]["metadata"])["status"], "RUNNING")
+        run_name = runs[0]["name"]
 
         # Check metrics
-        self.assertIn("metrics", metadata)
-        self.assertEqual(len(metadata["metrics"]), 3)
-        metric_dict = {m["name"]: m for m in metadata["metrics"]}
-        self.assertEqual(metric_dict["accuracy"]["value"], 0.95)
-        self.assertEqual(metric_dict["accuracy"]["step"], 0)  # Default step
-        self.assertEqual(metric_dict["precision"]["value"], 0.92)
-        self.assertEqual(metric_dict["precision"]["step"], 2)
-        self.assertEqual(metric_dict["recall"]["value"], 0.88)
-        self.assertEqual(metric_dict["recall"]["step"], 2)
+        metrics = self._session.sql(
+            f"""SHOW RUN METRICS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(len(metrics), 3)
+        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
+        self.assertEqual(metric_dict[("accuracy", 0)], 0.95)
+        self.assertEqual(metric_dict[("precision", 2)], 0.92)
+        self.assertEqual(metric_dict[("recall", 2)], 0.88)
 
         # Check parameters
-        self.assertIn("parameters", metadata)
-        self.assertEqual(len(metadata["parameters"]), 3)
-        param_dict = {p["name"]: p["value"] for p in metadata["parameters"]}
-        self.assertEqual(param_dict["model"], "bert")
-        self.assertEqual(param_dict["epochs"], "10")
-        self.assertEqual(param_dict["learning_rate"], "0.001")
+        parameters = self._session.sql(
+            f"""SHOW RUN PARAMETERS IN
+                EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT
+                RUN {run_name}"""
+        ).collect()
+        self.assertEqual(len(parameters), 3)
+        parameter_dict = {p["name"]: p["value"] for p in parameters}
+        self.assertEqual(parameter_dict["model"], "bert")
+        self.assertEqual(parameter_dict["epochs"], "10")
+        self.assertEqual(parameter_dict["learning_rate"], "0.001")
 
         # End run
         self.exp.end_run()
@@ -419,6 +423,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
         self.exp.set_experiment(experiment_name=experiment_name)
         with self.exp.start_run(run_name=run_name):
+            self.assertEqual(0, len(self.exp.list_artifacts(run_name=run_name)))
             self.exp.log_artifact(local_path)
 
         # Test that the artifact is logged correctly

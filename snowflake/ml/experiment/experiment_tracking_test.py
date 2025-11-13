@@ -248,7 +248,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         mock_run = MagicMock(spec=entities.Run)
         mock_run.experiment_name = "TEST_EXPERIMENT"
         mock_run.name = "TEST_RUN"
-        exp._get_or_start_run = MagicMock(return_value=mock_run)
+        exp._get_or_start_run = MagicMock(return_value=mock_run)  # type: ignore[method-assign]
 
         # Log metrics
         metrics = {"precision": 0.85}
@@ -301,7 +301,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         mock_run = MagicMock(spec=entities.Run)
         mock_run.experiment_name = "TEST_EXPERIMENT"
         mock_run.name = "TEST_RUN"
-        exp._get_or_start_run = MagicMock(return_value=mock_run)
+        exp._get_or_start_run = MagicMock(return_value=mock_run)  # type: ignore[method-assign]
 
         # Log params
         params = {"algorithm": "gradient_boosting"}
@@ -340,7 +340,7 @@ class ExperimentTrackingTest(absltest.TestCase):
             mock_patcher_class.return_value = mock_patcher
 
             # Call log_model with test arguments
-            exp.log_model(mock_model, model_name="test", version_name="v1")
+            exp.log_model(mock_model, model_name="test", version_name="v1")  # type: ignore[call-arg]
 
             # Verify ExperimentInfoPatcher was created with the correct experiment info
             mock_patcher_class.assert_called_once_with(experiment_info=mock_experiment_info)

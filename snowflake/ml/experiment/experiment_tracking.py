@@ -1,13 +1,13 @@
 import functools
 import json
 import sys
-from typing import Any, Callable, Concatenate, Optional, ParamSpec, TypeVar, Union
+from typing import Any, Optional, Union
 from urllib.parse import quote
 
 from snowflake import snowpark
 from snowflake.ml import model as ml_model, registry
 from snowflake.ml._internal.human_readable_id import hrid_generator
-from snowflake.ml._internal.utils import mixins, sql_identifier
+from snowflake.ml._internal.utils import connection_params, sql_identifier
 from snowflake.ml.experiment import (
     _entities as entities,
     _experiment_info as experiment_info,
@@ -21,34 +21,12 @@ from snowflake.ml.utils import sql_client as sql_client_utils
 
 DEFAULT_EXPERIMENT_NAME = sql_identifier.SqlIdentifier("DEFAULT")
 
-P = ParamSpec("P")
-T = TypeVar("T")
 
-
-def _restore_session(
-    func: Callable[Concatenate["ExperimentTracking", P], T],
-) -> Callable[Concatenate["ExperimentTracking", P], T]:
-    @functools.wraps(func)
-    def wrapper(self: "ExperimentTracking", /, *args: P.args, **kwargs: P.kwargs) -> T:
-        if self._session is None:
-            if self._session_state is None:
-                raise RuntimeError(
-                    f"Session is not set before calling {func.__name__}, and there is no session state to restore from"
-                )
-            self._set_session(self._session_state)
-            if self._session is None:
-                raise RuntimeError(f"Failed to restore session before calling {func.__name__}")
-        return func(self, *args, **kwargs)
-
-    return wrapper
-
-
-class ExperimentTracking(mixins.SerializableSessionMixin):
+class ExperimentTracking:
     """
     Class to manage experiments in Snowflake.
     """
 
-    @snowpark._internal.utils.private_preview(version="1.9.1")
     def __init__(
         self,
         session: snowpark.Session,
@@ -93,10 +71,7 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
-        self._session: Optional[snowpark.Session] = session
-        # Used to store information about the session if the session could not be restored during unpickling
-        # _session_state is None if and only if _session is not None
-        self._session_state: Optional[mixins._SessionState] = None
+        self._session = session
 
         # The experiment in context
         self._experiment: Optional[entities.Experiment] = None
@@ -104,35 +79,40 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         self._run: Optional[entities.Run] = None
 
     def __getstate__(self) -> dict[str, Any]:
-        state = super().__getstate__()
+        parent_state = (
+            super().__getstate__()  # type: ignore[misc] # object.__getstate__ appears in 3.11
+            if hasattr(super(), "__getstate__")
+            else self.__dict__
+        )
+        state = dict(parent_state)  # Create a copy so we can safely modify the state
+
         # Remove unpicklable attributes
+        state["_session"] = None
         state["_sql_client"] = None
         state["_registry"] = None
         return state
 
-    def _set_session(self, session_state: mixins._SessionState) -> None:
-        try:
-            super()._set_session(session_state)
-            assert self._session is not None
-        except (snowpark.exceptions.SnowparkSessionException, AssertionError):
-            # If session was not set, store the session state
-            self._session = None
-            self._session_state = session_state
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        if hasattr(super(), "__setstate__"):
+            super().__setstate__(state)  # type: ignore[misc]
         else:
-            # If session was set, clear the session state, and reinitialize the SQL client and registry
-            self._session_state = None
-            self._sql_client = sql_client.ExperimentTrackingSQLClient(
-                session=self._session,
-                database_name=self._database_name,
-                schema_name=self._schema_name,
-            )
-            self._registry = registry.Registry(
-                session=self._session,
-                database_name=self._database_name,
-                schema_name=self._schema_name,
-            )
+            self.__dict__.update(state)
 
-    @_restore_session
+        # Restore unpicklable attributes
+        options: dict[str, Any] = connection_params.SnowflakeLoginOptions()
+        options["client_session_keep_alive"] = True  # Needed for long-running training jobs
+        self._session = snowpark.Session.builder.configs(options).getOrCreate()
+        self._sql_client = sql_client.ExperimentTrackingSQLClient(
+            session=self._session,
+            database_name=self._database_name,
+            schema_name=self._schema_name,
+        )
+        self._registry = registry.Registry(
+            session=self._session,
+            database_name=self._database_name,
+            schema_name=self._schema_name,
+        )
+
     def set_experiment(
         self,
         experiment_name: str,
@@ -157,7 +137,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         self._run = None
         return self._experiment
 
-    @_restore_session
     def delete_experiment(
         self,
         experiment_name: str,
@@ -174,10 +153,8 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             self._run = None
 
     @functools.wraps(registry.Registry.log_model)
-    @_restore_session
     def log_model(
         self,
-        /,  # self needs to be a positional argument to stop mypy from complaining
         model: Union[type_hints.SupportedModelType, ml_model.ModelVersion],
         *,
         model_name: str,
@@ -187,7 +164,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         with experiment_info.ExperimentInfoPatcher(experiment_info=run._get_experiment_info()):
             return self._registry.log_model(model, model_name=model_name, **kwargs)
 
-    @_restore_session
     def start_run(
         self,
         run_name: Optional[str] = None,
@@ -229,7 +205,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         self._run = entities.Run(experiment_tracking=self, experiment_name=experiment.name, run_name=run_name)
         return self._run
 
-    @_restore_session
     def end_run(self, run_name: Optional[str] = None) -> None:
         """
         End the current run if no run name is provided. Otherwise, the specified run is ended.
@@ -259,7 +234,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             self._run = None
         self._print_urls(experiment_name=experiment_name, run_name=run_name)
 
-    @_restore_session
     def delete_run(
         self,
         run_name: str,
@@ -298,7 +272,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         """
         self.log_metrics(metrics={key: value}, step=step)
 
-    @_restore_session
     def log_metrics(
         self,
         metrics: dict[str, float],
@@ -335,7 +308,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
         """
         self.log_params({key: value})
 
-    @_restore_session
     def log_params(
         self,
         params: dict[str, Any],
@@ -357,7 +329,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             params=json.dumps([param.to_dict() for param in params_list]),
         )
 
-    @_restore_session
     def log_artifact(
         self,
         local_path: str,
@@ -381,7 +352,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
                 file_path=file_path,
             )
 
-    @_restore_session
     def list_artifacts(
         self,
         run_name: str,
@@ -410,7 +380,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             artifact_path=artifact_path or "",
         )
 
-    @_restore_session
     def download_artifacts(
         self,
         run_name: str,
@@ -452,7 +421,6 @@ class ExperimentTracking(mixins.SerializableSessionMixin):
             return self._run
         return self.start_run()
 
-    @_restore_session
     def _generate_run_name(self, experiment: entities.Experiment) -> sql_identifier.SqlIdentifier:
         generator = hrid_generator.HRID16()
         existing_runs = self._sql_client.show_runs_in_experiment(experiment_name=experiment.name)

@@ -759,6 +759,93 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         # Verify online table configuration is preserved
         self.assertEqual(final_fv.online_config.target_lag, "12 seconds")
 
+    def test_online_feature_table_with_different_session_schema(self) -> None:
+        """Test OFT creation works when session schema differs from FS schema (SNOW-2430972).
+
+        Scenario:
+        1. FS created in: DB.FS_SCHEMA
+        2. Session set to: DB.OTHER_SCHEMA (different)
+        3. Register FV with online config
+        4. Verify: OFT created successfully using FQDN
+
+        Bug (unfixed): OFT references offline FV as unqualified "FV$v1" → searches wrong schema → fails
+        Fix: OFT references offline FV as FQDN "DB.FS_SCHEMA.FV$v1" → finds it correctly → succeeds
+        """
+        # Create another schema for testing cross-schema scenarios
+        other_schema = common_utils.create_random_schema(self._session, "OTHER_SCHEMA_FQDN", self.test_db)
+
+        fv_name = "test_fqdn_cross_schema"
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="5m",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="10s"),
+        )
+
+        # Switch session to different schema (triggers the bug scenario)
+        self._session.use_schema(f"{self.test_db}.{other_schema}")
+
+        try:
+            registered_fv = self.fs.register_feature_view(fv, "v1")
+
+            self.assertTrue(registered_fv.online)
+            self.assertIsNotNone(registered_fv.online_config)
+
+            online_table_name = registered_fv.fully_qualified_online_table_name()
+            self.assertIsNotNone(online_table_name)
+            self.assertIn("$ONLINE", online_table_name)
+
+            # Verify online table exists
+            online_tables = self._session.sql(
+                f"SHOW ONLINE FEATURE TABLES LIKE '%{fv_name.upper()}%' IN SCHEMA {self.fs._config.full_schema_path}"
+            ).collect()
+            self.assertEqual(len(online_tables), 1)
+
+            # Verify can read from online table
+            result = self.fs.read_feature_view(
+                registered_fv, keys=[["1"]], store_type=feature_view.StoreType.ONLINE
+            ).collect()
+            self.assertEqual(len(result), 1)
+
+        finally:
+            self._session.use_schema(f"{self.test_db}.{self.test_schema}")
+
+    def test_online_feature_table_creation_uses_fqdn_in_sql(self) -> None:
+        """Verify offline and online tables use same database and schema (SNOW-2430972)."""
+        fv_name = "test_fqdn_verification_mgmt"
+
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="5m",
+            online_config=feature_view.OnlineConfig(enable=True),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+
+        fqdn_offline = registered_fv.fully_qualified_name()
+        fqdn_online = registered_fv.fully_qualified_online_table_name()
+
+        offline_parts = fqdn_offline.split(".")
+        online_parts = fqdn_online.split(".")
+
+        self.assertEqual(len(offline_parts), 3)
+        self.assertEqual(len(online_parts), 3)
+
+        # Verify same database and schema
+        self.assertEqual(offline_parts[0], online_parts[0])
+        self.assertEqual(offline_parts[1], online_parts[1])
+
+        # Verify online table exists
+        online_tables = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '%{fv_name.upper()}%' IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(online_tables), 1)
+
 
 if __name__ == "__main__":
     absltest.main()

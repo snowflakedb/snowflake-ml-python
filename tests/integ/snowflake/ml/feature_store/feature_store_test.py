@@ -119,6 +119,23 @@ class FeatureStoreTest(parameterized.TestCase):
         res = self._session.sql(query).collect()
         self.assertEqual(expected_value, res[0]["TAG_VALUE"])
 
+    def test_register_feature_view_block_false_deprecated(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+        fv = FeatureView(
+            name="my_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+        )
+
+        with self.assertRaisesRegex(ValueError, r"block=False.*initialize.*ON_SCHEDULE"):
+            fs.register_feature_view(feature_view=fv, version="v1", block=False)
+
     def test_fail_if_not_exist(self) -> None:
         name = f"foo_{uuid4().hex.upper()}"
         with self.assertRaisesRegex(ValueError, "Feature store schema .* does not exist."):
@@ -827,29 +844,24 @@ class FeatureStoreTest(parameterized.TestCase):
         )
 
         df_3 = fs.get_refresh_history(my_fv, verbose=True)
-        self.assertSameElements(
-            df_3.columns,
-            [
-                "NAME",
-                "SCHEMA_NAME",
-                "DATABASE_NAME",
-                "STATE",
-                "STATE_CODE",
-                "STATE_MESSAGE",
-                "QUERY_ID",
-                "DATA_TIMESTAMP",
-                "REFRESH_START_TIME",
-                "REFRESH_END_TIME",
-                "COMPLETION_TARGET",
-                "QUALIFIED_NAME",
-                "LAST_COMPLETED_DEPENDENCY",
-                "STATISTICS",
-                "REFRESH_ACTION",
-                "REFRESH_TRIGGER",
-                "TARGET_LAG_SEC",
-                "GRAPH_HISTORY_VALID_FROM",
-            ],
-        )
+        # Validate only the shared columns between offline and online refresh history schemas
+        shared_verbose_cols = [
+            "NAME",
+            "SCHEMA_NAME",
+            "DATABASE_NAME",
+            "QUALIFIED_NAME",
+            "STATE",
+            "STATE_CODE",
+            "STATE_MESSAGE",
+            "QUERY_ID",
+            "REFRESH_START_TIME",
+            "REFRESH_END_TIME",
+            "COMPLETION_TARGET",
+            "TARGET_LAG_SEC",
+            "REFRESH_TRIGGER",
+            "REFRESH_ACTION",
+        ]
+        self.assertTrue(set(shared_verbose_cols).issubset(set(df_3.columns)))
         res_3 = df_3.order_by("REFRESH_START_TIME", ascending=False).collect()
         self.assertEqual(len(res_3), 2)
         self.assertEqual(res_3[0]["STATE"], "SUCCEEDED")
@@ -858,30 +870,7 @@ class FeatureStoreTest(parameterized.TestCase):
         # teset refresh_feature_view and get_refresh_history with name and version
         fs.refresh_feature_view("my_fv", "v1")
         df_4 = fs.get_refresh_history("my_fv", "v1", verbose=True)
-
-        self.assertSameElements(
-            df_4.columns,
-            [
-                "NAME",
-                "SCHEMA_NAME",
-                "DATABASE_NAME",
-                "STATE",
-                "STATE_CODE",
-                "STATE_MESSAGE",
-                "QUERY_ID",
-                "DATA_TIMESTAMP",
-                "REFRESH_START_TIME",
-                "REFRESH_END_TIME",
-                "COMPLETION_TARGET",
-                "QUALIFIED_NAME",
-                "LAST_COMPLETED_DEPENDENCY",
-                "STATISTICS",
-                "REFRESH_ACTION",
-                "REFRESH_TRIGGER",
-                "TARGET_LAG_SEC",
-                "GRAPH_HISTORY_VALID_FROM",
-            ],
-        )
+        self.assertTrue(set(shared_verbose_cols).issubset(set(df_4.columns)))
         res_4 = df_4.order_by("REFRESH_START_TIME", ascending=False).collect()
         self.assertEqual(len(res_4), 3)
         self.assertEqual(res_4[0]["STATE"], "SUCCEEDED")
@@ -3404,6 +3393,111 @@ class FeatureStoreTest(parameterized.TestCase):
             target_data=sequential_no_ts_df.to_dict("list"),
             sort_cols=["ID"],
         )
+
+    def test_cte_method_with_duplicate_spine(self) -> None:
+        """Test CTE method handles duplicate spine rows correctly (no join explosion)."""
+        fs = self._create_feature_store()
+
+        # Create entities with different join keys
+        e_company = Entity("company", ["company_id"])
+        fs.register_entity(e_company)
+
+        e_subscriber = Entity("subscriber", ["subscriber_id"])
+        fs.register_entity(e_subscriber)
+
+        # Create feature views with different join keys using existing mock table
+        # FV1: company-level features (aggregated from mock table)
+        company_data_sql = f"""
+            SELECT
+                CAST(id / 10 AS INT) AS company_id,
+                ts,
+                MAX(name) AS company_name,
+                SUM(age) AS revenue
+            FROM {self._mock_table}
+            GROUP BY company_id, ts
+        """
+        fv_company = FeatureView(
+            name="fv_company",
+            entities=[e_company],
+            feature_df=self._session.sql(company_data_sql),
+            timestamp_col="ts",
+            refresh_freq="DOWNSTREAM",
+        )
+        fv_company = fs.register_feature_view(feature_view=fv_company, version="v1")
+
+        # FV2: subscriber-level features (use id as subscriber_id)
+        subscriber_data_sql = f"""
+            SELECT
+                CAST(id AS STRING) AS subscriber_id,
+                ts,
+                title AS plan_type,
+                age AS usage
+            FROM {self._mock_table}
+        """
+        fv_subscriber = FeatureView(
+            name="fv_subscriber",
+            entities=[e_subscriber],
+            feature_df=self._session.sql(subscriber_data_sql),
+            timestamp_col="ts",
+            refresh_freq="DOWNSTREAM",
+        )
+        fv_subscriber = fs.register_feature_view(feature_view=fv_subscriber, version="v1")
+
+        # Create spine with DUPLICATES on (company_id, timestamp)
+        # Mock table has: id=1 (john, boss, 20, sales, 100), id=2 (porter, manager, 30, engineer, 200)
+        # company_id = id / 10 = 0 for both
+        # Create spine where multiple subscribers belong to same company at same time
+        spine_df = self._session.create_dataframe(
+            [
+                (0, "1", 150),  # company_id=0, subscriber_id="1", ts=150
+                (0, "2", 150),  # company_id=0, subscriber_id="2", ts=150 (duplicate company_id, ts)
+            ],
+            schema=["company_id", "subscriber_id", "ts"],
+        )
+
+        # Test CTE method - should NOT explode despite duplicates
+        cte_result = fs.generate_dataset(
+            name="test_cte_duplicates",
+            spine_df=spine_df,
+            features=[fv_company, fv_subscriber],
+            spine_timestamp_col="ts",
+            output_type="table",
+            join_method="cte",
+        )
+
+        cte_df = cte_result.to_pandas().sort_values(["COMPANY_ID", "SUBSCRIBER_ID"]).reset_index(drop=True)
+
+        # Verify: Should have exactly 2 rows (same as spine), NOT 4 rows (explosion)
+        self.assertEqual(len(cte_df), 2, "CTE method should not cause join explosion with duplicate spine rows")
+
+        # Verify: All spine rows are preserved
+        self.assertEqual(sorted(cte_df["COMPANY_ID"].tolist()), [0, 0])
+        self.assertEqual(sorted(cte_df["SUBSCRIBER_ID"].tolist()), ["1", "2"])
+
+        # Verify: Company features are correctly joined
+        # All rows with company_id=0 should have the same company features
+        company_0_rows = cte_df[cte_df["COMPANY_ID"] == 0]
+        self.assertEqual(len(company_0_rows), 2, "Should have 2 rows for company_id=0")
+        # All rows with same company_id should have same company-level features
+        self.assertEqual(
+            len(company_0_rows["COMPANY_NAME"].unique()),
+            1,
+            "All rows with company_id=0 should have same company name",
+        )
+        self.assertEqual(
+            len(company_0_rows["REVENUE"].unique()),
+            1,
+            "All rows with company_id=0 should have same revenue",
+        )
+
+        # Verify: Subscriber features are correctly joined (unique per subscriber)
+        # Each subscriber_id should have its own row
+        for subscriber_id in ["1", "2"]:
+            subscriber_rows = cte_df[cte_df["SUBSCRIBER_ID"] == subscriber_id]
+            self.assertEqual(len(subscriber_rows), 1, f"Should have exactly 1 row for subscriber {subscriber_id}")
+            # Verify columns exist (values may be NULL if ASOF JOIN doesn't match, but that's OK)
+            self.assertIn("PLAN_TYPE", cte_df.columns, "PLAN_TYPE column should exist")
+            self.assertIn("USAGE", cte_df.columns, "USAGE column should exist")
 
 
 if __name__ == "__main__":

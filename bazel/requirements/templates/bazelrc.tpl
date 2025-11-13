@@ -48,6 +48,7 @@ run:all --config=_all
 # Environment variables for Hugging Face
 build --action_env=HF_HUB_ETAG_TIMEOUT=86400
 build --action_env=HF_HUB_DOWNLOAD_TIMEOUT=86400
-build --action_env=HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/huggingfaceml/huggingface-remote
+build --action_env=HF_ENDPOINT=https://huggingface.co
+build --action_env=HF_TOKEN
 
 # Below are auto-generated settings, do not modify them directly

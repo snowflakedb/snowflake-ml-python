@@ -252,6 +252,52 @@ class SFStageFileSystemTest(absltest.TestCase):
             self.assertEqual(fp.read(), self.content)
             self.mock_time.return_value = 1
 
+    def test_stage_path_to_relative_path(self) -> None:
+        """Test _stage_path_to_relative_path handles different stage path formats."""
+        stagefs = self._create_new_stagefs()
+
+        # Test standard stage name prefix path (existing behavior)
+        test_cases = [
+            # (stage_path, expected_relative_path, description)
+            (f"{self.stage.lower()}/file.txt", "file.txt", "lowercase stage name prefix"),
+            (f"{self.stage.lower()}/dir/subdir/file.txt", "dir/subdir/file.txt", "nested path with stage prefix"),
+            # S3 paths
+            ("s3://my-bucket/data/file.txt", "data/file.txt", "s3 path with single directory"),
+            ("s3://my-bucket/dir1/dir2/file.txt", "dir1/dir2/file.txt", "s3 path with nested directories"),
+            ("s3://bucket-name/file.txt", "file.txt", "s3 path with file at root"),
+            # GCS paths
+            ("gcs://my-bucket/data/file.txt", "data/file.txt", "gcs path with single directory"),
+            ("gcs://my-bucket/dir1/dir2/file.txt", "dir1/dir2/file.txt", "gcs path with nested directories"),
+            ("gcs://bucket-name/file.txt", "file.txt", "gcs path with file at root"),
+            # Azure paths
+            ("azure://my-container/data/file.txt", "data/file.txt", "azure path with single directory"),
+            ("azure://my-container/dir1/dir2/file.txt", "dir1/dir2/file.txt", "azure path with nested directories"),
+            ("azure://container-name/file.txt", "file.txt", "azure path with file at root"),
+        ]
+
+        for stage_path, expected_relative_path, description in test_cases:
+            with self.subTest(description):
+                result = stagefs._stage_path_to_relative_path(stage_path)
+                self.assertEqual(result, expected_relative_path, f"Failed for {description}")
+
+    def test_stage_path_to_relative_path_invalid(self) -> None:
+        """Test _stage_path_to_relative_path raises ValueError for invalid paths."""
+        stagefs = self._create_new_stagefs()
+
+        # Test invalid path formats that should raise ValueError
+        invalid_paths = [
+            "invalid/path/format",
+            "http://bucket/file.txt",  # unsupported protocol
+            "ftp://bucket/file.txt",  # unsupported protocol
+            "some_random_string",
+            "/absolute/path",
+        ]
+
+        for invalid_path in invalid_paths:
+            with self.subTest(invalid_path):
+                with self.assertRaisesRegex(ValueError, "Invalid stage path"):
+                    stagefs._stage_path_to_relative_path(invalid_path)
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -39,7 +39,7 @@ _GENERATED_REQUIREMENTS_FILES = {
     for d in [
         {
             "conda_env_all_yml": {
-                "cmd": "--mode dev_version --format conda_env",
+                "cmd": "--mode dev_version --format conda_env --filter_by_extras altair,catboost,keras,lightgbm,mlflow,prophet,streamlit,tensorflow,torch,transformers",
                 "generated": "conda-env-all.yml",
                 "target": "//bazel/environments:conda-env-all.yml",
             },
