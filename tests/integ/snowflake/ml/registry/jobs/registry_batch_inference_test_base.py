@@ -141,7 +141,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             input_file_pattern="*",
             output_stage_location=output_stage_location,
             completion_filename="_SUCCESS",
-            function_name=function_name or "predict",
+            function_name=mv._get_function_info(function_name=function_name)["target_method"],
             warehouse=sql_identifier.SqlIdentifier(self._TEST_SPCS_WH),
             cpu=cpu_requests,
             memory=memory_requests,
@@ -239,7 +239,12 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             return job
 
         job.wait()
-        self.assertEqual(job.status, "DONE")
+        if job.status != "DONE":
+            logs = job.get_logs(limit=100)
+            msg = f"Job status is {job.status}, expected DONE.\n\nLast 100 lines of job logs:\n{logs}"
+        else:
+            msg = None
+        self.assertEqual(job.status, "DONE", msg)
 
         success_file_path = output_stage_location.rstrip("/") + "/_SUCCESS"
         list_results = self.session.sql(f"LIST {success_file_path}").collect()

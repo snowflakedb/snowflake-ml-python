@@ -379,7 +379,7 @@ for i in "${!groups[@]}"; do
 
     export HF_HUB_DOWNLOAD_TIMEOUT=86400
     export HF_HUB_ETAG_TIMEOUT=86400
-    export HF_ENDPOINT=https://artifactory.ci1.us-west-2.aws-dev.app.snowflake.com/artifactory/api/huggingfaceml/huggingface-remote
+    export HF_ENDPOINT=https://huggingface.co
 
     pushd "${group}"
     if [ "${ENV}" = "pip" ]; then

@@ -108,7 +108,7 @@ class QuotedIdentifierTest(parameterized.TestCase):
 
         rf_algo = {
             "algorithm": "random_forest_classification",
-            "sklearn_obj": RandomForestClassifier(),
+            "sklearn_obj": RandomForestClassifier(n_jobs=1),
             "gs_params": {
                 "clf__n_estimators": randint(50, 250),
                 "clf__max_depth": randint(3, 7),

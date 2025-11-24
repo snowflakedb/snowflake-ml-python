@@ -10,17 +10,12 @@ This test validates that the CTE method can handle large-scale datasets with:
 - Millions of rows in both spine and feature views
 """
 
-import os
 import time
 from typing import Optional
 from uuid import uuid4
 
 from absl.testing import absltest
-from common_utils import (
-    FS_INTEG_TEST_DB,
-    cleanup_temporary_objects,
-    create_random_schema,
-)
+from common_utils import create_random_schema
 
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
@@ -35,10 +30,9 @@ from snowflake.snowpark import Session
 # CONFIGURABLE TEST PARAMETERS
 # ============================================================================
 
-# Warehouse configuration (use same warehouse as other tests by default)
-TEST_WAREHOUSE = os.getenv("WAREHOUSE", "REGTEST_ML_SMALL")
-
 # Perf warehouse config (disabled by default; only applied if PERF_WAREHOUSE_NAME is set)
+# When set, a custom warehouse is created with specified size/type for performance testing.
+# When None (default), the session's existing warehouse is used (same as other FS tests).
 PERF_WAREHOUSE_NAME = None  # e.g., "FS_PERF_4XL"; when set => explicit, no fallback
 PERF_WAREHOUSE_SIZE = "X-LARGE"
 PERF_WAREHOUSE_TYPE = "SNOWPARK-OPTIMIZED"
@@ -49,8 +43,8 @@ PERF_AUTO_RESUME = True
 def _resolve_and_use_test_warehouse(sess: Session) -> str:
     """Resolve the warehouse to use and activate it.
 
-    Default: use TEST_WAREHOUSE (env-driven default REGTEST_ML_SMALL) without creating.
-    Explicit: if PERF_WAREHOUSE_NAME is set, create-if-not-exists and use it. No fallback.
+    Default: use session's existing warehouse (same as other Feature Store tests).
+    Explicit: if PERF_WAREHOUSE_NAME is set, create-if-not-exists and use it.
     """
     if PERF_WAREHOUSE_NAME:
         autoresume = str(PERF_AUTO_RESUME).upper()
@@ -63,8 +57,11 @@ def _resolve_and_use_test_warehouse(sess: Session) -> str:
         sess.use_warehouse(PERF_WAREHOUSE_NAME)
         return PERF_WAREHOUSE_NAME
 
-    sess.use_warehouse(TEST_WAREHOUSE)
-    return TEST_WAREHOUSE
+    # Use session's existing warehouse (same strategy as FeatureStoreIntegTestBase)
+    session_warehouse = sess.get_current_warehouse()
+    if not session_warehouse:
+        raise RuntimeError("No warehouse is configured in the current session.")
+    return session_warehouse.strip('"')
 
 
 # Number of feature views to create
@@ -100,9 +97,13 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
     def setUpClass(cls) -> None:
         """Set up test environment."""
         cls._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        cleanup_temporary_objects(cls._session)
         cls._active_feature_store = []
         cls._test_tables = []
+
+        # Create per-test database to avoid conflicts with other tests
+        run_id = uuid4().hex[:8].upper()
+        cls._test_db = f"SNOWML_FS_PERF_TEST_DB_{run_id}"
+        cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {cls._test_db}").collect()
 
         # Resolve and use the warehouse (default or explicit perf config)
         cls._test_warehouse_name = _resolve_and_use_test_warehouse(cls._session)
@@ -124,6 +125,12 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
             except Exception as e:
                 print(f"Warning: Failed to drop table {table}: {e}")
 
+        # Drop the per-test database
+        try:
+            cls._session.sql(f"DROP DATABASE IF EXISTS {cls._test_db}").collect()
+        except Exception as e:
+            print(f"Warning: Failed to drop test database {cls._test_db}: {e}")
+
         cls._session.close()
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
@@ -135,7 +142,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self._test_db,  # Use per-test database instead of global FS_INTEG_TEST_DB
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,

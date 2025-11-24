@@ -16,6 +16,7 @@ from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env as snowml_env, relax_version_strategy
 from snowflake.ml._internal.utils import query_result_checker
 from snowflake.snowpark import context, exceptions, session
+from snowflake.snowpark._internal import utils as snowpark_utils
 
 
 class CONDA_OS(Enum):
@@ -36,6 +37,21 @@ DEFAULT_CHANNEL_NAME = ""
 SNOWML_SPROC_ENV = "IN_SNOWML_SPROC"
 SNOWPARK_ML_PKG_NAME = "snowflake-ml-python"
 SNOWFLAKE_CONDA_CHANNEL_URL = "https://repo.anaconda.com/pkgs/snowflake"
+
+
+def get_execution_context() -> str:
+    """Detect execution context: EXTERNAL, SPCS, or SPROC.
+
+    Returns:
+        str: The execution context - "SPROC" if running in a stored procedure,
+             "SPCS" if running in SPCS ML runtime, "EXTERNAL" otherwise.
+    """
+    if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        return "SPROC"
+    elif snowml_env.IN_ML_RUNTIME:
+        return "SPCS"
+    else:
+        return "EXTERNAL"
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:

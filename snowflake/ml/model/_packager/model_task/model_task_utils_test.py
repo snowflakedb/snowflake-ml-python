@@ -47,7 +47,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
         self.assertEqual(expected_output, model_task_and_output.output_type)
 
     def test_model_task_and_output_xgb_binary_classifier(self) -> None:
-        classifier = xgboost.XGBClassifier(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        classifier = xgboost.XGBClassifier(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
         classifier.fit(binary_data_X, binary_data_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
@@ -55,19 +55,19 @@ class ModelTaskUtilsTest(absltest.TestCase):
 
     def test_model_task_and_output_xgb_for_single_class(self) -> None:
         # without objective
-        classifier = xgboost.XGBClassifier(base_score=0.5)
+        classifier = xgboost.XGBClassifier(base_score=0.5, n_jobs=1)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with binary objective
-        classifier = xgboost.XGBClassifier(objective="binary:logistic", base_score=0.5)
+        classifier = xgboost.XGBClassifier(objective="binary:logistic", base_score=0.5, n_jobs=1)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with multiclass objective
-        params = {"objective": "multi:softmax", "num_class": 3, "base_score": 0.5}
+        params = {"objective": "multi:softmax", "num_class": 3, "base_score": 0.5, "n_jobs": 1}
         classifier = xgboost.XGBClassifier(**params)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
@@ -75,21 +75,21 @@ class ModelTaskUtilsTest(absltest.TestCase):
         )
 
     def test_model_task_and_output_xgb_multiclass_classifier(self) -> None:
-        classifier = xgboost.XGBClassifier()
+        classifier = xgboost.XGBClassifier(n_jobs=1)
         classifier.fit(multiclass_data_X, multiclass_data_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_MULTI_CLASSIFICATION, model_signature.DataType.STRING
         )
 
     def test_model_task_and_output_xgb_regressor(self) -> None:
-        regressor = xgboost.XGBRegressor()
+        regressor = xgboost.XGBRegressor(n_jobs=1)
         regressor.fit(multiclass_data_X, multiclass_data_y)
         self._validate_model_task_and_output(
             regressor, type_hints.Task.TABULAR_REGRESSION, model_signature.DataType.DOUBLE
         )
 
     def test_model_task_and_output_xgb_booster(self) -> None:
-        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
+        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic", nthread=1)
         booster = xgboost.train(params, xgboost.DMatrix(data=binary_data_X, label=binary_data_y))
         self._validate_model_task_and_output(
             booster, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
@@ -97,13 +97,17 @@ class ModelTaskUtilsTest(absltest.TestCase):
 
     def test_model_task_and_output_xgb_ranker(self) -> None:
         ranker = xgboost.XGBRanker(
-            tree_method="hist", lambdarank_num_pair_per_sample=8, objective="rank:ndcg", lambdarank_pair_method="topk"
+            tree_method="hist",
+            lambdarank_num_pair_per_sample=8,
+            objective="rank:ndcg",
+            lambdarank_pair_method="topk",
+            n_jobs=1,
         )
         ranker.fit(ranking_X, ranking_y, qid=ranking_qid)
         self._validate_model_task_and_output(ranker, type_hints.Task.TABULAR_RANKING, model_signature.DataType.DOUBLE)
 
     def test_model_task_and_output_lightgbm_classifier(self) -> None:
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(binary_data_X, binary_data_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
@@ -111,44 +115,46 @@ class ModelTaskUtilsTest(absltest.TestCase):
 
     def test_model_task_and_output_lightgbm_for_single_class(self) -> None:
         # without objective
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with binary objective
-        classifier = lightgbm.LGBMClassifier(objective="binary")
+        classifier = lightgbm.LGBMClassifier(objective="binary", n_jobs=1)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
         # with multiclass objective
-        classifier = lightgbm.LGBMClassifier(objective="multiclass", num_classes=3)
+        classifier = lightgbm.LGBMClassifier(objective="multiclass", num_classes=3, n_jobs=1)
         classifier.fit(binary_data_X, single_class_y)
         self._validate_model_task_and_output(
             classifier, type_hints.Task.TABULAR_MULTI_CLASSIFICATION, model_signature.DataType.STRING
         )
 
     def test_model_task_and_output_lightgbm_booster(self) -> None:
-        booster = lightgbm.train({"objective": "binary"}, lightgbm.Dataset(binary_data_X, label=binary_data_y))
+        booster = lightgbm.train(
+            {"objective": "binary", "num_threads": 1}, lightgbm.Dataset(binary_data_X, label=binary_data_y)
+        )
         self._validate_model_task_and_output(
             booster, type_hints.Task.TABULAR_BINARY_CLASSIFICATION, model_signature.DataType.DOUBLE
         )
 
     def test_model_task_and_output_lightgbm_regressor(self) -> None:
-        regressor = lightgbm.LGBMRegressor()
+        regressor = lightgbm.LGBMRegressor(n_jobs=1)
         regressor.fit(multiclass_data_X, multiclass_data_y)
         self._validate_model_task_and_output(
             regressor, type_hints.Task.TABULAR_REGRESSION, model_signature.DataType.DOUBLE
         )
 
     def test_model_task_and_output_lightgbm_ranker(self) -> None:
-        ranker = lightgbm.LGBMRanker()
+        ranker = lightgbm.LGBMRanker(n_jobs=1)
         ranker.fit(ranking_X, ranking_y, group=[len(list(group)) for _, group in groupby(ranking_qid)])
         self._validate_model_task_and_output(ranker, type_hints.Task.TABULAR_RANKING, model_signature.DataType.DOUBLE)
 
     def test_model_task_catboost_binary_classifier(self) -> None:
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(binary_data_X, binary_data_y)
         self._validate_model_task_and_output(
             classifier,
@@ -157,7 +163,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
         )
 
     def test_model_task_catboost_multi_classifier(self) -> None:
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(multiclass_data_X, multiclass_data_y)
         self._validate_model_task_and_output(
             classifier,
@@ -166,7 +172,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
         )
 
     def test_model_task_catboost_ranking(self) -> None:
-        ranker = catboost.CatBoostRanker()
+        ranker = catboost.CatBoostRanker(thread_count=1)
         ranker.fit(ranking_X, ranking_y, group_id=ranking_qid)
         self._validate_model_task_and_output(
             ranker,
@@ -175,7 +181,7 @@ class ModelTaskUtilsTest(absltest.TestCase):
         )
 
     def test_model_task_catboost_regressor(self) -> None:
-        regressor = catboost.CatBoostRegressor()
+        regressor = catboost.CatBoostRegressor(thread_count=1)
         regressor.fit(multiclass_data_X, multiclass_data_y)
         self._validate_model_task_and_output(
             regressor,

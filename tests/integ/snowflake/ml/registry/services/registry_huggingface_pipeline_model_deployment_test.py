@@ -95,7 +95,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
     def test_token_classification_with_model_logging(self) -> None:
         model = huggingface_pipeline.HuggingFacePipelineModel(
             task="token-classification",
-            model="hf-internal-testing/tiny-bert-for-token-classification",
+            model="dslim/bert-base-NER",
             download_snapshot=False,
         )
 

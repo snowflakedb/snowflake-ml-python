@@ -372,7 +372,53 @@ class DBManager:
             f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
         ).collect()
         for stale_wh in stale_warehouses:
-            self.drop_warehouse(stale_wh.name, if_exists=True)
+            try:
+                self.drop_warehouse(stale_wh.name, if_exists=True)
+            except Exception:
+                # Ignore errors during cleanup (e.g., insufficient privileges, already dropped by another test)
+                pass
+
+    def create_role(
+        self,
+        role_name: str,
+        creation_mode: sql_client.CreationMode = _default_creation_mode,
+    ) -> str:
+        actual_role_name = identifier.get_inferred_name(role_name)
+        ddl_phrases = creation_mode.get_ddl_phrases()
+        self._session.sql(
+            f"CREATE{ddl_phrases[sql_client.CreationOption.OR_REPLACE]} ROLE"
+            f"{ddl_phrases[sql_client.CreationOption.CREATE_IF_NOT_EXIST]} {actual_role_name}"
+        ).collect()
+        return actual_role_name
+
+    def show_roles(self, role_name: str) -> snowpark.DataFrame:
+        sql = f"SHOW ROLES LIKE '{role_name}'"
+        return self._session.sql(sql)
+
+    def drop_role(self, role_name: str, if_exists: bool = False) -> None:
+        actual_role_name = identifier.get_inferred_name(role_name)
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP ROLE{if_exists_sql} {actual_role_name}").collect()
+
+    def cleanup_roles(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 6) -> None:
+        """Clean up stale roles created by tests.
+
+        Args:
+            prefix: Role name prefix to match (e.g., 'snowml_test_')
+            expire_hours: Delete roles older than this many hours.
+                         Default is 6 hours (shorter than databases) since roles
+                         are account-level objects.
+        """
+        roles_df = self.show_roles(f"{prefix}%")
+        stale_roles = roles_df.filter(
+            f"\"created_on\" < dateadd('hour', {-expire_hours}, current_timestamp())"
+        ).collect()
+        for stale_role in stale_roles:
+            try:
+                self.drop_role(stale_role.name, if_exists=True)
+            except Exception:
+                # Role might be in use or have dependencies; skip
+                pass
 
     def create_image_repo(
         self,

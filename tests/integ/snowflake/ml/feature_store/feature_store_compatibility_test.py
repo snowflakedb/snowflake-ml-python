@@ -1,6 +1,6 @@
 from absl.testing import absltest
 from common_utils import compare_dataframe
-from snowflake.ml.version import VERSION
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
@@ -9,18 +9,16 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureView,
     _FeatureStoreObjTypes,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml.version import VERSION
 from snowflake.snowpark import Session
 
-FS_COMPATIBIILTY_TEST_DB = "FEATURE_STORE_COMPATIBILITY_TEST_DB"
-FS_COMPATIBIILTY_TEST_SCHEMA = "FEATURE_STORE_COMPATIBILITY_TEST_SCHEMA"
 TEST_DATA = "test_data"
 # check backward compatibility with two pkg versions in the past
 BC_VERSION_LIMITS = 2
 
 
-def _create_test_data(session: Session) -> str:
-    test_table = f"{FS_COMPATIBIILTY_TEST_DB}.{FS_COMPATIBIILTY_TEST_SCHEMA}.{TEST_DATA}"
+def _create_test_data(session: Session, db_name: str, schema_name: str) -> str:
+    test_table = f"{db_name}.{schema_name}.{TEST_DATA}"
     session.sql(
         f"""CREATE TABLE IF NOT EXISTS {test_table}
             (name VARCHAR(64), id INT, title VARCHAR(128), age INT, dept VARCHAR(64), ts INT)
@@ -36,25 +34,24 @@ def _create_test_data(session: Session) -> str:
     return test_table
 
 
-class FeatureStoreCompatibilityTest(absltest.TestCase):
-    @classmethod
-    def setUpClass(self) -> None:
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-
-        try:
-            self._session.sql(f"CREATE DATABASE IF NOT EXISTS {FS_COMPATIBIILTY_TEST_DB}").collect()
-            self._session.use_database(FS_COMPATIBIILTY_TEST_DB)
-            self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {FS_COMPATIBIILTY_TEST_SCHEMA}").collect()
-            self._session.use_schema(FS_COMPATIBIILTY_TEST_SCHEMA)
-            self._mock_table = _create_test_data(self._session)
-        except Exception as e:
-            raise Exception(f"Test setup failed: {e}")
+class FeatureStoreCompatibilityTest(FeatureStoreIntegTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        # Use per-test DB from base and a fresh schema
+        self._compat_db = self.test_db
+        # Create an isolated schema for compatibility checks
+        schema_name = f"FEATURE_STORE_COMPATIBILITY_{VERSION.replace('.', '_')}"
+        self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._compat_db}.{schema_name}").collect()
+        self._compat_schema = schema_name
+        self._session.use_database(self._compat_db)
+        self._session.use_schema(self._compat_schema)
+        self._mock_table = _create_test_data(self._session, self._compat_db, self._compat_schema)
 
     def test_cross_version_compatibilities(self) -> None:
         fs = FeatureStore(
             self._session,
-            FS_COMPATIBIILTY_TEST_DB,
-            FS_COMPATIBIILTY_TEST_SCHEMA,
+            self._compat_db,
+            self._compat_schema,
             default_warehouse=self._session.get_current_warehouse(),
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
@@ -73,6 +70,17 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
         self.assertGreater(len(fv_df.collect()), 1)
 
     def test_forward_compatibility_breakage(self) -> None:
+        # First, create a FeatureStore and populate it with objects
+        fs = FeatureStore(
+            self._session,
+            self._compat_db,
+            self._compat_schema,
+            default_warehouse=self._session.get_current_warehouse(),
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._maybe_create_feature_store_objects(fs)
+
+        # Now test that opening the FeatureStore with mocked incompatible version raises an error
         with absltest.mock.patch(
             "snowflake.ml.feature_store.feature_store._FeatureStoreObjTypes.parse", autospec=True
         ) as MockFeatureStoreObjTypesParseFn:
@@ -80,13 +88,24 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "The current snowflake-ml-python version .*"):
                 FeatureStore(
                     self._session,
-                    FS_COMPATIBIILTY_TEST_DB,
-                    FS_COMPATIBIILTY_TEST_SCHEMA,
+                    self._compat_db,
+                    self._compat_schema,
                     default_warehouse=self._session.get_current_warehouse(),
-                    creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+                    creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
                 )
 
     def test_pkg_version_falling_behind(self) -> None:
+        # First, create a FeatureStore and populate it with objects
+        fs = FeatureStore(
+            self._session,
+            self._compat_db,
+            self._compat_schema,
+            default_warehouse=self._session.get_current_warehouse(),
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._maybe_create_feature_store_objects(fs)
+
+        # Now test that opening the FeatureStore with an outdated version triggers a warning
         with absltest.mock.patch(
             "snowflake.ml.feature_store.feature_store.snowml_version", autospec=True
         ) as MockSnowMLVersion:
@@ -94,10 +113,10 @@ class FeatureStoreCompatibilityTest(absltest.TestCase):
             with self.assertWarnsRegex(UserWarning, "The current snowflake-ml-python version out of date.*"):
                 FeatureStore(
                     self._session,
-                    FS_COMPATIBIILTY_TEST_DB,
-                    FS_COMPATIBIILTY_TEST_SCHEMA,
+                    self._compat_db,
+                    self._compat_schema,
                     default_warehouse=self._session.get_current_warehouse(),
-                    creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+                    creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
                 )
 
     def _check_per_version_access(self, version: str, fs: FeatureStore) -> None:

@@ -31,6 +31,7 @@ def parse_bool_env_value(value: Optional[str], default: bool = False) -> bool:
 class FeatureFlags(Enum):
     USE_SUBMIT_JOB_V2 = "MLRS_USE_SUBMIT_JOB_V2"
     ENABLE_RUNTIME_VERSIONS = "MLRS_ENABLE_RUNTIME_VERSIONS"
+    ENABLE_STAGE_MOUNT_V2 = "MLRS_ENABLE_STAGE_MOUNT_V2"
 
     def is_enabled(self, default: bool = False) -> bool:
         """Check if the feature flag is enabled.

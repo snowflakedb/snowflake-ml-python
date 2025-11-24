@@ -274,7 +274,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     check_udf_res_fn(res)
 
     def test_fill_mask_pipeline(self) -> None:
-        x = ["LynYuu is the <mask> of the Grand Duchy of Yu."]
+        x = ["LynYuu is the [MASK] of the Grand Duchy of Yu."]
 
         x_df = pd.DataFrame(
             [x],
@@ -298,7 +298,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="fill-mask",
-            model_id="sshleifer/tiny-distilroberta-base",
+            model_id="google-bert/bert-base-uncased",
             udf_test_input=x_df,
             options={},
             check_pipeline_fn=check_pipeline,
@@ -307,7 +307,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="fill-mask",
-            model_id="sshleifer/tiny-distilroberta-base",
+            model_id="google-bert/bert-base-uncased",
             udf_test_input=x_df,
             options={"top_k": 5},
             check_pipeline_fn=check_pipeline,
@@ -316,7 +316,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="fill-mask",
-            model_id="sshleifer/tiny-distilroberta-base",
+            model_id="google-bert/bert-base-uncased",
             udf_test_input=x_df,
             options={"batch_size": 8},
             check_pipeline_fn=check_pipeline,

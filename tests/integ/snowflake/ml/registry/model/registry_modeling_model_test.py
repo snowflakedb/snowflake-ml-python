@@ -209,7 +209,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1)
         test_features = iris_X[:10]
         regr.fit(test_features)
 
@@ -237,7 +237,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 
@@ -274,7 +276,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 
@@ -316,7 +320,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 

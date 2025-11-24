@@ -36,7 +36,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         getattr(self, registry_test_fn)(
@@ -72,7 +72,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
 
         pipeline = SK_pipeline.Pipeline(
             [
-                ("classifier", lightgbm.LGBMClassifier()),
+                ("classifier", lightgbm.LGBMClassifier(n_jobs=1)),
             ]
         )
         pipeline.fit(cal_X_train, cal_y_train)
@@ -114,7 +114,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
         expected_explanations: npt.NDArray[Any] = shap.Explainer(classifier)(cal_X_test).values
         if expected_explanations.ndim == 3 and expected_explanations.shape[2] == 2:
@@ -166,7 +166,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         y_df_expected = pd.concat(
@@ -209,7 +209,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         y_df_expected = pd.concat(
@@ -272,7 +272,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "regression", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_pred = regressor.predict(cal_X_test)
 
         self._test_registry_model(
@@ -298,7 +300,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "regression", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_pred = regressor.predict(cal_X_test)
         expected_explanations = shap.Explainer(regressor)(cal_X_test).values
 
@@ -336,7 +340,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "regression", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_df_expected = pd.concat(
             [
                 cal_X_test.reset_index(drop=True),
@@ -366,7 +372,9 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "regression"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "regression", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_df_expected = pd.concat(
             [
                 cal_X_test.reset_index(drop=True),
@@ -414,7 +422,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
         y_pred = pd.DataFrame(classifier.predict(cal_X_test), columns=["output_feature_0"])
         sig = {
@@ -485,7 +493,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         pipeline = SK_pipeline.Pipeline(
             [
                 ("preprocessor", preprocessor),
-                ("classifier", lightgbm.LGBMClassifier()),
+                ("classifier", lightgbm.LGBMClassifier(n_jobs=1)),
             ]
         )
         pipeline.fit(df.drop("target", axis=1), df["target"])

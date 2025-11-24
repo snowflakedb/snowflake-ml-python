@@ -30,13 +30,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="fill-mask",
-            model="sshleifer/tiny-distilroberta-base",
+            model="google-bert/bert-base-uncased",
             top_k=1,
         )
 
         x_df = pd.DataFrame(
             [
-                ["LynYuu is the <mask> of the Grand Duchy of Yu."],
+                ["LynYuu is the [MASK] of the Grand Duchy of Yu."],
             ]
         )
 

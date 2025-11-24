@@ -197,7 +197,7 @@ def generate_service_spec(
         resource_limits["nvidia.com/gpu"] = image_spec.resource_limits.gpu
 
     # Add local volumes for ephemeral logs and artifacts
-    volumes: list[dict[str, str]] = []
+    volumes: list[dict[str, Any]] = []
     volume_mounts: list[dict[str, str]] = []
     for volume_name, mount_path in [
         ("system-logs", "/var/log/managedservices/system/mlrs"),
@@ -246,7 +246,16 @@ def generate_service_spec(
     volumes.append(
         {
             "name": constants.STAGE_VOLUME_NAME,
-            "source": payload.stage_path.as_posix(),
+            "source": "stage",
+            "stageConfig": {
+                "name": payload.stage_path.as_posix(),
+                "resources": {
+                    "requests": {
+                        "memory": "0Gi",
+                        "cpu": "0",
+                    },
+                },
+            },
         }
     )
 
@@ -286,7 +295,7 @@ def generate_service_spec(
             "storage",
         ]
 
-    spec_dict = {
+    spec_dict: dict[str, Any] = {
         "containers": [
             {
                 "name": constants.DEFAULT_CONTAINER_NAME,

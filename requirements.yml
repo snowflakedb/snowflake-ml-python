@@ -151,7 +151,7 @@
     - build_essential
 - name: packaging
   dev_version: '24.1'
-  version_requirements: '>=20.9,<25'
+  version_requirements: '>=20.9,<26'
   tags:
     - build_essential
 - name: pandas
@@ -339,6 +339,8 @@
 - name: tqdm
   dev_version: 4.67.1
   version_requirements: <5
+- name: cmdstanpy
+  dev_version: 1.1.0
 
 # Below are pip only external packages
 - name_pypi: --extra-index-url https://pypi.org/simple

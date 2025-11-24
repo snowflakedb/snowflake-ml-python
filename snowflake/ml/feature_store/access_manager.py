@@ -202,6 +202,7 @@ def _configure_role_hierarchy(
     session.sql(f"GRANT ROLE {producer_role} TO ROLE {session.get_current_role()}").collect()
 
     if consumer_role is not None:
+        # Create CONSUMER and grant it to PRODUCER to build hierarchy
         consumer_role = SqlIdentifier(consumer_role)
         session.sql(f"CREATE ROLE IF NOT EXISTS {consumer_role}").collect()
         session.sql(f"GRANT ROLE {consumer_role} TO ROLE {producer_role}").collect()

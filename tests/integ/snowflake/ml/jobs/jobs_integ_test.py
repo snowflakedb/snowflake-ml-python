@@ -216,18 +216,22 @@ class JobManagerTest(JobTestBase):
     def test_job_wait(self) -> None:
         # Status check adds some latency
         max_backoff = constants.JOB_POLL_MAX_DELAY_SECONDS
+
+        def wait_function() -> None:
+            time.sleep(5)
+
         try:
             # Speed up polling for testing
             constants.JOB_POLL_MAX_DELAY_SECONDS = 0.1  # type: ignore[assignment]
             fudge_factor = constants.JOB_POLL_INITIAL_DELAY_SECONDS
 
-            job = self._submit_func_as_file(dummy_function)
+            job = self._submit_func_as_file(wait_function)
             start = time.monotonic()
             with self.assertRaises(TimeoutError):
                 job.wait(timeout=0)
             self.assertLess(time.monotonic() - start, fudge_factor)
 
-            job1 = self._submit_func_as_file(dummy_function)
+            job1 = self._submit_func_as_file(wait_function)
             start = time.monotonic()
             with self.assertRaises(TimeoutError):
                 job1.wait(timeout=1)
@@ -239,7 +243,10 @@ class JobManagerTest(JobTestBase):
                     job.wait(timeout=1)
                 self.assertBetween(time.monotonic() - start, 1, 1 + fudge_factor)
                 mock_get_status.assert_called_once()
-
+            job.cancel()
+            job1.cancel()
+        except Exception:
+            pass
         finally:
             constants.JOB_POLL_MAX_DELAY_SECONDS = max_backoff
 
@@ -277,6 +284,25 @@ class JobManagerTest(JobTestBase):
             self.assertIn("Job start", loaded_job.get_logs())
             self.assertIn("Job complete", loaded_job.get_logs())
             self.assertIsNone(loaded_job.result())
+
+    def test_job_execution_system_compute_pool(self) -> None:
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+            payload = TestAsset("src/main.py")
+
+            # Create a job
+            job = jobs.submit_file(
+                payload.path,
+                "SYSTEM_COMPUTE_POOL_CPU",
+                stage_name="payload_stage",
+                args=["foo", "--delay", "1"],
+                session=self.session,
+            )
+
+            # Wait for job to finish
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertEqual(job.status, "DONE")
+            self.assertIn("Job complete", job.get_logs())
+            self.assertIsNone(job.result())
 
     def test_job_execution_metrics(self) -> None:
         payload = TestAsset("src/main.py")
@@ -1354,6 +1380,25 @@ class JobManagerTest(JobTestBase):
                 session=self.session,
             )
             self.assertRegex(job1.name.lower(), r"main_\w+")
+
+    @absltest.skipIf(
+        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
+        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
+    )  # type: ignore[misc]
+    def test_job_stage_mount_v2(self) -> None:
+        try:
+            self.session.sql("ALTER SESSION SET ENABLE_STAGE_MOUNT_V2_ML_JOB = true").collect()
+        except Exception:
+            self.skipTest("Stage mount v2 is not enabled")
+        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: "true"}):
+
+            @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+            def test_function() -> str:
+                return "hello world"
+
+            job = test_function()
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertEqual(job.result(), "hello world")
 
 
 if __name__ == "__main__":
