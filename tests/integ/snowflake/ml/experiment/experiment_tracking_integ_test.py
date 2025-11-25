@@ -99,29 +99,38 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         exp.start_run("TEST_RUN")
 
         pickled = pickle.dumps(exp)
-        new_exp = pickle.loads(pickled)
+        # Make sure that there is only one active session when _get_active_session() in setstate is called
+        with snowpark_session._session_management_lock:
+            session_set = snowpark_session._active_sessions.copy()
+            snowpark_session._active_sessions = {self._session}
+            new_exp = pickle.loads(pickled)  # setstate is called here
+            snowpark_session._active_sessions = session_set
+
         self.assert_experiment_tracking_equality(exp, new_exp)
 
     def test_experiment_getstate_and_setstate_no_session(self) -> None:
-        """Test that _restore_session decorator creates a new session if no session is found"""
+        """Test that setstate creates a new session if no session is found"""
         exp = ExperimentTracking(session=self._session)
         exp.set_experiment("TEST_EXPERIMENT")
         exp.start_run("TEST_RUN")
 
         pickled = pickle.dumps(exp)
-        session_set = snowpark_session._active_sessions.copy()
-        snowpark_session._active_sessions.clear()  # Simulate having no active session
-        new_exp = pickle.loads(pickled)
-        self.assert_experiment_tracking_equality(exp, new_exp)
+        # Make sure that there are no active sessions when _get_active_session() in setstate is called
+        with snowpark_session._session_management_lock:
+            session_set = snowpark_session._active_sessions.copy()
+            snowpark_session._active_sessions.clear()
+            new_exp = pickle.loads(pickled)  # setstate is called here
+            self.assertEqual(len(snowpark_session._active_sessions), 1)  # check that a new session has been created
+            new_session = snowpark_session._active_sessions.pop()
+            snowpark_session._active_sessions = session_set
 
-        # Check that a new session has been created
-        self.assertEqual(len(snowpark_session._active_sessions), 1)
-        self.assertIs(new_exp._session, snowpark_session._active_sessions.pop())
+        self.assert_experiment_tracking_equality(exp, new_exp)
+        # Check that the unpickled experiment uses the newly created session
+        self.assertIs(new_exp._session, new_session)
         self.assertIsNot(new_exp._session, self._session)
 
         # Clean up the newly created session
-        new_exp._session.close()
-        snowpark_session._active_sessions = session_set
+        new_session.close()
 
     def test_experiment_creation_and_deletion(self) -> None:
         # set_experiment with a new experiment name creates an experiment

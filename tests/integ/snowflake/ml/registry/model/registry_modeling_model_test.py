@@ -25,12 +25,8 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_snowml_model_deploy_snowml_sklearn_explain_disabled(
         self,
-        registry_test_fn: str,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -42,7 +38,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X
         regr.fit(test_features)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -209,7 +205,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1)
         test_features = iris_X[:10]
         regr.fit(test_features)
 
@@ -237,7 +233,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 
@@ -274,7 +272,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [identifier.concat_names([feature, "_explanation"]) for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 
@@ -316,7 +316,9 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         PRED_OUTPUT_COLUMNS = "PREDICTED_TARGET"
         EXPLAIN_OUTPUT_COLUMNS = [feature + "_explanation" for feature in INPUT_COLUMNS]
 
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(
+            input_cols=INPUT_COLUMNS, output_cols=PRED_OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1
+        )
         test_features = iris_X
         regr.fit(test_features)
 
@@ -723,12 +725,8 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_snowml_model_deploy_xgboost_pipeline_sp(
         self,
-        registry_test_fn: str,
     ) -> None:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
@@ -792,7 +790,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         expected_res = expected_res_sp.to_pandas()
         expected_res.columns = expected_res_sp.columns
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             prediction_assert_fns={
                 "predict": (

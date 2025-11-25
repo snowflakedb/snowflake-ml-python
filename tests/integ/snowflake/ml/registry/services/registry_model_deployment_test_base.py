@@ -68,6 +68,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
         use_model_logging: bool = False,
     ) -> ModelVersion:
@@ -113,6 +114,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,
             use_default_repo=use_default_repo,
+            inference_engine_options=inference_engine_options,
             experimental_options=experimental_options,
             pip_requirements=pip_requirements,
             conda_dependencies=conda_dependencies,
@@ -131,6 +133,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         force_rebuild: bool = True,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> None:
         """Deploy model with image override."""
@@ -145,7 +148,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         self._add_common_model_deployment_spec_options(
             mv=mv, database=database, schema=schema, force_rebuild=force_rebuild
         )
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
         # Set inference engine spec if specified
         if inference_engine_args is not None:
             inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
@@ -225,6 +228,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
         pip_requirements: Optional[list[str]] = None,
         conda_dependencies: Optional[list[str]] = None,
@@ -249,6 +253,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     force_rebuild=False,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,
+                    inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
                 )
             else:
@@ -265,6 +270,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     ingress_enabled=True,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,
+                    inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
                 )
         else:
@@ -301,6 +307,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     ingress_enabled=True,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,
+                    inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
                 )
                 mv = self.registry.get_model(model_name).version(version_name)

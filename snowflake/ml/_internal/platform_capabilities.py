@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
 INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
 SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST = "SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST"
+ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = "ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS"
 
 
 class PlatformCapabilities:
@@ -79,6 +80,9 @@ class PlatformCapabilities:
 
     def is_live_commit_enabled(self) -> bool:
         return self._get_bool_feature(LIVE_COMMIT_PARAMETER, False)
+
+    def is_model_method_signature_parameters_enabled(self) -> bool:
+        return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)
 
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> dict[str, Any]:

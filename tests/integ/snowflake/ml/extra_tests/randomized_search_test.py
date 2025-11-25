@@ -29,7 +29,7 @@ class GridSearchCVTest(TestCase):
         input_df = self._session.create_dataframe(input_df_pandas)
 
         sklearn_reg = SkRandomizedSearchCV(
-            estimator=SkRandomForestClassifier(random_state=0),
+            estimator=SkRandomForestClassifier(random_state=0, n_jobs=1),
             param_distributions={
                 "n_estimators": randint(50, 200),
                 "max_depth": randint(3, 8),
@@ -39,7 +39,7 @@ class GridSearchCVTest(TestCase):
         )
 
         reg = RandomizedSearchCV(
-            estimator=RandomForestClassifier(random_state=0),
+            estimator=RandomForestClassifier(random_state=0, n_jobs=1),
             param_distributions={
                 "n_estimators": randint(50, 200),
                 "max_depth": randint(3, 8),

@@ -2,7 +2,7 @@ import catboost
 import inflection
 import pandas as pd
 import shap
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import (
     compose,
     datasets,
@@ -25,7 +25,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         self._test_registry_model(
@@ -61,7 +61,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
 
         classifier = SK_pipeline.Pipeline(
             steps=[
-                ("regressor", catboost.CatBoostClassifier()),
+                ("regressor", catboost.CatBoostClassifier(thread_count=1)),
             ]
         )
         classifier.fit(cal_X_train, cal_y_train)
@@ -106,7 +106,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(cal_X_train, cal_y_train)
         expected_explanations = shap.Explainer(classifier)(cal_X_test).values
 
@@ -153,7 +153,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         y_df_expected = pd.concat(
@@ -196,7 +196,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(cal_X_train, cal_y_train)
 
         y_df_expected = pd.concat(
@@ -257,7 +257,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = catboost.CatBoostClassifier()
+        classifier = catboost.CatBoostClassifier(thread_count=1)
         classifier.fit(cal_X_train, cal_y_train)
         y_pred = classifier.predict(cal_X_test)
         y_pred_proba = classifier.predict_proba(cal_X_test)
@@ -317,12 +317,8 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_catboost_model_with_categorical_dtype_columns(
         self,
-        registry_test_fn: str,
     ) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
@@ -362,7 +358,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=df[input_features],
             prediction_assert_fns={

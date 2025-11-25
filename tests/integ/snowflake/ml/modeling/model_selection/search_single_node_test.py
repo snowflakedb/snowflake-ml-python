@@ -31,7 +31,7 @@ class SearchSingleNodeTest(absltest.TestCase):
             "learning_rate": [0.1],  # reduce the parameters into one to accelerate the test process
         }
 
-        estimator = XGBClassifier()
+        estimator = XGBClassifier(n_jobs=1)
         reg = GridSearchCV(estimator=estimator, param_grid=parameters, cv=2, verbose=True)
         reg.set_input_cols(input_cols)
         output_cols = ["OUTPUT_" + c for c in label_col]
@@ -57,7 +57,7 @@ class SearchSingleNodeTest(absltest.TestCase):
             "learning_rate": [0.1],  # reduce the parameters into one to accelerate the test process
         }
 
-        estimator = XGBClassifier()
+        estimator = XGBClassifier(n_jobs=1)
         reg = RandomizedSearchCV(estimator=estimator, param_distributions=parameters, cv=2, verbose=True)
         reg.set_input_cols(input_cols)
         output_cols = ["OUTPUT_" + c for c in label_col]

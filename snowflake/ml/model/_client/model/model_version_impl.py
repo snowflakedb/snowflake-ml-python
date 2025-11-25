@@ -12,7 +12,7 @@ from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.lineage import lineage_node
-from snowflake.ml.model import task, type_hints
+from snowflake.ml.model import openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
     batch_inference_specs,
     inference_engine_utils,
@@ -23,6 +23,7 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from snowflake.ml.model._model_composer.model_method import utils as model_method_utils
 from snowflake.ml.model._packager.model_handlers import snowmlmodel
 from snowflake.ml.model._packager.model_meta import model_meta_schema
+from snowflake.ml.model._signatures import core
 from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
@@ -940,14 +941,16 @@ class ModelVersion(lineage_node.LineageNode):
         self,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Check if the model is a HuggingFace pipeline with text-generation task.
+        """Check if the model is a HuggingFace pipeline with text-generation task
+        and is logged with OPENAI_CHAT_SIGNATURE.
 
         Args:
             statement_params: Optional dictionary of statement parameters to include
                 in the SQL command to fetch model spec.
 
         Raises:
-            ValueError: If the model is not a HuggingFace text-generation model.
+            ValueError: If the model is not a HuggingFace text-generation model or
+                if the model is not logged with OPENAI_CHAT_SIGNATURE.
         """
         # Fetch model spec
         model_spec = self._get_model_spec(statement_params)
@@ -983,6 +986,21 @@ class ModelVersion(lineage_node.LineageNode):
             )
             raise ValueError(f"Inference engine is only supported for task 'text-generation'. {found_tasks_str}")
 
+        # Check if the model is logged with OPENAI_CHAT_SIGNATURE
+        signatures_dict = model_spec.get("signatures", {})
+
+        # Deserialize signatures from model spec to ModelSignature objects for proper semantic comparison.
+        deserialized_signatures = {
+            func_name: core.ModelSignature.from_dict(sig_dict) for func_name, sig_dict in signatures_dict.items()
+        }
+
+        if deserialized_signatures != openai_signatures.OPENAI_CHAT_SIGNATURE:
+            raise ValueError(
+                "Inference engine requires the model to be logged with OPENAI_CHAT_SIGNATURE. "
+                f"Found signatures: {signatures_dict}. "
+                "Please log the model with: signatures=openai_signatures.OPENAI_CHAT_SIGNATURE"
+            )
+
     @overload
     def create_service(
         self,
@@ -1001,6 +1019,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
         block: bool = True,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
@@ -1034,10 +1053,12 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
-            experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
-                `inference_engine` is the name of the inference engine to use.
-                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+            inference_engine_options: Options for the service creation with custom inference engine.
+                Supports `engine` and `engine_args_override`.
+                `engine` is the type of the inference engine to use.
+                `engine_args_override` is a list of string arguments to pass to the inference engine.
+            experimental_options: Experimental options for the service creation.
+                Currently only `autocapture` is supported.
                 `autocapture` is a boolean to enable/disable inference table.
         """
         ...
@@ -1060,6 +1081,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
@@ -1093,10 +1115,12 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
-            experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
-                `inference_engine` is the name of the inference engine to use.
-                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+            inference_engine_options: Options for the service creation with custom inference engine.
+                Supports `engine` and `engine_args_override`.
+                `engine` is the type of the inference engine to use.
+                `engine_args_override` is a list of string arguments to pass to the inference engine.
+            experimental_options: Experimental options for the service creation.
+                Currently only `autocapture` is supported.
                 `autocapture` is a boolean to enable/disable inference table.
         """
         ...
@@ -1134,6 +1158,7 @@ class ModelVersion(lineage_node.LineageNode):
         build_external_access_integration: Optional[str] = None,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
@@ -1169,10 +1194,12 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is False, this function executes the underlying service creation asynchronously
                 and returns an AsyncJob.
-            experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, `inference_engine`, `inference_engine_args_override`, and `autocapture` are supported.
-                `inference_engine` is the name of the inference engine to use.
-                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+            inference_engine_options: Options for the service creation with custom inference engine.
+                Supports `engine` and `engine_args_override`.
+                `engine` is the type of the inference engine to use.
+                `engine_args_override` is a list of string arguments to pass to the inference engine.
+            experimental_options: Experimental options for the service creation.
+                Currently only `autocapture` is supported.
                 `autocapture` is a boolean to enable/disable inference table.
 
 
@@ -1209,9 +1236,10 @@ class ModelVersion(lineage_node.LineageNode):
         # Validate GPU support if GPU resources are requested
         self._throw_error_if_gpu_is_not_supported(gpu_requests, statement_params)
 
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
 
-        # Check if model is HuggingFace text-generation before doing inference engine checks
+        # Check if model is HuggingFace text-generation and is logged with
+        # OPENAI_CHAT_SIGNATURE before doing inference engine checks
         # Only validate if inference engine is actually specified
         if inference_engine_args is not None:
             self._check_huggingface_text_generation_model(statement_params)
@@ -1292,8 +1320,12 @@ class ModelVersion(lineage_node.LineageNode):
         """List all the service names using this model version.
 
         Returns:
-            List of service_names: The name of the service, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+            List of details about all the services associated with this model version. The details include:
+              name: The name of the service.
+              status: The status of the service.
+              inference_endpoint: The public endpoint of the service, if enabled and services is not in PENDING state.
+                This will give privatelink endpoint if the session is created with privatelink connection
+              internal_endpoint: The internal endpoint of the service, if services is not in PENDING state.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,

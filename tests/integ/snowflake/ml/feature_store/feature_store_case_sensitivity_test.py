@@ -1,13 +1,8 @@
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
-from common_utils import (
-    FS_INTEG_TEST_DATASET_SCHEMA,
-    FS_INTEG_TEST_DB,
-    cleanup_temporary_objects,
-    create_random_schema,
-    get_test_warehouse_name,
-)
+from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
 from snowflake.ml._internal.utils.identifier import resolve_identifier
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
@@ -17,8 +12,6 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureStore,
     FeatureView,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session
 
 # A list of names to be tested.
 #   Each tuple is consisted of:
@@ -32,7 +25,7 @@ TEST_NAMES = [
     (['"lazy_PIG"'], ["lazy_PIG", "LAZY_PIG", '"LAZY_PIG"']),
 ]
 
-WAREHOUSE_NAMES = ["my_warehouse", '"my_""WAREHOUSE"']
+WAREHOUSE_NAME_TEMPLATES = ["my_test_warehouse_{}", '"my_""TEST_WAREHOUSE_{}"']
 
 FS_LOCATIONS = [
     ("fs_test_db", "fs_test_schema"),
@@ -42,28 +35,33 @@ FS_LOCATIONS = [
 ]
 
 
-class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        cleanup_temporary_objects(cls._session)
-        cls._active_fs = []
-        cls._mock_table = cls._create_mock_table("mock_data")
-        cls._test_warehouse_name = get_test_warehouse_name(cls._session)
+class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._active_fs = []
+        self._test_databases = []  # Track databases created in tests for cleanup
+        self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self._test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}").collect()
+        self._mock_table = self._create_mock_table("mock_data")
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        for fs in cls._active_fs:
+    def tearDown(self) -> None:
+        for fs in self._active_fs:
             fs._clear(dryrun=False)
-            cls._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
-        cls._session.sql(f"DROP TABLE IF EXISTS {cls._mock_table}").collect()
-        cls._session.close()
+            self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
+        self._session.sql(f"DROP TABLE IF EXISTS {self._mock_table}").collect()
 
-    @classmethod
-    def _create_mock_table(cls, name: str) -> str:
-        table_full_path = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
-        cls._session.sql(f"CREATE OR REPLACE TABLE {table_full_path} (a INT, b INT)").collect()
-        cls._session.sql(
+        # Clean up test databases
+        for db in self._test_databases:
+            try:
+                self._session.sql(f"DROP DATABASE IF EXISTS {db}").collect()
+            except Exception:
+                pass  # Ignore errors during cleanup
+
+        super().tearDown()
+
+    def _create_mock_table(self, name: str) -> str:
+        table_full_path = f"{self._test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
+        self._session.sql(f"CREATE OR REPLACE TABLE {table_full_path} (a INT, b INT)").collect()
+        self._session.sql(
             f"""INSERT OVERWRITE INTO {table_full_path} (a, b)
                 VALUES
                 (1, 20),
@@ -74,7 +72,14 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
     @parameterized.parameters(FS_LOCATIONS)  # type: ignore[misc]
     def test_feature_store_location(self, database: str, schema: str) -> None:
+        # Make database name unique per test run to avoid privilege conflicts
+        if database.startswith('"') and database.endswith('"'):
+            database = f'{database[:-1]}_{uuid4().hex.upper()}"'
+        else:
+            database = f"{database}_{uuid4().hex.upper()}"
+
         self._session.sql(f"CREATE DATABASE IF NOT EXISTS {database}").collect()
+        self._test_databases.append(database)  # Track for cleanup
 
         if schema.startswith('"') and schema.endswith('"'):
             schema = f'{schema[:-1]}_{uuid4().hex.upper()}"'
@@ -108,36 +113,64 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
         )
 
-    @parameterized.parameters(WAREHOUSE_NAMES)  # type: ignore[misc]
-    def test_warehouse_names(self, warehouse: str) -> None:
-        current_schema = create_random_schema(self._session, "TEST_WAREHOUSE_NAMES")
+    @parameterized.parameters(WAREHOUSE_NAME_TEMPLATES)  # type: ignore[misc]
+    def test_warehouse_names(self, warehouse_name_template: str) -> None:
+        """Test that FeatureStore correctly handles different warehouse name formats."""
+        current_schema = create_random_schema(self._session, "TEST_WAREHOUSE_NAMES", database=self.test_db)
 
-        self._session.sql(f"CREATE WAREHOUSE IF NOT EXISTS {warehouse} WITH WAREHOUSE_SIZE='XSMALL'").collect()
+        # Step 1: Remember the original warehouse
+        original_warehouse = self._session.get_current_warehouse()
+        fs = None
 
-        fs = FeatureStore(
-            session=self._session,
-            database=FS_INTEG_TEST_DB,
-            name=current_schema,
-            default_warehouse=warehouse,
-            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
-        )
-        self._active_fs.append(fs)
+        try:
+            # Create the warehouse for testing
+            warehouse = warehouse_name_template.format(uuid4().hex)
+            self._session.sql(f"CREATE OR REPLACE WAREHOUSE {warehouse} WITH WAREHOUSE_SIZE='XSMALL'").collect()
 
-        df = self._session.sql(f"SELECT a, b FROM {self._mock_table}")
-        e = Entity(name="e", join_keys=["a"])
-        fs.register_entity(e)
-        fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
-        fs.register_feature_view(feature_view=fv, version="v1")
-        retrieved_fv = fs.get_feature_view(name="fv", version="v1")
-        self.assertEqual(resolve_identifier(warehouse), retrieved_fv.warehouse)
-        self.assertEqual(2, len(fs.read_feature_view(retrieved_fv).to_pandas()))
+            fs = FeatureStore(
+                session=self._session,
+                database=self.test_db,
+                name=current_schema,
+                default_warehouse=warehouse,
+                creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+            )
+            # Don't add to self._active_fs - we handle cleanup in this test's finally block
+
+            df = self._session.sql(f"SELECT a, b FROM {self._mock_table}")
+            e = Entity(name="e", join_keys=["a"])
+            fs.register_entity(e)
+            fv = FeatureView(name="fv", entities=[e], feature_df=df, refresh_freq="1 minute")
+            fs.register_feature_view(feature_view=fv, version="v1")
+            retrieved_fv = fs.get_feature_view(name="fv", version="v1")
+            self.assertEqual(resolve_identifier(warehouse), retrieved_fv.warehouse)
+            self.assertEqual(2, len(fs.read_feature_view(retrieved_fv).to_pandas()))
+        finally:
+            # Clean up the FeatureStore schema (just drop it, don't call _clear to avoid warehouse issues)
+            if fs is not None:
+                try:
+                    self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path} CASCADE").collect()
+                except Exception:
+                    pass  # Ignore cleanup errors
+
+            # Restore original warehouse BEFORE dropping the test warehouse
+            if original_warehouse:
+                try:
+                    self._session.use_warehouse(original_warehouse)
+                except Exception:
+                    pass  # Ignore if restoration fails
+
+            # Drop the test warehouse
+            try:
+                self._session.sql(f"DROP WAREHOUSE IF EXISTS {warehouse}").collect()
+            except Exception:
+                pass  # Ignore if we don't have DROP privilege
 
     # Covered APIs:
     #   1. FeatureStore
     def test_feature_store_database_names(self) -> None:
         db_name_1 = "FS_INTEG_TEST_DB_NAME_TEST"
         self._session.sql(f"CREATE DATABASE IF NOT EXISTS {db_name_1}").collect()
-        current_schema = create_random_schema(self._session, "TEST_DB_NAMES")
+        current_schema = create_random_schema(self._session, "TEST_DB_NAMES", database=self.test_db)
 
         with self.assertRaisesRegex(ValueError, "Database .* does not exist."):
             FeatureStore(
@@ -178,11 +211,11 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         diff_names = generate_unique_name(diff_names)
 
         original_name = equi_names[0]
-        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{original_name}").collect()
+        self._session.sql(f"DROP SCHEMA IF EXISTS {self.test_db}.{original_name}").collect()
 
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             original_name,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -193,7 +226,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         for equi_name in equi_names:
             FeatureStore(
                 self._session,
-                FS_INTEG_TEST_DB,
+                self.test_db,
                 equi_name,
                 default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
@@ -204,7 +237,7 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
             for diff_name in diff_names:
                 FeatureStore(
                     self._session,
-                    FS_INTEG_TEST_DB,
+                    self.test_db,
                     diff_name,
                     default_warehouse=self._test_warehouse_name,
                     creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
@@ -218,10 +251,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   5. delete_entity
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_entity_names(self, equi_names: list[str], diff_names: list[str]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_ENTITY_NAMES")
+        current_schema = create_random_schema(self._session, "TEST_ENTITY_NAMES", database=self.test_db)
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -264,10 +297,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
     #   5. FeatureView.timestamp_col
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_join_keys_and_ts_col(self, equi_names: list[str], diff_names: list[str]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_JOIN_KEYS_AND_TS_COL")
+        current_schema = create_random_schema(self._session, "TEST_JOIN_KEYS_AND_TS_COL", database=self.test_db)
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -324,10 +357,10 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
         equi_full_names: list[str],
         diff_full_names: list[str],
     ) -> None:
-        current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_NAMES")
+        current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_NAMES", database=self.test_db)
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -386,28 +419,28 @@ class FeatureStoreCaseSensitivityTest(parameterized.TestCase):
 
     @parameterized.parameters(TEST_NAMES)  # type: ignore[misc]
     def test_find_objects(self, equi_names: list[str], diff_names: list[str]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_FIND_OBJECTS")
+        current_schema = create_random_schema(self._session, "TEST_FIND_OBJECTS", database=self.test_db)
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
         self._active_fs.append(fs)
 
-        self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
+        self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self.test_db}.{equi_names[0]}").collect()
         for name in equi_names:
             self.assertEqual(len(fs._find_object("SCHEMAS", SqlIdentifier(name))), 1)
         for name in diff_names:
             self.assertEqual(len(fs._find_object("SCHEMAS", SqlIdentifier(name))), 0)
-        self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{equi_names[0]}").collect()
+        self._session.sql(f"DROP SCHEMA IF EXISTS {self.test_db}.{equi_names[0]}").collect()
 
     def test_feature_view_version(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_VERSION")
+        current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_VERSION", database=self.test_db)
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,

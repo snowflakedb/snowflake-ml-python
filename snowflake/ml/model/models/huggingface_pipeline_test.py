@@ -328,8 +328,8 @@ class HuggingFacePipelineTest(absltest.TestCase):
             args = mock_create_service.call_args.kwargs
             self.assertFalse(args["block"])
 
-    def test_create_service_with_experimental_options(self) -> None:
-        """Test the create_service function with experimental options."""
+    def test_create_service_with_inference_engine_options(self) -> None:
+        """Test the create_service function with inference engine options."""
         # Mock session
         mock_session = absltest.mock.Mock(spec=session.Session)
         mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
@@ -359,9 +359,9 @@ class HuggingFacePipelineTest(absltest.TestCase):
                 service_name="test_service",
                 service_compute_pool="test_compute_pool",
                 block=True,
-                experimental_options={
-                    "inference_engine": inference_engine.InferenceEngine.VLLM,
-                    "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
+                inference_engine_options={
+                    "engine": inference_engine.InferenceEngine.VLLM,
+                    "engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
                 },
             )
             self.assertEqual(result, "test_service_id")
@@ -374,8 +374,8 @@ class HuggingFacePipelineTest(absltest.TestCase):
                 ),
             )
 
-    def test_create_service_with_experimental_options_invalid_task(self) -> None:
-        """Test the create_service function with experimental options."""
+    def test_create_service_with_inference_engine_options_invalid_task(self) -> None:
+        """Test the create_service function with inference engine options."""
         # Mock session
         mock_session = absltest.mock.Mock(spec=session.Session)
         mock_session.get_current_database = absltest.mock.Mock(return_value="test_db")
@@ -406,14 +406,14 @@ class HuggingFacePipelineTest(absltest.TestCase):
                     service_name="test_service",
                     service_compute_pool="test_compute_pool",
                     block=True,
-                    experimental_options={
+                    inference_engine_options={
                         "inference_engine": inference_engine.InferenceEngine.VLLM,
                         "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
                     },
                 )
                 self.assertEqual(
                     str(cm.exception),
-                    "Currently, InferenceEngine using experimental_options is only supported for "
+                    "Currently, InferenceEngine using inference_engine_options is only supported for "
                     "HuggingFace text-generation models.",
                 )
 

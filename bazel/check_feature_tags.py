@@ -16,6 +16,7 @@ VALID_FEATURE_AREAS = [
     "feature_store",
     "jobs",
     "observability",
+    "experiment_tracking",
     "cortex",
     "core",
     "modeling",

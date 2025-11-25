@@ -1,4 +1,5 @@
 import types
+import warnings
 from typing import TYPE_CHECKING, Optional
 
 from snowflake.ml._internal.utils import sql_identifier
@@ -6,6 +7,8 @@ from snowflake.ml.experiment import _experiment_info as experiment_info
 
 if TYPE_CHECKING:
     from snowflake.ml.experiment import experiment_tracking
+
+METADATA_SIZE_WARNING_MESSAGE = "It is likely that no further metrics or parameters will be logged for this run."
 
 
 class Run:
@@ -19,6 +22,9 @@ class Run:
         self._experiment_tracking = experiment_tracking
         self.experiment_name = experiment_name
         self.name = run_name
+
+        # Whether we've already shown the user a warning about exceeding the run metadata size limit.
+        self._warned_about_metadata_size = False
 
         self._patcher = experiment_info.ExperimentInfoPatcher(
             experiment_info=self._get_experiment_info(),
@@ -45,3 +51,12 @@ class Run:
             ),
             run_name=self.name.identifier(),
         )
+
+    def _warn_about_run_metadata_size(self, sql_error_msg: str) -> None:
+        if not self._warned_about_metadata_size:
+            warnings.warn(
+                f"{sql_error_msg}. {METADATA_SIZE_WARNING_MESSAGE}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._warned_about_metadata_size = True

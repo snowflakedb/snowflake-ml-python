@@ -176,7 +176,7 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         INPUT_COLUMNS = ["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]
         LABEL_COLUMNS = "TARGET"
         OUTPUT_COLUMNS = "PREDICTED_TARGET"
-        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS)
+        regr = XGBRegressor(input_cols=INPUT_COLUMNS, output_cols=OUTPUT_COLUMNS, label_cols=LABEL_COLUMNS, n_jobs=1)
         regr.fit(df)
 
         predictions = regr.predict(df[:1])[[OUTPUT_COLUMNS]]
@@ -312,14 +312,14 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 (
                     "grid_search_xgb",
                     GridSearchCV(
-                        estimator=XGBClassifier(),
+                        estimator=XGBClassifier(n_jobs=1),
                         param_grid={
                             "n_estimators": [150],
                             "learning_rate": [0.1],
                             "max_depth": [5],
                             "subsample": [1],
                         },
-                        n_jobs=-1,
+                        n_jobs=1,
                         scoring="accuracy",
                         label_cols=LABEL_COLS,
                         output_cols=["OUTPUT_LABEL"],

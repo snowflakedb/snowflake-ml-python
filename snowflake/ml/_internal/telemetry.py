@@ -16,7 +16,7 @@ from typing_extensions import ParamSpec
 from snowflake import connector
 from snowflake.connector import connect, telemetry as connector_telemetry, time_util
 from snowflake.ml import version as snowml_version
-from snowflake.ml._internal import env
+from snowflake.ml._internal import env, env_utils
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
@@ -37,6 +37,22 @@ _CONNECTION_TYPES = {
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
 
+_conn: Optional[connector.SnowflakeConnection] = None
+
+
+def clear_cached_conn() -> None:
+    """Clear the cached Snowflake connection. Primarily for testing purposes."""
+    global _conn
+    if _conn is not None and _conn.is_valid():
+        _conn.close()
+    _conn = None
+
+
+def get_cached_conn() -> Optional[connector.SnowflakeConnection]:
+    """Get the cached Snowflake connection. Primarily for testing purposes."""
+    global _conn
+    return _conn
+
 
 def _get_login_token() -> Union[str, bytes]:
     with open("/snowflake/session/token") as f:
@@ -44,7 +60,11 @@ def _get_login_token() -> Union[str, bytes]:
 
 
 def _get_snowflake_connection() -> Optional[connector.SnowflakeConnection]:
-    conn = None
+    global _conn
+    if _conn is not None and _conn.is_valid():
+        return _conn
+
+    conn: Optional[connector.SnowflakeConnection] = None
     if os.getenv("SNOWFLAKE_HOST") is not None and os.getenv("SNOWFLAKE_ACCOUNT") is not None:
         try:
             conn = connect(
@@ -66,6 +86,13 @@ def _get_snowflake_connection() -> Optional[connector.SnowflakeConnection]:
             # Failed to get an active session. No connection available.
             pass
 
+    # cache the connection if it's a SnowflakeConnection. there is a behavior at runtime where it could be a
+    # StoredProcConnection perhaps incorrect type hinting somewhere
+    if isinstance(conn, connector.SnowflakeConnection):
+        # if _conn was expired, we need to copy telemetry data to new connection
+        if _conn is not None and conn is not None:
+            conn._telemetry._log_batch.extend(_conn._telemetry._log_batch)
+        _conn = conn
     return conn
 
 
@@ -111,6 +138,13 @@ class TelemetryField(enum.Enum):
     KEY_CUSTOM_TAGS = "custom_tags"
     # function categories
     FUNC_CAT_USAGE = "usage"
+
+
+@enum.unique
+class CustomTagKey(enum.Enum):
+    """Keys for custom tags in telemetry."""
+
+    EXECUTION_CONTEXT = "execution_context"
 
 
 class _TelemetrySourceType(enum.Enum):
@@ -441,6 +475,7 @@ def send_api_usage_telemetry(
     sfqids_extractor: Optional[Callable[..., list[str]]] = None,
     subproject_extractor: Optional[Callable[[Any], str]] = None,
     custom_tags: Optional[dict[str, Union[bool, int, str, float]]] = None,
+    log_execution_context: bool = True,
 ) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, _ReturnValue]]:
     """
     Decorator that sends API usage telemetry and adds function usage statement parameters to the dataframe returned by
@@ -455,6 +490,8 @@ def send_api_usage_telemetry(
         sfqids_extractor: Extract sfqids from `self`.
         subproject_extractor: Extract subproject at runtime from `self`.
         custom_tags: Custom tags.
+        log_execution_context: If True, automatically detect and log execution context
+            (EXTERNAL, SPCS, or SPROC) in custom_tags.
 
     Returns:
         Decorator that sends function usage telemetry for any call to the decorated function.
@@ -495,6 +532,11 @@ def send_api_usage_telemetry(
             if subproject_extractor is not None:
                 subproject_name = subproject_extractor(args[0])
 
+            # Add execution context if enabled
+            final_custom_tags = {**custom_tags} if custom_tags is not None else {}
+            if log_execution_context:
+                final_custom_tags[CustomTagKey.EXECUTION_CONTEXT.value] = env_utils.get_execution_context()
+
             statement_params = get_function_usage_statement_params(
                 project=project,
                 subproject=subproject_name,
@@ -502,7 +544,7 @@ def send_api_usage_telemetry(
                 function_name=_get_full_func_name(func),
                 function_parameters=params,
                 api_calls=api_calls,
-                custom_tags=custom_tags,
+                custom_tags=final_custom_tags,
             )
 
             def update_stmt_params_if_snowpark_df(obj: _ReturnValue, statement_params: dict[str, Any]) -> _ReturnValue:
@@ -538,7 +580,10 @@ def send_api_usage_telemetry(
             if conn_attr_name:
                 # raise AttributeError if conn attribute does not exist in `self`
                 conn = operator.attrgetter(conn_attr_name)(args[0])
-                if not isinstance(conn, _CONNECTION_TYPES.get(type(conn).__name__, connector.SnowflakeConnection)):
+                if not isinstance(
+                    conn,
+                    _CONNECTION_TYPES.get(type(conn).__name__, connector.SnowflakeConnection),
+                ):
                     raise TypeError(
                         f"Expected a conn object of type {' or '.join(_CONNECTION_TYPES.keys())} but got {type(conn)}"
                     )
@@ -560,7 +605,7 @@ def send_api_usage_telemetry(
                 func_params=params,
                 api_calls=api_calls,
                 sfqids=sfqids,
-                custom_tags=custom_tags,
+                custom_tags=final_custom_tags,
             )
             try:
                 return ctx.run(execute_func_with_statement_params)
@@ -571,7 +616,8 @@ def send_api_usage_telemetry(
                         raise
                     if isinstance(e, snowpark_exceptions.SnowparkClientException):
                         me = snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INTERNAL_SNOWPARK_ERROR, original_exception=e
+                            error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                            original_exception=e,
                         )
                     else:
                         me = snowml_exceptions.SnowflakeMLException(
@@ -627,7 +673,10 @@ def _get_full_func_name(func: Callable[..., Any]) -> str:
 
 
 def _get_func_params(
-    func: Callable[..., Any], func_params_to_log: Optional[Iterable[str]], args: Any, kwargs: Any
+    func: Callable[..., Any],
+    func_params_to_log: Optional[Iterable[str]],
+    args: Any,
+    kwargs: Any,
 ) -> dict[str, Any]:
     """
     Get function parameters.

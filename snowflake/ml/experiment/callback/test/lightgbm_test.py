@@ -19,12 +19,14 @@ class SnowflakeLightgbmCallbackTest(SnowflakeCallbackTest, parameterized.TestCas
     ) -> None:
         if issubclass(model_class, lgb.LGBMModel):
             assert isinstance(callback, SnowflakeLightgbmCallback)
-            model = model_class(n_estimators=self.num_steps)
+            model = model_class(n_estimators=self.num_steps, n_jobs=1)
             model.fit(self.X, self.y, eval_set=[(self.X, self.y)], callbacks=[callback])
         elif model_class is lgb.Booster:
             assert isinstance(callback, SnowflakeLightgbmCallback)
             dtrain = lgb.Dataset(self.X, label=self.y)
-            lgb.train({}, dtrain, valid_sets=[dtrain], num_boost_round=self.num_steps, callbacks=[callback])
+            lgb.train(
+                {"num_threads": 1}, dtrain, valid_sets=[dtrain], num_boost_round=self.num_steps, callbacks=[callback]
+            )
         else:
             raise ValueError(f"Unsupported model class: {model_class}")
 

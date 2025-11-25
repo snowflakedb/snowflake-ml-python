@@ -303,6 +303,7 @@ class HuggingFacePipelineModel:
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Logs a Hugging Face model and creates a service in Snowflake.
@@ -330,10 +331,8 @@ class HuggingFacePipelineModel:
             force_rebuild: Whether to force rebuild the image. Defaults to False.
             build_external_access_integrations: External access integrations for building the image. Defaults to None.
             block: Whether to block the operation. Defaults to True.
-            experimental_options: Experimental options for the service creation with custom inference engine.
-                Currently, only `inference_engine` and `inference_engine_args_override` are supported.
-                `inference_engine` is the name of the inference engine to use.
-                `inference_engine_args_override` is a list of string arguments to pass to the inference engine.
+            inference_engine_options: Options for the service creation with custom inference engine. Defaults to None.
+            experimental_options: Experimental options for the service creation. Defaults to None.
 
         Raises:
             ValueError: if database and schema name is not provided and session doesn't have a
@@ -377,14 +376,14 @@ class HuggingFacePipelineModel:
 
         # Check if model is HuggingFace text-generation before doing inference engine checks
         inference_engine_args = None
-        if experimental_options:
+        if inference_engine_options:
             if self.task != "text-generation":
                 raise ValueError(
-                    "Currently, InferenceEngine using experimental_options is only supported for "
+                    "Currently, InferenceEngine using inference_engine_options is only supported for "
                     "HuggingFace text-generation models."
                 )
 
-            inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+            inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
 
             # Enrich inference engine args if inference engine is specified
             if inference_engine_args is not None:

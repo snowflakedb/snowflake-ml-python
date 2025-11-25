@@ -176,7 +176,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "model": RandomForestClassifier,
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(),
-            "estimator_kwargs": dict(random_state=0),
+            "estimator_kwargs": dict(random_state=0, n_jobs=1),
             "enable_efficient_memory_usage": False,
         },
         {
@@ -185,7 +185,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "model": RandomForestClassifier,
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(return_train_score=True),
-            "estimator_kwargs": dict(random_state=0),
+            "estimator_kwargs": dict(random_state=0, n_jobs=1),
             "enable_efficient_memory_usage": False,
         },
         {
@@ -230,7 +230,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "model": RandomForestClassifier,
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(),
-            "estimator_kwargs": dict(random_state=0),
+            "estimator_kwargs": dict(random_state=0, n_jobs=1),
             "enable_efficient_memory_usage": True,
         },
         {
@@ -239,7 +239,7 @@ class GridSearchCVTest(parameterized.TestCase):
             "model": RandomForestClassifier,
             "params": {"n_estimators": [50, 200], "min_samples_split": [1.0, 2, 3], "max_depth": [3, 8]},
             "kwargs": dict(return_train_score=True),
-            "estimator_kwargs": dict(random_state=0),
+            "estimator_kwargs": dict(random_state=0, n_jobs=1),
             "enable_efficient_memory_usage": True,
         },
         {

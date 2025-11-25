@@ -24,18 +24,14 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_skl_model(
         self,
-        registry_test_fn: str,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # LogisticRegression is for classification task, such as iris
         classifier = linear_model.LogisticRegression()
         classifier.fit(iris_X, iris_y)
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=classifier,
             sample_input_data=iris_X,
             prediction_assert_fns={
@@ -183,7 +179,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
-        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42, n_jobs=1))
         model.fit(iris_X[:10], dual_target[:10])
         self._test_registry_model(
             model=model,
@@ -213,7 +209,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
-        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42, n_jobs=1))
         model.fit(iris_X[:10], dual_target[:10])
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
 
@@ -490,20 +486,19 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
     @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         enable_explainability=[False, None],  # Explainability not yet supported
     )
-    def test_scaler_random_forest_pipeline(self, registry_test_fn: str, enable_explainability: Optional[bool]) -> None:
+    def test_scaler_random_forest_pipeline(self, enable_explainability: Optional[bool]) -> None:
         X, y = datasets.load_iris(return_X_y=True)
         pipeline = SK_pipeline.Pipeline(
             [
                 ("scaler", preprocessing.StandardScaler()),
-                ("classifier", ensemble.RandomForestClassifier(random_state=42)),
+                ("classifier", ensemble.RandomForestClassifier(random_state=42, n_jobs=1)),
             ]
         )
         pipeline.fit(X, y)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=pipeline,
             sample_input_data=X,
             prediction_assert_fns={

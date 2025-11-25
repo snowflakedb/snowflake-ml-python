@@ -1200,7 +1200,7 @@ class FeatureStore:
                 {self._config.database}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY (RESULT_LIMIT => 10000)
             )
             WHERE NAME = '{fv_resolved_name}'
-            AND SCHEMA_NAME = '{self._config.schema}'
+            AND SCHEMA_NAME = '{self._config.schema.resolved()}'
             """
         )
 

@@ -513,13 +513,19 @@ def _submit_job(
     try:
         # Upload payload
         uploaded_payload = payload_utils.JobPayload(
-            source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=imports
+            source, entrypoint=entrypoint, pip_requirements=pip_requirements, imports=imports
         ).upload(session, stage_path)
     except SnowparkSQLException as e:
         if e.sql_error_code == 90106:
             raise RuntimeError(
                 "Please specify a schema, either in the session context or as a parameter in the job submission"
             )
+        elif e.sql_error_code == 3001 and "schema" in str(e).lower():
+            raise RuntimeError(
+                "please grant privileges on schema before submitting a job, see",
+                "https://docs.snowflake.com/en/developer-guide/snowflake-ml/ml-jobs/access-control-requirements",
+                " for more details",
+            ) from e
         raise
 
     if feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.is_enabled(default=True):
@@ -546,6 +552,12 @@ def _submit_job(
         except SnowparkSQLException as e:
             if not (e.sql_error_code == 90237 and sp_utils.is_in_stored_procedure()):  # type: ignore[no-untyped-call]
                 raise
+            elif e.sql_error_code == 3001 and "schema" in str(e).lower():
+                raise RuntimeError(
+                    "please grant privileges on schema before submitting a job, see",
+                    "https://docs.snowflake.com/en/developer-guide/snowflake-ml/ml-jobs/access-control-requirements"
+                    " for more details",
+                ) from e
             # SNOW-2390287: SYSTEM$EXECUTE_ML_JOB() is erroneously blocked in owner's rights
             # stored procedures. This will be fixed in an upcoming release.
             logger.warning(
@@ -690,6 +702,7 @@ def _do_submit_job_v2(
         # when feature flag is enabled, we get the local python version and wrap it in a dict
         # in system function, we can know whether it is python version or image tag or full image URL through the format
         spec_options["RUNTIME"] = json.dumps({"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"})
+
     job_options = {
         "EXTERNAL_ACCESS_INTEGRATIONS": external_access_integrations,
         "QUERY_WAREHOUSE": query_warehouse,
@@ -697,6 +710,9 @@ def _do_submit_job_v2(
         "MIN_INSTANCES": min_instances,
         "ASYNC": use_async,
     }
+
+    if feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(default=True):
+        job_options["ENABLE_STAGE_MOUNT_V2"] = True
     if payload.payload_name:
         job_options["GENERATE_SUFFIX"] = True
     job_options = {k: v for k, v in job_options.items() if v is not None}

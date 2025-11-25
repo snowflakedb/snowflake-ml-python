@@ -4,7 +4,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from packaging import requirements
 
 from snowflake.ml._internal import env_utils
@@ -30,13 +30,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="fill-mask",
-            model="sshleifer/tiny-distilroberta-base",
+            model="google-bert/bert-base-uncased",
             top_k=1,
         )
 
         x_df = pd.DataFrame(
             [
-                ["LynYuu is the <mask> of the Grand Duchy of Yu."],
+                ["LynYuu is the [MASK] of the Grand Duchy of Yu."],
             ]
         )
 
@@ -63,7 +63,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_ner_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="ner", model="hf-internal-testing/tiny-bert-for-token-classification")
+        model = transformers.pipeline(task="ner", model="Isotonic/distilbert_finetuned_ai4privacy_v2")
 
         x_df = pd.DataFrame(
             [
@@ -98,7 +98,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="question-answering",
-            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model="distilbert/distilbert-base-cased-distilled-squad",
             top_k=1,
         )
 
@@ -217,7 +217,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_table_question_answering_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="table-question-answering", model="google/tapas-tiny-finetuned-wtq")
+        model_id = "microsoft/tapex-base-finetuned-wtq"
+        # TODO: Use this model after upgrading pytorch>=2.6.0
+        # model_id = "google/tapas-large-finetuned-wtq"
+        model = transformers.pipeline(
+            task="table-question-answering",
+            model=model_id,
+        )
 
         x_df = pd.DataFrame(
             [
@@ -254,11 +260,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["answer", "coordinates", "cells", "aggregator"]))
 
             self.assertEqual(res["answer"].dtype.type, str)
-            self.assertEqual(res["coordinates"].dtype.type, np.object_)
-            self.assertIsInstance(res["coordinates"][0], list)
-            self.assertEqual(res["cells"].dtype.type, np.object_)
-            self.assertIsInstance(res["cells"][0], list)
-            self.assertEqual(res["aggregator"].dtype.type, str)
+            if model_id == "google/tapas-large-finetuned-wtq":
+                # only google/tapas-large-finetuned-wtq has coordinates, cells, and aggregator
+                self.assertEqual(res["coordinates"].dtype.type, np.object_)
+                self.assertIsInstance(res["coordinates"][0], list)
+                self.assertEqual(res["cells"].dtype.type, np.object_)
+                self.assertIsInstance(res["cells"][0], list)
+                self.assertEqual(res["aggregator"].dtype.type, str)
 
         self._test_registry_model(
             model=model,
@@ -312,7 +320,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-classification",
-            model="hf-internal-testing/tiny-random-distilbert",
+            model="distilbert/distilbert-base-uncased-finetuned-sst-2-english",
             top_k=1,
         )
 
@@ -347,7 +355,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-generation",
-            model="sshleifer/tiny-ctrl",
+            model="Qwen/Qwen2.5-0.5B",
         )
 
         x_df = pd.DataFrame(
@@ -387,12 +395,8 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_text_generation_chat_template_pipeline(
         self,
-        registry_test_fn: str,
     ) -> None:
         import transformers
 
@@ -436,7 +440,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("message", row[0])
                 self.assertIn("content", row[0]["message"])
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -452,7 +456,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text2text-generation",
-            model="patrickvonplaten/t5-tiny-random",
+            model="google-t5/t5-small",
         )
 
         x_df = pd.DataFrame(
@@ -476,7 +480,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_translation_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="translation_en_to_ja", model="patrickvonplaten/t5-tiny-random")
+        model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")
 
         x_df = pd.DataFrame(
             [
@@ -507,6 +511,9 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
+            additional_dependencies=[
+                "sentencepiece",
+            ],
         )
 
     def test_zero_shot_classification_pipeline(self) -> None:
@@ -514,7 +521,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="zero-shot-classification",
-            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model="sileod/deberta-v3-base-tasksource-nli",
         )
 
         x_df = pd.DataFrame(

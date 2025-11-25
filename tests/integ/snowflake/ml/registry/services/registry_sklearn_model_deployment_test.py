@@ -71,7 +71,7 @@ class TestRegistrySklearnModelDeploymentInteg(registry_model_deployment_test_bas
             remainder="drop",
         )
 
-        classifier = RandomForestClassifier(n_estimators=10)
+        classifier = RandomForestClassifier(n_estimators=10, n_jobs=1)
         model = Pipeline([("preprocessor", preprocessor), ("classifier", classifier)])
 
         model.fit(train_df, y_train)

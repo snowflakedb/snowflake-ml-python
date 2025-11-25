@@ -1,8 +1,10 @@
 import inspect
 import pickle
+import random
 import threading
 import time
 import traceback
+import typing
 from typing import Any, Callable, Optional
 from unittest import mock
 
@@ -29,6 +31,7 @@ class TelemetryTest(parameterized.TestCase):
     """Testing telemetry functions."""
 
     def setUp(self) -> None:
+        utils_telemetry.clear_cached_conn()
         self.mock_session = absltest.mock.MagicMock(spec=session.Session)
         self.mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
         self.mock_snowflake_conn = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
@@ -79,9 +82,150 @@ class TelemetryTest(parameterized.TestCase):
         )
         self.assertIn("DummyObject.foo", data[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
         self.assertEqual(data[utils_telemetry.TelemetryField.KEY_FUNC_PARAMS.value], {"param": "'val'"})
-        self.assertEqual(data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value], {"custom_tag": "tag"})
+        custom_tags = data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value]
+        self.assertEqual(custom_tags["custom_tag"], "tag")
+        self.assertIn(utils_telemetry.CustomTagKey.EXECUTION_CONTEXT.value, custom_tags)
 
         # TODO(hayu): [SNOW-750523] Add json level comparisons in telemetry unit tests.
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_cached_connection(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        def new_session() -> Any:
+            mock_telemetry = absltest.mock.MagicMock(spec=connector_telemetry.TelemetryClient)
+            mock_telemetry._log_batch = [random.randint(1, 1000) for _ in range(5)]
+            mock_snowflake_conn = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
+            mock_snowflake_conn._telemetry = mock_telemetry
+            mock_snowflake_conn._session_parameters = {}
+            mock_snowflake_conn.is_closed.return_value = False
+            mock_snowflake_conn.is_valid.return_value = True
+            mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
+            mock_server_conn._conn = mock_snowflake_conn
+            mock_session = absltest.mock.MagicMock(spec=session.Session)
+            mock_session.telemetry_enabled.return_value = True
+            mock_session._conn = mock_server_conn
+            return {mock_session}
+
+        mock_get_active_sessions.side_effect = new_session
+
+        class DummyObject:
+            def __init__(self) -> None:
+                pass
+
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+            )
+            def foo(self) -> None:
+                pass
+
+        self.assertIsNone(utils_telemetry.get_cached_conn())
+        test_obj = DummyObject()
+        test_obj.foo()
+        conn1 = utils_telemetry.get_cached_conn()
+        self.assertIsNotNone(conn1)
+        test_obj.foo()
+        conn2 = utils_telemetry.get_cached_conn()
+        self.assertIs(conn1, conn2)
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_cached_invalid_connection(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        def new_session() -> Any:
+            mock_telemetry = absltest.mock.MagicMock(spec=connector_telemetry.TelemetryClient)
+            mock_telemetry._log_batch = [random.randint(1, 1000) for _ in range(5)]
+            mock_snowflake_conn = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
+            mock_snowflake_conn._telemetry = mock_telemetry
+            mock_snowflake_conn._session_parameters = {}
+            mock_snowflake_conn.is_closed.return_value = False
+            mock_snowflake_conn.is_valid.return_value = False
+            mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
+            mock_server_conn._conn = mock_snowflake_conn
+            mock_session = absltest.mock.MagicMock(spec=session.Session)
+            mock_session.telemetry_enabled.return_value = True
+            mock_session._conn = mock_server_conn
+            return {mock_session}
+
+        mock_get_active_sessions.side_effect = new_session
+
+        class DummyObject:
+            def __init__(self) -> None:
+                pass
+
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+            )
+            def foo(self) -> None:
+                pass
+
+        test_obj = DummyObject()
+        self.assertIsNone(utils_telemetry.get_cached_conn())
+        test_obj.foo()
+        conn1 = utils_telemetry.get_cached_conn()
+        self.assertIsNotNone(conn1)
+        test_obj.foo()
+        conn2 = utils_telemetry.get_cached_conn()
+        self.assertIsNotNone(conn2)
+        self.assertIsNot(conn1, conn2)
+        # batch from first connection should have been added to the second connection
+        if conn1 is not None and conn2 is not None:
+            self.assertContainsSubset(conn1._telemetry._log_batch, conn2._telemetry._log_batch)
+        else:
+            raise AssertionError("Connections should not be None")
+
+    @typing.no_type_check
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_new_connection_includes_existing_batch_when_flushing(
+        self, mock_get_active_sessions: mock.MagicMock
+    ) -> None:
+        def new_session() -> Any:
+            mock_telemetry = absltest.mock.MagicMock(spec=connector_telemetry.TelemetryClient)
+            mock_telemetry._log_batch = []
+            mock_telemetry.is_closed.return_value = False
+            mock_telemetry.try_add_log_to_batch.side_effect = lambda log: mock_telemetry._log_batch.append(log)
+            mock_telemetry.send_batch.side_effect = lambda: mock_telemetry._log_batch.clear()
+            mock_snowflake_conn = absltest.mock.MagicMock(spec=connector.SnowflakeConnection)
+            mock_snowflake_conn._telemetry = mock_telemetry
+            mock_snowflake_conn._session_parameters = {}
+            mock_snowflake_conn.is_closed.return_value = False
+            mock_snowflake_conn.is_valid.return_value = True
+            mock_server_conn = absltest.mock.MagicMock(spec=server_connection.ServerConnection)
+            mock_server_conn._conn = mock_snowflake_conn
+            mock_session = absltest.mock.MagicMock(spec=session.Session)
+            mock_session.telemetry_enabled.return_value = True
+            mock_session._conn = mock_server_conn
+            return {mock_session}
+
+        mock_get_active_sessions.side_effect = new_session
+
+        class DummyObject:
+            def __init__(self) -> None:
+                pass
+
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+            )
+            def foo(self) -> None:
+                pass
+
+        test_obj = DummyObject()
+        self.assertIsNone(utils_telemetry.get_cached_conn())
+        test_obj.foo()
+        conn1 = utils_telemetry.get_cached_conn()
+        self.assertIsNotNone(conn1)
+        conn1.is_valid.return_value = False
+        test_obj.foo()
+        conn2 = utils_telemetry.get_cached_conn()
+        self.assertIsNotNone(conn2)
+        self.assertIsNot(conn1, conn2)  # make sure new connection was created
+        conn1._telemetry.send_batch.assert_not_called()  # old connection should not have sent batch yet
+        for _ in range(utils_telemetry._FLUSH_SIZE - 1):  # add more logs to trigger flush
+            test_obj.foo()
+            conn2._telemetry._enabled = True  # ensure telemetry is still enabled type: ignore
+        conn3 = utils_telemetry.get_cached_conn()
+        self.assertIs(conn2, conn3)  # still the same new connection
+        conn3._telemetry.send_batch.assert_called_once()  # new connection should have sent batch
+        self.assertEqual(len(conn3._telemetry._log_batch), 1)  # 1 logs should remain after flush type: ignore
 
     def test_client_telemetry_conn_member_name_session(self) -> None:
         """Test send_api_usage_telemetry with `conn_member_name` and object has a session."""
@@ -352,11 +496,13 @@ class TelemetryTest(parameterized.TestCase):
                 "default_stmt_params": repr(params["default_stmt_params"])
             },
             utils_telemetry.TelemetryField.KEY_API_CALLS.value: [api_call_time, api_call_sleep, api_call_foo],
-            utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value: {"custom_tag": "tag"},
         }
         self.assertIsNotNone(actual_statement_params)
         assert actual_statement_params is not None  # mypy
         self.assertEqual(actual_statement_params, actual_statement_params | expected_statement_params)
+        actual_custom_tags = actual_statement_params.get(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, {})
+        self.assertEqual(actual_custom_tags["custom_tag"], "tag")
+        self.assertIn(utils_telemetry.CustomTagKey.EXECUTION_CONTEXT.value, actual_custom_tags)
         self.assertIn("DummyObject.foo", actual_statement_params[utils_telemetry.TelemetryField.KEY_FUNC_NAME.value])
         self.assertFalse(hasattr(test_obj.foo2(), "_statement_params"))
 
@@ -783,6 +929,96 @@ class TelemetryTest(parameterized.TestCase):
             )
 
             self.assertEqual(conn, mock_conn)
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    @mock.patch("snowflake.ml._internal.env_utils.get_execution_context")
+    def test_log_execution_context(
+        self, mock_get_execution_context: mock.MagicMock, mock_get_active_sessions: mock.MagicMock
+    ) -> None:
+        """Test send_api_usage_telemetry with log_execution_context=True."""
+        mock_get_active_sessions.return_value = {self.mock_session}
+        mock_get_execution_context.return_value = "SPROC"
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+                func_params_to_log=["param"],
+                log_execution_context=True,
+            )
+            def foo(self, param: Any) -> None:
+                pass
+
+        test_obj = DummyObject()
+        test_obj.foo(param="test_value")
+
+        self.mock_telemetry.try_add_log_to_batch.assert_called()
+        message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
+        data = message["data"]
+
+        # Verify execution context is in custom_tags
+        self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, data)
+        custom_tags = data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value]
+        self.assertIn(utils_telemetry.CustomTagKey.EXECUTION_CONTEXT.value, custom_tags)
+        self.assertEqual(custom_tags[utils_telemetry.CustomTagKey.EXECUTION_CONTEXT.value], "SPROC")
+
+        # Verify get_execution_context was called
+        mock_get_execution_context.assert_called_once()
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    @mock.patch("snowflake.ml._internal.env_utils.get_execution_context")
+    def test_log_execution_context_with_existing_custom_tags(
+        self, mock_get_execution_context: mock.MagicMock, mock_get_active_sessions: mock.MagicMock
+    ) -> None:
+        """Test that log_execution_context merges with existing custom_tags."""
+        mock_get_active_sessions.return_value = {self.mock_session}
+        mock_get_execution_context.return_value = "EXTERNAL"
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+                custom_tags={"existing_tag": "existing_value"},
+                log_execution_context=True,
+            )
+            def foo(self) -> None:
+                pass
+
+        test_obj = DummyObject()
+        test_obj.foo()
+
+        self.mock_telemetry.try_add_log_to_batch.assert_called()
+        message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
+        data = message["data"]
+
+        # Verify both existing and new custom tags are present
+        self.assertIn(utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value, data)
+        custom_tags = data[utils_telemetry.TelemetryField.KEY_CUSTOM_TAGS.value]
+        self.assertEqual(custom_tags["existing_tag"], "existing_value")
+        self.assertEqual(custom_tags[utils_telemetry.CustomTagKey.EXECUTION_CONTEXT.value], "EXTERNAL")
+
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    @mock.patch("snowflake.ml._internal.env_utils.get_execution_context")
+    def test_log_execution_context_disabled(
+        self, mock_get_execution_context: mock.MagicMock, mock_get_active_sessions: mock.MagicMock
+    ) -> None:
+        """Test that execution context is not logged when log_execution_context=False."""
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        class DummyObject:
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+                log_execution_context=False,
+            )
+            def foo(self) -> None:
+                pass
+
+        test_obj = DummyObject()
+        test_obj.foo()
+
+        # Verify get_execution_context was not called
+        mock_get_execution_context.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -39,6 +39,11 @@ class ModelMonitorSourceConfig:
     custom_metric_columns: Optional[list[str]] = None
     """List of columns in the source containing custom metrics."""
 
+    timestamp_custom_metric_table: Optional[str] = None
+    """Optional name of a table containing timestamp-based custom metrics.
+    Can be specified unqualified or fully qualified as database.schema.table.
+    """
+
 
 @dataclass
 class ModelMonitorConfig:

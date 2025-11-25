@@ -19,7 +19,8 @@
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 # feature-areas: Comma-separated list of feature areas to test (e.g., "jobs,core").
-#   Valid areas: model_registry, feature_store, jobs, observability, cortex, core, modeling, model_serving, data, none
+#   Valid areas: model_registry, feature_store, jobs, observability, experiment_tracking, cortex, core, modeling,
+#     model_serving, data, none
 #
 # Action
 #   - Copy the integration tests from workspace folder and execute them in testing Python env using pytest.
@@ -197,6 +198,20 @@ case ${PYTHON_VERSION} in
         PYTHON_EXECUTABLE="py -3.12"
     else
         PYTHON_EXECUTABLE="python3.12"
+    fi
+    ;;
+  3.13)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.13"
+    else
+        PYTHON_EXECUTABLE="python3.13"
+    fi
+    ;;
+  3.14)
+    if [ ${IS_NT} = true ]; then
+        PYTHON_EXECUTABLE="py -3.14"
+    else
+        PYTHON_EXECUTABLE="python3.14"
     fi
     ;;
 esac

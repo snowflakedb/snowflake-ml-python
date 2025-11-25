@@ -3,14 +3,14 @@ import importlib
 import inspect
 import io
 import itertools
-import keyword
 import logging
 import pickle
 import sys
 import textwrap
 from importlib.abc import Traversable
 from pathlib import Path, PurePath
-from typing import Any, Callable, Optional, Union, cast, get_args, get_origin
+from types import ModuleType
+from typing import IO, Any, Callable, Optional, Union, cast, get_args, get_origin
 
 import cloudpickle as cp
 from packaging import version
@@ -25,11 +25,12 @@ from snowflake.ml.jobs._utils import (
 )
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
+from snowflake.snowpark._internal.utils import zip_file_or_directory_to_stream
 
 logger = logging.getLogger(__name__)
 
 cp.register_pickle_by_value(function_payload_utils)
-
+ImportType = Union[str, Path, ModuleType]
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
 _SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
@@ -247,7 +248,8 @@ _STARTUP_SCRIPT_CODE = textwrap.dedent(
 ).strip()
 
 
-def resolve_path(path: str) -> types.PayloadPath:
+def resolve_path(path: Union[str, Path]) -> types.PayloadPath:
+    path = path.as_posix() if isinstance(path, Path) else path
     try:
         stage_path = stage_utils.StagePath(path)
     except ValueError:
@@ -255,49 +257,93 @@ def resolve_path(path: str) -> types.PayloadPath:
     return stage_path
 
 
+def _compress_and_upload_file(
+    session: snowpark.Session, source_path: Path, stage_path: PurePath, import_path: Optional[str] = None
+) -> None:
+    absolute_source_path = source_path.absolute()
+    leading_path = absolute_source_path.as_posix()[: -len(import_path)] if import_path else None
+    filename = f"{source_path.name}.zip" if source_path.is_dir() or source_path.suffix == ".py" else source_path.name
+    with zip_file_or_directory_to_stream(source_path.absolute().as_posix(), leading_path) as stream:
+        session.file.put_stream(
+            cast(IO[bytes], stream),
+            stage_path.joinpath(filename).as_posix(),
+            auto_compress=False,
+            overwrite=True,
+        )
+
+
+def _upload_directory(session: snowpark.Session, source_path: Path, payload_stage_path: PurePath) -> None:
+    # Manually traverse the directory and upload each file, since Snowflake PUT
+    # can't handle directories. Reduce the number of PUT operations by using
+    # wildcard patterns to batch upload files with the same extension.
+    upload_path_patterns = set()
+    for p in source_path.rglob("*"):
+        if p.is_dir():
+            continue
+        if p.name.startswith("."):
+            # Hidden files: use .* pattern for batch upload
+            if p.suffix:
+                upload_path_patterns.add(p.parent.joinpath(f".*{p.suffix}"))
+            else:
+                upload_path_patterns.add(p.parent.joinpath(".*"))
+        else:
+            # Regular files: use * pattern for batch upload
+            if p.suffix:
+                upload_path_patterns.add(p.parent.joinpath(f"*{p.suffix}"))
+            else:
+                upload_path_patterns.add(p)
+
+    for path in upload_path_patterns:
+        session.file.put(
+            str(path),
+            payload_stage_path.joinpath(path.parent.relative_to(source_path)).as_posix(),
+            overwrite=True,
+            auto_compress=False,
+        )
+
+
 def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_specs: types.PayloadSpec) -> None:
-    for source_path, remote_relative_path in payload_specs:
+    for spec in payload_specs:
+        source_path = spec.source_path
+        remote_relative_path = spec.remote_relative_path
+        compress = spec.compress
         payload_stage_path = stage_path.joinpath(remote_relative_path) if remote_relative_path else stage_path
         if isinstance(source_path, stage_utils.StagePath):
             # only copy files into one stage directory from another stage directory, not from stage file
             # due to incomplete of StagePath functionality
-            session.sql(f"copy files into {payload_stage_path.as_posix()}/ from {source_path.as_posix()}/").collect()
+            if source_path.as_posix().endswith(".py"):
+                session.sql(f"copy files into {stage_path.as_posix()}/ from {source_path.as_posix()}").collect()
+            else:
+                session.sql(
+                    f"copy files into {payload_stage_path.as_posix()}/ from {source_path.as_posix()}/"
+                ).collect()
         elif isinstance(source_path, Path):
             if source_path.is_dir():
-                # Manually traverse the directory and upload each file, since Snowflake PUT
-                # can't handle directories. Reduce the number of PUT operations by using
-                # wildcard patterns to batch upload files with the same extension.
-                upload_path_patterns = set()
-                for p in source_path.rglob("*"):
-                    if p.is_dir():
-                        continue
-                    if p.name.startswith("."):
-                        # Hidden files: use .* pattern for batch upload
-                        if p.suffix:
-                            upload_path_patterns.add(p.parent.joinpath(f".*{p.suffix}"))
-                        else:
-                            upload_path_patterns.add(p.parent.joinpath(".*"))
-                    else:
-                        # Regular files: use * pattern for batch upload
-                        if p.suffix:
-                            upload_path_patterns.add(p.parent.joinpath(f"*{p.suffix}"))
-                        else:
-                            upload_path_patterns.add(p)
+                if compress:
+                    _compress_and_upload_file(
+                        session,
+                        source_path,
+                        stage_path,
+                        remote_relative_path.as_posix() if remote_relative_path else None,
+                    )
+                else:
+                    _upload_directory(session, source_path, payload_stage_path)
 
-                for path in upload_path_patterns:
+            elif source_path.is_file():
+                if compress and source_path.suffix == ".py":
+                    _compress_and_upload_file(
+                        session,
+                        source_path,
+                        stage_path,
+                        remote_relative_path.as_posix() if remote_relative_path else None,
+                    )
+                else:
                     session.file.put(
-                        str(path),
-                        payload_stage_path.joinpath(path.parent.relative_to(source_path)).as_posix(),
+                        str(source_path.resolve()),
+                        payload_stage_path.as_posix(),
                         overwrite=True,
                         auto_compress=False,
                     )
-            else:
-                session.file.put(
-                    str(source_path.resolve()),
-                    payload_stage_path.as_posix(),
-                    overwrite=True,
-                    auto_compress=False,
-                )
 
 
 def upload_system_resources(session: snowpark.Session, stage_path: PurePath) -> None:
@@ -385,71 +431,191 @@ def resolve_entrypoint(
     )
 
 
-def resolve_additional_payloads(
-    additional_payloads: Optional[list[Union[str, tuple[str, str]]]]
-) -> list[types.PayloadSpec]:
-    """
-    Determine how to stage local packages so that imports continue to work.
+def get_zip_file_from_path(path: types.PayloadPath) -> types.PayloadPath:
+    """Finds the path of the outermost zip archive from a given file path.
+
+    Examples:
+        >>> get_zip_file_from_path("/path/to/archive.zip/nested_file.py")
+        "/path/to/archive.zip"
+        >>> get_zip_file_from_path("/path/to/archive.zip")
+        "/path/to/archive.zip"
+        >>> get_zip_file_from_path("/path/to/regular_file.py")
+        "/path/to/regular_file.py"
 
     Args:
-        additional_payloads: A list of directory paths, each optionally paired with a dot-separated
-            import path
-            e.g. [("proj/src/utils", "src.utils"), "proj/src/helper"]
-            if there is no import path, the last part of path will be considered as import path
-            e.g. the import path of "proj/src/helper" is "helper"
+        path: The file path to inspect.
 
     Returns:
-        A list of payloadSpec for additional payloads.
+        str: The path to the outermost zip file, or the original path if
+            none is found.
+    """
 
-    Raises:
-        FileNotFoundError: If any specified package path does not exist.
-        ValueError: If the format of local_packages is invalid.
+    path_str = path.as_posix()
+
+    index = path_str.rfind(".zip/")
+    if index != -1:
+        return resolve_path(path_str[: index + 4])
+    return path
+
+
+def _finalize_payload_pair(
+    p: types.PayloadPath, base_import_path: Optional[str]
+) -> tuple[types.PayloadPath, Optional[str]]:
+    """Finalize the `(payload_path, import_path)` pair based on source type.
+
+    - Zip file: ignore import path (returns `(p, None)`).
+    - Python file: if `base_import_path` is provided, append ".py"; otherwise None.
+    - Directory: preserve `base_import_path` as-is.
+    - Stage file: use `base_import_path` as-is since we do not compress stage files.
+    - Other files: ignore import path (None).
+
+    Args:
+        p (types.PayloadPath): The resolved source path
+        base_import_path (Optional[str]): Slash-separated import path
+
+    Returns:
+        tuple[types.PayloadPath, Optional[str]]: `(p, final_import_path)` where:
+            - `final_import_path` is None for zip archives and non-Python files.
+            - `final_import_path` is `base_import_path + ".py"` for Python files when
+              `base_import_path` is provided; otherwise None.
+            - `final_import_path` is `base_import_path` for directories.
 
     """
-    if not additional_payloads:
-        return []
-
-    logger.warning(
-        "When providing a stage path as an additional payload, "
-        "please ensure it points to a directory. "
-        "Files are not currently supported."
-    )
-
-    additional_payloads_paths = []
-    for pkg in additional_payloads:
-        if isinstance(pkg, str):
-            source_path = resolve_path(pkg).absolute()
-            module_path = source_path.name
-        elif isinstance(pkg, tuple):
-            try:
-                source_path_str, module_path = pkg
-            except ValueError:
-                raise ValueError(
-                    f"Invalid format in `additional_payloads`. "
-                    f"Expected a tuple of (source_path, module_path). Got {pkg}"
-                )
-            source_path = resolve_path(source_path_str).absolute()
+    if p.suffix == ".zip":
+        final_import_path = None
+    elif isinstance(p, stage_utils.StagePath):
+        final_import_path = base_import_path
+    elif p.is_file():
+        if p.suffix == ".py":
+            final_import_path = (base_import_path + ".py") if base_import_path else None
         else:
-            raise ValueError("the format of additional payload is not correct")
+            final_import_path = None
+    else:
+        final_import_path = base_import_path
 
-        if not source_path.exists():
-            raise FileNotFoundError(f"{source_path} does not exist")
+    validate_import_path(p, final_import_path)
+    return (p, None) if p.suffix == ".zip" else (p, final_import_path)
 
-        if isinstance(source_path, Path):
-            if source_path.is_file():
-                raise ValueError(f"file is not supported for additional payloads: {source_path}")
 
-        module_parts = module_path.split(".")
-        for part in module_parts:
-            if not part.isidentifier() or keyword.iskeyword(part):
-                raise ValueError(
-                    f"Invalid module import path '{module_path}'. "
-                    f"'{part}' is not a valid Python identifier or is a keyword."
-                )
+def resolve_import_path(
+    path: Union[types.PayloadPath, ModuleType],
+    import_path: Optional[str] = None,
+) -> list[tuple[types.PayloadPath, Optional[str]]]:
+    """
+    Resolve and normalize the import path for modules, Python files, or zip payloads.
 
-        dest_path = PurePath(*module_parts)
-        additional_payloads_paths.append(types.PayloadSpec(source_path, dest_path))
-    return additional_payloads_paths
+    Args:
+        path (Union[types.PayloadPath, ModuleType]): The source path or module to resolve.
+            - If a directory is provided, it is compressed as a zip archive preserving its structure.
+            - If a single Python file is provided, the file itself is zipped.
+            - If a module is provided, it is treated as a directory or Python file.
+            - If a zip file is provided, it is uploaded as it is.
+            - If a stage file is provided, we only support stage file when the import path is provided
+        import_path (Optional[str], optional): Explicit import path to use. If None,
+            the function infers it from `path`.
+
+    Returns:
+        list[tuple[types.PayloadPath, Optional[str]]]: A list of tuples where each tuple
+        contains the resolved payload path and its corresponding import path (if any).
+
+    Raises:
+        FileNotFoundError: If the provided `path` does not exist.
+        NotImplementedError: If the stage file is provided without an import path.
+        ValueError: If the import path cannot be resolved or is invalid.
+    """
+    if import_path is None:
+        import_path = path.stem if isinstance(path, types.PayloadPath) else path.__name__
+    import_path = import_path.strip().replace(".", "/") if import_path else None
+    if isinstance(path, Path):
+        if not path.exists():
+            raise FileNotFoundError(f"{path} is not found")
+        return [_finalize_payload_pair(path.absolute(), import_path)]
+    elif isinstance(path, stage_utils.StagePath):
+        if import_path:
+            return [_finalize_payload_pair(path.absolute(), import_path)]
+        raise NotImplementedError("We only support stage file when the import path is provided")
+    elif isinstance(path, ModuleType):
+        if hasattr(path, "__path__"):
+            paths = [get_zip_file_from_path(resolve_path(p).absolute()) for p in path.__path__]
+            return [_finalize_payload_pair(p, import_path) for p in paths]
+        elif hasattr(path, "__file__") and path.__file__:
+            p = get_zip_file_from_path(Path(path.__file__).absolute())
+            return [_finalize_payload_pair(p, import_path)]
+        else:
+            raise ValueError(f"Module {path} is not a valid module")
+    else:
+        raise ValueError(f"Module {path} is not a valid imports")
+
+
+def validate_import_path(source: Union[str, types.PayloadPath], import_path: Optional[str]) -> None:
+    """Validate the import path for local python file or directory."""
+    if import_path is None:
+        return
+
+    source_path = resolve_path(source) if isinstance(source, str) else source
+    if isinstance(source_path, stage_utils.StagePath):
+        if not source_path.as_posix().endswith(import_path + ".py"):
+            raise ValueError(f"Import path {import_path} must end with the source name {source_path}")
+    elif (source_path.is_file() and source_path.suffix == ".py") or source_path.is_dir():
+        if not source_path.as_posix().endswith(import_path):
+            raise ValueError(f"Import path {import_path} must end with the source name {source_path}")
+
+
+def upload_imports(
+    imports: Optional[list[Union[str, Path, ModuleType, tuple[Union[str, Path, ModuleType], Optional[str]]]]],
+    session: snowpark.Session,
+    stage_path: PurePath,
+) -> None:
+    """Resolve paths and upload imports for ML Jobs.
+
+    Args:
+        imports: Optional list of paths/modules, or tuples of
+            ``(path_or_module, import_path)``. The path can be a local
+            directory, a local ``.py`` file, a local ``.zip`` file, or a stage
+            path (for example, ``@stage/path``). If a tuple is provided and the
+            first element is a local directory or ``.py`` file, the second
+            element denotes the Python import path (dot or slash separated) to
+            which the content should be mounted. If not provided for local
+            sources, it defaults to the stem of the path/module. For stage
+            paths or non-Python local files, the import path is ignored.
+        session: Active Snowpark session used to upload files.
+        stage_path: Destination stage subpath where payloads will be uploaded.
+
+    Raises:
+        ValueError: If a import has an invalid format or the
+            provided import path is incompatible with the source.
+
+    """
+    if not imports:
+        return
+    for additional_payload in imports:
+        if isinstance(additional_payload, tuple):
+            source, import_path = additional_payload
+        elif isinstance(additional_payload, str) or isinstance(additional_payload, ModuleType):
+            source = additional_payload
+            import_path = None
+        else:
+            raise ValueError(f"Invalid import format: {additional_payload}")
+        resolved_imports = resolve_import_path(
+            resolve_path(source) if not isinstance(source, ModuleType) else source, import_path
+        )
+        for source_path, import_path in resolved_imports:
+            # TODO(SNOW-2467038): support import path for stage files or directories
+            if isinstance(source_path, stage_utils.StagePath):
+                remote = None
+                compress = False
+            elif source_path.as_posix().endswith(".zip"):
+                remote = None
+                compress = False
+            elif source_path.is_dir() or source_path.suffix == ".py":
+                remote = PurePath(import_path) if import_path else None
+                compress = True
+            else:
+                # if the file is not a python file, ignore the import path
+                remote = None
+                compress = False
+
+            upload_payloads(session, stage_path, types.PayloadSpec(source_path, remote, compress=compress))
 
 
 class JobPayload:
@@ -459,13 +625,13 @@ class JobPayload:
         entrypoint: Optional[Union[str, Path]] = None,
         *,
         pip_requirements: Optional[list[str]] = None,
-        additional_payloads: Optional[list[Union[str, tuple[str, str]]]] = None,
+        imports: Optional[list[Union[ImportType, tuple[ImportType, Optional[str]]]]] = None,
     ) -> None:
         # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
         self.source = resolve_path(source) if isinstance(source, str) else source
         self.entrypoint = resolve_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
-        self.additional_payloads = additional_payloads
+        self.imports = imports
 
     def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
         # Prepare local variables
@@ -473,7 +639,6 @@ class JobPayload:
         source = resolve_source(self.source)
         entrypoint = resolve_entrypoint(source, self.entrypoint)
         pip_requirements = self.pip_requirements or []
-        additional_payload_specs = resolve_additional_payloads(self.additional_payloads)
 
         # Create stage if necessary
         stage_name = stage_path.parts[0].lstrip("@")
@@ -491,6 +656,7 @@ class JobPayload:
         payload_name = None
         # Upload payload to stage - organize into app/ subdirectory
         app_stage_path = stage_path.joinpath(constants.APP_STAGE_SUBPATH)
+        upload_imports(self.imports, session, app_stage_path)
         if not isinstance(source, types.PayloadPath):
             if isinstance(source, function_payload_utils.FunctionPayload):
                 payload_name = source.function.__name__
@@ -516,8 +682,6 @@ class JobPayload:
             upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
             if source.is_file():
                 source = source.parent
-
-        upload_payloads(session, app_stage_path, *additional_payload_specs)
 
         if not any(r.startswith("cloudpickle") for r in pip_requirements):
             pip_requirements.append(f"cloudpickle~={version.parse(cp.__version__).major}.0")
@@ -620,7 +784,12 @@ def _serialize_callable(func: Callable[..., Any]) -> bytes:
     try:
         func_bytes: bytes = cp.dumps(func)
         return func_bytes
-    except pickle.PicklingError as e:
+    except (pickle.PicklingError, TypeError) as e:
+        if isinstance(e, TypeError) and "_thread.lock" in str(e):
+            raise RuntimeError(
+                "Unable to pickle an object that internally holds a reference to a Session object, "
+                "such as a Snowpark DataFrame."
+            ) from e
         if isinstance(func, functools.partial):
             # Try to find which part of the partial isn't serializable for better debuggability
             objects = [

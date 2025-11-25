@@ -92,7 +92,7 @@ py_test(
 py_test(
     name = "snowmlmodel_test",
     srcs = ["snowmlmodel_test.py"],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model:model_signature",
@@ -164,7 +164,7 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
-    shard_count = 2,
+    shard_count = 1,
     tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model:model_signature",

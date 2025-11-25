@@ -10,13 +10,11 @@ from absl.testing import absltest, parameterized
 from common_utils import (
     FS_INTEG_TEST_DATASET_SCHEMA,
     FS_INTEG_TEST_DB,
-    FS_INTEG_TEST_DUMMY_DB,
-    cleanup_temporary_objects,
     compare_dataframe,
     create_mock_session,
     create_random_schema,
-    get_test_warehouse_name,
 )
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
@@ -31,34 +29,31 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewSlice,
     FeatureViewStatus,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+from snowflake.ml.utils import connection_params
 from snowflake.ml.version import VERSION
 from snowflake.snowpark import DataFrame, Session, exceptions as snowpark_exceptions
 from snowflake.snowpark.functions import call_udf, col, udf
 
 
-class FeatureStoreTest(parameterized.TestCase):
-    @classmethod
-    def setUpClass(self) -> None:
-        self._session_config = SnowflakeLoginOptions()
-        self._session = Session.builder.configs(self._session_config).create()
+class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        # Preserve access to connection options for tests that spawn sessions explicitly
+        self._session_config = connection_params.SnowflakeLoginOptions()
         self._active_feature_store = []
 
         try:
-            self._session.sql(f"CREATE DATABASE IF NOT EXISTS {FS_INTEG_TEST_DUMMY_DB}").collect()
-            self._session.sql(f"CREATE DATABASE IF NOT EXISTS {FS_INTEG_TEST_DB}").collect()
-            cleanup_temporary_objects(self._session)
-            self._session.sql(
-                f"CREATE SCHEMA IF NOT EXISTS {FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}"
-            ).collect()
-            self._test_warehouse_name = get_test_warehouse_name(self._session)
+            # Override legacy constants to point to per-test resources
+            globals()["FS_INTEG_TEST_DB"] = self.test_db
+            globals()["FS_INTEG_TEST_DUMMY_DB"] = self._dummy_db
+            # Ensure dataset schema exists in per-test DB
+            self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}").collect()
             self._mock_table = self._create_mock_table("customers")
         except Exception as e:
-            self.tearDownClass()
+            self.tearDown()
             raise Exception(f"Test setup failed: {e}")
 
-    @classmethod
-    def tearDownClass(self) -> None:
+    def tearDown(self) -> None:
         for fs in self._active_feature_store:
             try:
                 fs._clear(dryrun=False)
@@ -68,11 +63,10 @@ class FeatureStoreTest(parameterized.TestCase):
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
 
         self._session.sql(f"DROP TABLE IF EXISTS {self._mock_table}").collect()
-        self._session.close()
+        super().tearDown()
 
-    @classmethod
     def _create_mock_table(self, name: str) -> str:
-        table_full_path = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
+        table_full_path = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
         self._session.sql(
             f"""CREATE TABLE IF NOT EXISTS {table_full_path}
                 (name VARCHAR(64), id INT, title VARCHAR(128), age INT, dept VARCHAR(64), ts INT)
@@ -88,10 +82,10 @@ class FeatureStoreTest(parameterized.TestCase):
         return table_full_path
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
-        current_schema = create_random_schema(self._session, "FS_TEST") if name is None else name
+        current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db) if name is None else name
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -99,7 +93,7 @@ class FeatureStoreTest(parameterized.TestCase):
         self._active_feature_store.append(fs)
         # Intentionally point session to a different database to make sure feature store code is resilient to
         # session location.
-        self._session.use_database(FS_INTEG_TEST_DUMMY_DB)
+        self._session.use_database(self._dummy_db)
         return fs
 
     def _check_tag_value(
@@ -206,7 +200,7 @@ class FeatureStoreTest(parameterized.TestCase):
         self._session.sql(f"DROP SCHEMA IF EXISTS {FS_INTEG_TEST_DB}.{schema_name}").collect()
 
     def test_create_feature_store_when_database_not_exists(self) -> None:
-        current_schema = create_random_schema(self._session, "FS_TEST")
+        current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db)
         db_name = "RANDOM_NONEXIST_NONSENSE_FOOBAR_XYZ_DB"
         dbs = self._session.sql(f"SHOW DATABASES LIKE '{db_name}'").collect()
         self.assertEqual(len(dbs), 0)
@@ -225,7 +219,7 @@ class FeatureStoreTest(parameterized.TestCase):
             self.assertEqual(len(dbs), 0)
 
     def test_create_feature_store_when_tags_missing(self) -> None:
-        current_schema = create_random_schema(self._session, "FS_TEST")
+        current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db)
         with self.assertRaisesRegex(ValueError, "Feature store internal tag .* does not exist."):
             FeatureStore(
                 self._session,
@@ -400,18 +394,18 @@ class FeatureStoreTest(parameterized.TestCase):
             refresh_freq="1d",
         )
         r11 = fs.register_feature_view(feature_view=d1, version="1.0")
-        self.assertEqual(r11.warehouse, "REGTEST_ML_4XL_MULTI")
+        self.assertEqual(r11.warehouse, self._test_warehouse_name)
         self.assertEqual(
             fs.list_feature_views().select("warehouse").filter(col("version") == "1.0").collect()[0]["WAREHOUSE"],
-            "REGTEST_ML_4XL_MULTI",
+            self._test_warehouse_name,
         )
 
-        d1.warehouse = "REGTEST_ML_SMALL"  # type: ignore[assignment]
+        d1.warehouse = self._alt_warehouse_name  # type: ignore[assignment]
         r12 = fs.register_feature_view(feature_view=d1, version="2.0")
-        self.assertEqual(r12.warehouse, "REGTEST_ML_SMALL")
+        self.assertEqual(r12.warehouse, self._alt_warehouse_name)
         self.assertEqual(
             fs.list_feature_views().select("warehouse").filter(col("version") == "2.0").collect()[0]["WAREHOUSE"],
-            "REGTEST_ML_SMALL",
+            self._alt_warehouse_name,
         )
 
         d2 = FeatureView(
@@ -420,13 +414,13 @@ class FeatureStoreTest(parameterized.TestCase):
             feature_df=self._session.sql(sql1),
             timestamp_col="ts",
             refresh_freq="1d",
-            warehouse="REGTEST_ML_SMALL",
+            warehouse=self._alt_warehouse_name,
         )
         r2 = fs.register_feature_view(feature_view=d2, version="1.0")
-        self.assertEqual(r2.warehouse, "REGTEST_ML_SMALL")
+        self.assertEqual(r2.warehouse, self._alt_warehouse_name)
         self.assertEqual(
             fs.list_feature_views().select("warehouse").filter(col("name") == "FV2").collect()[0]["WAREHOUSE"],
-            "REGTEST_ML_SMALL",
+            self._alt_warehouse_name,
         )
 
     def test_register_feature_view_with_unregistered_entity(self) -> None:
@@ -659,7 +653,7 @@ class FeatureStoreTest(parameterized.TestCase):
             refresh_freq="5 minutes",
             desc="my_fv1",
         )
-        alternate_warehouse = "REGTEST_ML_SMALL"
+        alternate_warehouse = self._alt_warehouse_name
         fs.update_default_warehouse(alternate_warehouse)
         fv1 = fs.register_feature_view(feature_view=fv1, version="FIRST")
 
@@ -1852,10 +1846,12 @@ class FeatureStoreTest(parameterized.TestCase):
             except snowpark_exceptions.SnowparkSQLException as ex:
                 self.skipTest("Failed to disable Dataset with error %r" % ex)
 
+            session.use_warehouse(self._test_warehouse_name)
+
             fs = FeatureStore(
                 session,
                 FS_INTEG_TEST_DB,
-                create_random_schema(session, "FS_DATASET_TEST"),
+                create_random_schema(session, "FS_DATASET_TEST", database=self.test_db),
                 default_warehouse=self._test_warehouse_name,
                 creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
             )
@@ -1885,7 +1881,9 @@ class FeatureStoreTest(parameterized.TestCase):
                 )
 
     def test_clear_feature_store_in_existing_schema(self) -> None:
-        current_schema = create_random_schema(self._session, "TEST_CLEAR_FEATURE_STORE_IN_EXISTING_SCHEMA")
+        current_schema = create_random_schema(
+            self._session, "TEST_CLEAR_FEATURE_STORE_IN_EXISTING_SCHEMA", database=self.test_db
+        )
 
         # create some objects outside of feature store domain, later will check if they still exists after fs._clear()
         full_schema_path = f"{FS_INTEG_TEST_DB}.{current_schema}"
@@ -1900,7 +1898,9 @@ class FeatureStoreTest(parameterized.TestCase):
         ).collect()
         self._session.sql(f"CREATE TABLE {current_schema}.my_table (id int)").collect()
         self._session.sql(f"CREATE VIEW {current_schema}.my_view AS {sql}").collect()
-        self._session.sql(f"CREATE TASK {current_schema}.my_task AS SELECT CURRENT_TIMESTAMP").collect()
+        self._session.sql(
+            f"CREATE TASK {current_schema}.my_task WAREHOUSE = {self._test_warehouse_name} AS SELECT CURRENT_TIMESTAMP"
+        ).collect()
         self._session.sql(f"CREATE TAG {current_schema}.my_tag").collect()
 
         fs = self._create_feature_store(current_schema)
@@ -1966,8 +1966,8 @@ class FeatureStoreTest(parameterized.TestCase):
             fs.register_feature_view(feature_view=fv, version="V1")
 
     def test_switch_warehouse(self) -> None:
-        warehouse = "REGTEST_ML_SMALL"
-        current_schema = create_random_schema(self._session, "FS_TEST")
+        warehouse = self._alt_warehouse_name
+        current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db)
         fs = FeatureStore(
             self._session,
             FS_INTEG_TEST_DB,
@@ -2028,7 +2028,7 @@ class FeatureStoreTest(parameterized.TestCase):
         fs.register_entity(e)
 
         sql = f"SELECT id, name, title FROM {self._mock_table}"
-        alternative_wh = "REGTEST_ML_SMALL"
+        alternative_wh = self._alt_warehouse_name
         old_desc = "this is old desc"
         fv = FeatureView(
             name="fv1",
