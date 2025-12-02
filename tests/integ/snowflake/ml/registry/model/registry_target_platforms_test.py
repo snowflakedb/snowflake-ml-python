@@ -71,7 +71,7 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
         cal_y = cal_data.target
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
-        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
+        regressor = xgboost.XGBRegressor(n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
         regressor.fit(cal_X_train, cal_y_train)
 
         def _check_predict_fn(res: pd.DataFrame) -> None:

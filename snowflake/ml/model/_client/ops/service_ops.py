@@ -11,9 +11,9 @@ import warnings
 from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
-from snowflake.ml import jobs
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.service import model_deployment_spec
@@ -976,7 +976,7 @@ class ServiceOperator:
         gpu_requests: Optional[str],
         replicas: Optional[int],
         statement_params: Optional[dict[str, Any]] = None,
-    ) -> jobs.MLJob[Any]:
+    ) -> job.MLJob[Any]:
         database_name = self._database_name
         schema_name = self._schema_name
 
@@ -1045,7 +1045,7 @@ class ServiceOperator:
         # Block until the async job is done
         async_job.result()
 
-        return jobs.MLJob(
+        return job.MLJob(
             id=sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, job_name),
             session=self._session,
         )

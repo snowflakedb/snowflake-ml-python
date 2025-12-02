@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [--tags <tags>] [--with-spcs-image]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -17,6 +17,7 @@
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
+#   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.10)
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
 #   --with-spcs-image: use spcs image for testing.
 #
@@ -31,21 +32,25 @@ target=""
 SF_ENV="prod3"
 WITH_SPCS_IMAGE=false
 TAG_FILTERS=""
+PYTHON_VERSION=""
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [--tags <tags>] [--with-spcs-image]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image]"
     echo ""
     echo "Options:"
+    echo "  -p <version>        Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
     echo "  --tags <tags>       Specify bazel tag filters (comma-separated)"
     echo "  --with-spcs-image   Use spcs image for testing."
     echo ""
     echo "Examples:"
     echo "  ${PROG} test --tags 'feature:jobs'"
     echo "  ${PROG} test --tags 'feature:jobs,feature:data'"
+    echo "  ${PROG} test -p 3.13"
+    echo "  ${PROG} test -m continuous_run -p 3.14"
     exit "${exit_code}"
 }
 
@@ -82,6 +87,10 @@ while (($#)); do
     -e | --snowflake_env)
         shift
         SF_ENV=$1
+        ;;
+    -p | --python-version)
+        shift
+        PYTHON_VERSION=$1
         ;;
     --tags)
         shift
@@ -146,6 +155,22 @@ if [[ -n "${TAG_FILTERS:-}" ]]; then
     echo "Running with tag filters: ${TAG_FILTERS}"
 else
     tag_filter="--test_tag_filters="
+fi
+
+# Set up Python version config
+python_config=""
+if [[ -n "${PYTHON_VERSION}" ]]; then
+    # Validate Python version is one of the supported versions
+    case "${PYTHON_VERSION}" in
+        3.9|3.10|3.11|3.12|3.13|3.14)
+            python_config="--config=py${PYTHON_VERSION}"
+            echo "Running with Python version: ${PYTHON_VERSION}"
+            ;;
+        *)
+            echo "Error: Unsupported Python version '${PYTHON_VERSION}'. Supported versions: 3.9, 3.10, 3.11, 3.12, 3.13, 3.14"
+            exit 1
+            ;;
+    esac
 fi
 
 cache_test_results="--cache_test_results=no"
@@ -305,9 +330,10 @@ if [[ "${action}" = "test" ]]; then
         # Set default test output verbosity (can be overridden via BAZEL_TEST_OUTPUT)
         TEST_OUTPUT_FLAG="--test_output=${BAZEL_TEST_OUTPUT:-errors}"
         "${bazel}" test \
-            --jobs=8 \
-            --local_test_jobs=8 \
+            --jobs=6 \
+            --local_test_jobs=6 \
             --config="${group}" \
+            ${python_config} \
             "${cache_test_results}" \
             ${TEST_OUTPUT_FLAG} \
             ${action_env[@]+"${action_env[@]}"} \
@@ -324,6 +350,7 @@ elif [[ "${action}" = "coverage" ]]; then
 
         "${bazel}" coverage \
             --config="${group}" \
+            ${python_config} \
             "${cache_test_results}" \
             --combined_report=lcov \
             ${action_env[@]+"${action_env[@]}"} \

@@ -9,6 +9,8 @@ import runpy
 import sys
 import time
 import traceback
+import zipfile
+from pathlib import Path
 from typing import Any, Optional
 
 # Ensure payload directory is in sys.path for module imports before importing other modules
@@ -18,11 +20,17 @@ from typing import Any, Optional
 STAGE_MOUNT_PATH = os.environ.get("MLRS_STAGE_MOUNT_PATH", "/mnt/job_stage")
 JOB_RESULT_PATH = os.environ.get("MLRS_RESULT_PATH", "output/mljob_result.pkl")
 PAYLOAD_PATH = os.environ.get("MLRS_PAYLOAD_DIR")
+
 if PAYLOAD_PATH and not os.path.isabs(PAYLOAD_PATH):
     PAYLOAD_PATH = os.path.join(STAGE_MOUNT_PATH, PAYLOAD_PATH)
-if PAYLOAD_PATH and PAYLOAD_PATH not in sys.path:
-    sys.path.insert(0, PAYLOAD_PATH)
 
+if PAYLOAD_PATH:
+    if PAYLOAD_PATH not in sys.path:
+        sys.path.insert(0, PAYLOAD_PATH)
+    for zip_file in Path(PAYLOAD_PATH).rglob("*.zip"):
+        fpath = str(zip_file)
+        if fpath not in sys.path and zipfile.is_zipfile(fpath):
+            sys.path.insert(0, fpath)
 # Imports below must come after sys.path modification to support module overrides
 import snowflake.ml.jobs._utils.constants  # noqa: E402
 import snowflake.snowpark  # noqa: E402
