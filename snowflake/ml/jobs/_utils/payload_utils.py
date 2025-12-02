@@ -620,7 +620,12 @@ def _serialize_callable(func: Callable[..., Any]) -> bytes:
     try:
         func_bytes: bytes = cp.dumps(func)
         return func_bytes
-    except pickle.PicklingError as e:
+    except (pickle.PicklingError, TypeError) as e:
+        if isinstance(e, TypeError) and "_thread.lock" in str(e):
+            raise RuntimeError(
+                "Unable to pickle an object that internally holds a reference to a Session object, "
+                "such as a Snowpark DataFrame."
+            ) from e
         if isinstance(func, functools.partial):
             # Try to find which part of the partial isn't serializable for better debuggability
             objects = [

@@ -1,5 +1,6 @@
 import json
 import sys
+import warnings
 from io import StringIO
 from unittest.mock import MagicMock, patch
 from urllib.parse import quote
@@ -9,7 +10,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import _entities as entities, experiment_tracking
 from snowflake.ml.experiment._client import artifact
-from snowflake.snowpark import session
+from snowflake.snowpark import exceptions, session
 
 
 class ExperimentTrackingTest(absltest.TestCase):
@@ -269,6 +270,49 @@ class ExperimentTrackingTest(absltest.TestCase):
         metric_dict = {(m["name"], m["step"]): m["value"] for m in metric_list}
         self.assertEqual(metric_dict[("precision", 2)], 0.85)
 
+    def test_log_metrics_failure(self) -> None:
+        """Test that logging metrics handles size limit exceeded error gracefully."""
+        self.mock_sql_client.modify_run_add_metrics.side_effect = exceptions.SnowparkSQLException(
+            "Size limit exceeded", sql_error_code=400003
+        )
+        metrics = {"accuracy": 0.95, "loss": 0.05}
+        warning_msg_regex = f".*{entities.run.METADATA_SIZE_WARNING_MESSAGE}.*"
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        with exp.start_run("TEST_RUN"):
+            # First call - should issue a warning
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_metrics(metrics, step=1)
+
+                # Verify first call issued exactly one warning
+                self.assertEqual(len(caught_warnings), 1)
+                self.assertEqual(caught_warnings[0].category, RuntimeWarning)
+                self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
+
+            # Second call - should NOT issue any warnings
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_metrics(metrics, step=2)
+
+                # Verify no warnings were issued on second call
+                self.assertEqual(len(caught_warnings), 0)
+
+            # Verify SQL client was called twice
+            self.assertEqual(self.mock_sql_client.modify_run_add_metrics.call_count, 2)
+
+        with exp.start_run("TEST_RUN_2"):
+            # First call in new run - should issue a warning again
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_metrics(metrics, step=3)
+
+                # Verify first call in new run issued exactly one warning
+                self.assertEqual(len(caught_warnings), 1)
+                self.assertEqual(caught_warnings[0].category, RuntimeWarning)
+                self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
+
     def test_log_params_with_active_run(self) -> None:
         """Test logging params with an active run"""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
@@ -321,6 +365,49 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertEqual(len(param_list), 1)
         param_dict = {p["name"]: p["value"] for p in param_list}
         self.assertEqual(param_dict["algorithm"], "gradient_boosting")
+
+    def test_log_params_failure(self) -> None:
+        """Test that logging params handles size limit exceeded error gracefully."""
+        self.mock_sql_client.modify_run_add_params.side_effect = exceptions.SnowparkSQLException(
+            "Size limit exceeded", sql_error_code=400003
+        )
+        params = {"learning_rate": 0.01, "batch_size": 32}
+        warning_msg_regex = f".*{entities.run.METADATA_SIZE_WARNING_MESSAGE}.*"
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        with exp.start_run("TEST_RUN"):
+            # First call - should issue a warning
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_params(params)
+
+                # Verify first call issued exactly one warning
+                self.assertEqual(len(caught_warnings), 1)
+                self.assertEqual(caught_warnings[0].category, RuntimeWarning)
+                self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
+
+            # Second call - should NOT issue any warnings
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_params(params)
+
+                # Verify no warnings were issued on second call
+                self.assertEqual(len(caught_warnings), 0)
+
+            # Verify SQL client was called twice
+            self.assertEqual(self.mock_sql_client.modify_run_add_params.call_count, 2)
+
+        with exp.start_run("TEST_RUN_2"):
+            # First call in new run - should issue a warning again
+            with warnings.catch_warnings(record=True) as caught_warnings:
+                warnings.simplefilter("always")
+                exp.log_params(params)
+
+                # Verify first call in new run issued exactly one warning
+                self.assertEqual(len(caught_warnings), 1)
+                self.assertEqual(caught_warnings[0].category, RuntimeWarning)
+                self.assertRegex(str(caught_warnings[0].message), warning_msg_regex)
 
     def test_log_model(self) -> None:
         """Test that log_model uses ExperimentInfoPatcher with correct experiment info"""

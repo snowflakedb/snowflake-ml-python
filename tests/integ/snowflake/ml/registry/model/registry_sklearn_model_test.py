@@ -183,7 +183,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
-        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42, n_jobs=1))
         model.fit(iris_X[:10], dual_target[:10])
         self._test_registry_model(
             model=model,
@@ -213,7 +213,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         target2 = np.random.randint(0, 6, size=iris_y.shape)
         dual_target = np.vstack([iris_y, target2]).T
-        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42))
+        model = multioutput.MultiOutputClassifier(ensemble.RandomForestClassifier(random_state=42, n_jobs=1))
         model.fit(iris_X[:10], dual_target[:10])
         iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
 
@@ -498,7 +498,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         pipeline = SK_pipeline.Pipeline(
             [
                 ("scaler", preprocessing.StandardScaler()),
-                ("classifier", ensemble.RandomForestClassifier(random_state=42)),
+                ("classifier", ensemble.RandomForestClassifier(random_state=42, n_jobs=1)),
             ]
         )
         pipeline.fit(X, y)

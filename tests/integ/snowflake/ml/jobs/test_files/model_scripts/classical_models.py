@@ -12,9 +12,9 @@ def train_model(model_name: str) -> Any:
     dataset = load_iris()
     X_train, X_test, y_train, y_test = train_test_split(dataset.data, dataset.target, test_size=0.2, random_state=42)
     if model_name == "xgboost":
-        model = xgboost.XGBClassifier(n_estimators=5, max_depth=2, eval_metric="mlogloss", random_state=42)
+        model = xgboost.XGBClassifier(n_estimators=5, max_depth=2, eval_metric="mlogloss", random_state=42, n_jobs=1)
     elif model_name == "lightgbm":
-        model = lightgbm.LGBMClassifier(n_estimators=5, max_depth=2, random_state=42)
+        model = lightgbm.LGBMClassifier(n_estimators=5, max_depth=2, random_state=42, n_jobs=1)
     elif model_name == "sklearn":
         model = LogisticRegression(random_state=42, max_iter=10)
     else:

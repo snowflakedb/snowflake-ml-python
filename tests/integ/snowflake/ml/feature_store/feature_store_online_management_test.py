@@ -3,70 +3,35 @@ import uuid
 
 import common_utils
 from absl.testing import absltest, parameterized
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
-from snowflake import snowpark
 from snowflake.ml.feature_store import entity, feature_store, feature_view
-from snowflake.ml.utils import connection_params
 
 
-class FeatureStoreOnlineTest(parameterized.TestCase):
-    """Test class for online feature store functionality (management/config/lifecycle)."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Set up test class with feature store and common entities."""
-        cls._session_config = connection_params.SnowflakeLoginOptions()
-        cls._session = snowpark.Session.builder.configs(cls._session_config).create()
-        cls._active_feature_store = []
-
-        try:
-            # Create databases first before cleanup
-            cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {common_utils.FS_INTEG_TEST_DUMMY_DB}").collect()
-            cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {common_utils.FS_INTEG_TEST_DB}").collect()
-            cls._session.sql(
-                f"CREATE SCHEMA IF NOT EXISTS {common_utils.FS_INTEG_TEST_DB}."
-                f"{common_utils.FS_INTEG_TEST_DATASET_SCHEMA}"
-            ).collect()
-            common_utils.cleanup_temporary_objects(cls._session)
-
-            cls.test_db = common_utils.FS_INTEG_TEST_DB
-            cls.test_schema = common_utils.create_random_schema(cls._session, "ONLINE_TEST", cls.test_db)
-            cls.warehouse = common_utils.get_test_warehouse_name(cls._session)
-        except Exception as e:
-            cls.tearDownClass()
-            raise Exception(f"Test setup failed: {e}")
-
-        cls.fs = feature_store.FeatureStore(
-            session=cls._session,
-            database=cls.test_db,
-            name=cls.test_schema,
-            default_warehouse=cls.warehouse,
-            creation_mode=feature_store.CreationMode.CREATE_IF_NOT_EXIST,
-        )
-        cls._active_feature_store.append(cls.fs)
-
-        # Create test entities
-        cls.user_entity = entity.Entity(name="user_entity", join_keys=["user_id"], desc="User entity for testing")
-        cls.fs.register_entity(cls.user_entity)
-
-        cls.product_entity = entity.Entity(
-            name="product_entity", join_keys=["product_id"], desc="Product entity for testing"
-        )
-        cls.fs.register_entity(cls.product_entity)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Clean up test class resources."""
-        try:
-            for fs in cls._active_feature_store:
-                fs._clear(dryrun=False)
-        except Exception:
-            pass
-        common_utils.cleanup_temporary_objects(cls._session)
-        cls._session.close()
+class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    """Test class for online feature store functionality (management/config/lifecycle) of feature view."""
 
     def setUp(self) -> None:
-        """Set up test case with sample data."""
+        """Set up test case with feature store, entities, and sample data."""
+        super().setUp()
+        self.warehouse = self._test_warehouse_name
+
+        self.fs = feature_store.FeatureStore(
+            session=self._session,
+            database=self.test_db,
+            name=self.test_schema,
+            default_warehouse=self.warehouse,
+            creation_mode=feature_store.CreationMode.CREATE_IF_NOT_EXIST,
+        )
+
+        # Create test entities
+        self.user_entity = entity.Entity(name="user_entity", join_keys=["user_id"], desc="User entity for testing")
+        self.fs.register_entity(self.user_entity)
+
+        self.product_entity = entity.Entity(
+            name="product_entity", join_keys=["product_id"], desc="Product entity for testing"
+        )
+        self.fs.register_entity(self.product_entity)
         # Create a real table for testing since create_dataframe with VALUES has limitations
         self.test_table_name = f"TEST_ONLINE_DATA_{uuid.uuid4().hex.upper()[:8]}"
         self._session.sql(
@@ -92,6 +57,14 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
 
         # Create DataFrame from table
         self.sample_data = self._session.table(f"{self.fs._config.full_schema_path}.{self.test_table_name}")
+
+    def tearDown(self) -> None:
+        """Clean up test case resources."""
+        try:
+            self.fs._clear(dryrun=False)
+        except Exception:
+            pass
+        super().tearDown()
 
     def test_create_feature_view_with_online_default_config(self) -> None:
         """Test creating feature view with online enabled using default configuration."""
@@ -811,6 +784,96 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
 
         finally:
             self._session.use_schema(f"{self.test_db}.{self.test_schema}")
+
+    def test_update_online_lag_without_enable_preserves_online_state(self) -> None:
+        """Test that updating target_lag without specifying enable preserves online state.
+
+        Reproduces SNOW-2432363: When updating OnlineConfig with only target_lag specified,
+        the online feature view should stay enabled, not get disabled.
+        """
+        fv_name = "test_lag_update_preserve_online"
+
+        # Step 1: Create a feature view with online ENABLED and initial lag
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="15m",
+            desc="Test lag update",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="5m"),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.online, "Feature view should be online after registration")
+        self.assertIn("5", registered_fv.online_config.target_lag)
+
+        # Step 2: Update ONLY the target_lag WITHOUT specifying enable parameter
+        # This should preserve the online state (stay enabled)
+        updated_fv = self.fs.update_feature_view(
+            name=fv_name,
+            version="v1",
+            online_config=feature_view.OnlineConfig(target_lag="10m"),  # Only lag, no enable specified
+        )
+
+        # Step 3: Verify online is still ENABLED (bug fix)
+        self.assertTrue(updated_fv.online, "Online should stay ENABLED after lag update (SNOW-2432363 fix)")
+        self.assertIn("10", updated_fv.online_config.target_lag, "Target lag should be updated to 10m")
+
+    def test_update_online_lag_with_explicit_enable_true(self) -> None:
+        """Test that explicitly setting enable=True while updating lag works correctly."""
+        fv_name = "test_lag_update_explicit_enable_true"
+
+        # Create offline feature view
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="15m",
+            desc="Test explicit enable=True",
+            online_config=feature_view.OnlineConfig(enable=False),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered_fv.online, "Feature view should NOT be online initially")
+
+        # Update with explicit enable=True and target_lag
+        updated_fv = self.fs.update_feature_view(
+            name=fv_name,
+            version="v1",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="8m"),
+        )
+
+        self.assertTrue(updated_fv.online, "Online should be ENABLED after explicit enable=True")
+        self.assertIn("8", updated_fv.online_config.target_lag, "Target lag should be 8m")
+
+    def test_update_online_with_explicit_enable_false_disables(self) -> None:
+        """Test that explicitly setting enable=False still disables online storage."""
+        fv_name = "test_lag_update_explicit_enable_false"
+
+        # Create online feature view
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="15m",
+            desc="Test explicit enable=False",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="5m"),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.online, "Feature view should be online initially")
+
+        # Update with explicit enable=False (should disable)
+        updated_fv = self.fs.update_feature_view(
+            name=fv_name,
+            version="v1",
+            online_config=feature_view.OnlineConfig(enable=False),
+        )
+
+        self.assertFalse(updated_fv.online, "Online should be DISABLED after explicit enable=False")
 
     def test_online_feature_table_creation_uses_fqdn_in_sql(self) -> None:
         """Verify offline and online tables use same database and schema (SNOW-2430972)."""

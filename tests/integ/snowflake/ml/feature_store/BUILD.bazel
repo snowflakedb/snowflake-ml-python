@@ -16,9 +16,34 @@ py_library(
     ],
 )
 
+py_library(
+    name = "fs_integ_test_base",
+    testonly = True,
+    srcs = [
+        "fs_integ_test_base.py",
+    ],
+    deps = [
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_library(
+    name = "fs_dataset_provisioner",
+    testonly = True,
+    srcs = [
+        "fs_dataset_provisioner.py",
+    ],
+    deps = [
+        ":common_utils",
+        "//snowflake/ml/feature_store/examples:feature_store_examples",
+    ],
+)
+
 py_test(
     name = "feature_store_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_test.py",
     ],
@@ -26,6 +51,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -47,6 +73,7 @@ py_test(
 
 py_test(
     name = "feature_store_large_scale_test",
+    timeout = "eternal",
     srcs = [
         "feature_store_large_scale_test.py",
     ],
@@ -54,6 +81,8 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_dataset_provisioner",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/feature_store/_internal:synthetic_data_generator",
         "//snowflake/ml/utils:connection_params",
@@ -79,7 +108,7 @@ py_test(
 
 py_test(
     name = "feature_store_case_sensitivity_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_case_sensitivity_test.py",
     ],
@@ -87,6 +116,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -94,6 +124,7 @@ py_test(
 
 py_test(
     name = "feature_store_access_test",
+    timeout = "eternal",
     srcs = [
         "feature_store_access_test.py",
     ],
@@ -101,13 +132,16 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
 py_test(
     name = "feature_store_compatibility_test",
+    timeout = "eternal",
     srcs = [
         "feature_store_compatibility_test.py",
     ],
@@ -115,6 +149,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -122,12 +157,14 @@ py_test(
 
 py_test(
     name = "feature_sharing_test",
+    timeout = "eternal",
     srcs = [
         "feature_sharing_test.py",
     ],
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -135,12 +172,14 @@ py_test(
 
 py_test(
     name = "feature_store_example_helper_test",
+    timeout = "eternal",
     srcs = [
         "feature_store_example_helper_test.py",
     ],
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/feature_store/examples:feature_store_examples",
         "//snowflake/ml/utils:connection_params",
@@ -149,7 +188,7 @@ py_test(
 
 py_test(
     name = "feature_store_online_management_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_online_management_test.py",
     ],
@@ -157,6 +196,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -172,6 +212,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],
@@ -179,7 +220,7 @@ py_test(
 
 py_test(
     name = "feature_store_rollback_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_rollback_test.py",
     ],
@@ -187,20 +228,7 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
-        "//snowflake/ml/feature_store:feature_store_lib",
-        "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_test(
-    name = "feature_store_online_lag_update_test",
-    timeout = "long",
-    srcs = [
-        "feature_store_online_lag_update_test.py",
-    ],
-    tags = ["feature:feature_store"],
-    deps = [
-        ":common_utils",
+        ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
     ],

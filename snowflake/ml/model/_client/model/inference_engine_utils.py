@@ -4,14 +4,18 @@ from snowflake.ml.model._client.ops import service_ops
 
 
 def _get_inference_engine_args(
-    experimental_options: Optional[dict[str, Any]],
+    inference_engine_options: Optional[dict[str, Any]],
 ) -> Optional[service_ops.InferenceEngineArgs]:
-    if not experimental_options or "inference_engine" not in experimental_options:
+
+    if not inference_engine_options:
         return None
 
+    if "engine" not in inference_engine_options:
+        raise ValueError("'engine' field is required in inference_engine_options")
+
     return service_ops.InferenceEngineArgs(
-        inference_engine=experimental_options["inference_engine"],
-        inference_engine_args_override=experimental_options.get("inference_engine_args_override"),
+        inference_engine=inference_engine_options["engine"],
+        inference_engine_args_override=inference_engine_options.get("engine_args_override"),
     )
 
 

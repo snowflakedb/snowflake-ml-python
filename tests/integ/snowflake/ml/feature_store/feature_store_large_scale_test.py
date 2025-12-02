@@ -3,15 +3,9 @@ from typing import Literal, Optional, cast
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
-from common_utils import (
-    FS_INTEG_TEST_DATASET_SCHEMA,
-    FS_INTEG_TEST_DB,
-    FS_INTEG_TEST_WINE_QUALITY_DATA,
-    FS_INTEG_TEST_YELLOW_TRIP_DATA,
-    cleanup_temporary_objects,
-    create_random_schema,
-    get_test_warehouse_name,
-)
+from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
+from fs_dataset_provisioner import ensure_canonical_datasets
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from pandas.testing import assert_frame_equal
 
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
@@ -23,30 +17,27 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
 from snowflake.ml.feature_store._internal.synthetic_data_generator import (
     SyntheticDataGenerator,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import DataFrame, Session, functions as F
+from snowflake.snowpark import DataFrame, functions as F
 
 
-class FeatureStoreLargeScaleTest(parameterized.TestCase):
-    @classmethod
-    def setUpClass(self) -> None:
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        cleanup_temporary_objects(self._session)
+class FeatureStoreLargeScaleTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
         self._active_feature_store = []
-        self._test_warehouse_name = get_test_warehouse_name(self._session)
 
-    @classmethod
-    def tearDownClass(self) -> None:
+    def tearDown(self) -> None:
         for fs in self._active_feature_store:
             fs._clear(dryrun=False)
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
-        self._session.close()
+        super().tearDown()
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
-        current_schema = create_random_schema(self._session, "FS_LARGE_SCALE_TEST") if name is None else name
+        current_schema = (
+            create_random_schema(self._session, "FS_LARGE_SCALE_TEST", database=self.test_db) if name is None else name
+        )
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
@@ -57,9 +48,14 @@ class FeatureStoreLargeScaleTest(parameterized.TestCase):
     def test_cron_scheduling(self) -> None:
         fs = self._create_feature_store()
 
-        wine_data = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{FS_INTEG_TEST_WINE_QUALITY_DATA}"
+        datasets = ensure_canonical_datasets(self._session, self.test_db, FS_INTEG_TEST_DATASET_SCHEMA)
+        wine_data = datasets["wine_quality"]  # type: ignore[index]
+        # Copy into a temp table for mutations even if source is a view; ensure it lives in FS schema
         cloned_wine_data = f"wine_quality_data_{uuid4().hex.upper()}"
-        self._session.sql(f"CREATE TABLE {cloned_wine_data} CLONE {wine_data}").collect(block=True)
+        cloned_wine_data_fqn = f"{fs._config.full_schema_path}.{cloned_wine_data}"
+        self._session.sql(f"CREATE OR REPLACE TABLE {cloned_wine_data_fqn} AS SELECT * FROM {wine_data}").collect(
+            block=True
+        )
 
         entity = Entity(name="wine", join_keys=["wine_id"])
         fs.register_entity(entity)
@@ -70,7 +66,7 @@ class FeatureStoreLargeScaleTest(parameterized.TestCase):
             new_df = df.withColumn(id_column_name, F.monotonically_increasing_id())
             return cast(DataFrame, new_df[[id_column_name] + columns])
 
-        source_df = self._session.table(cloned_wine_data)
+        source_df = self._session.table(cloned_wine_data_fqn)
         feature_df = addIdColumn(source_df, "wine_id")
         fv = FeatureView(
             name="wine_features",
@@ -79,33 +75,36 @@ class FeatureStoreLargeScaleTest(parameterized.TestCase):
             refresh_freq="* * * * * America/Los_Angeles",
             desc="wine features",
         )
-        fv = fs.register_feature_view(feature_view=fv, version="v1")
+        # Ensure dynamic table resolves source in FS schema
+        self._session.sql(f"USE SCHEMA {fs._config.full_schema_path}").collect()
+        fv = fs.register_feature_view(feature_view=fv, version="v1", block=True)
         self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
-        self.assertEqual(len(fs.read_feature_view(fv).collect()), 1599)
+        initial_count = self._session.sql(f"SELECT COUNT(*) AS C FROM {cloned_wine_data_fqn}").collect()[0]["C"]
+        self.assertEqual(len(fs.read_feature_view(fv).collect()), initial_count)
 
         # Insert synthetic data into the table
-        temp_session = Session.builder.configs(SnowflakeLoginOptions()).create()
         generator = SyntheticDataGenerator(
-            temp_session, self._session.get_current_database(), self._session.get_current_schema(), cloned_wine_data
+            self._session, self._session.get_current_database(), self._session.get_current_schema(), cloned_wine_data
         )
         generator.trigger(batch_size=10, num_batches=10, freq=1)
 
         # wait for 90s so feature view will be refreshed at least once
         time.sleep(90)
-        self.assertEqual(len(fs.read_feature_view(fv).collect()), 1699)
+        self.assertEqual(len(fs.read_feature_view(fv).collect()), initial_count + 100)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"join_method": "cte"},
         {"join_method": "sequential"},
     )
     def test_external_table(self, join_method: Literal["sequential", "cte"]) -> None:
-        current_schema = create_random_schema(self._session, "TEST_EXTERNAL_TABLE")
+        current_schema = create_random_schema(self._session, "TEST_EXTERNAL_TABLE", database=self.test_db)
         fs = self._create_feature_store(current_schema)
 
         e_loc = Entity("LOCATION", ["PULOCATIONID"])
         fs.register_entity(e_loc)
 
-        raw_dataset = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}.{FS_INTEG_TEST_YELLOW_TRIP_DATA}"
+        datasets = ensure_canonical_datasets(self._session, self.test_db, FS_INTEG_TEST_DATASET_SCHEMA)
+        raw_dataset = datasets["yellow_trip"]  # type: ignore[index]
 
         feature_df = self._session.sql(
             f"""SELECT PULOCATIONID, AVG(TIP_AMOUNT) AS F_AVG_TIP, AVG(TOTAL_AMOUNT) AS F_AVG_TOTAL_AMOUNT
@@ -155,7 +154,7 @@ class FeatureStoreLargeScaleTest(parameterized.TestCase):
         dsv0 = ds0.selected_version
         dsv0_meta = dsv0._get_metadata()
         self.assertEqual(
-            dsv0.url(), f"snow://dataset/{FS_INTEG_TEST_DB}.{current_schema}.{dataset_name}/versions/{dataset_version}/"
+            dsv0.url(), f"snow://dataset/{self.test_db}.{current_schema}.{dataset_name}/versions/{dataset_version}/"
         )
         self.assertIsNotNone(dsv0_meta.properties)
         self.assertEqual(len(dsv0_meta.properties.compact_feature_views), 1)

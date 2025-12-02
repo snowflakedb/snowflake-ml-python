@@ -5,42 +5,29 @@ from __future__ import annotations
 import typing
 import unittest.mock as mock
 
-import common_utils
 from absl.testing import absltest, parameterized
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
-from snowflake import snowpark
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml.feature_store import entity, feature_store, feature_view
-from snowflake.ml.utils import connection_params
 
 
-class FeatureStoreRollbackTest(parameterized.TestCase):
+class FeatureStoreRollbackTest(FeatureStoreIntegTestBase, parameterized.TestCase):
     """Test rollback and transaction safety mechanisms in Feature Store operations."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Set up test fixtures, if any."""
-        cls._session_config = connection_params.SnowflakeLoginOptions()
-        cls._session = snowpark.Session.builder.configs(cls._session_config).create()
-        cls._test_db = common_utils.FS_INTEG_TEST_DB
-        cls._test_schema = common_utils.create_random_schema(cls._session, "ROLLBACK_TEST", cls._test_db)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Tear down test fixtures, if any."""
-        common_utils.cleanup_temporary_objects(cls._session)
-        cls._session.close()
 
     def setUp(self) -> None:
         """Set up test fixtures before each test method."""
-        self._test_warehouse = common_utils.get_test_warehouse_name(self._session)
+        super().setUp()
+        # Note: self._test_warehouse_name is already set by the base class
         self.fs = feature_store.FeatureStore(
             session=self._session,
-            database=self._test_db,
-            name=self._test_schema,
-            default_warehouse=self._test_warehouse,
+            database=self.test_db,
+            name=self.test_schema,
+            default_warehouse=self._test_warehouse_name,
             creation_mode=feature_store.CreationMode.CREATE_IF_NOT_EXIST,
         )
+        # Ensure schema context matches the feature store for object resolution
+        self.use_feature_store_schema(self.fs)
 
         # Create test entity
         self.test_entity = entity.Entity("user_id", ["user_id"])
@@ -76,6 +63,7 @@ class FeatureStoreRollbackTest(parameterized.TestCase):
             ).collect()
         except Exception:
             pass
+        super().tearDown()
 
     def test_register_feature_view_rollback_offline_failure(self) -> None:
         """Test rollback when offline feature view creation fails."""

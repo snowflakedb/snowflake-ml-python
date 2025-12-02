@@ -32,4 +32,10 @@ spec:
       size: 5Gi
       source: memory
     - name: stage-volume
-      source: '@dummy_stage'
+      source: stage
+      stageConfig:
+        name: '@dummy_stage'
+        resources:
+          requests:
+            memory: 0Gi
+            cpu: '0'

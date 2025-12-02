@@ -1,74 +1,43 @@
+from __future__ import annotations
+
 import uuid
 import warnings
 
-import common_utils
 from absl.testing import absltest, parameterized
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from packaging import version
 
-from snowflake import snowpark
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml.feature_store import entity, feature_store, feature_view
-from snowflake.ml.utils import connection_params
 
 
-class FeatureStoreOnlineTest(parameterized.TestCase):
-    """Test class for online feature store functionality (read/refresh/history)."""
+class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    """Test class for online feature store functionality (read/refresh).
 
-    @classmethod
-    def setUpClass(cls) -> None:
-        """Set up test class with feature store and common entities."""
-        cls._session_config = connection_params.SnowflakeLoginOptions()
-        cls._session = snowpark.Session.builder.configs(cls._session_config).create()
-        cls._active_feature_store = []
-
-        try:
-            # Create databases first before cleanup
-            cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {common_utils.FS_INTEG_TEST_DUMMY_DB}").collect()
-            cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {common_utils.FS_INTEG_TEST_DB}").collect()
-            cls._session.sql(
-                f"CREATE SCHEMA IF NOT EXISTS {common_utils.FS_INTEG_TEST_DB}."
-                f"{common_utils.FS_INTEG_TEST_DATASET_SCHEMA}"
-            ).collect()
-            common_utils.cleanup_temporary_objects(cls._session)
-
-            cls.test_db = common_utils.FS_INTEG_TEST_DB
-            cls.test_schema = common_utils.create_random_schema(cls._session, "ONLINE_TEST", cls.test_db)
-            cls.warehouse = common_utils.get_test_warehouse_name(cls._session)
-        except Exception as e:
-            cls.tearDownClass()
-            raise Exception(f"Test setup failed: {e}")
-
-        cls.fs = feature_store.FeatureStore(
-            session=cls._session,
-            database=cls.test_db,
-            name=cls.test_schema,
-            default_warehouse=cls.warehouse,
-            creation_mode=feature_store.CreationMode.CREATE_IF_NOT_EXIST,
-        )
-        cls._active_feature_store.append(cls.fs)
-
-        # Create test entities
-        cls.user_entity = entity.Entity(name="user_entity", join_keys=["user_id"], desc="User entity for testing")
-        cls.fs.register_entity(cls.user_entity)
-
-        cls.product_entity = entity.Entity(
-            name="product_entity", join_keys=["product_id"], desc="Product entity for testing"
-        )
-        cls.fs.register_entity(cls.product_entity)
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        """Clean up test class resources."""
-        try:
-            for fs in cls._active_feature_store:
-                fs._clear(dryrun=False)
-        except Exception:
-            pass
-        common_utils.cleanup_temporary_objects(cls._session)
-        cls._session.close()
+    These tests validate reading from ONLINE store and refresh history behavior.
+    """
 
     def setUp(self) -> None:
-        """Set up test case with sample data."""
+        """Set up test case with feature store, entities, and sample data."""
+        super().setUp()
+        self.warehouse = self._test_warehouse_name
+
+        self.fs = feature_store.FeatureStore(
+            session=self._session,
+            database=self.test_db,
+            name=self.test_schema,
+            default_warehouse=self.warehouse,
+            creation_mode=feature_store.CreationMode.CREATE_IF_NOT_EXIST,
+        )
+
+        # Create test entities
+        self.user_entity = entity.Entity(name="user_entity", join_keys=["user_id"], desc="User entity for testing")
+        self.fs.register_entity(self.user_entity)
+
+        self.product_entity = entity.Entity(
+            name="product_entity", join_keys=["product_id"], desc="Product entity for testing"
+        )
+        self.fs.register_entity(self.product_entity)
         # Create a real table for testing since create_dataframe with VALUES has limitations
         self.test_table_name = f"TEST_ONLINE_DATA_{uuid.uuid4().hex.upper()[:8]}"
         self._session.sql(
@@ -94,6 +63,14 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
 
         # Create DataFrame from table
         self.sample_data = self._session.table(f"{self.fs._config.full_schema_path}.{self.test_table_name}")
+
+    def tearDown(self) -> None:
+        """Clean up test case resources."""
+        try:
+            self.fs._clear(dryrun=False)
+        except Exception:
+            pass
+        super().tearDown()
 
     def test_refresh_online_feature_view(self) -> None:
         """Test refreshing online feature table specifically."""
@@ -193,14 +170,19 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
 
         registered_fv = self.fs.register_feature_view(fv, "v1")
 
-        # Test getting offline refresh history (default behavior)
         offline_history = self.fs.get_refresh_history(registered_fv)
         offline_rows = offline_history.collect()
         # Should have at least 1 row from initial refresh
         self.assertGreaterEqual(len(offline_rows), 1)
-        # Check expected columns for offline refresh history
         self.assertSameElements(
-            offline_history.columns, ["NAME", "STATE", "REFRESH_START_TIME", "REFRESH_END_TIME", "REFRESH_ACTION"]
+            offline_history.columns,
+            [
+                "NAME",
+                "STATE",
+                "REFRESH_START_TIME",
+                "REFRESH_END_TIME",
+                "REFRESH_ACTION",
+            ],
         )
 
         # Test getting offline refresh history explicitly
@@ -209,14 +191,23 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         offline_rows_explicit = offline_history_explicit.collect()
         self.assertGreaterEqual(len(offline_rows_explicit), len(offline_rows))
 
+        # Ensure at least one online refresh record as well
+        self.fs.refresh_feature_view(registered_fv, store_type=feature_view.StoreType.ONLINE)
         # Test getting online refresh history
+        online_rows = []
         online_history = self.fs.get_refresh_history(registered_fv, store_type=feature_view.StoreType.ONLINE)
         online_rows = online_history.collect()
-        # Should have at least 1 row from initial refresh
         self.assertGreaterEqual(len(online_rows), 1)
         # Check expected columns for online refresh history
         self.assertSameElements(
-            online_history.columns, ["NAME", "STATE", "REFRESH_START_TIME", "REFRESH_END_TIME", "REFRESH_ACTION"]
+            online_history.columns,
+            [
+                "NAME",
+                "STATE",
+                "REFRESH_START_TIME",
+                "REFRESH_END_TIME",
+                "REFRESH_ACTION",
+            ],
         )
 
         # Test with string store_type parameter
@@ -263,9 +254,14 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
             online_config=feature_view.OnlineConfig(enable=False),
         )
 
-        registered_fv = self.fs.register_feature_view(fv, "v1")
+        # Ensure correct schema context and block until registration completes
+        self.use_feature_store_schema(self.fs)
+        registered_fv = self.fs.register_feature_view(fv, "v1", block=True)
 
-        # Should work fine for offline store type
+        # Explicitly refresh offline store to ensure at least one history record exists
+        self.fs.refresh_feature_view(registered_fv, store_type=feature_view.StoreType.OFFLINE)
+        # Should work fine for offline store type; poll for at least one record
+        offline_rows = []
         offline_history = self.fs.get_refresh_history(registered_fv, store_type=feature_view.StoreType.OFFLINE)
         offline_rows = offline_history.collect()
         self.assertGreaterEqual(len(offline_rows), 1)
@@ -297,6 +293,9 @@ class FeatureStoreOnlineTest(parameterized.TestCase):
         my_fv = self.fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
 
         # Test that calling without store_type parameter still works (defaults to OFFLINE)
+        # Ensure at least one offline refresh event exists for deterministic assertion
+        self.fs.refresh_feature_view(my_fv, store_type=feature_view.StoreType.OFFLINE)
+        rows_no_param = []
         history_no_param = self.fs.get_refresh_history(my_fv)
         rows_no_param = history_no_param.collect()
         self.assertGreaterEqual(len(rows_no_param), 1)

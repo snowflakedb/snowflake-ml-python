@@ -10,7 +10,13 @@ from absl.testing import absltest
 from snowflake.ml import jobs
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.model import inference_engine, model_signature, task, type_hints
+from snowflake.ml.model import (
+    inference_engine,
+    model_signature,
+    openai_signatures,
+    task,
+    type_hints,
+)
 from snowflake.ml.model._client.model import (
     batch_inference_specs,
     inference_engine_utils,
@@ -1050,8 +1056,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-    def test_create_service_with_experimental_options(self) -> None:
-        """Test create_service with experimental options for inference engine."""
+    def test_create_service_with_inference_engine_options(self) -> None:
+        """Test create_service with inference engine options."""
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch.object(
@@ -1082,13 +1088,13 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
                 gpu_requests="4",
-                experimental_options={
-                    "inference_engine": inference_engine.InferenceEngine.VLLM,
-                    "inference_engine_args_override": ["--max_tokens=1000", "--temperature=0.8"],
+                inference_engine_options={
+                    "engine": inference_engine.InferenceEngine.VLLM,
+                    "engine_args_override": ["--max_tokens=1000", "--temperature=0.8"],
                 },
             )
 
-            # This check should happen when experimental_options is provided
+            # This check should happen when inference_engine_options is provided
             mock_check_huggingface_text_generation_model.assert_called_once()
 
             # Verify that the enriched kwargs were passed to create_service
@@ -1112,13 +1118,13 @@ class ModelVersionImplTest(absltest.TestCase):
                 expected_args,
             )
 
-    def test_create_service_without_experimental_options(self) -> None:
-        """Test create_service without experimental options to ensure existing behavior is preserved."""
+    def test_create_service_without_inference_engine_options(self) -> None:
+        """Test create_service without inference engine options to ensure existing behavior is preserved."""
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
         ):
-            # Test without experimental_options
+            # Test without inference_engine_options
             self.m_mv.create_service(
                 service_name="SERVICE",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
@@ -1348,28 +1354,28 @@ class ModelVersionImplTest(absltest.TestCase):
         inference_engine_args = inference_engine_utils._get_inference_engine_args(None)
         self.assertIsNone(inference_engine_args)
 
-        # Test with empty experimental_options
+        # Test with empty inference_engine_options
         inference_engine_args = inference_engine_utils._get_inference_engine_args({})
         self.assertIsNone(inference_engine_args)
 
-        # Test with experimental_options missing inference_engine key (e.g., autocapture only)
-        # Should return None instead of raising error to support other experimental options like autocapture
-        inference_engine_args = inference_engine_utils._get_inference_engine_args({"autocapture": True})
-        self.assertIsNone(inference_engine_args)
+        # Test with inference_engine_options missing inference_engine key
+        with self.assertRaises(ValueError) as cm:
+            inference_engine_utils._get_inference_engine_args({"other_key": "value"})
+        self.assertEqual(str(cm.exception), "'engine' field is required in inference_engine_options")
 
-        # Test with only inference_engine (no args_override)
-        experimental_options: dict[str, Any] = {"inference_engine": inference_engine.InferenceEngine.VLLM}
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        # Test with only engine (no args_override)
+        inference_engine_options: dict[str, Any] = {"engine": inference_engine.InferenceEngine.VLLM}
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertIsNone(inference_engine_args.inference_engine_args_override)
 
         # Test with inference_engine and args_override
-        experimental_options = {
-            "inference_engine": inference_engine.InferenceEngine.VLLM,
-            "inference_engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
+        inference_engine_options = {
+            "engine": inference_engine.InferenceEngine.VLLM,
+            "engine_args_override": ["--max_tokens=100", "--temperature=0.7"],
         }
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertEqual(
@@ -1377,11 +1383,11 @@ class ModelVersionImplTest(absltest.TestCase):
         )
 
         # Test with inference_engine and empty args_override
-        experimental_options = {
-            "inference_engine": inference_engine.InferenceEngine.VLLM,
-            "inference_engine_args_override": [],
+        inference_engine_options = {
+            "engine": inference_engine.InferenceEngine.VLLM,
+            "engine_args_override": [],
         }
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(experimental_options)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
         assert inference_engine_args is not None
         self.assertEqual(inference_engine_args.inference_engine, inference_engine.InferenceEngine.VLLM)
         self.assertEqual(inference_engine_args.inference_engine_args_override, [])
@@ -1588,11 +1594,17 @@ class ModelVersionImplTest(absltest.TestCase):
     def test_check_huggingface_text_generation_model(self) -> None:
         """Test _check_huggingface_text_generation_model method."""
         # Test successful case - HuggingFace text-generation model
+        # Serialize the OPENAI_CHAT_SIGNATURE to match what the model spec returns
+        serialized_signatures = {
+            func_name: sig_obj.to_dict() for func_name, sig_obj in openai_signatures.OPENAI_CHAT_SIGNATURE.items()
+        }
+
         with mock.patch.object(
             self.m_mv._model_ops,
             "_fetch_model_spec",
             return_value={
                 "model_type": "huggingface_pipeline",
+                "signatures": serialized_signatures,
                 "models": {
                     "model1": {
                         "model_type": "huggingface_pipeline",
@@ -1673,6 +1685,36 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._check_huggingface_text_generation_model()
             self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
             self.assertIn("No task found in model spec.", str(cm.exception))
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test failure case - HuggingFace text-generation model but wrong signature
+        wrong_signature = {
+            "__call__": {
+                "inputs": [{"name": "input", "type": "STRING", "nullable": True}],
+                "outputs": [{"name": "output", "type": "STRING", "nullable": True}],
+            }
+        }
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "signatures": wrong_signature,
+                "models": {
+                    "model1": {
+                        "model_type": "huggingface_pipeline",
+                        "options": {"task": "text-generation"},
+                    }
+                },
+            },
+        ):
+            with self.assertRaises(ValueError) as cm:
+                self.m_mv._check_huggingface_text_generation_model()
+            self.assertIn(
+                "Inference engine requires the model to be logged with OPENAI_CHAT_SIGNATURE", str(cm.exception)
+            )
 
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""

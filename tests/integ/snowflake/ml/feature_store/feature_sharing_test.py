@@ -2,13 +2,8 @@ from typing import Optional
 from unittest.mock import patch
 
 from absl.testing import absltest
-from common_utils import (
-    FS_INTEG_TEST_DB,
-    cleanup_temporary_objects,
-    create_mock_table,
-    create_random_schema,
-    get_test_warehouse_name,
-)
+from common_utils import create_mock_table, create_random_schema
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
@@ -17,30 +12,27 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureView,
     FeatureViewStatus,
 )
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Row, Session
+from snowflake.snowpark import Row
 
 
-class FeatureSharingTest(absltest.TestCase):
-    @classmethod
-    def setUpClass(self) -> None:
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        cleanup_temporary_objects(self._session)
+class FeatureSharingTest(FeatureStoreIntegTestBase):
+    def setUp(self) -> None:
+        super().setUp()
         self._active_feature_store = []
-        self._test_warehouse_name = get_test_warehouse_name(self._session)
 
-    @classmethod
-    def tearDownClass(self) -> None:
+    def tearDown(self) -> None:
         for fs in self._active_feature_store:
             fs._clear(dryrun=False)
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
-        self._session.close()
+        super().tearDown()
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
-        current_schema = create_random_schema(self._session, "FS_SHARING_TEST") if name is None else name
+        current_schema = (
+            create_random_schema(self._session, "FS_SHARING_TEST", database=self.test_db) if name is None else name
+        )
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,

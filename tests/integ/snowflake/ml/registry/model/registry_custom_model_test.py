@@ -549,6 +549,7 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             eval_metric="logloss",  # Evaluation metric
             use_label_encoder=False,  # Disable the use of label encoder to avoid warnings
             random_state=42,  # For reproducibility
+            n_jobs=1,
         )
 
         # Train the model

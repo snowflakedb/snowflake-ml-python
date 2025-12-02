@@ -283,16 +283,26 @@ class ExperimentTracking:
         Args:
             metrics: Dictionary containing metric keys and float values.
             step: The step of the metrics. Defaults to 0.
+
+        Raises:
+            snowpark.exceptions.SnowparkSQLException: If logging metrics fails due to Snowflake SQL errors,
+                except for run metadata size limit errors which will issue a warning instead of raising.
         """
         run = self._get_or_start_run()
         metrics_list = []
         for key, value in metrics.items():
             metrics_list.append(entities.Metric(key, value, step))
-        self._sql_client.modify_run_add_metrics(
-            experiment_name=run.experiment_name,
-            run_name=run.name,
-            metrics=json.dumps([metric.to_dict() for metric in metrics_list]),
-        )
+        try:
+            self._sql_client.modify_run_add_metrics(
+                experiment_name=run.experiment_name,
+                run_name=run.name,
+                metrics=json.dumps([metric.to_dict() for metric in metrics_list]),
+            )
+        except snowpark.exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == 400003:  # EXPERIMENT_RUN_PROPERTY_SIZE_LIMIT_EXCEEDED
+                run._warn_about_run_metadata_size(e.message)
+            else:
+                raise
 
     def log_param(
         self,
@@ -318,16 +328,26 @@ class ExperimentTracking:
         Args:
             params: Dictionary containing parameter keys and values. Values can be of any type, but will be converted
                 to string.
+
+        Raises:
+            snowpark.exceptions.SnowparkSQLException: If logging parameters fails due to Snowflake SQL errors,
+                except for run metadata size limit errors which will issue a warning instead of raising.
         """
         run = self._get_or_start_run()
         params_list = []
         for key, value in params.items():
             params_list.append(entities.Param(key, str(value)))
-        self._sql_client.modify_run_add_params(
-            experiment_name=run.experiment_name,
-            run_name=run.name,
-            params=json.dumps([param.to_dict() for param in params_list]),
-        )
+        try:
+            self._sql_client.modify_run_add_params(
+                experiment_name=run.experiment_name,
+                run_name=run.name,
+                params=json.dumps([param.to_dict() for param in params_list]),
+            )
+        except snowpark.exceptions.SnowparkSQLException as e:
+            if e.sql_error_code == 400003:  # EXPERIMENT_RUN_PROPERTY_SIZE_LIMIT_EXCEEDED
+                run._warn_about_run_metadata_size(e.message)
+            else:
+                raise
 
     def log_artifact(
         self,

@@ -1,41 +1,26 @@
 from absl.testing import absltest
-from common_utils import (
-    FS_INTEG_TEST_DB,
-    cleanup_temporary_objects,
-    compare_dataframe,
-    create_random_schema,
-)
+from common_utils import compare_dataframe, create_random_schema
+from fs_integ_test_base import FeatureStoreIntegTestBase
 
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     FeatureStore,
 )
 from snowflake.ml.feature_store.examples.example_helper import ExampleHelper
-from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Session
 
 
-class FeatureStoreExampleHelperTest(absltest.TestCase):
-    @classmethod
-    def setUpClass(self) -> None:
-        self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
-        cleanup_temporary_objects(self._session)
-
-    @classmethod
-    def tearDownClass(self) -> None:
-        self._session.close()
-
+class FeatureStoreExampleHelperTest(FeatureStoreIntegTestBase):
     def test_example_helper(self) -> None:
-        current_schema = create_random_schema(self._session, "FS_EXAMPLE_HELP_TEST")
+        current_schema = create_random_schema(self._session, "FS_EXAMPLE_HELP_TEST", database=self.test_db)
         default_warehouse = self._session.get_current_warehouse()
         fs = FeatureStore(
             self._session,
-            FS_INTEG_TEST_DB,
+            self.test_db,
             current_schema,
             default_warehouse=default_warehouse,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
         )
-        helper = ExampleHelper(self._session, FS_INTEG_TEST_DB, current_schema)
+        helper = ExampleHelper(self._session, self.test_db, current_schema)
         all_examples = helper.list_examples()
         self.assertIsNotNone(all_examples)
         expected_examples = [

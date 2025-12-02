@@ -1,10 +1,51 @@
 # Release History
 
-## 1.19.0
+## 1.20.0
 
 ### Bug Fixes
 
-* Experiment Tracking (PrPr): No longer throw an exception in `list_artifacts` when run does not have artifacts.
+* Experiment Tracking (PuPr): Reaching the run metadata size limit in `log_metrics` or `log_params` will warn the user
+  instead of raising an exception.
+
+### Behavior Changes
+
+### New Features
+
+* Registry (PrPr): Introducing vLLM as a backend inference engine. The `create_service` API will now
+ accept `inference_engine_options` as an argument.
+
+```python
+from snowflake.ml.model.inference_engine import InferenceEngine
+
+mv = snowflake_registry.log_model(
+    model=generator,
+    model_name=...,
+    ...,
+    # Specifying OPENAI_CHAT_SIGNATURE is necessary to use vLLM inference engine
+    signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+)
+
+mv.create_service(
+    service_name=my_serv,
+    service_compute_pool=...,
+    ...,
+    inference_engine_options={
+        "engine": InferenceEngine.VLLM,
+        "engine_args_override": [
+            "--max-model-len=2048",
+            "--gpu-memory-utilization=0.9"
+        ]
+    }
+)
+```
+
+### Deprecations
+
+## 1.19.0 (11-13-2025)
+
+### Bug Fixes
+
+* Experiment Tracking (PuPr): No longer throw an exception in `list_artifacts` when run does not have artifacts.
 * Registry: Fix `get_version_by_alias`: now requires an exact match of snowflake identifier.
 
 ### Behavior Changes

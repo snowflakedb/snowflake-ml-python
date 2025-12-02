@@ -346,7 +346,7 @@ class RandomizedSearchCVTest(parameterized.TestCase):
 
     def test_not_fitted_exception(self) -> None:
         param_distributions = {"max_depth": [2, 6], "learning_rate": [0.1, 0.01]}
-        reg = RandomizedSearchCV(estimator=XGBClassifier(), param_distributions=param_distributions)
+        reg = RandomizedSearchCV(estimator=XGBClassifier(n_jobs=1), param_distributions=param_distributions)
 
         with self.assertRaises(RuntimeError, msg="Estimator not fitted before accessing property model_signatures!"):
             reg.predict(self._input_df)

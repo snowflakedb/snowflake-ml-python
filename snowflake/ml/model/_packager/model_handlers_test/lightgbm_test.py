@@ -23,7 +23,9 @@ class LightGBMHandlerTest(absltest.TestCase):
         cal_y = pd.Series(cal_data.target)
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "binary"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "binary", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_pred = regressor.predict(cal_X_test)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -93,7 +95,9 @@ class LightGBMHandlerTest(absltest.TestCase):
         cal_y = pd.Series(cal_data.target)
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        regressor = lightgbm.train({"objective": "binary"}, lightgbm.Dataset(cal_X_train, label=cal_y_train))
+        regressor = lightgbm.train(
+            {"objective": "binary", "num_threads": 1}, lightgbm.Dataset(cal_X_train, label=cal_y_train)
+        )
         y_pred = regressor.predict(cal_X_test)
         explanations: npt.NDArray[Any] = shap.TreeExplainer(regressor)(cal_X_test).values
         if explanations.ndim == 3 and explanations.shape[2] == 2:
@@ -166,7 +170,7 @@ class LightGBMHandlerTest(absltest.TestCase):
         cal_y = pd.Series(cal_data.target)
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
         y_pred = classifier.predict(cal_X_test)
         y_pred_proba = classifier.predict_proba(cal_X_test)
@@ -242,7 +246,7 @@ class LightGBMHandlerTest(absltest.TestCase):
         cal_y = pd.Series(cal_data.target)
         cal_X_train, cal_X_test, cal_y_train, _ = model_selection.train_test_split(cal_X, cal_y)
 
-        classifier = lightgbm.LGBMClassifier()
+        classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
         y_pred = classifier.predict(cal_X_test)
         y_pred_proba = classifier.predict_proba(cal_X_test)

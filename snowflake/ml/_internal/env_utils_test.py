@@ -1,5 +1,7 @@
 import collections
 import copy
+import importlib
+import os
 import pathlib
 import platform
 import tempfile
@@ -1175,6 +1177,46 @@ class EnvFileTest(absltest.TestCase):
                 "Requested python version is 3.10.10 while current Python version is 3.8.13",
             ):
                 env_utils.validate_py_runtime_version("3.10.10")
+
+    @mock.patch("snowflake.snowpark._internal.utils.is_in_stored_procedure")
+    @mock.patch.dict("os.environ", {}, clear=False)
+    def test_get_execution_context_external(self, mock_is_in_sproc: mock.MagicMock) -> None:
+        """Test get_execution_context returns EXTERNAL when not in SPROC or SPCS."""
+        mock_is_in_sproc.return_value = False
+        # Ensure IN_ML_RUNTIME env var is not set
+        if snowml_env.IN_ML_RUNTIME_ENV_VAR in os.environ:
+            del os.environ[snowml_env.IN_ML_RUNTIME_ENV_VAR]
+
+        # Need to reload to pick up the env var change
+        importlib.reload(snowml_env)
+        importlib.reload(env_utils)
+
+        result = env_utils.get_execution_context()
+        self.assertEqual(result, "EXTERNAL")
+        mock_is_in_sproc.assert_called_once()
+
+    @mock.patch("snowflake.snowpark._internal.utils.is_in_stored_procedure")
+    def test_get_execution_context_sproc(self, mock_is_in_sproc: mock.MagicMock) -> None:
+        """Test get_execution_context returns SPROC when running in stored procedure."""
+        mock_is_in_sproc.return_value = True
+
+        result = env_utils.get_execution_context()
+        self.assertEqual(result, "SPROC")
+        mock_is_in_sproc.assert_called_once()
+
+    @mock.patch("snowflake.snowpark._internal.utils.is_in_stored_procedure")
+    @mock.patch.dict("os.environ", {snowml_env.IN_ML_RUNTIME_ENV_VAR: "1"})
+    def test_get_execution_context_spcs(self, mock_is_in_sproc: mock.MagicMock) -> None:
+        """Test get_execution_context returns SPCS when running in SPCS ML runtime."""
+        mock_is_in_sproc.return_value = False
+
+        # Reload to pick up the env var change
+        importlib.reload(snowml_env)
+        importlib.reload(env_utils)
+
+        result = env_utils.get_execution_context()
+        self.assertEqual(result, "SPCS")
+        mock_is_in_sproc.assert_called_once()
 
 
 if __name__ == "__main__":

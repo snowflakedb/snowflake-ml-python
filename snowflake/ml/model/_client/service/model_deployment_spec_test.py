@@ -591,7 +591,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
 
-    def test_experimental_options_minimal(self) -> None:
+    def test_inference_engine_options_minimal(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -647,7 +647,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 )
         mds.clear()
 
-    def test_experimental_options_minimal_with_blocklist_args(self) -> None:
+    def test_inference_engine_options_minimal_with_blocklist_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(

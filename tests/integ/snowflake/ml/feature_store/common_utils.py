@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 from unittest.mock import Mock
 from uuid import uuid4
@@ -6,13 +5,9 @@ from uuid import uuid4
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
-from snowflake.ml._internal.utils.sql_identifier import (
-    SqlIdentifier,
-    to_sql_identifiers,
-)
 from snowflake.ml.feature_store.feature_view import FeatureView
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
-from snowflake.snowpark import Row, Session
+from snowflake.snowpark import Session
 
 # Database used for feature store integration test
 FS_INTEG_TEST_DB = "SNOWML_FEATURE_STORE_TEST_DB"
@@ -105,28 +100,7 @@ def create_mock_table(
 
 def get_test_warehouse_name(session: Session) -> str:
     session_warehouse = session.get_current_warehouse()
-    return session_warehouse if session_warehouse else "REGTEST_ML_4XL_MULTI"
-
-
-def cleanup_temporary_objects(session: Session) -> None:
-    current_time = datetime.now().astimezone()
-
-    def is_object_expired(row: Row) -> bool:
-        time_diff: timedelta = current_time - row["created_on"]
-        return time_diff >= timedelta(hours=DB_OBJECT_EXPIRE_HOURS)
-
-    for db in [FS_INTEG_TEST_DB, FS_INTEG_TEST_DUMMY_DB]:
-        result = session.sql(f"SHOW SCHEMAS IN DATABASE {db}").collect()
-        permanent_schemas = to_sql_identifiers(["INFORMATION_SCHEMA", "PUBLIC", FS_INTEG_TEST_DATASET_SCHEMA])
-        for row in result:
-            schema = SqlIdentifier(row["name"], case_sensitive=True)
-            if schema.resolved() not in permanent_schemas and is_object_expired(row):
-                session.sql(f"DROP SCHEMA IF EXISTS {db}.{schema.identifier()}").collect()
-
-    full_schema_path = f"{FS_INTEG_TEST_DB}.{FS_INTEG_TEST_DATASET_SCHEMA}"
-    result = session.sql(f"SHOW TABLES IN {full_schema_path}").collect()
-    permanent_tables = to_sql_identifiers([FS_INTEG_TEST_YELLOW_TRIP_DATA, FS_INTEG_TEST_WINE_QUALITY_DATA])
-    for row in result:
-        table = SqlIdentifier(row["name"], case_sensitive=True)
-        if table.resolved() not in permanent_tables and is_object_expired(row):
-            session.sql(f"DROP TABLE IF EXISTS {full_schema_path}.{table.identifier()}").collect()
+    if not session_warehouse:
+        raise RuntimeError("No warehouse is configured in the current session.")
+    # Sanitize any accidental surrounding quotes to avoid generating SQL like """WH"""
+    return session_warehouse.strip('"')
