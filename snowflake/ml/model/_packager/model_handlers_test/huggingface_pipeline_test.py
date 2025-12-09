@@ -2,7 +2,7 @@ import copy
 import json
 import os
 import tempfile
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 from unittest import mock
 
 import numpy as np
@@ -17,13 +17,13 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers import (
-    huggingface_pipeline as hf_pipeline_handler,
+    huggingface as hf_pipeline_handler,
 )
-from snowflake.ml.model._packager.model_handlers.huggingface_pipeline import (
-    HuggingFacePipelineHandler,
+from snowflake.ml.model._packager.model_handlers.huggingface import (
+    TransformersPipelineHandler,
 )
 from snowflake.ml.model._signatures import utils
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import huggingface as hf_base, huggingface_pipeline
 
 if TYPE_CHECKING:
     import transformers
@@ -47,31 +47,31 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         self.cache_dir.cleanup()
 
     def test_get_device_config(self) -> None:
-        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(), {})
-        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=False), {})
+        self.assertDictEqual(TransformersPipelineHandler._get_device_config(), {})
+        self.assertDictEqual(TransformersPipelineHandler._get_device_config(use_gpu=False), {})
         with mock.patch.dict(os.environ, {}):
-            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
+            self.assertDictEqual(TransformersPipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
         with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0"}):
-            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device": "cuda"})
+            self.assertDictEqual(TransformersPipelineHandler._get_device_config(use_gpu=True), {"device": "cuda"})
         with mock.patch.dict(os.environ, {"CUDA_VISIBLE_DEVICES": "0,1"}):
-            self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
+            self.assertDictEqual(TransformersPipelineHandler._get_device_config(use_gpu=True), {"device_map": "auto"})
         self.assertDictEqual(
-            HuggingFacePipelineHandler._get_device_config(device_map="balanced"), {"device_map": "balanced"}
+            TransformersPipelineHandler._get_device_config(device_map="balanced"), {"device_map": "balanced"}
         )
         self.assertDictEqual(
-            HuggingFacePipelineHandler._get_device_config(use_gpu=False, device_map="balanced"),
+            TransformersPipelineHandler._get_device_config(use_gpu=False, device_map="balanced"),
             {"device_map": "balanced"},
         )
         self.assertDictEqual(
-            HuggingFacePipelineHandler._get_device_config(use_gpu=True, device_map="balanced"),
+            TransformersPipelineHandler._get_device_config(use_gpu=True, device_map="balanced"),
             {"device_map": "balanced"},
         )
-        self.assertDictEqual(HuggingFacePipelineHandler._get_device_config(device="cuda:0"), {"device": "cuda:0"})
+        self.assertDictEqual(TransformersPipelineHandler._get_device_config(device="cuda:0"), {"device": "cuda:0"})
         self.assertDictEqual(
-            HuggingFacePipelineHandler._get_device_config(use_gpu=False, device="cuda:0"), {"device": "cuda:0"}
+            TransformersPipelineHandler._get_device_config(use_gpu=False, device="cuda:0"), {"device": "cuda:0"}
         )
         self.assertDictEqual(
-            HuggingFacePipelineHandler._get_device_config(use_gpu=True, device="cuda:0"), {"device": "cuda:0"}
+            TransformersPipelineHandler._get_device_config(use_gpu=True, device="cuda:0"), {"device": "cuda:0"}
         )
 
     def _check_loaded_pipeline_object(self, original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
@@ -85,8 +85,8 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
     def _check_loaded_pipeline_wrapper_object(
         self,
-        original: huggingface_pipeline.HuggingFacePipelineModel,
-        loaded: huggingface_pipeline.HuggingFacePipelineModel,
+        original: Union[huggingface_pipeline.HuggingFacePipelineModel, hf_base.TransformersPipeline],
+        loaded: Union[huggingface_pipeline.HuggingFacePipelineModel, hf_base.TransformersPipeline],
         use_gpu: bool = False,
     ) -> None:
         original_dict = original.__dict__
@@ -218,7 +218,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             # the transformer model is user defined, and is not available in huggingface hub
             # can't test the wrapper model
             return
-        wrapper_model = huggingface_pipeline.HuggingFacePipelineModel(
+        wrapper_model = hf_base.TransformersPipeline(
             task=task, model=model_id, **options  # type:ignore[arg-type]
         )
 
@@ -244,7 +244,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 pk.load()
                 assert pk.model
                 assert pk.meta
-                assert isinstance(pk.model, huggingface_pipeline.HuggingFacePipelineModel)
+                assert isinstance(pk.model, hf_base.TransformersPipeline)
                 self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model)
                 self.assertEqual(s, pk.meta.signatures)
 
@@ -261,7 +261,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     pk.load(options={"use_gpu": True})
                     assert pk.model
                     assert pk.meta
-                    assert isinstance(pk.model, huggingface_pipeline.HuggingFacePipelineModel)
+                    assert isinstance(pk.model, hf_base.TransformersPipeline)
                     self._check_loaded_pipeline_wrapper_object(wrapper_model, pk.model, use_gpu=True)
                     self.assertEqual(s, pk.meta.signatures)
 
@@ -433,7 +433,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model_id="distilbert/distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={},
             check_pipeline_fn=get_check_pipeline_fn(),
@@ -443,7 +443,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model_id="distilbert/distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"align_to_words": True},
             check_pipeline_fn=get_check_pipeline_fn(),
@@ -453,7 +453,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model_id="distilbert/distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"top_k": 5},
             check_pipeline_fn=get_check_pipeline_fn(top_k=5),
@@ -490,7 +490,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="summarization",
-            model_id="sshleifer/tiny-mbart",
+            model_id="Falconsai/text_summarization",
             udf_test_input=x_df,
             # This model is stored in fp16, but the architecture does not support it,
             # it will messed up the auto dtype loading.
@@ -505,7 +505,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         ):
             self._basic_test_case(
                 task="summarization",
-                model_id="sshleifer/tiny-mbart",
+                model_id="Falconsai/text_summarization",
                 udf_test_input=x_df,
                 options={"return_tensors": True, "torch_dtype": torch.float32},
                 check_pipeline_fn=check_pipeline,
@@ -1051,7 +1051,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="zero-shot-classification",
-            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model_id="distilbert/distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={},
             check_pipeline_fn=check_pipeline,
@@ -1061,7 +1061,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="zero-shot-classification",
-            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
+            model_id="distilbert/distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"multi_label": True},
             check_pipeline_fn=check_pipeline,

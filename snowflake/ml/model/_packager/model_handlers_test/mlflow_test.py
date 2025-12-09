@@ -30,17 +30,17 @@ class MLFlowHandlerTest(absltest.TestCase):
                 conda_env={
                     "channels": ["conda-forge"],
                     "dependencies": [
-                        "python=3.8.13",
-                        "pip<=23.0.1",
+                        "python=3.11.9",
+                        "pip<=24.0",
                         {
                             "pip": [
-                                "mlflow<3,>=2.3",
-                                "cloudpickle==2.0.0",
-                                "numpy==1.23.4",
-                                "psutil==5.9.0",
-                                "scikit-learn==1.2.2",
-                                "scipy==1.9.3",
-                                "typing-extensions==4.5.0",
+                                "mlflow<4,>=3.3",
+                                "cloudpickle==3.0.0",
+                                "numpy==2.1.3",
+                                "psutil==7.0.0",
+                                "scikit-learn==1.6.1",
+                                "scipy==1.14.1",
+                                "typing-extensions==4.12.2",
                             ]
                         },
                     ],
@@ -59,7 +59,7 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert pk.model
             assert pk.meta
 
-            self.assertEqual(pk.meta.env.python_version, "3.8")
+            self.assertEqual(pk.meta.env.python_version, "3.11")
             self.assertDictEqual(pk.meta.metadata, {"author": "halu", "version": "1"})
             self.assertDictEqual(
                 pk.meta.signatures,
@@ -80,16 +80,16 @@ class MLFlowHandlerTest(absltest.TestCase):
                 sorted(pk.meta.env.pip_requirements),
                 sorted(
                     [
-                        "mlflow<3,>=2.3",
-                        "numpy==1.23.4",
-                        "psutil==5.9.0",
-                        "scikit-learn==1.2.2",
-                        "scipy==1.9.3",
-                        "typing-extensions==4.5.0",
+                        "mlflow<4,>=3.3",
+                        "numpy==2.1.3",
+                        "psutil==7.0.0",
+                        "scikit-learn==1.6.1",
+                        "scipy==1.14.1",
+                        "typing-extensions==4.12.2",
                     ]
                 ),
             )
-            self.assertIn("pip<=23.0.1", pk.meta.env.conda_dependencies)
+            self.assertIn("pip<=24.0", pk.meta.env.conda_dependencies)
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
             pk.load()
@@ -102,7 +102,7 @@ class MLFlowHandlerTest(absltest.TestCase):
                 name="model1_again", model=mlflow_pyfunc_model, options={"relax_version": False}
             )
 
-            self.assertEqual(pk.meta.env.python_version, "3.8")
+            self.assertEqual(pk.meta.env.python_version, "3.11")
             self.assertDictEqual(pk.meta.metadata, {"author": "halu", "version": "1"})
             self.assertDictEqual(
                 pk.meta.signatures,
@@ -123,16 +123,16 @@ class MLFlowHandlerTest(absltest.TestCase):
                 sorted(pk.meta.env.pip_requirements),
                 sorted(
                     [
-                        "mlflow<3,>=2.3",
-                        "numpy==1.23.4",
-                        "psutil==5.9.0",
-                        "scikit-learn==1.2.2",
-                        "scipy==1.9.3",
-                        "typing-extensions==4.5.0",
+                        "mlflow<4,>=3.3",
+                        "numpy==2.1.3",
+                        "psutil==7.0.0",
+                        "scikit-learn==1.6.1",
+                        "scipy==1.14.1",
+                        "typing-extensions==4.12.2",
                     ]
                 ),
             )
-            self.assertIn("pip<=23.0.1", pk.meta.env.conda_dependencies)
+            self.assertIn("pip<=24.0", pk.meta.env.conda_dependencies)
 
             np.testing.assert_allclose(predictions, pk.model.predict(X_test))
 

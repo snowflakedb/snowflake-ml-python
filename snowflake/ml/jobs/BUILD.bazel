@@ -15,8 +15,13 @@ py_library(
     srcs = ["job.py"],
     deps = [
         "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:mixins",
         "//snowflake/ml/jobs/_interop:interop",
-        "//snowflake/ml/jobs/_utils:job_utils",
+        "//snowflake/ml/jobs/_utils:constants",
+        "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:stage_utils",
+        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 
@@ -28,7 +33,10 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/jobs/_utils:feature_flags",
-        "//snowflake/ml/jobs/_utils:job_utils",
+        "//snowflake/ml/jobs/_utils:payload_utils",
+        "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:spec_utils",
+        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 
@@ -37,6 +45,8 @@ py_library(
     srcs = ["decorators.py"],
     deps = [
         ":job_manager",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/jobs/_utils:payload_utils",
     ],
 )
 
@@ -58,6 +68,15 @@ py_test(
     ],
 )
 
+py_test(
+    name = "manager_test",
+    srcs = ["manager_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        "//snowflake/ml/jobs",
+    ],
+)
+
 py_library(
     name = "jobs",
     srcs = [
@@ -66,5 +85,7 @@ py_library(
     deps = [
         ":job_decorators",
         ":job_manager",
+        "//snowflake/ml/jobs/_interop:exception_utils",
+        "//snowflake/ml/jobs/_utils:types",
     ],
 )

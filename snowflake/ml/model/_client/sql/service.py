@@ -3,7 +3,9 @@ import dataclasses
 import enum
 import logging
 import textwrap
-from typing import Any, Generator, Optional
+from typing import Any, Generator, Optional, cast
+
+import yaml
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import (
@@ -68,6 +70,7 @@ class ServiceStatusInfo:
 
 class ServiceSQLClient(_base._BaseSQLClient):
     MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME = "name"
+    MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME = "port"
     MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME = "ingress_url"
     MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME = "privatelink_ingress_url"
     SERVICE_STATUS = "service_status"
@@ -75,6 +78,14 @@ class ServiceSQLClient(_base._BaseSQLClient):
     INSTANCE_STATUS = "instance_status"
     CONTAINER_STATUS = "status"
     MESSAGE = "message"
+    DESC_SERVICE_INTERNAL_DNS_COL_NAME = "dns_name"
+    DESC_SERVICE_SPEC_COL_NAME = "spec"
+    DESC_SERVICE_CONTAINERS_SPEC_NAME = "containers"
+    DESC_SERVICE_NAME_SPEC_NAME = "name"
+    DESC_SERVICE_PROXY_SPEC_ENV_NAME = "env"
+    PROXY_CONTAINER_NAME = "proxy"
+    MODEL_INFERENCE_AUTOCAPTURE_ENV_NAME = "SPCS_MODEL_INFERENCE_SERVER__AUTOCAPTURE_ENABLED"
+    FEATURE_MODEL_INFERENCE_AUTOCAPTURE = "FEATURE_MODEL_INFERENCE_AUTOCAPTURE"
 
     @contextlib.contextmanager
     def _qmark_paramstyle(self) -> Generator[None, None, None]:
@@ -233,7 +244,15 @@ class ServiceSQLClient(_base._BaseSQLClient):
     ) -> list[ServiceStatusInfo]:
         fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         query = f"SHOW SERVICE CONTAINERS IN SERVICE {fully_qualified_object_name}"
-        rows = self._session.sql(query).collect(statement_params=statement_params)
+        rows = (
+            query_result_checker.SqlResultValidator(self._session, query, statement_params=statement_params)
+            .has_column(ServiceSQLClient.INSTANCE_STATUS)
+            .has_column(ServiceSQLClient.CONTAINER_STATUS)
+            .has_column(ServiceSQLClient.SERVICE_STATUS)
+            .has_column(ServiceSQLClient.INSTANCE_ID)
+            .has_column(ServiceSQLClient.MESSAGE)
+            .validate()
+        )
         statuses = []
         for r in rows:
             instance_status, container_status = None, None
@@ -251,6 +270,53 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 )
             )
         return statuses
+
+    def describe_service(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> row.Row:
+        fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
+        query = f"DESCRIBE SERVICE {fully_qualified_object_name}"
+        rows = (
+            query_result_checker.SqlResultValidator(self._session, query, statement_params=statement_params)
+            .has_dimensions(expected_rows=1)
+            .has_column(ServiceSQLClient.DESC_SERVICE_INTERNAL_DNS_COL_NAME)
+            .validate()
+        )
+        return rows[0]
+
+    def get_proxy_container_autocapture(self, row: row.Row) -> bool:
+        """Extract whether service has autocapture enabled from proxy container spec.
+
+        Args:
+            row: A row.Row object from DESCRIBE SERVICE containing the service YAML spec.
+
+        Returns:
+            True if autocapture is enabled in proxy spec
+            False if disabled or not set in proxy spec
+            False if service doesn't have proxy container
+        """
+        try:
+            spec_raw = yaml.safe_load(row[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME])
+            spec = cast(dict[str, Any], spec_raw)
+
+            proxy_container_spec = next(
+                container
+                for container in spec[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME][
+                    ServiceSQLClient.DESC_SERVICE_CONTAINERS_SPEC_NAME
+                ]
+                if container[ServiceSQLClient.DESC_SERVICE_NAME_SPEC_NAME] == ServiceSQLClient.PROXY_CONTAINER_NAME
+            )
+            env = proxy_container_spec.get(ServiceSQLClient.DESC_SERVICE_PROXY_SPEC_ENV_NAME, {})
+            autocapture_enabled = env.get(ServiceSQLClient.MODEL_INFERENCE_AUTOCAPTURE_ENV_NAME, "false")
+            return str(autocapture_enabled).lower() == "true"
+
+        except StopIteration:
+            return False
 
     def drop_service(
         self,
@@ -282,6 +348,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME, allow_empty=True)
+            .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME, allow_empty=True)
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME, allow_empty=True)
         )
 

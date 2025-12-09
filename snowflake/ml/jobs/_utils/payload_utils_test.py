@@ -5,8 +5,8 @@ import os
 import subprocess
 import sys
 import tempfile
-from pathlib import Path, PurePath
-from typing import Any, Callable, Generator, Optional, Union
+from pathlib import Path
+from typing import Any, Callable, Generator, Optional
 
 from absl.testing import absltest, parameterized
 
@@ -129,38 +129,9 @@ class PayloadUtilsTests(parameterized.TestCase):
             resolved_source = payload_utils.resolve_source(payload.source)
             resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
             assert not callable(resolved_source)
-            self.assertEqual(resolved_source.as_posix(), payload_utils.resolve_path(source).absolute().as_posix())
+            assert isinstance(resolved_entrypoint, types.PayloadEntrypoint)
+            self.assertEqual(resolved_source.as_posix(), stage_utils.resolve_path(source).absolute().as_posix())
             self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
-
-    @parameterized.parameters(  # type: ignore[misc]
-        (
-            [(resolve_path("src"), "deep.deep.module")],
-            [(Path(resolve_path("src")), PurePath("deep/deep/module"))],
-        ),
-        (
-            [("@test_stage/src", "deep.deep.module")],
-            [(stage_utils.StagePath("@test_stage/src"), PurePath("deep/deep/module"))],
-        ),
-        (
-            [
-                (resolve_path("src"), "package.subpackage.module"),
-                ("@test_stage/deep/path", "very.deep.nested.module"),
-            ],
-            [
-                (Path(resolve_path("src")), PurePath("package/subpackage/module")),
-                (stage_utils.StagePath("@test_stage/deep/path"), PurePath("very/deep/nested/module")),
-            ],
-        ),
-    )
-    def test_resolve_additional_payloads(
-        self,
-        additional_payloads: list[Union[str, tuple[str, str]]],
-        expected_payloads_specs: list[types.PayloadSpec],
-    ) -> None:
-        with pushd(resolve_path("")):
-            additional_payloads_paths = payload_utils.resolve_additional_payloads(additional_payloads)
-            payload_specs = [(spec.source_path, spec.remote_relative_path) for spec in additional_payloads_paths]
-            self.assertEqual(payload_specs, expected_payloads_specs)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("not_exist", "file1.py", FileNotFoundError),  # not_exist/ does not exist
@@ -300,6 +271,52 @@ class PayloadUtilsTests(parameterized.TestCase):
         # Write generated code to a temp file and execute temp file as a subprocess
         with self.assertRaises(error_type):
             payload_utils.generate_python_code(func)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ((resolve_path("src/subdir1"), "src.subdir1"), [(resolve_path("src/subdir1"), "src/subdir1")]),
+        ((resolve_path("src/subdir2"), "subdir2"), [(resolve_path("src/subdir2"), "subdir2")]),
+        ((resolve_path("src/file2.py"), "file2"), [(resolve_path("src/file2.py"), "file2.py")]),
+        (("@test_stage/src/file1.py", "src.file1"), [("@test_stage/src/file1.py", "src/file1")]),
+        ((resolve_path("src/subdir1"), None), [(resolve_path("src/subdir1"), "subdir1")]),
+    )
+    def test_resolve_import_path(
+        self, imports: tuple[str, Optional[str]], expected_imports: list[tuple[str, Optional[str]]]
+    ) -> None:
+
+        with pushd(resolve_path("")):
+            source, import_path = imports
+            resolved_imports = payload_utils.resolve_import_path(stage_utils.resolve_path(source), import_path)
+            normalized = [(p.as_posix(), m) for p, m in resolved_imports]
+            self.assertListEqual(expected_imports, normalized)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("/path/to/archive.zip/nested_file.py", "/path/to/archive.zip"),
+        ("/path/to/archive.zip", "/path/to/archive.zip"),
+        ("/path/to/regular_file.py", "/path/to/regular_file.py"),
+    )
+    def test_get_zip_file_from_path(self, path: str, expected_zip_file: str) -> None:
+        resolved_path = payload_utils.get_zip_file_from_path(Path(path))
+        self.assertEqual(resolved_path.as_posix(), expected_zip_file)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (resolve_path("src/file2.py"), "file2"),
+        (resolve_path("src/subdir1"), "lib/src/subdir1"),
+    )
+    def test_validate_import_path_negative(self, source: str, import_path: Optional[str]) -> None:
+        with pushd(resolve_path("")):
+            with self.assertRaises(ValueError):
+                payload_utils.validate_import_path(source, import_path)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (resolve_path("src/file2.py"), "file2.py"),
+        (resolve_path("src/subdir1"), "src/subdir1"),
+    )
+    def test_validate_import_path_positive(self, source: str, import_path: Optional[str]) -> None:
+        with pushd(resolve_path("")):
+            try:
+                payload_utils.validate_import_path(source, import_path)
+            except Exception as e:
+                self.fail(f"validate_import_path() raised an exception unexpectedly: {e}")
 
 
 if __name__ == "__main__":
