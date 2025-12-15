@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import Any, cast
+from typing import cast
 from unittest import mock
 
 from absl.testing import absltest
@@ -343,28 +343,6 @@ class ServiceSQLTest(absltest.TestCase):
         ]
         self.assertEqual(res, m_res)
 
-    def test_get_service_container_statuses_no_status(self) -> None:
-        m_statement_params = {"test": "1"}
-        rows: list[Any] = []
-        m_df = mock_data_frame.MockDataFrame(collect_result=rows)
-        self.m_session.add_mock_sql(
-            """SHOW SERVICE CONTAINERS IN SERVICE TEMP."test".MYSERVICE""",
-            copy.deepcopy(m_df),
-        )
-        c_session = cast(Session, self.m_session)
-        res = service_sql.ServiceSQLClient(
-            c_session,
-            database_name=sql_identifier.SqlIdentifier("TEMP"),
-            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-        ).get_service_container_statuses(
-            database_name=None,
-            schema_name=None,
-            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-            include_message=False,
-            statement_params=m_statement_params,
-        )
-        self.assertEqual(res, [])
-
     def test_drop_service(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(
@@ -393,6 +371,7 @@ class ServiceSQLTest(absltest.TestCase):
             collect_result=[
                 Row(
                     name="inference",
+                    port=8000,
                     ingress_url="foo.snowflakecomputing.app",
                     privatelink_ingress_url="privatelink.foo.privatelink.snowflakecomputing.com",
                 )
@@ -441,6 +420,7 @@ class ServiceSQLTest(absltest.TestCase):
             collect_result=[
                 Row(
                     name="inference",
+                    port=8000,
                     ingress_url="foo.snowflakecomputing.app",
                 )
             ],
@@ -469,6 +449,37 @@ class ServiceSQLTest(absltest.TestCase):
         self.assertEqual(result[0]["name"], "inference")
         self.assertEqual(result[0]["ingress_url"], "foo.snowflakecomputing.app")
         self.assertNotIn("privatelink_ingress_url", result[0])
+
+    def test_get_internal_dns(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame(
+            collect_result=[
+                Row(
+                    name="MYSERVICE",
+                    dns_name="my-service.test.e6nv.svc.spcs.internal",
+                    status="RUNNING",
+                )
+            ],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql(
+            """DESCRIBE SERVICE TEMP."test".MYSERVICE""",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).get_internal_dns(
+            database_name=None,
+            schema_name=None,
+            service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+            statement_params=m_statement_params,
+        )
+
+        self.assertEqual(res, "my-service.test.e6nv.svc.spcs.internal")
 
 
 if __name__ == "__main__":

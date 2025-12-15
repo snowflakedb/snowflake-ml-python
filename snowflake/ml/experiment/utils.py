@@ -1,3 +1,4 @@
+import numbers
 from typing import Any, Union
 
 
@@ -12,3 +13,8 @@ def flatten_nested_params(params: Union[list[Any], dict[str, Any]], prefix: str 
         else:
             flat_params[new_prefix] = value
     return flat_params
+
+
+def is_integer(value: Any) -> bool:
+    """Check if the given value is an integer, excluding booleans."""
+    return isinstance(value, numbers.Integral) and not isinstance(value, bool)

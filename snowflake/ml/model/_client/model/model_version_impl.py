@@ -8,9 +8,9 @@ from typing import Any, Callable, Optional, Union, overload
 import pandas as pd
 
 from snowflake import snowpark
-from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
@@ -603,7 +603,7 @@ class ModelVersion(lineage_node.LineageNode):
         input_spec: dataframe.DataFrame,
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
-    ) -> jobs.MLJob[Any]:
+    ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
 
         Args:
@@ -618,7 +618,7 @@ class ModelVersion(lineage_node.LineageNode):
                 If None, default values will be used.
 
         Returns:
-            jobs.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
+            job.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
                 lifecycle.
 
         Raises:
@@ -1320,8 +1320,12 @@ class ModelVersion(lineage_node.LineageNode):
         """List all the service names using this model version.
 
         Returns:
-            List of service_names: The name of the service, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+            List of details about all the services associated with this model version. The details include:
+              name: The name of the service.
+              status: The status of the service.
+              inference_endpoint: The public endpoint of the service, if enabled and services is not in PENDING state.
+                This will give privatelink endpoint if the session is created with privatelink connection
+              internal_endpoint: The internal endpoint of the service, if services is not in PENDING state.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,

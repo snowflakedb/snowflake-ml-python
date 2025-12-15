@@ -7,9 +7,10 @@ from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml import jobs, version as snowml_version
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.ops import service_ops
@@ -1246,7 +1247,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
 
             # Verify returned MLJob
-            self.assertIsInstance(result, jobs.MLJob)
+            self.assertIsInstance(result, job.MLJob)
             self.assertEqual(result.id, expected_result_id)
 
     def test_invoke_batch_job_method_with_workspace(self) -> None:
@@ -1345,7 +1346,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 )
 
                 # Verify returned MLJob
-                self.assertIsInstance(result, jobs.MLJob)
+                self.assertIsInstance(result, job.MLJob)
 
     def test_invoke_batch_job_method_minimal_params(self) -> None:
         """Test invoke_batch_job_method with minimal required parameters only."""
@@ -1440,7 +1441,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
 
             # Verify returned MLJob
-            self.assertIsInstance(result, jobs.MLJob)
+            self.assertIsInstance(result, job.MLJob)
 
     def test_enforce_save_mode_error_with_empty_stage(self) -> None:
         """Test _enforce_save_mode with ERROR mode and empty stage location."""

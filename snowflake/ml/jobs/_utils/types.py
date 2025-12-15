@@ -1,7 +1,9 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import PurePath
-from typing import Iterator, Literal, Optional, Protocol, Union, runtime_checkable
+from typing import Literal, Optional, Protocol, Union, runtime_checkable
+
+from typing_extensions import Self
 
 JOB_STATUS = Literal[
     "PENDING",
@@ -20,6 +22,10 @@ class PayloadPath(Protocol):
     """A protocol for path-like objects used in this module, covering methods from pathlib.Path and StagePath."""
 
     @property
+    def parts(self) -> tuple[str, ...]:
+        ...
+
+    @property
     def name(self) -> str:
         ...
 
@@ -32,7 +38,7 @@ class PayloadPath(Protocol):
         ...
 
     @property
-    def parent(self) -> "PayloadPath":
+    def parent(self) -> Self:
         ...
 
     @property
@@ -45,13 +51,16 @@ class PayloadPath(Protocol):
     def is_file(self) -> bool:
         ...
 
+    def is_dir(self) -> bool:
+        ...
+
     def is_absolute(self) -> bool:
         ...
 
-    def absolute(self) -> "PayloadPath":
+    def absolute(self) -> Self:
         ...
 
-    def joinpath(self, *other: Union[str, os.PathLike[str]]) -> "PayloadPath":
+    def joinpath(self, *other: Union[str, os.PathLike[str]]) -> Self:
         ...
 
     def as_posix(self) -> str:
@@ -79,9 +88,7 @@ class PayloadSpec:
 
     source_path: PayloadPath
     remote_relative_path: Optional[PurePath] = None
-
-    def __iter__(self) -> Iterator[Union[PayloadPath, Optional[PurePath]]]:
-        return iter((self.source_path, self.remote_relative_path))
+    compress: bool = False
 
 
 @dataclass(frozen=True)
