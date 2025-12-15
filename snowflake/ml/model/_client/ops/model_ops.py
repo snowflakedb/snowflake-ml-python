@@ -42,7 +42,6 @@ class ServiceInfo(TypedDict):
     name: str
     status: str
     inference_endpoint: Optional[str]
-    internal_endpoint: Optional[str]
 
 
 class ModelOperator:
@@ -652,13 +651,6 @@ class ModelOperator:
         url_str = str(url_value)
         return url_str if ModelOperator.PRIVATELINK_INGRESS_ENDPOINT_URL_SUBSTRING in url_str else None
 
-    def _extract_and_validate_port(self, res_row: "row.Row") -> Optional[int]:
-        """Extract and validate port from endpoint row."""
-        port_value = res_row[self._service_client.MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME]
-        if port_value is None:
-            return None
-        return int(port_value)
-
     def show_services(
         self,
         *,
@@ -694,7 +686,6 @@ class ModelOperator:
         is_privatelink_connection = self._is_privatelink_connection()
 
         for fully_qualified_service_name in fully_qualified_service_names:
-            port: Optional[int] = None
             inference_endpoint: Optional[str] = None
             db, schema, service_name = sql_identifier.parse_fully_qualified_name(fully_qualified_service_name)
             statuses = self._service_client.get_service_container_statuses(
@@ -704,9 +695,6 @@ class ModelOperator:
                 return result
 
             service_status = statuses[0].service_status
-            internal_dns = self._service_client.get_internal_dns(
-                database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
-            )
             for res_row in self._service_client.show_endpoints(
                 database_name=db, schema_name=schema, service_name=service_name, statement_params=statement_params
             ):
@@ -718,7 +706,6 @@ class ModelOperator:
 
                 ingress_url = self._extract_and_validate_ingress_url(res_row)
                 privatelink_ingress_url = self._extract_and_validate_privatelink_url(res_row)
-                port = self._extract_and_validate_port(res_row)
 
                 if is_privatelink_connection and privatelink_ingress_url is not None:
                     inference_endpoint = privatelink_ingress_url
@@ -730,7 +717,6 @@ class ModelOperator:
                     name=fully_qualified_service_name,
                     status=service_status.value,
                     inference_endpoint=inference_endpoint,
-                    internal_endpoint=f"http://{internal_dns}:{port}" if port is not None else None,
                 )
             )
 

@@ -1,4 +1,3 @@
-import numpy as np
 from absl.testing import absltest
 
 from snowflake.ml.experiment import utils
@@ -52,22 +51,6 @@ class ExperimentTrackingUtilsTest(absltest.TestCase):
         }
         flattened = utils.flatten_nested_params(nested_params)
         self.assertEqual(flattened, expected_flattened)
-
-    def test_is_integer(self) -> None:
-        """Test the is_integer utility function."""
-        self.assertTrue(utils.is_integer(10))
-        self.assertTrue(utils.is_integer(-10))
-        self.assertTrue(utils.is_integer(0))
-
-        np_int_types = [np.int8, np.int16, np.int32, np.int64, np.uint8, np.uint16, np.uint32, np.uint64]
-        for np_int_type in np_int_types:
-            self.assertTrue(utils.is_integer(np_int_type(10)))
-
-        self.assertFalse(utils.is_integer(10.0))
-        self.assertFalse(utils.is_integer("10"))
-        self.assertFalse(utils.is_integer(True))
-        self.assertFalse(utils.is_integer(False))
-        self.assertFalse(utils.is_integer(None))
 
 
 if __name__ == "__main__":

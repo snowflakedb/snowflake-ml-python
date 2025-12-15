@@ -163,7 +163,6 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
         model_version: model_version_impl.ModelVersion,
         segment_columns=None,
         custom_metric_columns=None,
-        timestamp_custom_metric_table=None,
     ) -> model_monitor.ModelMonitor:
         return self.registry.add_monitor(
             name=monitor_name,
@@ -175,7 +174,6 @@ class ModelMonitorIntegrationTestBase(parameterized.TestCase):
                 timestamp_column="timestamp",
                 segment_columns=segment_columns,
                 custom_metric_columns=custom_metric_columns,
-                timestamp_custom_metric_table=timestamp_custom_metric_table,
             ),
             model_monitor_config=model_monitor_config.ModelMonitorConfig(
                 model_version=model_version,

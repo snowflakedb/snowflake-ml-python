@@ -1,6 +1,6 @@
 import pandas as pd
 import tensorflow as tf
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._signatures import snowpark_handler, tensorflow_handler
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -8,8 +8,12 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, model_factory
 
 
 class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_tf_tensor_as_sample(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.TensorflowTensorHandler.convert_to_df(data_x, ensure_serializable=False)
@@ -27,7 +31,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
                 check_dtype=False,
             )
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=data_x,
             prediction_assert_fns={
@@ -148,8 +152,12 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             options={"multiple_inputs": True},
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_tf_sp_multiple_inputs(
         self,
+        registry_test_fn: str,
     ) -> None:
         model, data_x = model_factory.ModelFactory.prepare_tf_model()
         x_df = tensorflow_handler.SeqOfTensorflowTensorHandler.convert_to_df([data_x], ensure_serializable=False)
@@ -163,7 +171,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
         y_pred_df.columns = ["output_feature_0"]
         y_df_expected = pd.concat([x_df, y_pred_df], axis=1)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=x_df,
             prediction_assert_fns={

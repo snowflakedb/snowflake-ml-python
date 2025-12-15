@@ -92,9 +92,6 @@ class ModelMonitorSQLClient:
         baseline: Optional[sql_identifier.SqlIdentifier] = None,
         segment_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
         custom_metric_columns: Optional[list[sql_identifier.SqlIdentifier]] = None,
-        timestamp_custom_metric_database: Optional[sql_identifier.SqlIdentifier] = None,
-        timestamp_custom_metric_schema: Optional[sql_identifier.SqlIdentifier] = None,
-        timestamp_custom_metric_table: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         baseline_sql = ""
@@ -108,14 +105,6 @@ class ModelMonitorSQLClient:
         custom_metric_columns_sql = ""
         if custom_metric_columns:
             custom_metric_columns_sql = f"CUSTOM_METRIC_COLUMNS={_build_sql_list_from_columns(custom_metric_columns)}"
-
-        timestamp_custom_metric_table_sql = ""
-        if timestamp_custom_metric_table:
-            timestamp_custom_metric_table_sql = (
-                f"TIMESTAMP_CUSTOM_METRIC_TABLE="
-                f"{self._infer_qualified_schema(timestamp_custom_metric_database, timestamp_custom_metric_schema)}."
-                f"{timestamp_custom_metric_table}"
-            )
 
         query_result_checker.SqlResultValidator(
             self._sql_client._session,
@@ -137,7 +126,6 @@ class ModelMonitorSQLClient:
                     AGGREGATION_WINDOW='{aggregation_window}'
                     {segment_columns_sql}
                     {custom_metric_columns_sql}
-                    {timestamp_custom_metric_table_sql}
                     {baseline_sql}""",
             statement_params=statement_params,
         ).has_column("status").has_dimensions(1, 1).validate()

@@ -68,7 +68,6 @@ class ServiceStatusInfo:
 
 class ServiceSQLClient(_base._BaseSQLClient):
     MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME = "name"
-    MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME = "port"
     MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME = "ingress_url"
     MODEL_INFERENCE_SERVICE_ENDPOINT_PRIVATELINK_INGRESS_URL_COL_NAME = "privatelink_ingress_url"
     SERVICE_STATUS = "service_status"
@@ -76,7 +75,6 @@ class ServiceSQLClient(_base._BaseSQLClient):
     INSTANCE_STATUS = "instance_status"
     CONTAINER_STATUS = "status"
     MESSAGE = "message"
-    DESC_SERVICE_INTERNAL_DNS_COL_NAME = "dns_name"
 
     @contextlib.contextmanager
     def _qmark_paramstyle(self) -> Generator[None, None, None]:
@@ -235,15 +233,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
     ) -> list[ServiceStatusInfo]:
         fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
         query = f"SHOW SERVICE CONTAINERS IN SERVICE {fully_qualified_object_name}"
-        rows = (
-            query_result_checker.SqlResultValidator(self._session, query, statement_params=statement_params)
-            .has_column(ServiceSQLClient.INSTANCE_STATUS)
-            .has_column(ServiceSQLClient.CONTAINER_STATUS)
-            .has_column(ServiceSQLClient.SERVICE_STATUS)
-            .has_column(ServiceSQLClient.INSTANCE_ID)
-            .has_column(ServiceSQLClient.MESSAGE)
-            .validate()
-        )
+        rows = self._session.sql(query).collect(statement_params=statement_params)
         statuses = []
         for r in rows:
             instance_status, container_status = None, None
@@ -261,24 +251,6 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 )
             )
         return statuses
-
-    def get_internal_dns(
-        self,
-        *,
-        database_name: Optional[sql_identifier.SqlIdentifier],
-        schema_name: Optional[sql_identifier.SqlIdentifier],
-        service_name: sql_identifier.SqlIdentifier,
-        statement_params: Optional[dict[str, Any]] = None,
-    ) -> str:
-        fully_qualified_object_name = self.fully_qualified_object_name(database_name, schema_name, service_name)
-        query = f"DESCRIBE SERVICE {fully_qualified_object_name}"
-        rows = (
-            query_result_checker.SqlResultValidator(self._session, query, statement_params=statement_params)
-            .has_dimensions(expected_rows=1)
-            .has_column(ServiceSQLClient.DESC_SERVICE_INTERNAL_DNS_COL_NAME)
-            .validate()
-        )
-        return str(rows[0][ServiceSQLClient.DESC_SERVICE_INTERNAL_DNS_COL_NAME])
 
     def drop_service(
         self,
@@ -310,7 +282,6 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_NAME_COL_NAME, allow_empty=True)
-            .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_PORT_COL_NAME, allow_empty=True)
             .has_column(ServiceSQLClient.MODEL_INFERENCE_SERVICE_ENDPOINT_INGRESS_URL_COL_NAME, allow_empty=True)
         )
 

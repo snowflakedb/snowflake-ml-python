@@ -49,7 +49,7 @@ def _prepare_keras_subclass_model() -> tuple[keras.Model, npt.ArrayLike, npt.Arr
 
     model = KerasModel(n_hidden, n_out)
     model.compile(optimizer=keras.optimizers.SGD(learning_rate=learning_rate), loss=keras.losses.MeanSquaredError())
-    model.fit(x, y, batch_size=batch_size, epochs=10)
+    model.fit(x, y, batch_size=batch_size, epochs=100)
     return model, x, y
 
 
@@ -65,7 +65,7 @@ def _prepare_keras_sequential_model() -> tuple[keras.Model, npt.ArrayLike, npt.A
         ]
     )
     model.compile(optimizer=keras.optimizers.SGD(learning_rate=learning_rate), loss=keras.losses.MeanSquaredError())
-    model.fit(x, y, batch_size=batch_size, epochs=10)
+    model.fit(x, y, batch_size=batch_size, epochs=100)
     return model, x, y
 
 
@@ -79,7 +79,7 @@ def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.A
     output = keras.layers.Dense(n_out, activation="sigmoid")(input_2)
     model = keras.Model(inputs=input, outputs=output)
     model.compile(optimizer=keras.optimizers.SGD(learning_rate=learning_rate), loss=keras.losses.MeanSquaredError())
-    model.fit(x, y, batch_size=batch_size, epochs=10)
+    model.fit(x, y, batch_size=batch_size, epochs=100)
     return model, x, y
 
 

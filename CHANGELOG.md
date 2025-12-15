@@ -9,15 +9,6 @@
 
 ### Behavior Changes
 
-* ML Job: The `additional_payloads` (Preview API) behavior is changing.
-  Use the `imports` argument to declare additional dependencies, such as zip files and Python modules.
-  Local directories and Python files are automatically compressed, and their internal layout is determined by the
-  specified import path. The import path applies only to local directories, Python files and staged python files;
-  it has no effect on other import types. When referencing files in a stage, only individual files
-  are supported—not directories.
-* Online Inference (PuPr): `list_services()` now shows internal endpoint that does not need EAI to call from another
-  SPCS node or Notebook.
-
 ### New Features
 
 * Registry (PrPr): Introducing vLLM as a backend inference engine. The `create_service` API will now
@@ -155,6 +146,8 @@ options = {
 
 * Registry: Dropping support for deprecated `conversational` task type for Huggingface models.
   To read more <https://github.com/huggingface/transformers/pull/31165>
+
+### New Features
 
 ## 1.14.0 (09-18-2025)
 

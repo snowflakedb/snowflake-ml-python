@@ -44,7 +44,7 @@ class CovarianceTest(TestCase):
                 Row(2.0, 2.5, 5.6, 2.4, 1.1),
                 Row(3.5, 4.7, 0.4, 2.1, 3.8),
                 Row(2.5, 1.5, 6.7, None, 9.1),
-                Row(4.0, 3.8, 2.3, 5.5, np.nan),
+                Row(4.0, 3.8, 2.3, 5.5, np.NaN),
             ],
             schema=["COL1", "COL2", "COL3", "COL4", "COL5"],
         )
@@ -62,7 +62,7 @@ class CovarianceTest(TestCase):
                 Row(2.0, 2.5, 5.6, 2.4, 1.1),
                 Row(3.5, 4.7, 0.4, 2.1, 3.8),
                 Row(2.5, 1.5, 6.7, None, 9.1),
-                Row(4.0, 3.8, 2.3, 5.5, np.nan),
+                Row(4.0, 3.8, 2.3, 5.5, np.NaN),
             ],
             schema=["col1", "col2", "col3", "col4", "col5"],
         )

@@ -56,38 +56,6 @@ class ModelMonitorIntegrationCustomMetricTest(ModelMonitorIntegrationTestBase):
         self.assertNotIn("INITIAL_METRIC", json.loads(describe_result[0]["columns"])["custom_metric_columns"])
         self.assertIn("INITIAL_METRIC", json.loads(describe_result[0]["columns"])["numerical_columns"])
 
-    def test_create_monitor_with_timestamp_custom_metric_table(self):
-        """Test creating a monitor with TIMESTAMP_CUSTOM_METRIC_TABLE."""
-
-        self._session.sql("ALTER SESSION SET ENABLE_MODEL_MONITOR_TIMESTAMP_CUSTOM_METRIC_TABLE = TRUE").collect()
-
-        source_table_name = "source_table_ts_cm"
-        ts_cm_table_name = "ts_cm_table"
-        monitor_name = "monitor_ts_cm"
-
-        self._create_test_table(f"{self._db_name}.{self._schema_name}.{source_table_name}")
-        self._create_test_table(f"{self._db_name}.{self._schema_name}.{ts_cm_table_name}")
-
-        monitor = self._add_sample_monitor(
-            monitor_name=monitor_name,
-            source=source_table_name,
-            model_version=self._model_version,
-            timestamp_custom_metric_table=ts_cm_table_name,
-        )
-
-        self.assertEqual(monitor.name, monitor_name.upper())
-        monitors = self.registry.show_model_monitors()
-        monitor_names = [m["name"] for m in monitors]
-        self.assertIn(monitor_name.upper(), monitor_names)
-
-        # Verify DESCRIBE MODEL MONITOR includes TIMESTAMP_CUSTOM_METRIC_TABLE
-        describe_result = self._session.sql(
-            f"DESCRIBE MODEL MONITOR {self._db_name}.{self._schema_name}.{monitor_name}"
-        ).collect()
-        self.assertEqual(
-            json.loads(describe_result[0]["timestamp_custom_metric_table"])["name"], ts_cm_table_name.upper()
-        )
-
 
 if __name__ == "__main__":
     absltest.main()

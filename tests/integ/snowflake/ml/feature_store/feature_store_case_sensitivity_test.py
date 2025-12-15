@@ -25,7 +25,7 @@ TEST_NAMES = [
     (['"lazy_PIG"'], ["lazy_PIG", "LAZY_PIG", '"LAZY_PIG"']),
 ]
 
-WAREHOUSE_NAME_TEMPLATES = ["my_test_warehouse_{}", '"my_""TEST_WAREHOUSE_{}"']
+WAREHOUSE_NAMES = ["my_test_warehouse", '"my_""TEST_WAREHOUSE"']
 
 FS_LOCATIONS = [
     ("fs_test_db", "fs_test_schema"),
@@ -113,8 +113,8 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
             creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
         )
 
-    @parameterized.parameters(WAREHOUSE_NAME_TEMPLATES)  # type: ignore[misc]
-    def test_warehouse_names(self, warehouse_name_template: str) -> None:
+    @parameterized.parameters(WAREHOUSE_NAMES)  # type: ignore[misc]
+    def test_warehouse_names(self, warehouse: str) -> None:
         """Test that FeatureStore correctly handles different warehouse name formats."""
         current_schema = create_random_schema(self._session, "TEST_WAREHOUSE_NAMES", database=self.test_db)
 
@@ -124,7 +124,6 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
 
         try:
             # Create the warehouse for testing
-            warehouse = warehouse_name_template.format(uuid4().hex)
             self._session.sql(f"CREATE OR REPLACE WAREHOUSE {warehouse} WITH WAREHOUSE_SIZE='XSMALL'").collect()
 
             fs = FeatureStore(

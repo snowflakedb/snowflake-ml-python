@@ -61,12 +61,9 @@ class ModelOpsTest(absltest.TestCase):
         return m_df
 
     def test_prepare_model_temp_stage_path(self) -> None:
-        with (
-            mock.patch.object(self.m_ops._stage_client, "create_tmp_stage") as mock_create_stage,
-            mock.patch.object(
-                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
-            ) as mock_random_name_for_temp_object,
-        ):
+        with mock.patch.object(self.m_ops._stage_client, "create_tmp_stage") as mock_create_stage, mock.patch.object(
+            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+        ) as mock_random_name_for_temp_object:
             stage_path = self.m_ops.prepare_model_temp_stage_path(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -473,13 +470,12 @@ class ModelOpsTest(absltest.TestCase):
     def test_show_services_1(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
         # Row objects with privatelink_ingress_url field for Business Critical accounts
-        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting", privatelink_ingress_url=None, port=8080)]
+        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="Waiting", privatelink_ingress_url=None)]
         m_endpoints_list_res_1 = [
             Row(
                 name="inference",
                 ingress_url="foo.snowflakecomputing.app",
                 privatelink_ingress_url="bar.privatelink.snowflakecomputing.com",
-                port=9090,
             )
         ]
         m_statuses_0 = [
@@ -501,31 +497,22 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_client, "show_versions", return_value=m_services_list_res
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_service_container_statuses",
-                side_effect=[m_statuses_0, m_statuses_1, m_statuses_0, m_statuses_1],
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "show_endpoints",
-                side_effect=[
-                    m_endpoints_list_res_0,
-                    m_endpoints_list_res_1,
-                    m_endpoints_list_res_0,
-                    m_endpoints_list_res_1,
-                ],
-            ) as mock_show_endpoints,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_internal_dns",
-                side_effect=["abc.internal", "def.internal", "abc.internal", "def.internal"],
-            ),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client,
+            "get_service_container_statuses",
+            side_effect=[m_statuses_0, m_statuses_1, m_statuses_0, m_statuses_1],
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client,
+            "show_endpoints",
+            side_effect=[
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+            ],
+        ) as mock_show_endpoints:
 
             # Test with regular connection - should display the ingress_url
             with mock.patch.object(self.m_ops._session.connection, "host", "account.snowflakecomputing.com"):
@@ -539,18 +526,8 @@ class ModelOpsTest(absltest.TestCase):
                 self.assertListEqual(
                     res,
                     [
-                        {
-                            "name": "a.b.c",
-                            "status": "PENDING",
-                            "inference_endpoint": None,
-                            "internal_endpoint": "http://abc.internal:8080",
-                        },
-                        {
-                            "name": "d.e.f",
-                            "status": "RUNNING",
-                            "inference_endpoint": "foo.snowflakecomputing.app",
-                            "internal_endpoint": "http://def.internal:9090",
-                        },
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
+                        {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
                     ],
                 )
 
@@ -568,17 +545,11 @@ class ModelOpsTest(absltest.TestCase):
                 self.assertListEqual(
                     res,
                     [
-                        {
-                            "name": "a.b.c",
-                            "status": "PENDING",
-                            "inference_endpoint": None,
-                            "internal_endpoint": "http://abc.internal:8080",
-                        },
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
                         {
                             "name": "d.e.f",
                             "status": "RUNNING",
                             "inference_endpoint": "bar.privatelink.snowflakecomputing.com",
-                            "internal_endpoint": "http://def.internal:9090",
                         },
                     ],
                 )
@@ -625,7 +596,7 @@ class ModelOpsTest(absltest.TestCase):
 
     def test_show_services_2(self) -> None:
         m_services_list_res = [Row(inference_services='["a.b.c"]')]
-        m_endpoints_list_res = [Row(name="inference", ingress_url=None, privatelink_ingress_url=None, port=None)]
+        m_endpoints_list_res = [Row(name="inference", ingress_url=None, privatelink_ingress_url=None)]
         m_statuses = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
@@ -636,18 +607,13 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_client, "show_versions", return_value=m_services_list_res
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
-            ) as mock_show_endpoints,
-            mock.patch.object(self.m_ops._service_client, "get_internal_dns", return_value="abc.internal"),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ) as mock_show_endpoints:
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -660,12 +626,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertListEqual(
                 res,
                 [
-                    {
-                        "name": "a.b.c",
-                        "status": "PENDING",
-                        "inference_endpoint": None,
-                        "internal_endpoint": None,
-                    },
+                    {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
                 ],
             )
             mock_show_versions.assert_called_once_with(
@@ -693,13 +654,11 @@ class ModelOpsTest(absltest.TestCase):
         m_endpoints_list_res = [
             Row(
                 name="inference",
-                port=8000,
                 ingress_url="foo.snowflakecomputing.app",
                 privatelink_ingress_url="foo.privatelink.snowflakecomputing.com",
             ),
             Row(
                 name="another",
-                port=9000,
                 ingress_url="bar.snowflakecomputing.app",
                 privatelink_ingress_url="bar.privatelink.snowflakecomputing.com",
             ),
@@ -714,18 +673,13 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_client, "show_versions", return_value=m_services_list_res
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
-            ) as mock_show_endpoints,
-            mock.patch.object(self.m_ops._service_client, "get_internal_dns", return_value="abc.internal"),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ) as mock_show_endpoints:
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -738,12 +692,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertListEqual(
                 res,
                 [
-                    {
-                        "name": "a.b.c",
-                        "status": "PENDING",
-                        "inference_endpoint": "foo.snowflakecomputing.app",
-                        "internal_endpoint": "http://abc.internal:8000",
-                    },
+                    {"name": "a.b.c", "status": "PENDING", "inference_endpoint": "foo.snowflakecomputing.app"},
                 ],
             )
             mock_show_versions.assert_called_once_with(
@@ -771,7 +720,6 @@ class ModelOpsTest(absltest.TestCase):
         m_endpoints_list_res = [
             Row(
                 name="custom",
-                port=7000,
                 ingress_url="foo.snowflakecomputing.app",
                 privatelink_ingress_url="foo.privatelink.snowflakecomputing.com",
             )
@@ -786,18 +734,13 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_client, "show_versions", return_value=m_services_list_res
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
-            ) as mock_show_endpoints,
-            mock.patch.object(self.m_ops._service_client, "get_internal_dns", return_value="abc.internal"),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
+        ) as mock_show_endpoints:
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -810,12 +753,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertListEqual(
                 res,
                 [
-                    {
-                        "name": "a.b.c",
-                        "status": "PENDING",
-                        "inference_endpoint": None,
-                        "internal_endpoint": None,
-                    },
+                    {"name": "a.b.c", "status": "PENDING", "inference_endpoint": None},
                 ],
             )
             mock_show_versions.assert_called_once_with(
@@ -842,8 +780,8 @@ class ModelOpsTest(absltest.TestCase):
         """Test show_services for non-Business Critical accounts where privatelink_ingress_url column doesn't exist."""
         m_services_list_res = [Row(inference_services='["a.b.c", "d.e.f"]')]
         # Row objects without privatelink_ingress_url field
-        m_endpoints_list_res_0 = [Row(name="inference", port=8080, ingress_url="bar.snowflakecomputing.app")]
-        m_endpoints_list_res_1 = [Row(name="inference", port=9090, ingress_url="foo.snowflakecomputing.app")]
+        m_endpoints_list_res_0 = [Row(name="inference", ingress_url="bar.snowflakecomputing.app")]
+        m_endpoints_list_res_1 = [Row(name="inference", ingress_url="foo.snowflakecomputing.app")]
         m_statuses_0 = [
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
@@ -863,31 +801,22 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_client, "show_versions", return_value=m_services_list_res
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_service_container_statuses",
-                side_effect=[m_statuses_0, m_statuses_1, m_statuses_0, m_statuses_1],
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "show_endpoints",
-                side_effect=[
-                    m_endpoints_list_res_0,
-                    m_endpoints_list_res_1,
-                    m_endpoints_list_res_0,
-                    m_endpoints_list_res_1,
-                ],
-            ) as mock_show_endpoints,
-            mock.patch.object(
-                self.m_ops._service_client,
-                "get_internal_dns",
-                side_effect=["abc.internal", "def.internal", "abc.internal", "def.internal"],
-            ),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_services_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client,
+            "get_service_container_statuses",
+            side_effect=[m_statuses_0, m_statuses_1, m_statuses_0, m_statuses_1],
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client,
+            "show_endpoints",
+            side_effect=[
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+                m_endpoints_list_res_0,
+                m_endpoints_list_res_1,
+            ],
+        ) as mock_show_endpoints:
 
             # Test with regular connection
             with mock.patch.object(self.m_ops._session.connection, "host", "account.snowflakecomputing.com"):
@@ -901,18 +830,8 @@ class ModelOpsTest(absltest.TestCase):
                 self.assertListEqual(
                     res,
                     [
-                        {
-                            "name": "a.b.c",
-                            "status": "PENDING",
-                            "inference_endpoint": "bar.snowflakecomputing.app",
-                            "internal_endpoint": "http://abc.internal:8080",
-                        },
-                        {
-                            "name": "d.e.f",
-                            "status": "RUNNING",
-                            "inference_endpoint": "foo.snowflakecomputing.app",
-                            "internal_endpoint": "http://def.internal:9090",
-                        },
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": "bar.snowflakecomputing.app"},
+                        {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
                     ],
                 )
 
@@ -930,18 +849,8 @@ class ModelOpsTest(absltest.TestCase):
                 self.assertListEqual(
                     res,
                     [
-                        {
-                            "name": "a.b.c",
-                            "status": "PENDING",
-                            "inference_endpoint": "bar.snowflakecomputing.app",
-                            "internal_endpoint": "http://abc.internal:8080",
-                        },
-                        {
-                            "name": "d.e.f",
-                            "status": "RUNNING",
-                            "inference_endpoint": "foo.snowflakecomputing.app",
-                            "internal_endpoint": "http://def.internal:9090",
-                        },
+                        {"name": "a.b.c", "status": "PENDING", "inference_endpoint": "bar.snowflakecomputing.app"},
+                        {"name": "d.e.f", "status": "RUNNING", "inference_endpoint": "foo.snowflakecomputing.app"},
                     ],
                 )
 
@@ -1025,18 +934,13 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
-            ) as mock_get_service_container_statuses,
-            mock.patch.object(
-                self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res]
-            ) as mock_show_endpoints,
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", return_value="service.test.e6nv.svc.spcs.internal"
-            ),
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ) as mock_get_service_container_statuses, mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", side_effect=[m_endpoints_list_res]
+        ) as mock_show_endpoints:
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -1047,12 +951,7 @@ class ModelOpsTest(absltest.TestCase):
             self.assertListEqual(
                 res,
                 [
-                    {
-                        "name": "A.B.SERVICE",
-                        "status": "PENDING",
-                        "inference_endpoint": None,
-                        "internal_endpoint": None,
-                    },
+                    {"name": "A.B.SERVICE", "status": "PENDING", "inference_endpoint": None},
                 ],
             )
             mock_show_versions.assert_called_once_with(
@@ -1088,13 +987,12 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["abc.internal", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             with self.assertRaisesRegex(
                 ValueError, "Service 'A.B.A' does not exist or unauthorized or not associated with this model version."
@@ -1116,13 +1014,12 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["abc.internal", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             with self.assertRaisesRegex(
                 ValueError,
@@ -1145,13 +1042,12 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["abc.internal", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             with self.assertRaisesRegex(
                 ValueError,
@@ -1187,14 +1083,14 @@ class ModelOpsTest(absltest.TestCase):
             )
         ]
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "drop_service") as mock_drop_service,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["abc.internal", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             self.m_ops.delete_service(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -1219,14 +1115,14 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=mock.ANY,
             )
 
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=m_list_res) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "drop_service") as mock_drop_service,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["abc.internal", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=m_list_res
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             self.m_ops.delete_service(
                 database_name=sql_identifier.SqlIdentifier("A"),
@@ -1250,18 +1146,16 @@ class ModelOpsTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("C"),
                 statement_params=mock.ANY,
             )
-        with (
-            mock.patch.object(
-                self.m_ops._model_client,
-                "show_versions",
-                return_value=[Row(inference_services='["TEMP.\\"test\\".C", "D.E.F"]')],
-            ) as mock_show_versions,
-            mock.patch.object(self.m_ops._service_client, "drop_service") as mock_drop_service,
-            mock.patch.object(self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses),
-            mock.patch.object(self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res),
-            mock.patch.object(
-                self.m_ops._service_client, "get_internal_dns", side_effect=["test_internal.dns", "def.internal"]
-            ),
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "show_versions",
+            return_value=[Row(inference_services='["TEMP.\\"test\\".C", "D.E.F"]')],
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._service_client, "drop_service"
+        ) as mock_drop_service, mock.patch.object(
+            self.m_ops._service_client, "get_service_container_statuses", return_value=m_statuses
+        ), mock.patch.object(
+            self.m_ops._service_client, "show_endpoints", return_value=m_endpoints_list_res
         ):
             self.m_ops.delete_service(
                 database_name=None,
@@ -1290,14 +1184,12 @@ class ModelOpsTest(absltest.TestCase):
         mock_composer = mock.MagicMock()
         mock_composer.stage_path = '@TEMP."test".MODEL/V1'
 
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_create_from_stage,
-            mock.patch.object(
-                self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_add_version_from_stage,
-            mock.patch.object(self.m_ops._model_client, "show_models", return_value=[]),
+        with mock.patch.object(
+            self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_create_from_stage, mock.patch.object(
+            self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_add_version_from_stage, mock.patch.object(
+            self.m_ops._model_client, "show_models", return_value=[]
         ):
             self.m_ops.create_from_stage(
                 composed_model=mock_composer,
@@ -1331,15 +1223,14 @@ class ModelOpsTest(absltest.TestCase):
                 default_version_name="V1",
             ),
         ]
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_create_from_stage,
-            mock.patch.object(
-                self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_add_version_from_stage,
-            mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res),
-            mock.patch.object(self.m_ops._model_client, attribute="show_versions", return_value=[]),
+        with mock.patch.object(
+            self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_create_from_stage, mock.patch.object(
+            self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_add_version_from_stage, mock.patch.object(
+            self.m_ops._model_client, "show_models", return_value=m_list_res
+        ), mock.patch.object(
+            self.m_ops._model_client, attribute="show_versions", return_value=[]
         ):
             self.m_ops.create_from_stage(
                 composed_model=mock_composer,
@@ -1382,15 +1273,14 @@ class ModelOpsTest(absltest.TestCase):
                 is_default_version=True,
             ),
         ]
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_create_from_stage,
-            mock.patch.object(
-                self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
-            ) as mock_add_version_from_stagel,
-            mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res_models),
-            mock.patch.object(self.m_ops._model_client, attribute="show_versions", return_value=m_list_res_versions),
+        with mock.patch.object(
+            self.m_ops._model_version_client, "create_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_create_from_stage, mock.patch.object(
+            self.m_ops._model_version_client, "add_version_from_stage", return_value='TEMP."test".MODEL'
+        ) as mock_add_version_from_stagel, mock.patch.object(
+            self.m_ops._model_client, "show_models", return_value=m_list_res_models
+        ), mock.patch.object(
+            self.m_ops._model_client, attribute="show_versions", return_value=m_list_res_versions
         ):
             with self.assertRaisesRegex(ValueError, 'Model TEMP."test".MODEL version V1 already existed.'):
                 self.m_ops.create_from_stage(
@@ -1468,17 +1358,13 @@ class ModelOpsTest(absltest.TestCase):
         m_df.__setattr__("columns", ["COL1", "COL2"])
         self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
-        with (
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
-            ) as mock_convert_from_df,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-            ) as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
@@ -1521,17 +1407,13 @@ class ModelOpsTest(absltest.TestCase):
         self._add_id_check_mock_operations(m_df, [Row(None)])
         m_df.add_mock_drop("COL1", "COL2")
         with self.assertWarns(Warning):
-            with (
-                mock.patch.object(
-                    snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
-                ) as mock_convert_from_df,
-                mock.patch.object(
-                    self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
-                ) as mock_invoke_method,
-                mock.patch.object(
-                    snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-                ) as mock_convert_to_df,
-            ):
+            with mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+            ) as mock_convert_from_df, mock.patch.object(
+                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+            ) as mock_invoke_method, mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+            ) as mock_convert_to_df:
                 self.m_ops.invoke_method(
                     method_name=sql_identifier.SqlIdentifier("PREDICT"),
                     method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
@@ -1573,17 +1455,13 @@ class ModelOpsTest(absltest.TestCase):
         m_df.__setattr__("columns", ["COL1", '"output"'])
         self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1")
-        with (
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
-            ) as mock_convert_from_df,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-            ) as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
@@ -1621,18 +1499,15 @@ class ModelOpsTest(absltest.TestCase):
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
-        with (
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
-            mock.patch.object(
-                model_signature,
-                "_validate_snowpark_data",
-                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
-            ) as mock_validate_snowpark_data,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df"
+        ) as mock_convert_from_df, mock.patch.object(
+            model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
+        ) as mock_validate_snowpark_data, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
@@ -1664,18 +1539,15 @@ class ModelOpsTest(absltest.TestCase):
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
-        with (
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
-            mock.patch.object(
-                model_signature,
-                "_validate_snowpark_data",
-                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
-            ) as mock_validate_snowpark_data,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df"
+        ) as mock_convert_from_df, mock.patch.object(
+            model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
+        ) as mock_validate_snowpark_data, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
@@ -1712,17 +1584,13 @@ class ModelOpsTest(absltest.TestCase):
         m_df.__setattr__("columns", ["COL1", "COL2"])
         self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
-        with (
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
-            ) as mock_convert_from_df,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-            ) as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
@@ -1770,17 +1638,13 @@ class ModelOpsTest(absltest.TestCase):
         self._add_id_check_mock_operations(m_df, [Row(1)])
         m_df.add_mock_sort("_ID", ascending=True).add_mock_drop("COL1", "COL2")
         partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
-        with (
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
-            ) as mock_convert_from_df,
-            mock.patch.object(
-                self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(
-                snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
-            ) as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df", return_value=m_df
+        ) as mock_convert_from_df, mock.patch.object(
+            self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df", return_value=pd_df
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
                 method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
@@ -1824,18 +1688,15 @@ class ModelOpsTest(absltest.TestCase):
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
-        with (
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
-            mock.patch.object(
-                model_signature,
-                "_validate_snowpark_data",
-                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
-            ) as mock_validate_snowpark_data,
-            mock.patch.object(
-                self.m_ops._service_client, "invoke_function_method", return_value=m_df
-            ) as mock_invoke_method,
-            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
-        ):
+        with mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_from_df"
+        ) as mock_convert_from_df, mock.patch.object(
+            model_signature, "_validate_snowpark_data", return_value=model_signature.SnowparkIdentifierRule.NORMALIZED
+        ) as mock_validate_snowpark_data, mock.patch.object(
+            self.m_ops._service_client, "invoke_function_method", return_value=m_df
+        ) as mock_invoke_method, mock.patch.object(
+            snowpark_handler.SnowparkDataFrameHandler, "convert_to_df"
+        ) as mock_convert_to_df:
             self.m_ops.invoke_method(
                 method_name=sql_identifier.SqlIdentifier("PREDICT"),
                 signature=m_sig,
@@ -2177,10 +2038,11 @@ class ModelOpsTest(absltest.TestCase):
             )
 
     def test_set_default_version_2(self) -> None:
-        with (
-            mock.patch.object(self.m_ops._model_client, "show_versions", return_value=[]) as mock_show_versions,
-            mock.patch.object(self.m_ops._model_version_client, "set_default_version") as mock_set_default_version,
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client, "show_versions", return_value=[]
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "set_default_version"
+        ) as mock_set_default_version:
             with self.assertRaisesRegex(
                 ValueError, "You cannot set version V1 as default version as it does not exist."
             ):
@@ -2333,21 +2195,17 @@ class ModelOpsTest(absltest.TestCase):
             Row(name="predict", return_type="NUMBER"),
             Row(name="predict_table", return_type="TABLE (RESULTS VARCHAR)"),
         ]
-        with (
-            mock.patch.object(
-                self.m_ops._model_client,
-                "show_versions",
-                return_value=m_show_versions_result,
-            ) as mock_show_versions,
-            mock.patch.object(
-                self.m_ops._model_version_client, "show_functions", return_value=m_show_functions_result
-            ) as mock_show_functions,
-            mock.patch.object(
-                model_meta.ModelMetadata,
-                "_validate_model_metadata",
-                return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
-            ) as mock_validate_model_metadata,
-        ):
+        with mock.patch.object(
+            self.m_ops._model_client,
+            "show_versions",
+            return_value=m_show_versions_result,
+        ) as mock_show_versions, mock.patch.object(
+            self.m_ops._model_version_client, "show_functions", return_value=m_show_functions_result
+        ) as mock_show_functions, mock.patch.object(
+            model_meta.ModelMetadata,
+            "_validate_model_metadata",
+            return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
+        ) as mock_validate_model_metadata:
             self.m_ops.get_functions(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
@@ -2433,14 +2291,14 @@ class ModelOpsTest(absltest.TestCase):
             ],
         ]
         m_local_path = pathlib.Path("/tmp")
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client,
-                "list_file",
-                side_effect=m_list_files_res,
-            ) as mock_list_file,
-            mock.patch.object(self.m_ops._model_version_client, "get_file") as mock_get_file,
-            mock.patch.object(pathlib.Path, "mkdir"),
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -2541,14 +2399,14 @@ class ModelOpsTest(absltest.TestCase):
             ],
         ]
         m_local_path = pathlib.Path("/tmp")
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client,
-                "list_file",
-                side_effect=m_list_files_res,
-            ) as mock_list_file,
-            mock.patch.object(self.m_ops._model_version_client, "get_file") as mock_get_file,
-            mock.patch.object(pathlib.Path, "mkdir"),
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -2614,14 +2472,14 @@ class ModelOpsTest(absltest.TestCase):
             ],
         ]
         m_local_path = pathlib.Path("/tmp")
-        with (
-            mock.patch.object(
-                self.m_ops._model_version_client,
-                "list_file",
-                side_effect=m_list_files_res,
-            ) as mock_list_file,
-            mock.patch.object(self.m_ops._model_version_client, "get_file") as mock_get_file,
-            mock.patch.object(pathlib.Path, "mkdir"),
+        with mock.patch.object(
+            self.m_ops._model_version_client,
+            "list_file",
+            side_effect=m_list_files_res,
+        ) as mock_list_file, mock.patch.object(
+            self.m_ops._model_version_client, "get_file"
+        ) as mock_get_file, mock.patch.object(
+            pathlib.Path, "mkdir"
         ):
             self.m_ops.download_files(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),

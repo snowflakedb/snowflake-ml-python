@@ -513,7 +513,7 @@ def _submit_job(
     try:
         # Upload payload
         uploaded_payload = payload_utils.JobPayload(
-            source, entrypoint=entrypoint, pip_requirements=pip_requirements, imports=imports
+            source, entrypoint=entrypoint, pip_requirements=pip_requirements, additional_payloads=imports
         ).upload(session, stage_path)
     except SnowparkSQLException as e:
         if e.sql_error_code == 90106:
@@ -684,7 +684,9 @@ def _do_submit_job_v2(
     Returns:
         The job object.
     """
-    args = [(v.as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint] + (args or [])
+    args = [
+        (payload.stage_path.joinpath(v).as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint
+    ] + (args or [])
     spec_options = {
         "STAGE_PATH": payload.stage_path.as_posix(),
         "ENTRYPOINT": ["/usr/local/bin/_entrypoint.sh"],
@@ -708,9 +710,6 @@ def _do_submit_job_v2(
         "MIN_INSTANCES": min_instances,
         "ASYNC": use_async,
     }
-
-    if feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(default=True):
-        job_options["ENABLE_STAGE_MOUNT_V2"] = True
     if payload.payload_name:
         job_options["GENERATE_SUFFIX"] = True
     job_options = {k: v for k, v in job_options.items() if v is not None}

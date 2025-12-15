@@ -9,7 +9,6 @@ These APIs are available everywhere you can use Snowflake ML, including Snowsigh
 
    data
    dataset
-   experiment
    feature_store
    fileset
    model

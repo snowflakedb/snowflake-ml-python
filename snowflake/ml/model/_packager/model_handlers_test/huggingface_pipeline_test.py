@@ -433,7 +433,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="distilbert/distilbert-base-cased-distilled-squad",
+            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={},
             check_pipeline_fn=get_check_pipeline_fn(),
@@ -443,7 +443,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="distilbert/distilbert-base-cased-distilled-squad",
+            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"align_to_words": True},
             check_pipeline_fn=get_check_pipeline_fn(),
@@ -453,7 +453,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="question-answering",
-            model_id="distilbert/distilbert-base-cased-distilled-squad",
+            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"top_k": 5},
             check_pipeline_fn=get_check_pipeline_fn(top_k=5),
@@ -490,7 +490,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="summarization",
-            model_id="Falconsai/text_summarization",
+            model_id="sshleifer/tiny-mbart",
             udf_test_input=x_df,
             # This model is stored in fp16, but the architecture does not support it,
             # it will messed up the auto dtype loading.
@@ -505,7 +505,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         ):
             self._basic_test_case(
                 task="summarization",
-                model_id="Falconsai/text_summarization",
+                model_id="sshleifer/tiny-mbart",
                 udf_test_input=x_df,
                 options={"return_tensors": True, "torch_dtype": torch.float32},
                 check_pipeline_fn=check_pipeline,
@@ -1051,7 +1051,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="zero-shot-classification",
-            model_id="distilbert/distilbert-base-cased-distilled-squad",
+            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={},
             check_pipeline_fn=check_pipeline,
@@ -1061,7 +1061,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
 
         self._basic_test_case(
             task="zero-shot-classification",
-            model_id="distilbert/distilbert-base-cased-distilled-squad",
+            model_id="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             udf_test_input=x_df,
             options={"multi_label": True},
             check_pipeline_fn=check_pipeline,
