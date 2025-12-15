@@ -4,7 +4,7 @@ import tempfile
 
 import numpy as np
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from packaging import requirements
 
 from snowflake.ml._internal import env_utils
@@ -63,7 +63,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_ner_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="ner", model="Isotonic/distilbert_finetuned_ai4privacy_v2")
+        model = transformers.pipeline(task="ner", model="hf-internal-testing/tiny-bert-for-token-classification")
 
         x_df = pd.DataFrame(
             [
@@ -98,7 +98,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="question-answering",
-            model="distilbert/distilbert-base-cased-distilled-squad",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             top_k=1,
         )
 
@@ -138,7 +138,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="question-answering",
-            model="distilbert/distilbert-base-cased-distilled-squad",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
             top_k=3,
         )
 
@@ -178,7 +178,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_summarization_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="summarization", model="Falconsai/text_summarization")
+        model = transformers.pipeline(task="summarization", model="sshleifer/tiny-mbart")
 
         x_df = pd.DataFrame(
             [
@@ -217,13 +217,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_table_question_answering_pipeline(self) -> None:
         import transformers
 
-        model_id = "microsoft/tapex-base-finetuned-wtq"
-        # TODO: Use this model after upgrading pytorch>=2.6.0
-        # model_id = "google/tapas-large-finetuned-wtq"
-        model = transformers.pipeline(
-            task="table-question-answering",
-            model=model_id,
-        )
+        model = transformers.pipeline(task="table-question-answering", model="google/tapas-tiny-finetuned-wtq")
 
         x_df = pd.DataFrame(
             [
@@ -260,13 +254,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["answer", "coordinates", "cells", "aggregator"]))
 
             self.assertEqual(res["answer"].dtype.type, str)
-            if model_id == "google/tapas-large-finetuned-wtq":
-                # only google/tapas-large-finetuned-wtq has coordinates, cells, and aggregator
-                self.assertEqual(res["coordinates"].dtype.type, np.object_)
-                self.assertIsInstance(res["coordinates"][0], list)
-                self.assertEqual(res["cells"].dtype.type, np.object_)
-                self.assertIsInstance(res["cells"][0], list)
-                self.assertEqual(res["aggregator"].dtype.type, str)
+            self.assertEqual(res["coordinates"].dtype.type, np.object_)
+            self.assertIsInstance(res["coordinates"][0], list)
+            self.assertEqual(res["cells"].dtype.type, np.object_)
+            self.assertIsInstance(res["cells"][0], list)
+            self.assertEqual(res["aggregator"].dtype.type, str)
 
         self._test_registry_model(
             model=model,
@@ -320,7 +312,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-classification",
-            model="distilbert/distilbert-base-uncased-finetuned-sst-2-english",
+            model="hf-internal-testing/tiny-random-distilbert",
             top_k=1,
         )
 
@@ -355,7 +347,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-generation",
-            model="Qwen/Qwen2.5-0.5B",
+            model="sshleifer/tiny-ctrl",
         )
 
         x_df = pd.DataFrame(
@@ -395,8 +387,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_text_generation_chat_template_pipeline(
         self,
+        registry_test_fn: str,
     ) -> None:
         import transformers
 
@@ -440,7 +436,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("message", row[0])
                 self.assertIn("content", row[0]["message"])
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             prediction_assert_fns={
                 "": (
@@ -456,7 +452,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text2text-generation",
-            model="google-t5/t5-small",
+            model="patrickvonplaten/t5-tiny-random",
         )
 
         x_df = pd.DataFrame(
@@ -480,7 +476,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_translation_pipeline(self) -> None:
         import transformers
 
-        model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")
+        model = transformers.pipeline(task="translation_en_to_ja", model="patrickvonplaten/t5-tiny-random")
 
         x_df = pd.DataFrame(
             [
@@ -511,9 +507,6 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
-            additional_dependencies=[
-                "sentencepiece",
-            ],
         )
 
     def test_zero_shot_classification_pipeline(self) -> None:
@@ -521,7 +514,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="zero-shot-classification",
-            model="sileod/deberta-v3-base-tasksource-nli",
+            model="sshleifer/tiny-distilbert-base-cased-distilled-squad",
         )
 
         x_df = pd.DataFrame(

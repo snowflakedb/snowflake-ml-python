@@ -8,7 +8,6 @@ import numpy as np
 from absl.testing import absltest, parameterized
 
 from snowflake.ml import jobs
-from snowflake.ml.jobs._utils import feature_flags
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import exceptions as sp_exceptions
 from tests.integ.snowflake.ml.jobs import (
@@ -37,7 +36,6 @@ class JobTestBase(parameterized.TestCase):
         cls.dbm.cleanup_schemas(prefix=test_constants._TEST_SCHEMA, expire_days=1)
         cls.db = cls.session.get_current_database()
         cls.schema = cls.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
-        os.environ[feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value] = "false"
         try:
             cls.compute_pool = cls.dbm.create_compute_pool(
                 test_constants._TEST_COMPUTE_POOL, sql_client.CreationMode(if_not_exists=True), max_nodes=20

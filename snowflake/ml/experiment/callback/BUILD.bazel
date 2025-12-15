@@ -27,7 +27,7 @@ py_test(
     optional_dependencies = [
         "keras",
     ],
-    tags = ["feature:experiment_tracking"],
+    tags = ["feature:observability"],
     deps = [
         ":keras",
         ":test_base",
@@ -39,7 +39,6 @@ py_library(
     srcs = ["lightgbm.py"],
     deps = [
         "//snowflake/ml/experiment:experiment_tracking",
-        "//snowflake/ml/experiment:utils",
         "//snowflake/ml/model:model_signature",
     ],
 )
@@ -50,7 +49,7 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
-    tags = ["feature:experiment_tracking"],
+    tags = ["feature:observability"],
     deps = [
         ":lightgbm",
         ":test_base",
@@ -70,7 +69,7 @@ py_library(
 py_test(
     name = "xgboost_test",
     srcs = ["test/xgboost_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = ["feature:observability"],
     deps = [
         ":test_base",
         ":xgboost",

@@ -20,7 +20,7 @@ py_library(
 py_test(
     name = "run_test",
     srcs = ["run_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = ["feature:observability"],
     deps = [
         ":entities",
         "//snowflake/ml/_internal/utils:sql_identifier",

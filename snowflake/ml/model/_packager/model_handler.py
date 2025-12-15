@@ -1,6 +1,5 @@
 import functools
 import importlib
-import logging
 import pkgutil
 from types import ModuleType
 from typing import Any, Callable, Optional, TypeVar, cast
@@ -11,8 +10,6 @@ from snowflake.ml.model._packager.model_handlers import _base
 _HANDLERS_BASE = "snowflake.ml.model._packager.model_handlers"
 _MODEL_HANDLER_REGISTRY: dict[str, type[_base.BaseModelHandler[model_types.SupportedModelType]]] = dict()
 _IS_HANDLER_LOADED = False
-
-logger = logging.getLogger(__name__)
 
 
 def _register_handlers() -> None:
@@ -59,11 +56,8 @@ def find_handler(
     model: model_types.SupportedModelType,
 ) -> Optional[type[_base.BaseModelHandler[model_types.SupportedModelType]]]:
     for handler in _MODEL_HANDLER_REGISTRY.values():
-        try:
-            if handler.can_handle(model):
-                return handler
-        except Exception:
-            logger.error(f"Error in {handler.__name__} `can_handle` method for model {type(model)}", exc_info=True)
+        if handler.can_handle(model):
+            return handler
     return None
 
 

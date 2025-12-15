@@ -2,7 +2,7 @@ import catboost
 import inflection
 import pandas as pd
 import shap
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import (
     compose,
     datasets,
@@ -317,8 +317,12 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_catboost_model_with_categorical_dtype_columns(
         self,
+        registry_test_fn: str,
     ) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
@@ -358,7 +362,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=pipeline,
             sample_input_data=df[input_features],
             prediction_assert_fns={

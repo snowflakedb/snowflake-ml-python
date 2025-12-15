@@ -216,10 +216,10 @@ py_test(
 
 py_test(
     name = "registry_huggingface_pipeline_model_test",
-    timeout = "eternal",
+    timeout = "long",
     srcs = ["registry_huggingface_pipeline_model_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 4,
+    shard_count = 8,
     tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
@@ -275,7 +275,7 @@ py_test(
     srcs = ["registry_keras_model_test.py"],
     main = "registry_keras_model_test.py",
     optional_dependencies = ["keras"],
-    shard_count = 2,
+    shard_count = 6,
     tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",
@@ -288,7 +288,7 @@ py_test(
 py_test(
     name = "registry_artifact_repository_test",
     srcs = ["registry_artifact_repository_test.py"],
-    shard_count = 2,
+    shard_count = 4,
     tags = ["feature:model_registry"],
     deps = [
         ":registry_model_test_base",

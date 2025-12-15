@@ -20,21 +20,15 @@ def convert_list_to_ndarray(data: list[Any]) -> npt.NDArray[Any]:
 
     Raises:
         SnowflakeMLException: ValueError: Raised when ragged nested list or list containing non-basic type confronted.
+        SnowflakeMLException: ValueError: Raised when ragged nested list or list containing non-basic type confronted.
 
     Returns:
         The converted numpy array.
     """
-    # VisibleDeprecationWarning was removed in numpy>2
-    visible_deprecation_warning = getattr(np, "VisibleDeprecationWarning", None)
-    exception_types = (ValueError,)
-
-    if visible_deprecation_warning is not None:
-        warnings.filterwarnings("error", category=visible_deprecation_warning)
-        exception_types = (visible_deprecation_warning, ValueError)  # type: ignore[assignment]
-
+    warnings.filterwarnings("error", category=np.VisibleDeprecationWarning)
     try:
         arr = np.array(data)
-    except exception_types:
+    except (np.VisibleDeprecationWarning, ValueError):
         # In recent version of numpy, this warning should be raised when bad list provided.
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_DATA,
@@ -42,10 +36,7 @@ def convert_list_to_ndarray(data: list[Any]) -> npt.NDArray[Any]:
                 f"Unable to construct signature: Ragged nested or Unsupported list-like data {data} confronted."
             ),
         )
-    finally:
-        if visible_deprecation_warning is not None:
-            warnings.filterwarnings("default", category=visible_deprecation_warning)
-
+    warnings.filterwarnings("default", category=np.VisibleDeprecationWarning)
     if arr.dtype == object:
         # If not raised, then a array of object would be created.
         raise snowml_exceptions.SnowflakeMLException(

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import prophet
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -58,7 +58,10 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
 
         return future_data
 
-    def test_prophet_basic_model(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_prophet_basic_model(self, registry_test_fn: str) -> None:
         """Test basic Prophet model without regressors."""
         # Create training data
         training_data = self._create_sample_time_series_data(start_date="2020-01-01", periods=365, freq="D")
@@ -98,7 +101,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             self.assertTrue((result["yhat_lower"] <= result["yhat"]).all())
             self.assertTrue((result["yhat"] <= result["yhat_upper"]).all())
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={
@@ -111,7 +114,10 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             # Note: TABLE_FUNCTION is automatically configured for Prophet models
         )
 
-    def test_prophet_model_with_regressors(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_prophet_model_with_regressors(self, registry_test_fn: str) -> None:
         """Test Prophet model with additional regressors."""
         # Create training data with regressors
         training_data = self._create_sample_time_series_data(
@@ -142,7 +148,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             self.assertTrue((result["yhat_lower"] <= result["yhat"]).all())
             self.assertTrue((result["yhat"] <= result["yhat_upper"]).all())
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={
@@ -155,7 +161,10 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             # Note: TABLE_FUNCTION is automatically configured for Prophet models
         )
 
-    def test_prophet_weekly_model(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_prophet_weekly_model(self, registry_test_fn: str) -> None:
         """Test Prophet model with weekly frequency."""
         # Create weekly training data
         training_data = self._create_sample_time_series_data(
@@ -189,7 +198,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             self.assertFalse(result["yhat"].isna().any())
             self.assertTrue(np.isfinite(result["yhat"]).all())
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={
@@ -202,7 +211,10 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             # Note: TABLE_FUNCTION is automatically configured for Prophet models
         )
 
-    def test_prophet_model_with_holidays(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_prophet_model_with_holidays(self, registry_test_fn: str) -> None:
         """Test Prophet model with built-in holidays."""
         # Create training data
         training_data = self._create_sample_time_series_data(start_date="2020-01-01", periods=365, freq="D")
@@ -229,7 +241,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             self.assertFalse(result["yhat"].isna().any())
             self.assertTrue(np.isfinite(result["yhat"]).all())
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={
@@ -242,7 +254,10 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             # Note: TABLE_FUNCTION is automatically configured for Prophet models
         )
 
-    def test_prophet_model_edge_cases(self) -> None:
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
+    def test_prophet_model_edge_cases(self, registry_test_fn: str) -> None:
         """Test Prophet model with edge cases and validation."""
         # Create training data
         training_data = self._create_sample_time_series_data(start_date="2020-01-01", periods=100, freq="D")
@@ -272,7 +287,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
             # Check that forecasts extend properly into the future
             self.assertTrue((result["ds"] > pd.to_datetime("2020-04-09")).all())
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={
@@ -287,7 +302,7 @@ class TestRegistryProphetModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
         # Test long forecast in separate model to avoid conflicts
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=training_data,
             prediction_assert_fns={

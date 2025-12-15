@@ -44,7 +44,7 @@ py_library(
         ":inference_engine_utils",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:sql_identifier",
-        "//snowflake/ml/jobs:ml_job",
+        "//snowflake/ml/jobs",
         "//snowflake/ml/lineage",
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:type_hints",

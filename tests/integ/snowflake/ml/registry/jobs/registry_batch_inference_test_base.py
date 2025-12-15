@@ -6,8 +6,8 @@ from typing import Any, Optional
 import pandas as pd
 
 from snowflake import snowpark
+from snowflake.ml import jobs
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.jobs import job
 from snowflake.ml.model import (
     JobSpec,
     ModelVersion,
@@ -48,7 +48,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         expected_predictions: Optional[pd.DataFrame] = None,
         blocking: bool = True,
         prediction_assert_fn: Optional[Any] = None,
-    ) -> job.MLJob[Any]:
+    ) -> jobs.MLJob[Any]:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
         ]
@@ -105,13 +105,13 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         replicas: int = 1,
         force_rebuild: bool = True,
         function_name: Optional[str] = None,
-    ) -> job.MLJob[Any]:
+    ) -> jobs.MLJob[Any]:
         """Deploy batch inference job with image override."""
         # Determine if we're using GPU based on gpu_requests
         is_gpu = gpu_requests is not None
         image_path = self.BASE_BATCH_GPU_IMAGE_PATH if is_gpu else self.BASE_BATCH_CPU_IMAGE_PATH
         assert image_path is not None, "Base image path must be set for batch inference image override deployment."
-        database, schema, job_id = self._get_fully_qualified_service_or_job_name(job_name)
+        database, schema, job = self._get_fully_qualified_service_or_job_name(job_name)
         compute_pool = sql_identifier.SqlIdentifier(service_compute_pool)
         mv._service_ops._model_deployment_spec.clear()
 
@@ -133,7 +133,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         mv._service_ops._model_deployment_spec.add_job_spec(
             job_database_name=database,
             job_schema_name=schema,
-            job_name=job_id,
+            job_name=job,
             inference_compute_pool_name=compute_pool,
             num_workers=num_workers,
             max_batch_rows=None,
@@ -161,8 +161,8 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         async_job.result()
 
         # Return the job object
-        return job.MLJob(
-            id=sql_identifier.get_fully_qualified_name(database, schema, job_id),
+        return jobs.MLJob(
+            id=sql_identifier.get_fully_qualified_name(database, schema, job),
             session=self.session,
         )
 
@@ -183,7 +183,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         blocking: bool = True,
         use_default_repo: bool = False,
         prediction_assert_fn: Optional[Any] = None,
-    ) -> job.MLJob[Any]:
+    ) -> jobs.MLJob[Any]:
         if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
             with_image_override = True
         elif not self.BUILDER_IMAGE_PATH and not self.BASE_CPU_IMAGE_PATH and not self.BASE_GPU_IMAGE_PATH:

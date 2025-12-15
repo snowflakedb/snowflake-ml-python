@@ -218,48 +218,38 @@ class FeatureView(lineage_node.LineageNode):
         """
         Create a FeatureView instance.
 
-        # noqa: DAR101
-
         Args:
-            name: The name of the FeatureView. This must follow Snowflake identifier rules.
-            entities: The entities that the FeatureView is associated with.
-            feature_df: The Snowpark DataFrame containing data source and all feature feature_df logic.
-                The final projection of the DataFrame should contain feature names, join keys and timestamp if
-                applicable.
+            name: name of the FeatureView. NOTE: following Snowflake identifier rule
+            entities: entities that the FeatureView is associated with.
+            feature_df: Snowpark DataFrame containing data source and all feature feature_df logics.
+                Final projection of the DataFrame should contain feature names, join keys and timestamp(if applicable).
             timestamp_col: name of the timestamp column for point-in-time lookup when consuming the
                 feature values.
-            refresh_freq: Time unit defining how often the new feature data should be generated, in the format
-                ``{ <num> { seconds | minutes | hours | days } | DOWNSTREAM | <cron expr> <time zone>}``.
-
-                The minimum refresh frequency is 1 minute.
-
-                When using a ``cron`` format, you must provide a time zone.
-
-                When you don't provide a refresh value, the ``FeatureView`` is registered as a ``View`` on the Snowflake
-                backend. There are no extra storage costs incurred for this view.
-            desc: Description of the FeatureView.
-            warehouse: The warehouse used to refresh this feature view. Not needed when ``refresh_freq`` is ``None``.
-                This warehouse will overwrite the default warehouse of Feature Store if specified, otherwise the default
-                warehouse will be used.
+            refresh_freq: Time unit defining how often the new feature data should be generated.
+                Valid args are { <num> { seconds | minutes | hours | days } | DOWNSTREAM | <cron expr> <time zone>}.
+                NOTE: Currently minimum refresh frequency is 1 minute.
+                NOTE: If refresh_freq is in cron expression format, there must be a valid time zone as well.
+                    E.g. * * * * * UTC
+                NOTE: If refresh_freq is not provided, then FeatureView will be registered as View on Snowflake backend
+                    and there won't be extra storage cost.
+            desc: description of the FeatureView.
+            warehouse: warehouse to refresh feature view. Not needed for static feature view (refresh_freq is None).
+                For managed feature view, this warehouse will overwrite the default warehouse of Feature Store if it is
+                specified, otherwise the default warehouse will be used.
             initialize: Specifies the behavior of the initial refresh of feature view. This property cannot be altered
                 after you register the feature view. It supports ON_CREATE (default) or ON_SCHEDULE. ON_CREATE refreshes
                 the feature view synchronously at creation. ON_SCHEDULE refreshes the feature view at the next scheduled
                 refresh. It is only effective when refresh_freq is not None.
             refresh_mode: The refresh mode of managed feature view. The value can be 'AUTO', 'FULL' or 'INCREMENTAL'.
-                For managed feature view, the default value is 'AUTO'. For static feature view it has no effect. For
-                more information, see
-                `CREATE DYNAMIC TABLE <https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table>`__.
-            cluster_by: Columns to cluster the feature view by. If ``timestamp_col`` is provided, it is added to the
-                default clustering keys. Default is to use the join keys from entities in the view.
-            online_config: Configuration for online storage. If provided with ``enable=True``,
-                online storage will be enabled. Defaults to ``None`` (no online storage).
-
-                .. note::
-                    This feature is currently in preview.
-            _kwargs: Reserved kwargs for system generated args.
-
-                .. caution::
-                    Use of additional keywords is prohibited.
+                For managed feature view, the default value is 'AUTO'. For static feature view it has no effect.
+                Check https://docs.snowflake.com/en/sql-reference/sql/create-dynamic-table for for details.
+            cluster_by: Columns to cluster the feature view by.
+                - Defaults to the join keys from entities.
+                - If `timestamp_col` is provided, it is added to the default clustering keys.
+            online_config: Optional configuration for online storage. If provided with enable=True,
+                online storage will be enabled. Defaults to None (no online storage).
+                NOTE: this feature is currently in Public Preview.
+            _kwargs: reserved kwargs for system generated args. NOTE: DO NOT USE.
 
         Example::
 

@@ -24,14 +24,18 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_skl_model(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         # LogisticRegression is for classification task, such as iris
         classifier = linear_model.LogisticRegression()
         classifier.fit(iris_X, iris_y)
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=iris_X,
             prediction_assert_fns={
@@ -486,9 +490,10 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         )
 
     @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
         enable_explainability=[False, None],  # Explainability not yet supported
     )
-    def test_scaler_random_forest_pipeline(self, enable_explainability: Optional[bool]) -> None:
+    def test_scaler_random_forest_pipeline(self, registry_test_fn: str, enable_explainability: Optional[bool]) -> None:
         X, y = datasets.load_iris(return_X_y=True)
         pipeline = SK_pipeline.Pipeline(
             [
@@ -498,7 +503,7 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         )
         pipeline.fit(X, y)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=pipeline,
             sample_input_data=X,
             prediction_assert_fns={

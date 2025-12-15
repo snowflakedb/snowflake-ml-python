@@ -7,9 +7,9 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest
 
+from snowflake.ml import jobs
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.jobs import job
 from snowflake.ml.model import (
     inference_engine,
     model_signature,
@@ -1005,8 +1005,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_list_services(self) -> None:
         data = [
-            {"name": "a.b.c", "inference_endpoint": "fooendpoint", "internal_endpoint": "http://abc.internal:8000"},
-            {"name": "d.e.f", "inference_endpoint": "bazendpoint", "internal_endpoint": "http://def.internal:9090"},
+            {"name": "a.b.c", "inference_endpoint": "fooendpoint"},
+            {"name": "d.e.f", "inference_endpoint": "bazendpoint"},
         ]
         m_df = pd.DataFrame(data)
         with mock.patch.object(
@@ -1737,7 +1737,7 @@ class ModelVersionImplTest(absltest.TestCase):
             replicas=10,
         )
 
-        mock_job = mock.MagicMock(spec=job.MLJob)
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1793,7 +1793,7 @@ class ModelVersionImplTest(absltest.TestCase):
             memory_requests="2Gi",
         )
 
-        mock_job = mock.MagicMock(spec=job.MLJob)
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1836,7 +1836,7 @@ class ModelVersionImplTest(absltest.TestCase):
             memory_requests="2Gi",
         )
 
-        mock_job = mock.MagicMock(spec=job.MLJob)
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1903,7 +1903,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
 
-        mock_job = mock.MagicMock(spec=job.MLJob)
+        mock_job = mock.MagicMock(spec=jobs.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),

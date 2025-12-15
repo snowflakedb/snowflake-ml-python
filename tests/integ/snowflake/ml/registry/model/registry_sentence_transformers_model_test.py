@@ -3,7 +3,7 @@ import random
 import tempfile
 
 import pandas as pd
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.model._signatures import snowpark_handler
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -26,8 +26,12 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
             os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self._original_cache_dir
         self.cache_dir.cleanup()
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_sentence_transformers(
         self,
+        registry_test_fn: str,
     ) -> None:
         import sentence_transformers
 
@@ -45,7 +49,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         )
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
         embeddings = pd.DataFrame({"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()})
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=model,
             sample_input_data=sentences,
             prediction_assert_fns={

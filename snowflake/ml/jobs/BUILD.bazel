@@ -58,15 +58,6 @@ py_test(
     ],
 )
 
-py_test(
-    name = "manager_test",
-    srcs = ["manager_test.py"],
-    tags = ["feature:jobs"],
-    deps = [
-        "//snowflake/ml/jobs",
-    ],
-)
-
 py_library(
     name = "jobs",
     srcs = [

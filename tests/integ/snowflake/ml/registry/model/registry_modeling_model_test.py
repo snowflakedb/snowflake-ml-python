@@ -25,8 +25,12 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_snowml_model_deploy_snowml_sklearn_explain_disabled(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -38,7 +42,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         test_features = iris_X
         regr.fit(test_features)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=regr,
             prediction_assert_fns={
                 "predict": (
@@ -725,8 +729,12 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_snowml_model_deploy_xgboost_pipeline_sp(
         self,
+        registry_test_fn: str,
     ) -> None:
         iris = datasets.load_iris()
         df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
@@ -790,7 +798,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
         expected_res = expected_res_sp.to_pandas()
         expected_res.columns = expected_res_sp.columns
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=pipeline,
             prediction_assert_fns={
                 "predict": (

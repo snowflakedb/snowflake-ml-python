@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import shap
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 from sklearn import (
     compose,
     datasets,
@@ -23,8 +23,12 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 
 class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_classifier_no_explain(
         self,
+        registry_test_fn: str,
     ) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -35,7 +39,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
         classifier = lightgbm.LGBMClassifier(n_jobs=1)
         classifier.fit(cal_X_train, cal_y_train)
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=classifier,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
@@ -458,8 +462,12 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @parameterized.product(  # type: ignore[misc]
+        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
+    )
     def test_lightgbm_model_with_categorical_dtype_columns(
         self,
+        registry_test_fn: str,
     ) -> None:
         data = {
             "color": ["red", "blue", "green", "red"],
@@ -497,7 +505,7 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
                 check_dtype=False,
             )
 
-        self._test_registry_model(
+        getattr(self, registry_test_fn)(
             model=pipeline,
             sample_input_data=df[input_features],
             prediction_assert_fns={
