@@ -212,7 +212,7 @@ def create_feature_spec_html(spec: Any, indent: int = 0) -> str:
     from snowflake.ml.model._signatures import core
 
     if isinstance(spec, core.FeatureSpec):
-        shape_str = f" shape={spec._shape}" if spec._shape else ""
+        shape_str = f", shape={spec._shape}" if spec._shape else ""
         nullable_str = "" if spec._nullable else ", not nullable"
         return f"""
             <div style="margin: 3px 0; padding-left: {indent * 16}px;">
@@ -261,3 +261,69 @@ def create_features_html(features: Sequence[Any], title: str) -> str:
         html += create_feature_spec_html(feature)
     html += "</div>"
     return html
+
+
+def create_parameters_html(parameters: Sequence[Any], title: str) -> str:
+    """Create HTML representation for a collection of parameters.
+
+    Args:
+        parameters: The sequence of parameter specifications.
+        title: The title for the parameter collection.
+
+    Returns:
+        HTML string for the parameters collection.
+    """
+    if not parameters:
+        return f"""
+            <div style="margin: 5px 0; padding: 5px;">
+                <em>No {title.lower()} parameters defined</em>
+            </div>
+        """
+
+    html = """
+        <div style="margin: 5px 0; padding: 5px;">
+    """
+    for parameter in parameters:
+        html += create_param_spec_html(parameter)
+    html += "</div>"
+    return html
+
+
+def create_param_spec_html(spec: Any, indent: int = 0) -> str:
+    """Create HTML representation for a parameter specification.
+
+    Args:
+        spec: The parameter specification (ParamSpec or ParamGroupSpec).
+        indent: The indentation level for nested parameters.
+
+    Returns:
+        HTML string for the parameter specification.
+    """
+    # Import here to avoid circular imports
+    from snowflake.ml.model._signatures import core
+
+    if isinstance(spec, core.ParamSpec):
+        shape_str = f", shape={spec._shape}" if spec._shape else ""
+        default_value_str = f"default: {repr(spec._default_value)}"
+        return f"""
+            <div style="margin: 3px 0; padding-left: {indent * 16}px;">
+                <strong>{spec.name}</strong>: {spec._dtype}{shape_str}, {default_value_str}
+            </div>
+        """
+    elif isinstance(spec, core.ParamGroupSpec):
+        shape_str = f" shape={spec._shape}" if spec._shape else ""
+        group_html = f"""
+            <div style="margin: 8px 0;">
+                <div style="margin: 3px 0; padding-left: {indent * 16}px;">
+                    <strong>{spec.name}</strong> <span style="color: #666;">(group){shape_str}</span>
+                </div>
+                <div style="border-left: 2px solid #e0e0e0; margin-left: {indent * 16 + 8}px;">
+        """
+        for sub_spec in spec._specs:
+            group_html += create_param_spec_html(sub_spec, indent + 1)
+        group_html += """
+                </div>
+            </div>
+        """
+        return group_html
+    return ""

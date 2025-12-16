@@ -211,6 +211,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 baseline_database=None,
                 baseline_schema=None,
                 baseline=None,
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
                 statement_params=None,
             )
 
@@ -257,6 +260,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 baseline_database=None,
                 baseline_schema=None,
                 baseline=None,
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
                 statement_params=None,
             )
 
@@ -321,6 +327,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 baseline_database=sql_identifier.SqlIdentifier("BASELINE_DB"),
                 baseline_schema=sql_identifier.SqlIdentifier("BASELINE_SCHEMA"),
                 baseline=sql_identifier.SqlIdentifier("BASELINE"),
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
                 statement_params=None,
             )
 
@@ -386,6 +395,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 baseline_database=None,
                 baseline_schema=None,
                 baseline=None,
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
                 statement_params=None,
             )
 
@@ -451,6 +463,9 @@ class ModelMonitorManagerTest(absltest.TestCase):
                 baseline_database=None,
                 baseline_schema=None,
                 baseline=None,
+                timestamp_custom_metric_database=None,
+                timestamp_custom_metric_schema=None,
+                timestamp_custom_metric_table=None,
                 statement_params=None,
             )
 

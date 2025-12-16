@@ -6,9 +6,13 @@ import logging
 import math
 import os
 import runpy
+import shutil
+import subprocess
 import sys
 import time
 import traceback
+import zipfile
+from pathlib import Path
 from typing import Any, Optional
 
 # Ensure payload directory is in sys.path for module imports before importing other modules
@@ -18,11 +22,17 @@ from typing import Any, Optional
 STAGE_MOUNT_PATH = os.environ.get("MLRS_STAGE_MOUNT_PATH", "/mnt/job_stage")
 JOB_RESULT_PATH = os.environ.get("MLRS_RESULT_PATH", "output/mljob_result.pkl")
 PAYLOAD_PATH = os.environ.get("MLRS_PAYLOAD_DIR")
+
 if PAYLOAD_PATH and not os.path.isabs(PAYLOAD_PATH):
     PAYLOAD_PATH = os.path.join(STAGE_MOUNT_PATH, PAYLOAD_PATH)
-if PAYLOAD_PATH and PAYLOAD_PATH not in sys.path:
-    sys.path.insert(0, PAYLOAD_PATH)
 
+if PAYLOAD_PATH:
+    if PAYLOAD_PATH not in sys.path:
+        sys.path.insert(0, PAYLOAD_PATH)
+    for zip_file in Path(PAYLOAD_PATH).rglob("*.zip"):
+        fpath = str(zip_file)
+        if fpath not in sys.path and zipfile.is_zipfile(fpath):
+            sys.path.insert(0, fpath)
 # Imports below must come after sys.path modification to support module overrides
 import snowflake.ml.jobs._utils.constants  # noqa: E402
 import snowflake.snowpark  # noqa: E402
@@ -79,6 +89,76 @@ TARGET_INSTANCES = int(os.environ.get(TARGET_INSTANCES_ENV_VAR) or MIN_INSTANCES
 MIN_WAIT_TIME = float(os.getenv(INSTANCES_MIN_WAIT_ENV_VAR) or -1)  # seconds
 TIMEOUT = float(os.getenv(INSTANCES_TIMEOUT_ENV_VAR) or 720)  # seconds
 CHECK_INTERVAL = float(os.getenv(INSTANCES_CHECK_INTERVAL_ENV_VAR) or 10)  # seconds
+
+
+def is_python_script(file_path: str) -> bool:
+    """Check if a file is a Python script by examining its shebang.
+
+    Args:
+        file_path: Path to the file to check.
+
+    Returns:
+        True if the file has a shebang line containing 'python', False otherwise.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            first_line = f.readline()
+            if first_line.startswith(b"#!"):
+                shebang = first_line.decode("utf-8", errors="ignore").lower()
+                return "python" in shebang
+    except OSError:
+        pass
+    return False
+
+
+def resolve_entrypoint(entrypoint: str) -> tuple[str, bool]:
+    """Resolve the entrypoint to determine how to execute it.
+
+    Args:
+        entrypoint: The entrypoint string (file path or command name).
+
+    Returns:
+        A tuple of (resolved_path, is_python):
+        - resolved_path: The path to the executable/script.
+        - is_python: True if this should be run as a Python script.
+    """
+    # Check if entrypoint is an existing file
+    if os.path.isfile(entrypoint):
+        # Always run as Python script for backward compatibility
+        return entrypoint, True
+
+    # Try to resolve as a command using shutil.which
+    resolved_path = shutil.which(entrypoint)
+    if resolved_path:
+        if is_python_script(resolved_path):
+            return resolved_path, True
+        else:
+            # Assume it's meant to be used as a command and not a Python script
+            return entrypoint, False
+
+    # If we can't resolve it, assume it's meant to be a Python script path
+    # (this preserves backwards compatibility and will fail with a clear error)
+    return entrypoint, True
+
+
+def run_command(command: str, *args: Any) -> None:
+    """Execute a command as a subprocess, streaming output and raising an exception if it fails.
+
+    Args:
+        command: Path to the executable.
+        args: Arguments to pass to the command.
+
+    Raises:
+        CalledProcessError: If the subprocess exits with a non-zero return code.
+    """
+    cmd = [command, *[str(arg) for arg in args]]
+    logger.debug(f"Running subprocess: {' '.join(cmd)}")
+
+    # Run subprocess without capturing output - let stdout/stderr flow directly to console
+    result = subprocess.run(cmd)
+
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, cmd)
 
 
 def save_mljob_result_v2(value: Any, is_error: bool, path: str) -> None:
@@ -313,11 +393,11 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
         sys.argv = original_argv
 
 
-def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = None) -> Any:
+def main(entrypoint: str, *script_args: Any, script_main_func: Optional[str] = None) -> Any:
     """Executes a Python script and serializes the result to JOB_RESULT_PATH.
 
     Args:
-        script_path (str): Path to the Python script to execute.
+        entrypoint (str): The job payload entrypoint to execute.
         script_args (Any): Arguments to pass to the script.
         script_main_func (str, optional): The name of the function to call in the script (if any).
 
@@ -361,8 +441,15 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
         # Log start marker before starting user script execution
         print(LOG_START_MSG)  # noqa: T201
 
-        # Run the user script
-        execution_result_value = run_script(script_path, *script_args, main_func=script_main_func)
+        # Resolve entrypoint to determine execution method
+        resolved_entrypoint, is_python = resolve_entrypoint(entrypoint)
+
+        if is_python:
+            # Run as Python script
+            execution_result_value = run_script(resolved_entrypoint, *script_args, main_func=script_main_func)
+        else:
+            # Run as subprocess
+            run_command(resolved_entrypoint, *script_args)
 
         # Log end marker for user script execution
         print(LOG_END_MSG)  # noqa: T201
@@ -395,7 +482,7 @@ def main(script_path: str, *script_args: Any, script_main_func: Optional[str] = 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch a Python script and save the result")
-    parser.add_argument("script_path", help="Path to the Python script to execute")
+    parser.add_argument("entrypoint", help="The job payload entrypoint to execute")
     parser.add_argument("script_args", nargs="*", help="Arguments to pass to the script")
     parser.add_argument(
         "--script_main_func", required=False, help="The name of the main function to call in the script"
@@ -403,7 +490,7 @@ if __name__ == "__main__":
     args, unknown_args = parser.parse_known_args()
 
     main(
-        args.script_path,
+        args.entrypoint,
         *args.script_args,
         *unknown_args,
         script_main_func=args.script_main_func,

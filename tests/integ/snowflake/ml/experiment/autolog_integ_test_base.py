@@ -32,6 +32,7 @@ class AutologIntegrationTest:
         ).upper()
         self._db_manager.create_database(self._db_name, data_retention_time_in_days=1)
         self._db_manager.cleanup_databases(expire_hours=6)
+        experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
         self.exp = experiment_tracking.ExperimentTracking(
             self._session,
             database_name=self._db_name,

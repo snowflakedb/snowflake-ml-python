@@ -1,7 +1,7 @@
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.jobs import delete_job, get_job
+from snowflake.ml.jobs.manager import delete_job, get_job
 from snowflake.ml.model import custom_model
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 

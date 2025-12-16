@@ -60,6 +60,10 @@
 # This requirement will be added to all extras tags specified here, and an `all` extras tag will be auto-generated to include
 # all extras requirements. All extras requirements will be labeled as `run_constrained` in conda's meta.yaml.
 
+# If you need the same package with different `dev_version` values for different groups (e.g., one version for
+# torch group and another for llm group), you MUST ensure the `requirements_extra_tags` are mutually exclusive.
+# If any of the tags overlap, both versions will be included in the same environment file which is unintended.
+
 # `tags`: Set tags to filter some of the requirements in specific cases. The current valid tags include:
 #   - `build_essential`: Used to indicate the packages composing the build environment.
 #   - `build_test_env`: Used to indicate the package is required in build and test environment to run the tests.
@@ -98,6 +102,8 @@
   # Only used in connection_params.py, which is an util library anyways.
 - name: coverage
   dev_version: 7.6.1
+- name_pypi: datasets
+  dev_version_pypi: 3.3.2
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask
@@ -261,8 +267,8 @@
   requirements_extra_tags:
     - tensorflow
     - keras
-- name_conda: tokenizers
-  dev_version_conda: 0.15.1
+- name: tokenizers
+  dev_version: 0.15.1
   version_requirements: '>=0.15.1,<1'
   requirements_extra_tags:
     - transformers
@@ -282,8 +288,8 @@
   requirements_extra_tags:
     - torch
     - llm
-- name_conda: transformers
-  dev_version_conda: 4.39.3
+- name: transformers
+  dev_version: 4.39.3
   version_requirements: '>=4.39.3,<5,!=4.51.3'
   requirements_extra_tags:
     - transformers

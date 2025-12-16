@@ -16,6 +16,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
         "//snowflake/ml/utils:authentication",
         "//tests/integ/snowflake/ml/registry:registry_spcs_test_base",
@@ -67,6 +68,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
@@ -80,6 +82,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
