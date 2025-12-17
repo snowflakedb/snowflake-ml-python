@@ -13,13 +13,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
 from snowflake.ml.jobs._interop import results as interop_result, utils as interop_utils
-from snowflake.ml.jobs._utils import (
-    constants,
-    payload_utils,
-    query_helper,
-    stage_utils,
-    types,
-)
+from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, types
 from snowflake.snowpark import Row, context as sp_context
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
@@ -131,7 +125,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
     def _transform_path(self, path_str: str) -> str:
         """Transform a local path within the container to a stage path."""
-        path = payload_utils.resolve_path(path_str)
+        path = stage_utils.resolve_path(path_str)
         if isinstance(path, stage_utils.StagePath):
             # Stage paths need no transformation
             return path.as_posix()

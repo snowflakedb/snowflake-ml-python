@@ -13,7 +13,7 @@ requirements:
     - python
     - bazel==6.5.0
   run:
-    - python>=3.9,<3.13
+    - python>=3.9,<3.14
 
 test:
   imports:

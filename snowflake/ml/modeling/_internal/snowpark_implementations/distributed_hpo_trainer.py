@@ -365,8 +365,8 @@ class DistributedHPOTrainer(SnowparkModelTrainer):
 
         required_deps = dependencies + [
             "snowflake-snowpark-python<2",
-            "fastparquet<2023.11",
-            "pyarrow<14",
+            "fastparquet<2024.3",
+            "pyarrow<18",
             "cachetools<6",
         ]
 

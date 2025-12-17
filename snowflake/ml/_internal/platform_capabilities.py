@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
 INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
 SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST = "SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST"
+ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = "ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS"
+FEATURE_MODEL_INFERENCE_AUTOCAPTURE = "FEATURE_MODEL_INFERENCE_AUTOCAPTURE"
 
 
 class PlatformCapabilities:
@@ -79,6 +81,12 @@ class PlatformCapabilities:
 
     def is_live_commit_enabled(self) -> bool:
         return self._get_bool_feature(LIVE_COMMIT_PARAMETER, False)
+
+    def is_model_method_signature_parameters_enabled(self) -> bool:
+        return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)
+
+    def is_inference_autocapture_enabled(self) -> bool:
+        return self._is_feature_enabled(FEATURE_MODEL_INFERENCE_AUTOCAPTURE)
 
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> dict[str, Any]:
@@ -182,3 +190,31 @@ class PlatformCapabilities:
             f"current={current_version}, feature={feature_version}, enabled={result}"
         )
         return result
+
+    def _is_feature_enabled(self, feature_name: str) -> bool:
+        """Check if the feature parameter value belongs to enabled values.
+
+        Args:
+            feature_name: The name of the feature to retrieve.
+
+        Returns:
+            bool: True if the value is "ENABLED" or "ENABLED_PUBLIC_PREVIEW",
+                  False if the value is "DISABLED", "DISABLED_PRIVATE_PREVIEW", or not set.
+
+        Raises:
+            ValueError: If the feature value is set but not one of the recognized values.
+        """
+        value = self.features.get(feature_name)
+        if value is None:
+            logger.debug(f"Feature {feature_name} not found.")
+            return False
+
+        if isinstance(value, str):
+            value_str = str(value)
+            if value_str.upper() in ["ENABLED", "ENABLED_PUBLIC_PREVIEW"]:
+                return True
+            elif value_str.upper() in ["DISABLED", "DISABLED_PRIVATE_PREVIEW"]:
+                return False
+            else:
+                raise ValueError(f"Invalid feature parameter value: {value} for feature {feature_name}")
+        raise ValueError(f"Invalid feature parameter string value: {value} for feature {feature_name}")

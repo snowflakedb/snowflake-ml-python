@@ -30,6 +30,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         ).upper()
         self._db_manager.create_database(self._db_name, data_retention_time_in_days=1)
         self._db_manager.cleanup_databases(expire_hours=6)
+        ExperimentTracking._instance = None  # Reset singleton for test
         self.exp = ExperimentTracking(
             self._session,
             database_name=self._db_name,
@@ -94,11 +95,12 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
 
     def test_experiment_getstate_and_setstate(self) -> None:
         """Test getstate and setstate methods by pickling and then unpickling"""
-        exp = ExperimentTracking(session=self._session)
-        exp.set_experiment("TEST_EXPERIMENT")
-        exp.start_run("TEST_RUN")
+        self.exp.set_experiment("TEST_EXPERIMENT")
+        self.exp.start_run("TEST_RUN")
 
-        pickled = pickle.dumps(exp)
+        pickled = pickle.dumps(self.exp)
+        ExperimentTracking._instance = None  # Reset singleton for test
+
         # Make sure that there is only one active session when _get_active_session() in setstate is called
         with snowpark_session._session_management_lock:
             session_set = snowpark_session._active_sessions.copy()
@@ -106,15 +108,17 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
             new_exp = pickle.loads(pickled)  # setstate is called here
             snowpark_session._active_sessions = session_set
 
-        self.assert_experiment_tracking_equality(exp, new_exp)
+        self.assertIsNot(new_exp, self.exp)
+        self.assert_experiment_tracking_equality(self.exp, new_exp)
 
     def test_experiment_getstate_and_setstate_no_session(self) -> None:
         """Test that setstate creates a new session if no session is found"""
-        exp = ExperimentTracking(session=self._session)
-        exp.set_experiment("TEST_EXPERIMENT")
-        exp.start_run("TEST_RUN")
+        self.exp.set_experiment("TEST_EXPERIMENT")
+        self.exp.start_run("TEST_RUN")
 
-        pickled = pickle.dumps(exp)
+        pickled = pickle.dumps(self.exp)
+        ExperimentTracking._instance = None  # Reset singleton for test
+
         # Make sure that there are no active sessions when _get_active_session() in setstate is called
         with snowpark_session._session_management_lock:
             session_set = snowpark_session._active_sessions.copy()
@@ -124,7 +128,8 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
             new_session = snowpark_session._active_sessions.pop()
             snowpark_session._active_sessions = session_set
 
-        self.assert_experiment_tracking_equality(exp, new_exp)
+        self.assertIsNot(new_exp, self.exp)
+        self.assert_experiment_tracking_equality(self.exp, new_exp)
         # Check that the unpickled experiment uses the newly created session
         self.assertIs(new_exp._session, new_session)
         self.assertIsNot(new_exp._session, self._session)
@@ -215,6 +220,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(run.name, target_run_name)
 
         # New ExperimentTracking instance in the same DB/Schema resumes the same run
+        ExperimentTracking._instance = None  # Reset singleton for test
         exp2 = ExperimentTracking(self._session, database_name=self._db_name, schema_name=self._schema_name)
         exp2.set_experiment(experiment_name=experiment_name)
         resumed = exp2.start_run(run_name=target_run_name)
@@ -247,6 +253,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(json.loads(runs[0]["metadata"])["status"], "FINISHED")
 
         # New instance attempting to start the same (non-running) run should error
+        ExperimentTracking._instance = None  # Reset singleton for test
         exp2 = ExperimentTracking(self._session, database_name=self._db_name, schema_name=self._schema_name)
         exp2.set_experiment(experiment_name=experiment_name)
         with self.assertRaises(RuntimeError):

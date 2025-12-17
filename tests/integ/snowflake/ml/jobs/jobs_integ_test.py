@@ -1,3 +1,4 @@
+import importlib
 import itertools
 import os
 import pathlib
@@ -5,7 +6,8 @@ import re
 import sys
 import textwrap
 import time
-from typing import Any, Optional, cast
+from types import ModuleType
+from typing import Any, Callable, Optional, cast
 from unittest import mock
 from uuid import uuid4
 
@@ -251,7 +253,6 @@ class JobManagerTest(JobTestBase):
             constants.JOB_POLL_MAX_DELAY_SECONDS = max_backoff
 
     @parameterized.product(  # type: ignore[misc]
-        USE_SUBMIT_JOB_V2=[True, False],
         ENABLE_RUNTIME_VERSIONS=[True, False],
     )
     def test_job_execution(self, **feature_flag_kwargs: bool) -> None:
@@ -843,6 +844,26 @@ class JobManagerTest(JobTestBase):
             "Didn't find expected package log:" + job_logs,
         )
 
+    def test_job_arctic_training(self) -> None:
+        """Test that arctic-training can be run as a job."""
+        rows = self.session.sql("SHOW EXTERNAL ACCESS INTEGRATIONS LIKE 'ALLOW_ALL%'").collect()
+        if not rows:
+            self.skipTest("No compatible EAIs found in environment.")
+        allow_all_eais = [r["name"] for r in rows]
+
+        job = jobs.submit_directory(
+            TestAsset("train_recipes").path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            entrypoint=["arctic_training", "run_causal.yml"],
+            pip_requirements=["arctic-training"],
+            external_access_integrations=allow_all_eais,
+            session=self.session,
+        )
+
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        self.assertIn("arctic", job.get_logs(verbose=True).lower())
+
     @parameterized.parameters(  # type: ignore[misc]
         {
             "env_vars": {
@@ -959,7 +980,7 @@ class JobManagerTest(JobTestBase):
     )
     def test_remote_with_session_positive(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="@payload_stage", session=self.session)
-        def test_session_as_first_positional(arg1: snowpark.Session, arg2: str, arg3: str):
+        def test_session_as_first_positional(arg1: snowpark.Session, arg2: str, arg3: str) -> None:
             print(f"database: {arg1.get_current_database()}")
             print(f"hello {arg2}, {arg3}")
 
@@ -986,7 +1007,7 @@ class JobManagerTest(JobTestBase):
         stage_name: str,
         temporary: bool,
         encryption: str,
-    ):
+    ) -> None:
         """
         currently there are no commands supporting copy files from or to user stage(@~)
         only cover these two cases
@@ -1166,53 +1187,51 @@ class JobManagerTest(JobTestBase):
                     job.cancel()
 
     @parameterized.parameters(  # type: ignore[misc]
-        ("src", "src/entry.py", [(TestAsset("src/subdir/utils").path.as_posix(), "src.subdir.utils")]),
-        ("src", "src/nine.py", [(TestAsset("src/subdir/utils").path.as_posix(), "subdir.utils")]),
-        ("src/subdir2", "src/subdir2/eight.py", [(TestAsset("src/subdir3/").path.as_posix(), "subdir3")]),
+        ("src/entry.py", [(TestAsset("src/subdir/utils").path.as_posix(), "src.subdir.utils")]),
+        ("src/secondary.py", [(TestAsset("src/main.py").path.as_posix(), None)]),
+        ("src/subdir2/eight.py", [(TestAsset("src/subdir3/").path.as_posix(), "subdir3")]),
+        ("src/modules_zip.py", [(TestAsset("src/test_data_processor.zip").path, "data_processor")]),
     )
-    def test_submit_with_additional_payloads_local(
-        self, source: str, entrypoint: str, additional_payloads: list[tuple[str, str]]
-    ) -> None:
-        job1 = jobs.submit_directory(
-            TestAsset(source).path,
-            self.compute_pool,
-            entrypoint=TestAsset(entrypoint).path,
-            stage_name="payload_stage",
-            session=self.session,
-            additional_payloads=additional_payloads,
-        )
-        self.assertEqual(job1.wait(), "DONE", job1.get_logs())
-
-        job2 = jobs.submit_file(
+    def test_submit_with_imports_local(self, entrypoint: str, imports: list[tuple[str, str]]) -> None:
+        job = jobs.submit_file(
             TestAsset(entrypoint).path,
             self.compute_pool,
             stage_name="payload_stage",
             session=self.session,
-            additional_payloads=additional_payloads,
+            imports=imports,
         )
-        self.assertEqual(job2.wait(), "DONE", job2.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
 
-    def test_submit_with_additional_payloads_stage(self) -> None:
+    def test_submit_with_imports_stage(self) -> None:
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
+        import_stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
         upload_files = TestAsset("src")
 
         payload_utils.upload_payloads(
-            self.session, pathlib.PurePath(stage_path), types.PayloadSpec(upload_files.path, None)
+            self.session, pathlib.PurePath(stage_path), types.PayloadSpec(upload_files.path, None, compress=False)
+        )
+        payload_utils.upload_payloads(
+            self.session,
+            pathlib.PurePath(import_stage_path),
+            types.PayloadSpec(upload_files.path, None, compress=False),
         )
 
         test_cases = [
-            (f"{stage_path}/", f"{stage_path}/entry.py", [(f"{stage_path}/subdir/utils", "src.subdir.utils")]),
-            (f"{stage_path}", f"{stage_path}/nine.py", [(f"{stage_path}/subdir/utils", "subdir.utils")]),
+            (
+                f"{stage_path}",
+                f"{stage_path}/nine.py",
+                [(f"{import_stage_path}/subdir/utils/tool.py", "subdir.utils.tool")],
+            ),
         ]
-        for source, entrypoint, additional_payloads in test_cases:
-            with self.subTest(source=source, entrypoint=entrypoint, additional_payloads=additional_payloads):
+        for source, entrypoint, imports in test_cases:
+            with self.subTest(source=source, entrypoint=entrypoint, imports=imports):
                 job = jobs.submit_from_stage(
                     source=source,
                     entrypoint=entrypoint,
                     compute_pool=self.compute_pool,
                     stage_name="payload_stage",
                     session=self.session,
-                    additional_payloads=additional_payloads,
+                    imports=imports,
                 )
                 self.assertEqual(job.wait(), "DONE", job.get_logs())
 
@@ -1257,6 +1276,9 @@ class JobManagerTest(JobTestBase):
         self.assertIn("This is the content of a hidden file with no extension", job.get_logs())
 
     def test_job_with_different_python_version(self) -> None:
+        rows = self.session.sql("SHOW PARAMETERS LIKE 'ENABLE_NOTEBOOK_CONTAINER_RUNTIME_SELECTION';").collect()
+        if not rows or rows[0]["value"] == "false":
+            self.skipTest("ENABLE_NOTEBOOK_CONTAINER_RUNTIME_SELECTION is not enabled")
         target_version = f"{sys.version_info.major}.{sys.version_info.minor}"
         resources = spec_utils._get_node_resources(self.session, self.compute_pool)
         hardware = "GPU" if resources.gpu > 0 else "CPU"
@@ -1381,24 +1403,66 @@ class JobManagerTest(JobTestBase):
             )
             self.assertRegex(job1.name.lower(), r"main_\w+")
 
+    @parameterized.parameters(  # type: ignore[misc]
+        ("src/", "greeter", "src/modules_file.py", lambda greeter: [(greeter, None)]),
+        ("src/", "utils", "src/modules_dir.py", lambda utils: [(utils, "src.utils")]),
+        (
+            "src/test_data_processor.zip",
+            "data_processor",
+            "src/modules_zip.py",
+            lambda dp: [(dp, "data_processor")],
+        ),
+    )
+    def test_job_with_imports_modules(
+        self,
+        path_addition: str,
+        module_name: str,
+        entrypoint_file: str,
+        imports_func: Callable[[ModuleType], list[tuple[ModuleType, Optional[str]]]],
+    ) -> None:
+        with mock.patch.object(sys, "path", [str(TestAsset(path_addition).path)] + sys.path):
+            imported_module = importlib.import_module(module_name)
+
+            job = jobs.submit_file(
+                TestAsset(entrypoint_file).path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+                imports=imports_func(imported_module),
+            )
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+
     @absltest.skipIf(
         version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
         "Decorator test only works for Python 3.10 and below due to pickle compatibility",
     )  # type: ignore[misc]
-    def test_job_stage_mount_v2(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        (True,),
+        (False,),
+    )
+    def test_job_stage_mount_v2(self, enable_stage_mount_v2: bool) -> None:
         try:
             self.session.sql("ALTER SESSION SET ENABLE_STAGE_MOUNT_V2_ML_JOB = true").collect()
         except Exception:
             self.skipTest("Stage mount v2 is not enabled")
-        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: "true"}):
 
-            @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
-            def test_function() -> str:
-                return "hello world"
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def test_function() -> str:
+            return "hello world"
 
+        with mock.patch.dict(
+            os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: str(enable_stage_mount_v2)}
+        ):
             job = test_function()
+
             self.assertEqual(job.wait(), "DONE", job.get_logs())
             self.assertEqual(job.result(), "hello world")
+
+    def test_job_with_runtime_image_tag_notebook(self) -> None:
+        with mock.patch.dict(os.environ, {constants.RUNTIME_IMAGE_TAG_ENV_VAR: "1.8.0"}):
+            job = self._submit_func_as_file(dummy_function)
+            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertIn("1.8.0", job._container_spec["image"])
 
 
 if __name__ == "__main__":

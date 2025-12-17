@@ -8,9 +8,9 @@ from typing import Any, Callable, Optional, Union, overload
 import pandas as pd
 
 from snowflake import snowpark
-from snowflake.ml import jobs
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
@@ -46,6 +46,7 @@ class ModelVersion(lineage_node.LineageNode):
     _version_name: sql_identifier.SqlIdentifier
     _functions: list[model_manifest_schema.ModelFunctionInfo]
     _model_spec: Optional[model_meta_schema.ModelMetadataDict]
+    _model_manifest: Optional[model_manifest_schema.ModelManifestDict]
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -156,6 +157,7 @@ class ModelVersion(lineage_node.LineageNode):
         self._version_name = version_name
         self._functions = self._get_functions()
         self._model_spec = None
+        self._model_manifest = None
         super(cls, cls).__init__(
             self,
             session=model_ops._session,
@@ -463,6 +465,28 @@ class ModelVersion(lineage_node.LineageNode):
             )
         return self._model_spec
 
+    def _get_model_manifest(
+        self, statement_params: Optional[dict[str, Any]] = None
+    ) -> model_manifest_schema.ModelManifestDict:
+        """Fetch and cache the model manifest for this model version.
+
+        Args:
+            statement_params: Optional dictionary of statement parameters to include
+                in the SQL command to fetch the model manifest.
+
+        Returns:
+            The model manifest as a dictionary for this model version.
+        """
+        if self._model_manifest is None:
+            self._model_manifest = self._model_ops.get_model_version_manifest(
+                database_name=None,
+                schema_name=None,
+                model_name=self._model_name,
+                version_name=self._version_name,
+                statement_params=statement_params,
+            )
+        return self._model_manifest
+
     @overload
     def run(
         self,
@@ -531,6 +555,9 @@ class ModelVersion(lineage_node.LineageNode):
 
         Returns:
             The prediction data. It would be the same type dataframe as your input.
+
+        Raises:
+            ValueError: When the model does not support running on warehouse and no service name is provided.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,
@@ -557,6 +584,27 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
             )
         else:
+            manifest = self._get_model_manifest(statement_params=statement_params)
+            target_platforms = manifest.get("target_platforms", None)
+            if (
+                target_platforms is not None
+                and len(target_platforms) > 0
+                and type_hints.TargetPlatform.WAREHOUSE.value not in target_platforms
+            ):
+                raise ValueError(
+                    f"The model {self.fully_qualified_model_name} version {self.version_name} "
+                    "is not logged for inference in Warehouse. "
+                    "To run the model in Warehouse, please log the model again using `log_model` API with "
+                    '`target_platforms=["WAREHOUSE"]` or '
+                    '`target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]` and rerun the command. '
+                    "To run the model in Snowpark Container Services, the `service_name` argument must be provided. "
+                    "You can create a service using the `create_service` API. "
+                    "For inference in Warehouse, see https://docs.snowflake.com/en/developer-guide/"
+                    "snowflake-ml/model-registry/warehouse#inference-from-python. "
+                    "For inference in Snowpark Container Services, see https://docs.snowflake.com/en/developer-guide/"
+                    "snowflake-ml/model-registry/container#python."
+                )
+
             explain_case_sensitive = self._determine_explain_case_sensitivity(target_function_info, statement_params)
 
             return self._model_ops.invoke_method(
@@ -603,7 +651,7 @@ class ModelVersion(lineage_node.LineageNode):
         input_spec: dataframe.DataFrame,
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
-    ) -> jobs.MLJob[Any]:
+    ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
 
         Args:
@@ -618,7 +666,7 @@ class ModelVersion(lineage_node.LineageNode):
                 If None, default values will be used.
 
         Returns:
-            jobs.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
+            job.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
                 lifecycle.
 
         Raises:
@@ -1019,6 +1067,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
         block: bool = True,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
@@ -1053,13 +1102,13 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
+            autocapture: Whether inference autocapture is enabled on the service. If true, inference data will be
+                captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
-                Currently only `autocapture` is supported.
-                `autocapture` is a boolean to enable/disable inference table.
         """
         ...
 
@@ -1081,6 +1130,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
@@ -1115,13 +1165,13 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is ``False``, this function executes the underlying service creation asynchronously
                 and returns an :class:`AsyncJob`.
+            autocapture: Whether inference autocapture is enabled on the service. If true, inference data will be
+                captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
-                Currently only `autocapture` is supported.
-                `autocapture` is a boolean to enable/disable inference table.
         """
         ...
 
@@ -1158,6 +1208,7 @@ class ModelVersion(lineage_node.LineageNode):
         build_external_access_integration: Optional[str] = None,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
@@ -1194,13 +1245,13 @@ class ModelVersion(lineage_node.LineageNode):
             block: A bool value indicating whether this function will wait until the service is available.
                 When it is False, this function executes the underlying service creation asynchronously
                 and returns an AsyncJob.
+            autocapture: Whether inference autocapture is enabled on the service. If true, inference data will be
+                captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
-                Currently only `autocapture` is supported.
-                `autocapture` is a boolean to enable/disable inference table.
 
 
         Raises:
@@ -1250,9 +1301,6 @@ class ModelVersion(lineage_node.LineageNode):
                 inference_engine_args,
                 gpu_requests,
             )
-
-        # Extract autocapture from experimental_options
-        autocapture = experimental_options.get("autocapture") if experimental_options else None
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions
@@ -1320,8 +1368,13 @@ class ModelVersion(lineage_node.LineageNode):
         """List all the service names using this model version.
 
         Returns:
-            List of service_names: The name of the service, can be fully qualified. If not fully qualified, the database
-                or schema of the model will be used.
+            List of details about all the services associated with this model version. The details include:
+              name: The name of the service.
+              status: The status of the service.
+              inference_endpoint: The public endpoint of the service, if enabled and services is not in PENDING state.
+                This will give privatelink endpoint if the session is created with privatelink connection
+              internal_endpoint: The internal endpoint of the service, if services is not in PENDING state.
+              autocapture_enabled: Whether service has autocapture enabled, if it is set in service proxy spec.
         """
         statement_params = telemetry.get_statement_params(
             project=_TELEMETRY_PROJECT,

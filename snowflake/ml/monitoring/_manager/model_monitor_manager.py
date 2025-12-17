@@ -100,6 +100,15 @@ class ModelMonitorManager:
             if source_config.baseline
             else (None, None, None)
         )
+        (
+            timestamp_custom_metric_database_name_id,
+            timestamp_custom_metric_schema_name_id,
+            timestamp_custom_metric_table_name_id,
+        ) = (
+            sql_identifier.parse_fully_qualified_name(source_config.timestamp_custom_metric_table)
+            if source_config.timestamp_custom_metric_table
+            else (None, None, None)
+        )
         model_database_name_id, model_schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(
             model_monitor_config.model_version.fully_qualified_model_name
         )
@@ -155,6 +164,9 @@ class ModelMonitorManager:
             baseline_database=baseline_database_name_id,
             baseline_schema=baseline_schema_name_id,
             baseline=baseline_name_id,
+            timestamp_custom_metric_database=timestamp_custom_metric_database_name_id,
+            timestamp_custom_metric_schema=timestamp_custom_metric_schema_name_id,
+            timestamp_custom_metric_table=timestamp_custom_metric_table_name_id,
             statement_params=self.statement_params,
         )
         return model_monitor.ModelMonitor._ref(

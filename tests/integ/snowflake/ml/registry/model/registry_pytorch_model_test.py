@@ -1,6 +1,6 @@
 import pandas as pd
 import torch
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model._signatures import pytorch_handler, snowpark_handler
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
@@ -8,18 +8,14 @@ from tests.integ.snowflake.ml.test_utils import dataframe_utils, model_factory
 
 
 class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_pytorch_tensor_as_sample(
         self,
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_factory.ModelFactory.prepare_torch_model(torch.float32)
         x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
         y_pred = model.forward(data_x).detach()
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=data_x,
             prediction_assert_fns={

@@ -23,7 +23,7 @@ py_library(
 py_test(
     name = "experiment_tracking_sql_client_test",
     srcs = ["experiment_tracking_sql_client_test.py"],
-    tags = ["feature:observability"],
+    tags = ["feature:experiment_tracking"],
     deps = [
         ":experiment_tracking_sql_client",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -35,7 +35,7 @@ py_test(
 py_test(
     name = "artifact_test",
     srcs = ["artifact_test.py"],
-    tags = ["feature:observability"],
+    tags = ["feature:experiment_tracking"],
     deps = [
         ":experiment_tracking_sql_client",
     ],

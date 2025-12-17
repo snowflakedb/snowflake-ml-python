@@ -353,8 +353,8 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
     def test_custom_demo_model_structured(self) -> None:
         lm = DemoModelMultipleStructured(custom_model.ModelContext())
         input_data = [
-            {"a": 1, "b": 2.8, "c": "a string"},
-            {"a": 4, "b": 5.3, "c": "another string"},
+            {"a": 1, "b": 2.8, "c": "a string", "d": [1, 2, 3]},
+            {"a": 4, "b": 5.3, "c": "another string", "d": [4, 5, 6]},
         ]
         pd_df = pd.DataFrame(input_data)
 

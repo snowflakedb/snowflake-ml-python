@@ -17,7 +17,7 @@ build:
   noarch: python
 package:
   name: snowflake-ml-python
-  version: 1.20.0
+  version: 1.21.0
 requirements:
   build:
     - python
@@ -52,7 +52,7 @@ requirements:
     - tqdm<5
     - typing-extensions>=4.1.0,<5
     - xgboost<4
-    - python>=3.9,<3.13
+    - python>=3.9,<3.14
   run_constrained:
     - altair>=5,<6
     - catboost>=1.2.0, <2
