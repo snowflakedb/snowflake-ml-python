@@ -266,6 +266,9 @@ class PandasDataFrameProtocol(SerializationProtocol):
 
         # TODO: Support partitioned writes for large datasets
         result_path = posixpath.join(dest_dir, self.DEFAULT_PATH_PATTERN.format(0))
+        # stage mount v2 has a bug where it creates an empty file when creating a new file
+        with data_utils.open_stream(result_path, "wb", session=session) as stream:
+            stream.write(b"")  # Dummy write to create the file
         with data_utils.open_stream(result_path, "wb", session=session) as stream:
             obj.to_parquet(stream)
 

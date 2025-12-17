@@ -37,9 +37,21 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.mock_registry = MagicMock()
         self.mock_registry_class.return_value = self.mock_registry
 
+        experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
+
     def tearDown(self) -> None:
         self.sql_client_patcher.stop()
         self.registry_patcher.stop()
+
+    def test_singleton(self) -> None:
+        """Test that ExperimentTracking is a singleton class, and that warnings are issued on re-initialization."""
+        with warnings.catch_warnings(record=True) as caught_warnings:
+            exp1 = experiment_tracking.ExperimentTracking(session=self.mock_session)
+            exp2 = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        self.assertEqual(len(caught_warnings), 1)
+        self.assertEqual(caught_warnings[0].category, UserWarning)
+        self.assertIn("ExperimentTracking is a singleton class", str(caught_warnings[0].message))
+        self.assertIs(exp1, exp2)
 
     def test_init(self) -> None:
         """Test all initialization scenarios."""
@@ -48,6 +60,8 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertEqual(exp._database_name.identifier(), "TEST_DB")
         self.assertEqual(exp._schema_name.identifier(), "TEST_SCHEMA")
 
+        experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
+
         # Test with custom parameters
         exp = experiment_tracking.ExperimentTracking(
             session=self.mock_session, database_name="CUSTOM_DB", schema_name="CUSTOM_SCHEMA"
@@ -55,10 +69,14 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertEqual(exp._database_name.identifier(), "CUSTOM_DB")
         self.assertEqual(exp._schema_name.identifier(), "CUSTOM_SCHEMA")
 
+        experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
+
         # Test with no schema, should use PUBLIC schema
         self.mock_session.get_current_schema.return_value = None
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
         self.assertEqual(exp._schema_name.identifier(), "PUBLIC")
+
+        experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
 
         # Test with no database, should raise ValueError
         self.mock_session.get_current_database.return_value = None
@@ -83,6 +101,28 @@ class ExperimentTrackingTest(absltest.TestCase):
         # Verify the experiment is stored in the tracking context
         self.assertEqual(exp._experiment, experiment)
 
+        # Setting the same experiment name with the same database and schema should return the existing experiment
+        self.mock_sql_client.reset_mock()
+        experiment2 = exp.set_experiment("TEST_EXPERIMENT")
+        self.mock_sql_client.create_experiment.assert_not_called()
+        self.assertIs(experiment, experiment2)
+
+        # Setting the database_name without schema_name should use the "PUBLIC" schema
+        self.mock_sql_client.reset_mock()
+        experiment3 = exp.set_experiment("TEST_EXPERIMENT", database_name="NEW_DB")
+        self.mock_sql_client.create_experiment.assert_called_once()
+        self.assertEqual(exp._database_name.identifier(), "NEW_DB")
+        self.assertEqual(exp._schema_name.identifier(), "PUBLIC")
+        self.assertIsNot(experiment2, exp._experiment)
+        self.assertIs(experiment3, exp._experiment)
+
+        # Setting the same experiment name with different database or schema should create a new experiment
+        self.mock_sql_client.reset_mock()
+        experiment4 = exp.set_experiment("TEST_EXPERIMENT", database_name="NEW_DB", schema_name="NEW_SCHEMA")
+        self.mock_sql_client.create_experiment.assert_called_once()
+        self.assertIsNot(experiment3, exp._experiment)
+        self.assertIs(experiment4, exp._experiment)
+
     def test_delete_experiment(self) -> None:
         """Test deleting an experiment."""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
@@ -94,6 +134,25 @@ class ExperimentTrackingTest(absltest.TestCase):
         # Verify SQL client was called to delete the experiment
         self.mock_sql_client.drop_experiment.assert_called_once()
         call_args = self.mock_sql_client.drop_experiment.call_args[1]
+        self.assertEqual(call_args["database_name"].identifier(), "TEST_DB")
+        self.assertEqual(call_args["schema_name"].identifier(), "TEST_SCHEMA")
+        self.assertEqual(call_args["experiment_name"].identifier(), "TEST_EXPERIMENT")
+
+        # Setting the database_name without schema_name should raise error
+        with self.assertRaises(ValueError) as context:
+            exp.delete_experiment("TEST_EXPERIMENT", database_name="NEW_DB")
+        self.assertIn(
+            "If one of database_name and schema_name is specified, the other one must also be specified.",
+            str(context.exception),
+        )
+
+        # Test deleting the experiment with different database or schema
+        self.mock_sql_client.reset_mock()
+        exp.delete_experiment("TEST_EXPERIMENT", database_name="NEW_DB", schema_name="NEW_SCHEMA")
+        self.mock_sql_client.drop_experiment.assert_called_once()
+        call_args = self.mock_sql_client.drop_experiment.call_args[1]
+        self.assertEqual(call_args["database_name"].identifier(), "NEW_DB")
+        self.assertEqual(call_args["schema_name"].identifier(), "NEW_SCHEMA")
         self.assertEqual(call_args["experiment_name"].identifier(), "TEST_EXPERIMENT")
 
     def test_start_run(self) -> None:
@@ -544,7 +603,6 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertIn("No experiment set. Please set an experiment before downloading artifacts.", str(ctx.exception))
 
         # Scenario 2: explicit artifact_path and target_path
-        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
         exp.set_experiment("EXP1")
         expected_artifacts_1 = [
             artifact.ArtifactInfo(name="sub/dir/a.txt", size=1, md5="md5a", last_modified="2024-01-01"),
@@ -574,7 +632,6 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertEqual(call_kwargs["target_path"], local_dir)
 
         # Scenario 3: defaults for artifact_path and target_path
-        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
         exp.set_experiment("EXP2")
         expected_artifacts_2: list[artifact.ArtifactInfo] = []
         self.mock_sql_client.list_artifacts.reset_mock()

@@ -13,6 +13,10 @@ from typing import (
 import numpy.typing as npt
 from typing_extensions import NotRequired
 
+from snowflake.ml.model.compute_pool import (
+    DEFAULT_CPU_COMPUTE_POOL,
+    DEFAULT_GPU_COMPUTE_POOL,
+)
 from snowflake.ml.model.target_platform import TargetPlatform
 from snowflake.ml.model.task import Task
 from snowflake.ml.model.volatility import Volatility
@@ -380,4 +384,4 @@ class ProgressStatus(Protocol):
         ...
 
 
-__all__ = ["TargetPlatform", "Task"]
+__all__ = ["TargetPlatform", "Task", "DEFAULT_CPU_COMPUTE_POOL", "DEFAULT_GPU_COMPUTE_POOL"]

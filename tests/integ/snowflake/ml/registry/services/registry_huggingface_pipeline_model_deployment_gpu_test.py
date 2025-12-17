@@ -24,12 +24,19 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         os.environ["TRANSFORMERS_CACHE"] = self.cache_dir.name
         # Get HF token if available (used for gated models)
         self.hf_token = os.getenv("HF_TOKEN", None)
+        # Unset HF_ENDPOINT to avoid artifactory errors
+        # TODO: Remove this once artifactory is fixed
+        if "HF_ENDPOINT" in os.environ:
+            self._original_hf_endpoint = os.environ["HF_ENDPOINT"]
+            del os.environ["HF_ENDPOINT"]
 
     @classmethod
     def tearDownClass(self) -> None:
         if self._original_cache_dir:
             os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
         self.cache_dir.cleanup()
+        if self._original_hf_endpoint:
+            os.environ["HF_ENDPOINT"] = self._original_hf_endpoint
 
     def _get_inference_engine_options_for_inference_engine(
         self,

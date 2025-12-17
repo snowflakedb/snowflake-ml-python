@@ -11,9 +11,9 @@ import warnings
 from typing import Any, Optional, Union, cast
 
 from snowflake import snowpark
-from snowflake.ml import jobs
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.service import model_deployment_spec
@@ -171,6 +171,7 @@ class ServiceOperator:
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec(
                 workspace_path=pathlib.Path(self._workspace.name)
             )
+        self._inference_autocapture_enabled = pc.PlatformCapabilities.get_instance().is_inference_autocapture_enabled()
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, ServiceOperator):
@@ -207,7 +208,7 @@ class ServiceOperator:
         # inference engine model
         inference_engine_args: Optional[InferenceEngineArgs] = None,
         # inference table
-        autocapture: Optional[bool] = None,
+        autocapture: bool = False,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Generate operation ID for this deployment
@@ -230,6 +231,10 @@ class ServiceOperator:
         # Step 1: Preparing deployment artifacts
         progress_status.update("preparing deployment artifacts...")
         progress_status.increment()
+
+        # If autocapture param is disabled, don't allow create service with autocapture
+        if not self._inference_autocapture_enabled and autocapture:
+            raise ValueError("Invalid Argument: Autocapture feature is not supported.")
 
         if self._workspace:
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)
@@ -976,7 +981,7 @@ class ServiceOperator:
         gpu_requests: Optional[str],
         replicas: Optional[int],
         statement_params: Optional[dict[str, Any]] = None,
-    ) -> jobs.MLJob[Any]:
+    ) -> job.MLJob[Any]:
         database_name = self._database_name
         schema_name = self._schema_name
 
@@ -1045,7 +1050,7 @@ class ServiceOperator:
         # Block until the async job is done
         async_job.result()
 
-        return jobs.MLJob(
+        return job.MLJob(
             id=sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, job_name),
             session=self._session,
         )

@@ -41,8 +41,14 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
-    def drop_experiment(self, *, experiment_name: sql_identifier.SqlIdentifier) -> None:
-        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+    def drop_experiment(
+        self,
+        *,
+        database_name: sql_identifier.SqlIdentifier,
+        schema_name: sql_identifier.SqlIdentifier,
+        experiment_name: sql_identifier.SqlIdentifier,
+    ) -> None:
+        experiment_fqn = self.fully_qualified_object_name(database_name, schema_name, experiment_name)
         query_result_checker.SqlResultValidator(self._session, f"DROP EXPERIMENT {experiment_fqn}").has_dimensions(
             expected_rows=1, expected_cols=1
         ).validate()

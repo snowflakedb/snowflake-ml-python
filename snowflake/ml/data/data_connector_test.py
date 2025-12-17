@@ -1,3 +1,5 @@
+import os
+import tempfile
 from typing import Iterable, Optional
 from unittest import mock
 
@@ -11,6 +13,11 @@ from snowflake import snowpark
 from snowflake.ml.data import data_connector
 from snowflake.ml.data._internal import arrow_ingestor
 from snowflake.ml.fileset import parquet_test_util
+
+# Set HuggingFace cache to temp directory to avoid permission issues in Bazel sandbox
+_hf_cache_dir = tempfile.mkdtemp()
+os.environ["HF_DATASETS_CACHE"] = _hf_cache_dir
+os.environ["HF_HOME"] = _hf_cache_dir
 
 
 class DataConnectorTest(parameterized.TestCase):
@@ -248,6 +255,54 @@ class DataConnectorTest(parameterized.TestCase):
             np.testing.assert_array_equal(batch["col3"].numpy(), expected_res[count2]["col3"])
             count2 += 1
         self.assertEqual(count2, len(expected_res))
+
+    def test_to_huggingface_dataset(self) -> None:
+        """Test non-streaming HuggingFace Dataset creation."""
+        import datasets as hf_datasets
+
+        # Test basic dataset creation
+        ds = self._sut.to_huggingface_dataset(streaming=False)
+        self.assertIsInstance(ds, hf_datasets.Dataset)
+        self.assertEqual(len(ds), 7)  # Total rows across test files
+
+        # Validate data values
+        df = ds.to_pandas()
+        np.testing.assert_array_equal(df["col1"].values, [0, 1, 2, 3, 4, 5, 6])
+        np.testing.assert_array_equal(df["col3"].values, ["a", "ab", "abc", "m", "mn", "mnm", "mnmn"])
+
+        # Test with limit
+        ds_limited = self._sut.to_huggingface_dataset(streaming=False, limit=3)
+        self.assertEqual(len(ds_limited), 3)
+
+    def test_to_huggingface_iterable_dataset(self) -> None:
+        """Test streaming HuggingFace IterableDataset creation."""
+        import datasets as hf_datasets
+
+        # Test basic iterable dataset creation
+        ds = self._sut.to_huggingface_dataset(streaming=True, batch_size=2, shuffle=False, drop_last_batch=False)
+        self.assertIsInstance(ds, hf_datasets.IterableDataset)
+
+        # Validate by iterating through all rows
+        rows = list(ds)
+        self.assertEqual(len(rows), 7)
+
+        # Check data values
+        col1_values = [row["col1"] for row in rows]
+        col3_values = [row["col3"] for row in rows]
+        self.assertEqual(col1_values, [0, 1, 2, 3, 4, 5, 6])
+        self.assertEqual(col3_values, ["a", "ab", "abc", "m", "mn", "mnm", "mnmn"])
+
+        # Test with drop_last_batch=True (batch_size=2, 7 rows -> 6 rows)
+        ds_drop_last = self._sut.to_huggingface_dataset(
+            streaming=True, batch_size=2, shuffle=False, drop_last_batch=True
+        )
+        rows_drop_last = list(ds_drop_last)
+        self.assertEqual(len(rows_drop_last), 6)
+
+        # Test with limit
+        ds_limited = self._sut.to_huggingface_dataset(streaming=True, limit=4)
+        rows_limited = list(ds_limited)
+        self.assertEqual(len(rows_limited), 4)
 
     def test_to_ray_dataset(self) -> None:
         ray_data_ingestor = mock.Mock()

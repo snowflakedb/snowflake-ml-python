@@ -7,9 +7,9 @@ from unittest import mock
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml import jobs
 from snowflake.ml._internal import platform_capabilities as pc
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.model import (
     inference_engine,
     model_signature,
@@ -291,7 +291,10 @@ class ModelVersionImplTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "There are more than 1 target methods available in the model"):
             self.m_mv.run(m_df)
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict"')
             mock_invoke_method.assert_called_once_with(
@@ -310,7 +313,10 @@ class ModelVersionImplTest(absltest.TestCase):
                 explain_case_sensitive=False,
             )
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self.m_mv.run(m_df, function_name="__call__")
             mock_invoke_method.assert_called_once_with(
                 method_name="__CALL__",
@@ -344,7 +350,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
         self.m_mv._functions = m_methods
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self._add_show_versions_mock()
             self.m_mv.run(m_df)
             mock_invoke_method.assert_called_once_with(
@@ -379,7 +388,10 @@ class ModelVersionImplTest(absltest.TestCase):
 
         self.m_mv._functions = m_methods
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self._add_show_versions_mock()
             self.m_mv.run(m_df, strict_input_validation=True)
             mock_invoke_method.assert_called_once_with(
@@ -422,7 +434,10 @@ class ModelVersionImplTest(absltest.TestCase):
         ]
         self.m_mv._functions = m_methods
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_table"')
             mock_invoke_method.assert_called_once_with(
@@ -441,7 +456,10 @@ class ModelVersionImplTest(absltest.TestCase):
                 explain_case_sensitive=False,
             )
 
-        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
             self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_table"', partition_column="PARTITION_COLUMN")
             mock_invoke_method.assert_called_once_with(
@@ -486,6 +504,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
             mock.patch.object(
                 self.m_mv._model_ops,
                 "_fetch_model_spec",
@@ -558,6 +577,50 @@ class ModelVersionImplTest(absltest.TestCase):
                 strict_input_validation=False,
                 statement_params=mock.ANY,
             )
+
+    def test_run_no_service_name_spcs_only(self) -> None:
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict"',
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+        self.m_mv._functions = m_methods
+
+        # Mock manifest indicating SPCS only support (WAREHOUSE missing from target_platforms)
+        manifest = {
+            "target_platforms": ["SNOWPARK_CONTAINER_SERVICES"],
+            "methods": [],
+            "runtimes": {},
+            "manifest_version": "1.0",
+        }
+
+        with mock.patch.object(
+            self.m_mv._model_ops, "get_model_version_manifest", return_value=manifest
+        ) as mock_get_manifest:
+            expected_msg = (
+                f"The model {self.m_mv.fully_qualified_model_name} version {self.m_mv.version_name} "
+                "is not logged for inference in Warehouse. "
+                "To run the model in Warehouse, please log the model again using `log_model` API with "
+                '`target_platforms=\\["WAREHOUSE"\\]` or '
+                '`target_platforms=\\["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"\\]` and rerun the command. '
+                "To run the model in Snowpark Container Services, the `service_name` argument must be provided. "
+                "You can create a service using the `create_service` API. "
+                "For inference in Warehouse, see https://docs.snowflake.com/en/developer-guide/"
+                "snowflake-ml/model-registry/warehouse#inference-from-python. "
+                "For inference in Snowpark Container Services, see https://docs.snowflake.com/en/developer-guide/"
+                "snowflake-ml/model-registry/container#python."
+            )
+            with self.assertRaisesRegex(ValueError, expected_msg):
+                self.m_mv.run(m_df, function_name='"predict"')
+
+            mock_get_manifest.assert_called_once()
 
     def test_description_getter(self) -> None:
         with mock.patch.object(
@@ -821,6 +884,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=True,
                 build_external_access_integrations=["EAI"],
                 block=True,
+                autocapture=False,
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -846,7 +910,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=None,
+                autocapture=False,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -897,7 +961,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=None,
+                autocapture=False,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -948,7 +1012,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=None,
+                autocapture=False,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -1000,13 +1064,29 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=None,
+                autocapture=False,
             )
 
     def test_list_services(self) -> None:
         data = [
-            {"name": "a.b.c", "inference_endpoint": "fooendpoint"},
-            {"name": "d.e.f", "inference_endpoint": "bazendpoint"},
+            {
+                "name": "a.b.c",
+                "inference_endpoint": "fooendpoint",
+                "internal_endpoint": "http://abc.internal:8000",
+                "autocapture_enabled": True,
+            },
+            {
+                "name": "d.e.f",
+                "inference_endpoint": "bazendpoint",
+                "internal_endpoint": "http://def.internal:9090",
+                "autocapture_enabled": False,
+            },
+            {
+                "name": "g.h.i",
+                "inference_endpoint": "bazendpoint",
+                "internal_endpoint": "http://def.internal:9090",
+                "autocapture_enabled": False,
+            },
         ]
         m_df = pd.DataFrame(data)
         with mock.patch.object(
@@ -1737,7 +1817,7 @@ class ModelVersionImplTest(absltest.TestCase):
             replicas=10,
         )
 
-        mock_job = mock.MagicMock(spec=jobs.MLJob)
+        mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1793,7 +1873,7 @@ class ModelVersionImplTest(absltest.TestCase):
             memory_requests="2Gi",
         )
 
-        mock_job = mock.MagicMock(spec=jobs.MLJob)
+        mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1836,7 +1916,7 @@ class ModelVersionImplTest(absltest.TestCase):
             memory_requests="2Gi",
         )
 
-        mock_job = mock.MagicMock(spec=jobs.MLJob)
+        mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
@@ -1903,7 +1983,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
 
-        mock_job = mock.MagicMock(spec=jobs.MLJob)
+        mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
             mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),

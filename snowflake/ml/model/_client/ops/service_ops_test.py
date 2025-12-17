@@ -7,9 +7,10 @@ from absl.testing import absltest, parameterized
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml import jobs, version as snowml_version
+from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.ops import service_ops
@@ -206,7 +207,6 @@ class ServiceOpsTest(parameterized.TestCase):
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
                 inference_engine_args=None,
-                autocapture=None,
             )
             mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -226,7 +226,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=None,
+                autocapture=False,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -385,7 +385,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=None,
+                autocapture=False,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -545,7 +545,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=None,
+                autocapture=False,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -898,7 +898,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=None,
+                autocapture=False,
             )
 
             # This is the key assertion - verify add_inference_engine_spec was called
@@ -1063,7 +1063,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=None,
+                autocapture=False,
             )
 
             # key assertions -- image build is not called and inference engine model is called
@@ -1246,7 +1246,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
 
             # Verify returned MLJob
-            self.assertIsInstance(result, jobs.MLJob)
+            self.assertIsInstance(result, job.MLJob)
             self.assertEqual(result.id, expected_result_id)
 
     def test_invoke_batch_job_method_with_workspace(self) -> None:
@@ -1345,7 +1345,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 )
 
                 # Verify returned MLJob
-                self.assertIsInstance(result, jobs.MLJob)
+                self.assertIsInstance(result, job.MLJob)
 
     def test_invoke_batch_job_method_minimal_params(self) -> None:
         """Test invoke_batch_job_method with minimal required parameters only."""
@@ -1440,7 +1440,7 @@ class ServiceOpsTest(parameterized.TestCase):
             )
 
             # Verify returned MLJob
-            self.assertIsInstance(result, jobs.MLJob)
+            self.assertIsInstance(result, job.MLJob)
 
     def test_enforce_save_mode_error_with_empty_stage(self) -> None:
         """Test _enforce_save_mode with ERROR mode and empty stage location."""

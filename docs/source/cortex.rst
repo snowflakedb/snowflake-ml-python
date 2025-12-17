@@ -1,5 +1,5 @@
 ===================
-snowflake.ml.cortex
+snowflake.cortex
 ===================
 
 .. automodule:: snowflake.cortex

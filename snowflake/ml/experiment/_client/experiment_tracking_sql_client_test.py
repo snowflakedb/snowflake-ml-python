@@ -56,7 +56,9 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
 
         self.m_session.add_mock_sql("DROP EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT", self._create_mock_df())
 
-        self.client.drop_experiment(experiment_name=experiment_name)
+        self.client.drop_experiment(
+            database_name=self.database_name, schema_name=self.schema_name, experiment_name=experiment_name
+        )
 
     def test_add_run(self) -> None:
         # Test adding a run to an experiment
