@@ -1,15 +1,5 @@
 import os
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generator,
-    Literal,
-    Optional,
-    Sequence,
-    TypeVar,
-    Union,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, Generator, Optional, Sequence, TypeVar
 
 import numpy.typing as npt
 from typing_extensions import deprecated
@@ -21,7 +11,6 @@ from snowflake.ml.data._internal.arrow_ingestor import ArrowIngestor
 from snowflake.snowpark import context as sp_context
 
 if TYPE_CHECKING:
-    import datasets as hf_datasets
     import pandas as pd
     import ray
     import tensorflow as tf
@@ -267,97 +256,6 @@ class DataConnector:
             return ray.data.from_pandas(self._ingestor.to_pandas())
         except ImportError as e:
             raise ImportError("Ray is not installed, please install ray in your local environment.") from e
-
-    @overload
-    def to_huggingface_dataset(
-        self,
-        *,
-        streaming: Literal[False] = ...,
-        limit: Optional[int] = ...,
-    ) -> "hf_datasets.Dataset":
-        ...
-
-    @overload
-    def to_huggingface_dataset(
-        self,
-        *,
-        streaming: Literal[True],
-        limit: Optional[int] = ...,
-        batch_size: int = ...,
-        shuffle: bool = ...,
-        drop_last_batch: bool = ...,
-    ) -> "hf_datasets.IterableDataset":
-        ...
-
-    @telemetry.send_api_usage_telemetry(
-        project=_PROJECT,
-        subproject_extractor=lambda self: type(self).__name__,
-        func_params_to_log=["streaming", "limit", "batch_size", "shuffle", "drop_last_batch"],
-    )
-    def to_huggingface_dataset(
-        self,
-        *,
-        streaming: bool = False,
-        limit: Optional[int] = None,
-        batch_size: int = 1024,
-        shuffle: bool = False,
-        drop_last_batch: bool = False,
-    ) -> "Union[hf_datasets.Dataset, hf_datasets.IterableDataset]":
-        """Retrieve the Snowflake data as a HuggingFace Dataset.
-
-        Args:
-            streaming: If True, returns an IterableDataset that streams data in batches.
-                If False (default), returns an in-memory Dataset.
-            limit: Maximum number of rows to load. If None, loads all rows.
-            batch_size: Size of batches for internal data retrieval.
-            shuffle: Whether to shuffle the data. If True, files will be shuffled and rows
-                in each file will also be shuffled.
-            drop_last_batch: Whether to drop the last batch if it's smaller than batch_size.
-
-        Returns:
-            A HuggingFace Dataset (in-memory) or IterableDataset (streaming).
-        """
-        import datasets as hf_datasets
-
-        if streaming:
-            return self._to_huggingface_iterable_dataset(
-                limit=limit,
-                batch_size=batch_size,
-                shuffle=shuffle,
-                drop_last_batch=drop_last_batch,
-            )
-        else:
-            return hf_datasets.Dataset.from_pandas(self._ingestor.to_pandas(limit))
-
-    def _to_huggingface_iterable_dataset(
-        self,
-        *,
-        limit: Optional[int],
-        batch_size: int,
-        shuffle: bool,
-        drop_last_batch: bool,
-    ) -> "hf_datasets.IterableDataset":
-        """Create a HuggingFace IterableDataset that streams data in batches."""
-        import datasets as hf_datasets
-
-        def generator() -> Generator[dict[str, Any], None, None]:
-            rows_yielded = 0
-            for batch in self._ingestor.to_batches(batch_size, shuffle, drop_last_batch):
-                # Yield individual rows from each batch
-                num_rows = len(next(iter(batch.values())))
-                for i in range(num_rows):
-                    if limit is not None and rows_yielded >= limit:
-                        return
-                    yield {k: v[i].item() if hasattr(v[i], "item") else v[i] for k, v in batch.items()}
-                    rows_yielded += 1
-
-        result = hf_datasets.IterableDataset.from_generator(generator)
-        # In datasets >= 3.x, from_generator returns IterableDatasetDict
-        # We need to extract the IterableDataset from the dict
-        if hasattr(hf_datasets, "IterableDatasetDict") and isinstance(result, hf_datasets.IterableDatasetDict):
-            # Get the first (and only) dataset from the dict
-            result = next(iter(result.values()))
-        return result
 
 
 # Switch to use Runtime's Data Ingester if running in ML runtime

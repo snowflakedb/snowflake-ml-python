@@ -71,6 +71,5 @@ dependencies:
   - xgboost==2.1.4
   - pip
   - pip:
-      - datasets==3.3.2
       - --extra-index-url https://pypi.org/simple
       - types-cachetools==4.2.2

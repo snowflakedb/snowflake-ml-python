@@ -6,8 +6,6 @@
 
 * Inference Autocapture (Preview): The `create_service` API will now accept `autocapture` as a new argument to indicate
   whether inference data will be captured.
-* DataConnector: Added `to_huggingface_dataset()` method for converting Snowflake data to HuggingFace datasets.
-  Supports both in-memory `Dataset` (streaming=False) and streaming `IterableDataset` (streaming=True) modes.
 * Introducing `snowflake.ml.model.models.huggingface.TransformersPipeline` model which will replace object
 `snowflake.ml.model.models.huggingface_pipeline.HuggingfacePipelineModel`. This is a wrapper class to
   `transformers.Pipeline` model. Currently, following tasks

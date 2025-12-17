@@ -256,8 +256,6 @@ class JobManagerTest(JobTestBase):
         ENABLE_RUNTIME_VERSIONS=[True, False],
     )
     def test_job_execution(self, **feature_flag_kwargs: bool) -> None:
-        if feature_flag_kwargs["ENABLE_RUNTIME_VERSIONS"]:
-            self.skipTest("SNOW-2888640: Temporarily disable runtime version tests")
         env_vars = {}
         for param_name, param_value in feature_flag_kwargs.items():
             flag = getattr(feature_flags.FeatureFlags, param_name.upper())

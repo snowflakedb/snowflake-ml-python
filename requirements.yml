@@ -102,8 +102,6 @@
   # Only used in connection_params.py, which is an util library anyways.
 - name: coverage
   dev_version: 7.6.1
-- name_pypi: datasets
-  dev_version_pypi: 3.3.2
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask

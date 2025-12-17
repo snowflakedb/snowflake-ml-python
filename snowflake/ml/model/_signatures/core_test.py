@@ -115,106 +115,6 @@ class FeatureGroupSpecTest(absltest.TestCase):
         self.assertEqual(np.object_, fts.as_dtype())
 
 
-class ParamSpecTest(absltest.TestCase):
-    def test_param_spec_scalar_and_serialization(self) -> None:
-        """Test scalar ParamSpec creation, properties, and round-trip serialization."""
-        # Scalar (shape=None)
-        param = core.ParamSpec(name="threshold", dtype=core.DataType.FLOAT, default_value=0.5)
-        self.assertEqual(param.name, "threshold")
-        self.assertEqual(param.dtype, core.DataType.FLOAT)
-        self.assertEqual(param.default_value, 0.5)
-        self.assertIsNone(param.shape)
-
-        # Serialization round-trip
-        self.assertEqual(param, core.ParamSpec.from_dict(param.to_dict()))
-        self.assertEqual(param, eval(repr(param), core.__dict__))
-
-    def test_param_spec_with_shape(self) -> None:
-        """Test ParamSpec with shape for array parameters."""
-        # Fixed shape array
-        param = core.ParamSpec(name="weights", dtype=core.DataType.FLOAT, default_value=[1.0, 2.0, 3.0], shape=(3,))
-        self.assertEqual(param.shape, (3,))
-        self.assertEqual(param.default_value, [1.0, 2.0, 3.0])
-
-        # Serialization includes shape
-        param_dict = param.to_dict()
-        self.assertEqual(param_dict["shape"], (3,))
-        self.assertEqual(param, core.ParamSpec.from_dict(param_dict))
-
-        # Variable length shape (-1)
-        param_var = core.ParamSpec(name="ids", dtype=core.DataType.INT64, default_value=[1, 2], shape=(-1,))
-        self.assertEqual(param_var.shape, (-1,))
-        self.assertEqual(param_var, core.ParamSpec.from_dict(param_var.to_dict()))
-
-    def test_param_spec_validation(self) -> None:
-        """Test validation for dtype, shape, and default_value compatibility."""
-        # Invalid shape type
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=TypeError, expected_regex="Shape should be a tuple"
-        ):
-            core.ParamSpec(
-                name="bad", dtype=core.DataType.FLOAT, default_value=0.5, shape=[3]  # type: ignore[arg-type]
-            )
-
-        # Shape mismatch: expected scalar, got array
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Expected scalar value"
-        ):
-            core.ParamSpec(name="bad", dtype=core.DataType.FLOAT, default_value=[1.0, 2.0])
-
-        # Shape mismatch: expected array, got scalar
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Expected 1-dimensional"
-        ):
-            core.ParamSpec(name="bad", dtype=core.DataType.FLOAT, default_value=1.0, shape=(3,))
-
-        # Dimension size mismatch
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="Dimension 0: expected 3, got 2"
-        ):
-            core.ParamSpec(name="bad", dtype=core.DataType.FLOAT, default_value=[1.0, 2.0], shape=(3,))
-
-        # None default value is allowed (means no default)
-        param_with_none = core.ParamSpec(name="optional", dtype=core.DataType.INT64, default_value=None)
-        self.assertIsNone(param_with_none.default_value)
-
-
-class ParamGroupSpecTest(absltest.TestCase):
-    def test_param_group_spec_with_shape_and_nesting(self) -> None:
-        """Test ParamGroupSpec creation, nesting, shape, and serialization."""
-        # Create nested structure with shapes
-        p1 = core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)
-        p2 = core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9)
-        pg_optimizer = core.ParamGroupSpec(name="optimizer", specs=[p1, p2])
-
-        p3 = core.ParamSpec(name="epochs", dtype=core.DataType.INT64, default_value=10)
-        pg_training = core.ParamGroupSpec(name="training", specs=[p3, pg_optimizer], shape=(2,))
-
-        # Verify structure
-        self.assertEqual(pg_training.name, "training")
-        self.assertEqual(pg_training.shape, (2,))
-        self.assertEqual(len(pg_training.specs), 2)
-        self.assertIsInstance(pg_training.specs[1], core.ParamGroupSpec)
-
-        # Serialization round-trip
-        self.assertEqual(pg_training, core.ParamGroupSpec.from_dict(pg_training.to_dict()))
-        self.assertEqual(pg_training, eval(repr(pg_training), core.__dict__))
-
-        # Equality
-        pg_same = core.ParamGroupSpec(name="training", specs=[p3, pg_optimizer], shape=(2,))
-        pg_diff_shape = core.ParamGroupSpec(name="training", specs=[p3, pg_optimizer], shape=(3,))
-        self.assertEqual(pg_training, pg_same)
-        self.assertNotEqual(pg_training, pg_diff_shape)
-        self.assertNotEqual(pg_training, "not a param group spec")
-
-    def test_param_group_spec_empty_specs_error(self) -> None:
-        """Test that empty specs raises error."""
-        with exception_utils.assert_snowml_exceptions(
-            self, expected_original_error_type=ValueError, expected_regex="No children param specs."
-        ):
-            core.ParamGroupSpec(name="empty", specs=[])
-
-
 class ModelSignatureTest(absltest.TestCase):
     def test_1(self) -> None:
         s = core.ModelSignature(
@@ -269,7 +169,6 @@ class ModelSignatureTest(absltest.TestCase):
                 {"type": "FLOAT", "name": "c2", "shape": (-1,), "nullable": True},
             ],
             "outputs": [{"type": "FLOAT", "name": "output", "nullable": True}],
-            "params": [],
         }
         self.assertDictEqual(s.to_dict(), target)
         self.assertEqual(s, eval(repr(s), core.__dict__))
@@ -309,45 +208,6 @@ class ModelSignatureTest(absltest.TestCase):
         )
         self.assertEqual(s, eval(repr(s), core.__dict__))
         self.assertEqual(s, core.ModelSignature.from_dict(s.to_dict()))
-
-    def test_with_param_group_spec(self) -> None:
-        """Test ModelSignature with ParamGroupSpec."""
-        # Create nested param group structure
-        optimizer_params = core.ParamGroupSpec(
-            name="optimizer",
-            specs=[
-                core.ParamSpec(name="learning_rate", dtype=core.DataType.FLOAT, default_value=0.01),
-                core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
-            ],
-        )
-        training_params = core.ParamGroupSpec(
-            name="training",
-            specs=[
-                core.ParamSpec(name="epochs", dtype=core.DataType.INT64, default_value=10),
-                optimizer_params,
-            ],
-        )
-
-        s = core.ModelSignature(
-            inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="input")],
-            outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
-            params=[
-                core.ParamSpec(name="threshold", dtype=core.DataType.FLOAT, default_value=0.5),
-                training_params,
-            ],
-        )
-
-        # Test to_dict structure
-        s_dict = s.to_dict()
-        self.assertEqual(len(s_dict["params"]), 2)
-        self.assertEqual(s_dict["params"][0]["name"], "threshold")
-        self.assertIn("specs", s_dict["params"][1])  # training_params is a group
-
-        # Test round-trip serialization
-        self.assertEqual(s, core.ModelSignature.from_dict(s.to_dict()))
-
-        # Test repr/eval round-trip
-        self.assertEqual(s, eval(repr(s), core.__dict__))
 
     def test_repr_html_happy_path(self) -> None:
         """Test _repr_html_ method for ModelSignature with various feature types."""

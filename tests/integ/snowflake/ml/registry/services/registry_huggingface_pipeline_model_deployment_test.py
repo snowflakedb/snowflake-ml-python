@@ -21,19 +21,11 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         self._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
         os.environ["TRANSFORMERS_CACHE"] = self.cache_dir.name
 
-        # Unset HF_ENDPOINT to avoid artifactory errors
-        # TODO: Remove this once artifactory is fixed
-        if "HF_ENDPOINT" in os.environ:
-            self._original_hf_endpoint = os.environ["HF_ENDPOINT"]
-            del os.environ["HF_ENDPOINT"]
-
     @classmethod
     def tearDownClass(self) -> None:
         if self._original_cache_dir:
             os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
         self.cache_dir.cleanup()
-        if self._original_hf_endpoint:
-            os.environ["HF_ENDPOINT"] = self._original_hf_endpoint
 
     @parameterized.product(  # type: ignore[misc]
         pip_requirements=[None, ["transformers", "torch==2.6.0"]],

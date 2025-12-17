@@ -481,280 +481,10 @@ class FeatureGroupSpec(BaseFeatureSpec):
         return FeatureGroupSpec(name=input_dict["name"], specs=specs, shape=shape)
 
 
-class BaseParamSpec(ABC):
-    """Abstract Class for specification of a parameter."""
-
-    def __init__(self, name: str, shape: Optional[tuple[int, ...]] = None) -> None:
-        self._name = name
-
-        if shape is not None and not isinstance(shape, tuple):
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_TYPE,
-                original_exception=TypeError("Shape should be a tuple if presented."),
-            )
-        self._shape = shape
-
-    @final
-    @property
-    def name(self) -> str:
-        """Name of the parameter."""
-        return self._name
-
-    @final
-    @property
-    def shape(self) -> Optional[tuple[int, ...]]:
-        """Shape of the parameter. None means scalar."""
-        return self._shape
-
-    @abstractmethod
-    def to_dict(self) -> dict[str, Any]:
-        """Serialization"""
-
-    @classmethod
-    @abstractmethod
-    def from_dict(cls, input_dict: dict[str, Any]) -> "BaseParamSpec":
-        """Deserialization"""
-
-
-class ParamSpec(BaseParamSpec):
-    """Specification of a parameter in Snowflake native model packaging."""
-
-    def __init__(
-        self,
-        name: str,
-        dtype: DataType,
-        default_value: Any,
-        shape: Optional[tuple[int, ...]] = None,
-    ) -> None:
-        """Initialize a parameter.
-
-        Args:
-            name: Name of the parameter.
-            dtype: Type of the parameter.
-            default_value: Default value of the parameter.
-            shape: Shape of the parameter. None means scalar, otherwise a tuple
-                representing dimensions. Use -1 for variable length dimensions.
-        """
-        super().__init__(name=name, shape=shape)
-
-        self._validate_default_value(dtype, default_value, shape)
-        self._dtype = dtype
-        self._default_value = default_value
-
-    @staticmethod
-    def _validate_default_value(dtype: DataType, default_value: Any, shape: Optional[tuple[int, ...]]) -> None:
-        """Validate that default_value is compatible with dtype and shape.
-
-        Args:
-            dtype: The expected data type.
-            default_value: The default value to validate. None is allowed and means no default.
-            shape: The expected shape. None means scalar.
-
-        Raises:
-            SnowflakeMLException: ValueError: When the default_value is not compatible with dtype/shape.
-        """
-        if default_value is None:
-            return
-
-        try:
-            arr = np.array(default_value, dtype=dtype._numpy_type)
-
-            # Validate shape compatibility
-            if shape is None:
-                # Scalar expected
-                if arr.ndim != 0:
-                    raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.INVALID_ARGUMENT,
-                        original_exception=ValueError(f"Expected scalar value, got array with shape {arr.shape}"),
-                    )
-            else:
-                # Non-scalar expected
-                if arr.ndim != len(shape):
-                    raise snowml_exceptions.SnowflakeMLException(
-                        error_code=error_codes.INVALID_ARGUMENT,
-                        original_exception=ValueError(
-                            f"Expected {len(shape)}-dimensional value, got {arr.ndim}-dimensional"
-                        ),
-                    )
-                # Check each dimension (-1 means variable length)
-                for i, (expected, actual) in enumerate(zip(shape, arr.shape)):
-                    if expected != -1 and expected != actual:
-                        raise snowml_exceptions.SnowflakeMLException(
-                            error_code=error_codes.INVALID_ARGUMENT,
-                            original_exception=ValueError(f"Dimension {i}: expected {expected}, got {actual}"),
-                        )
-
-        except (ValueError, TypeError, OverflowError) as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError(
-                    f"Default value {repr(default_value)} (type: {type(default_value).__name__}) "
-                    f"is not compatible with dtype {dtype} and shape {shape}. {str(e)}"
-                ),
-            )
-
-    @property
-    def dtype(self) -> DataType:
-        """Type of the parameter."""
-        return self._dtype
-
-    @property
-    def default_value(self) -> Any:
-        """Default value of the parameter."""
-        return self._default_value
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the parameter specification into a dict.
-
-        Returns:
-            A dict that serializes the parameter specification.
-        """
-        result: dict[str, Any] = {
-            "name": self._name,
-            "dtype": self._dtype.name,
-            "default_value": self._default_value,
-        }
-        if self._shape is not None:
-            result["shape"] = self._shape
-        return result
-
-    @classmethod
-    def from_dict(cls, input_dict: dict[str, Any]) -> "ParamSpec":
-        """Deserialize the parameter specification from a dict.
-
-        Args:
-            input_dict: The dict containing information of the parameter specification.
-
-        Returns:
-            ParamSpec: The deserialized parameter specification.
-        """
-        shape = input_dict.get("shape", None)
-        if shape is not None:
-            shape = tuple(shape)
-        return ParamSpec(
-            name=input_dict["name"],
-            dtype=DataType[input_dict["dtype"]],
-            default_value=input_dict["default_value"],
-            shape=shape,
-        )
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, ParamSpec):
-            return (
-                self._name == other._name
-                and self._dtype == other._dtype
-                and np.array_equal(self._default_value, other._default_value)
-                and self._shape == other._shape
-            )
-        else:
-            return False
-
-    def __repr__(self) -> str:
-        shape_str = f", shape={repr(self._shape)}" if self._shape else ""
-        return (
-            f"ParamSpec(name={repr(self._name)}, dtype={repr(self._dtype)}, "
-            f"default_value={repr(self._default_value)}{shape_str})"
-        )
-
-    @classmethod
-    def from_mlflow_spec(cls, param_spec: "mlflow.types.ParamSpec") -> "ParamSpec":
-        return ParamSpec(
-            name=param_spec.name,
-            dtype=DataType.from_numpy_type(param_spec.dtype.to_numpy()),
-            default_value=param_spec.default,
-        )
-
-
-class ParamGroupSpec(BaseParamSpec):
-    """Specification of a group of parameters in Snowflake native model packaging."""
-
-    def __init__(
-        self,
-        name: str,
-        specs: list[BaseParamSpec],
-        shape: Optional[tuple[int, ...]] = None,
-    ) -> None:
-        """Initialize a parameter group.
-
-        Args:
-            name: Name of the parameter group.
-            specs: A list of parameter specifications that composes the group.
-            shape: Shape of the parameter group. None means scalar, otherwise a tuple
-                representing dimensions. Use -1 for variable length dimensions.
-        """
-        super().__init__(name=name, shape=shape)
-        self._specs = specs
-        self._validate()
-
-    def _validate(self) -> None:
-        if len(self._specs) == 0:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT, original_exception=ValueError("No children param specs.")
-            )
-
-    @property
-    def specs(self) -> list[BaseParamSpec]:
-        """List of parameter specifications in the group."""
-        return self._specs
-
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, ParamGroupSpec):
-            return self._name == other._name and self._specs == other._specs and self._shape == other._shape
-        return False
-
-    def __repr__(self) -> str:
-        spec_strs = ",\n\t\t".join(repr(spec) for spec in self._specs)
-        shape_str = f",\nshape={repr(self._shape)}" if self._shape else ""
-        return textwrap.dedent(
-            f"""ParamGroupSpec(
-                name={repr(self._name)},
-                specs=[
-                    {spec_strs}
-                ]{shape_str}
-            )
-            """
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        """Serialize the parameter group into a dict.
-
-        Returns:
-            A dict that serializes the parameter group.
-        """
-        result: dict[str, Any] = {"name": self._name, "specs": [s.to_dict() for s in self._specs]}
-        if self._shape is not None:
-            result["shape"] = self._shape
-        return result
-
-    @classmethod
-    def from_dict(cls, input_dict: dict[str, Any]) -> "ParamGroupSpec":
-        """Deserialize the parameter group from a dict.
-
-        Args:
-            input_dict: The dict containing information of the parameter group.
-
-        Returns:
-            A parameter group instance deserialized and created from the dict.
-        """
-        specs: list[BaseParamSpec] = []
-        for e in input_dict["specs"]:
-            spec: BaseParamSpec = ParamGroupSpec.from_dict(e) if "specs" in e else ParamSpec.from_dict(e)
-            specs.append(spec)
-        shape = input_dict.get("shape", None)
-        if shape is not None:
-            shape = tuple(shape)
-        return ParamGroupSpec(name=input_dict["name"], specs=specs, shape=shape)
-
-
 class ModelSignature:
     """Signature of a model that specifies the input and output of a model."""
 
-    def __init__(
-        self,
-        inputs: Sequence[BaseFeatureSpec],
-        outputs: Sequence[BaseFeatureSpec],
-        params: Optional[Sequence[BaseParamSpec]] = None,
-    ) -> None:
+    def __init__(self, inputs: Sequence[BaseFeatureSpec], outputs: Sequence[BaseFeatureSpec]) -> None:
         """Initialize a model signature.
 
         Args:
@@ -762,12 +492,9 @@ class ModelSignature:
                 the input of the model.
             outputs: A sequence of feature specifications and feature group specifications that will compose
                 the output of the model.
-            params: A sequence of parameter specifications and parameter group specifications that will compose
-                the parameters of the model. Defaults to None.
         """
         self._inputs = inputs
         self._outputs = outputs
-        self._params = params or []
 
     @property
     def inputs(self) -> Sequence[BaseFeatureSpec]:
@@ -779,18 +506,9 @@ class ModelSignature:
         """Outputs of the model, containing a sequence of feature specifications and feature group specifications."""
         return self._outputs
 
-    @property
-    def params(self) -> Sequence[BaseParamSpec]:
-        """Parameters of the model, containing a sequence of parameter specifications."""
-        return self._params
-
     def __eq__(self, other: object) -> bool:
         if isinstance(other, ModelSignature):
-            return (
-                self._inputs == other._inputs
-                and self._outputs == other._outputs
-                and getattr(other, "_params", []) == self._params  # handles backward compatibility
-            )
+            return self._inputs == other._inputs and self._outputs == other._outputs
         else:
             return False
 
@@ -804,7 +522,6 @@ class ModelSignature:
         return {
             "inputs": [spec.to_dict() for spec in self._inputs],
             "outputs": [spec.to_dict() for spec in self._outputs],
-            "params": [spec.to_dict() for spec in self._params],
         }
 
     @classmethod
@@ -819,26 +536,18 @@ class ModelSignature:
         """
         sig_outs = loaded["outputs"]
         sig_inputs = loaded["inputs"]
-        # If parameters is not provided, default to empty list for backward compatibility.
-        sig_params = loaded.get("params", [])
 
         deserialize_spec: Callable[[dict[str, Any]], BaseFeatureSpec] = lambda sig_spec: (
             FeatureGroupSpec.from_dict(sig_spec) if "specs" in sig_spec else FeatureSpec.from_dict(sig_spec)
         )
-        deserialize_param: Callable[[dict[str, Any]], BaseParamSpec] = lambda sig_param: (
-            ParamGroupSpec.from_dict(sig_param) if "specs" in sig_param else ParamSpec.from_dict(sig_param)
-        )
 
         return ModelSignature(
-            inputs=[deserialize_spec(s) for s in sig_inputs],
-            outputs=[deserialize_spec(s) for s in sig_outs],
-            params=[deserialize_param(s) for s in sig_params],
+            inputs=[deserialize_spec(s) for s in sig_inputs], outputs=[deserialize_spec(s) for s in sig_outs]
         )
 
     def __repr__(self) -> str:
         inputs_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._inputs)
         outputs_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._outputs)
-        params_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._params)
         return textwrap.dedent(
             f"""ModelSignature(
                     inputs=[
@@ -846,9 +555,6 @@ class ModelSignature:
                     ],
                     outputs=[
                         {outputs_spec_strs}
-                    ],
-                    params=[
-                        {params_spec_strs}
                     ]
                 )"""
         )
@@ -864,17 +570,15 @@ class ModelSignature:
         # Create collapsible sections for inputs and outputs
         inputs_content = html_utils.create_features_html(self.inputs, "Input")
         outputs_content = html_utils.create_features_html(self.outputs, "Output")
-        params_content = html_utils.create_parameters_html(self.params, "Parameter")
+
         inputs_section = html_utils.create_collapsible_section("Inputs", inputs_content, open_by_default=True)
         outputs_section = html_utils.create_collapsible_section("Outputs", outputs_content, open_by_default=True)
-        params_section = html_utils.create_collapsible_section("Parameters", params_content, open_by_default=True)
 
         content = f"""
-            <div style="margin-top: 10px;">
-                {inputs_section}
-                {outputs_section}
-                {params_section}
-            </div>
+        <div style="margin-top: 10px;">
+            {inputs_section}
+            {outputs_section}
+        </div>
         """
 
         return html_utils.create_base_container("Model Signature", content)
@@ -889,5 +593,4 @@ class ModelSignature:
                 FeatureSpec.from_mlflow_spec(spec, f"output_feature_{idx}")
                 for idx, spec in enumerate(mlflow_sig.outputs)
             ],
-            params=[ParamSpec.from_mlflow_spec(spec) for spec in mlflow_sig.params or []],
         )
