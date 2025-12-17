@@ -149,7 +149,7 @@ class TestSnowFileSystem(absltest.TestCase):
                         if isinstance(actual_res, str):
                             raise AssertionError("ls() with detail should not return a list of strings.")
                         else:
-                            self.assertDictContainsSubset(expected_res, actual_res)
+                            self.assertContainsSubset(expected_res.items(), actual_res.items())
 
     def test_fs_ls_on_trivial_stage(self) -> None:
         """Test if ls() can raise exception when the input points to invalid stages."""
@@ -207,7 +207,7 @@ class TestSnowFileSystem(absltest.TestCase):
             ]:
                 for fs in [self.sffs1, self.sffs2]:
                     actual = fs.info(path)
-                    self.assertDictContainsSubset(expected, actual)
+                    self.assertContainsSubset(expected.items(), actual.items())
 
     def test_isdir(self) -> None:
         """Test if snowfs can call isdir() to check if a path is a directory."""

@@ -1,3 +1,3 @@
-from subdir.utils import tool
+import tool
 
 tool.say_hi()

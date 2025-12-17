@@ -15,6 +15,7 @@ py_library(
         ":target_platform",
         ":task",
         ":volatility",
+        "//snowflake/ml/model:compute_pool",
         "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/modeling/framework",
     ],
@@ -145,4 +146,10 @@ py_test(
     deps = [
         ":model",
     ],
+)
+
+py_library(
+    name = "compute_pool",
+    srcs = ["compute_pool.py"],
+    deps = [],
 )

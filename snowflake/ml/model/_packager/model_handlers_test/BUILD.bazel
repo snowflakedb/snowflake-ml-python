@@ -182,12 +182,14 @@ py_test(
     deps = [
         "//snowflake/ml/model/_packager:model_packager",
         "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 
 py_test(
     name = "sentence_transformers_test",
+    timeout = "long",
     srcs = ["sentence_transformers_test.py"],
     optional_dependencies = ["transformers"],
     tags = ["feature:model_registry"],

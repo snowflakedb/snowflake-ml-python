@@ -23,3 +23,6 @@
 //tests/integ/snowflake/ml/registry/model:registry_target_platforms_test
 //tests/integ/snowflake/ml/registry/model:registry_artifact_repository_test
 //snowflake/ml/model/_packager/model_handlers_test:xgboost_test
+//tests/integ/snowflake/ml/registry/model:registry_tensorflow_model_test
+//tests/integ/snowflake/ml/registry/model:registry_keras_torch_model_test
+//tests/integ/snowflake/ml/registry/model:registry_keras_tensorflow_model_test

@@ -148,12 +148,17 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
             file_utils.copy_file_or_tree(local_path, os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR))
 
+        # MLflow 3.x may return file:// URIs for artifact_path; extract just the last path component
+        artifact_path = model_info.artifact_path
+        if artifact_path.startswith("file://"):
+            artifact_path = artifact_path.rstrip("/").split("/")[-1]
+
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
-            options=model_meta_schema.MLFlowModelBlobOptions({"artifact_path": model_info.artifact_path}),
+            options=model_meta_schema.MLFlowModelBlobOptions({"artifact_path": artifact_path}),
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION

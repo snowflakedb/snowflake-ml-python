@@ -1,6 +1,8 @@
+import base64
 import collections
 import logging
 import os
+import re
 import time
 from typing import TYPE_CHECKING, Any, Deque, Iterator, Optional, Sequence, Union
 
@@ -165,8 +167,71 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         # Re-shuffle input files on each iteration start
         if shuffle:
             np.random.shuffle(sources)
-        pa_dataset: pds.Dataset = pds.dataset(sources, format=format, **self._kwargs)
-        return pa_dataset
+        try:
+            pa_dataset: pds.Dataset = pds.dataset(sources, format=format, **self._kwargs)
+            return pa_dataset
+        except Exception as e:
+            self._tmp_debug_parquet_invalid(e, sources)
+
+    def _tmp_debug_parquet_invalid(self, e: Exception, sources: list[Any]) -> None:
+        # Attach rich debug info to help diagnose intermittent Parquet footer/magic byte errors
+        debug_parts: list[str] = []
+        debug_parts.append("SNOWML DEBUG: Failed to construct Arrow Dataset")
+        debug_parts.append(
+            "SNOWML DEBUG: " f"data_sources_count={len(self._data_sources)} " f"resolved_sources_count={len(sources)}"
+        )
+        # Try to include the exact file path mentioned by pyarrow, if present
+        error_text = str(e)
+        snow_paths: list[str] = []
+        try:
+            # Extract snow://... tokens possibly wrapped in quotes
+            for match in re.finditer(r'(snow://[^\s\'"]+)', error_text):
+                token = match.group(1).rstrip(").,;]")
+                snow_paths.append(token)
+        except Exception:
+            pass
+        fs = self._kwargs.get("filesystem")
+        if fs is not None:
+            # Always include a directory listing with sizes for context
+            try:
+                debug_parts.append("SNOWML DEBUG: Listing resolved sources with sizes:")
+                for s in sources:
+                    try:
+                        info = fs.info(s)
+                        size = info.get("size", None)
+                        md5 = info.get("md5", None)
+                        debug_parts.append(f"  - {s} size={size} md5={md5}")
+                    except Exception as le:
+                        debug_parts.append(f"  - {s} info_failed={le}")
+            except Exception as le:
+                debug_parts.append(f"SNOWML DEBUG: listing sources failed: {le}")
+            # If pyarrow referenced a specific file, dump its full contents (base64) for inspection
+            for path in snow_paths[:1]:  # usually only one path appears in the message
+                try:
+                    info = fs.info(path)
+                    size = info.get("size", None)
+                    debug_parts.append(f"SNOWML DEBUG: Inspecting referenced file: {path} size={size}")
+                    with fs.open(path, "rb") as f:
+                        content = f.read()
+                    magic_head = content[:4]
+                    magic_tail = content[-4:] if content else b""
+                    looks_like_parquet = (magic_head == b"PAR1") and (magic_tail == b"PAR1")
+                    debug_parts.append(
+                        "SNOWML DEBUG: "
+                        f"file_magic_head={magic_head!r} "
+                        f"file_magic_tail={magic_tail!r} "
+                        f"parquet_magic_detected={looks_like_parquet}"
+                    )
+                    b64 = base64.b64encode(content).decode("ascii")
+                    debug_parts.append("SNOWML DEBUG: file_content_base64 (entire file):")
+                    debug_parts.append(b64)
+                except Exception as fe:
+                    debug_parts.append(f"SNOWML DEBUG: failed to read referenced file {path}: {fe}")
+        else:
+            debug_parts.append("SNOWML DEBUG: No filesystem available; cannot inspect files")
+        debug_message = "\n".join(debug_parts)
+        # Re-raise with augmented message to surface in stacktrace
+        raise RuntimeError(f"{e}\n{debug_message}") from e
 
     def _get_batches_from_buffer(self, batch_size: int) -> dict[str, npt.NDArray[Any]]:
         """Generate new batches from the existing record batch buffer."""

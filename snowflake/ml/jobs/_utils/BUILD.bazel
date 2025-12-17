@@ -5,9 +5,6 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "types",
     srcs = ["types.py"],
-    deps = [
-        ":stage_utils",
-    ],
 )
 
 py_library(
@@ -60,6 +57,7 @@ py_library(
     name = "stage_utils",
     srcs = ["stage_utils.py"],
     deps = [
+        ":types",
         "//snowflake/ml/_internal/utils:identifier",
     ],
 )
@@ -69,7 +67,7 @@ py_test(
     srcs = ["stage_utils_test.py"],
     tags = ["feature:jobs"],
     deps = [
-        ":payload_utils",
+        ":stage_utils",
     ],
 )
 
@@ -147,20 +145,5 @@ py_test(
         ":test_file_helper",
         "//snowflake/ml/jobs/_interop:legacy",
         "//snowflake/ml/utils:connection_params",
-    ],
-)
-
-py_library(
-    name = "job_utils",
-    srcs = [
-        "__init__.py",
-    ],
-    deps = [
-        ":payload_utils",
-        ":query_helper",
-        ":spec_utils",
-        ":stage_utils",
-        "//snowflake/ml/_internal/utils:mixins",
-        "//snowflake/ml/jobs/_interop:legacy",
     ],
 )

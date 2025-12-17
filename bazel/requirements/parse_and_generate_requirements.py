@@ -273,10 +273,24 @@ def generate_requirements(
         validate_dev_version_and_user_requirements(req_info, "pip")
         validate_dev_version_and_user_requirements(req_info, "conda")
 
-    reqs_pypi = list(filter(None, map(lambda req_info: get_req_name(req_info, "pip"), requirements)))
-    reqs_conda = list(filter(None, map(lambda req_info: get_req_name(req_info, "conda"), requirements)))
-    if len(reqs_pypi) != len(set(reqs_pypi)) or len(reqs_conda) != len(set(reqs_conda)):
-        raise ValueError("Duplicate Requirements found!")
+    # Only check for duplicates in core dependencies (packages without extras tags)
+    # Allow duplicates across different extras groups to support different dev versions
+    core_reqs_pypi = []
+    core_reqs_conda = []
+    for req_info in requirements:
+        if not req_info.get("requirements_extra_tags", []):
+            core_reqs_pypi.append(get_req_name(req_info, "pip"))
+            core_reqs_conda.append(get_req_name(req_info, "conda"))
+
+    core_reqs_pypi = list(filter(None, core_reqs_pypi))
+    core_reqs_conda = list(filter(None, core_reqs_conda))
+
+    if len(core_reqs_pypi) != len(set(core_reqs_pypi)):
+        raise ValueError("Duplicate PyPI packages found in core dependencies!")
+    if len(core_reqs_conda) != len(set(core_reqs_conda)):
+        raise ValueError("Duplicate Conda packages found in core dependencies!")
+
+    # The filtering logic will ensure only the appropriate dev version is used for each group
     channels_to_use = [SNOWFLAKE_CONDA_CHANNEL, "nodefaults"]
 
     if extras_filter is None:

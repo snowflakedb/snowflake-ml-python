@@ -15,6 +15,7 @@ snowflake.ml.model
     Model
     ModelVersion
     HuggingFacePipelineModel
+    TransformersPipeline
 
 snowflake.ml.model.custom_model
 ---------------------------------

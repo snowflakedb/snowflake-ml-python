@@ -2,7 +2,7 @@ from importlib import metadata as importlib_metadata
 
 import mlflow
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
@@ -11,12 +11,8 @@ from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
 class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBase):
-    @parameterized.product(  # type: ignore[misc]
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
-    )
     def test_mlflow_model_deploy_sklearn_df(
         self,
-        registry_test_fn: str,
     ) -> None:
         db = datasets.load_diabetes(as_frame=True)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
@@ -53,7 +49,7 @@ class TestRegistryMLFlowModelInteg(registry_model_test_base.RegistryModelTestBas
 
             run_id = run.info.run_id
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
             prediction_assert_fns={
                 "predict": (

@@ -23,7 +23,7 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
         cal_y = cal_data.target
         cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
-        regressor = xgboost.XGBRegressor(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3)
+        regressor = xgboost.XGBRegressor(n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
         regressor.fit(cal_X_train, cal_y_train)
         self._test_registry_model_deployment(
             model=regressor,
@@ -86,8 +86,7 @@ class TestRegistryXGBoostModelDeploymentInteg(registry_model_deployment_test_bas
             le = LabelEncoder()
             train_df[col] = le.fit_transform(train_df[col])
 
-        y_train = np.random.choice([0, 1, 2], n_samples)
-
+        y_train = np.array([i % 3 for i in range(n_samples)])
         model = xgboost.XGBClassifier(n_estimators=50, reg_lambda=1, gamma=0, max_depth=3)
         model.fit(train_df, y_train)
 
