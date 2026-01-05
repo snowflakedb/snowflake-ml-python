@@ -1,4 +1,6 @@
+import os
 import random
+import tempfile
 from typing import Any, Generator
 
 import numpy as np
@@ -16,6 +18,11 @@ from tests.integ.snowflake.ml.test_utils import (
     db_manager,
     test_env_utils,
 )
+
+# Set HuggingFace cache to temp directory to avoid permission issues in Bazel sandbox
+_hf_cache_dir = tempfile.mkdtemp()
+os.environ["HF_DATASETS_CACHE"] = _hf_cache_dir
+os.environ["HF_HOME"] = _hf_cache_dir
 
 DC_INTEG_TEST_DB = "DC_INTEG_TEST_DB"
 DC_INTEG_TEST_SCHEMA = "DC_INTEG_TEST_SCHEMA"
@@ -86,7 +93,7 @@ class TestDataConnector(common_test_base.CommonTestBase):
             cls.session.close()
         super().tearDownClass()
 
-    @common_test_base.CommonTestBase.sproc_test(additional_packages=["tensorflow"])
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["tensorflow", "setuptools"])
     @parameterized.parameters(  # type: ignore[misc]
         {"batch_size": 2048, "shuffle": False, "drop_last_batch": False},
     )
@@ -168,6 +175,30 @@ class TestDataConnector(common_test_base.CommonTestBase):
         for sut in self.suts:
             with self.subTest(type(sut.data_sources[0]).__name__):
                 self._validate_pandas(sut.to_pandas())
+
+    @common_test_base.CommonTestBase.sproc_test(additional_packages=["datasets>=3.0"])
+    def test_to_huggingface_dataset(self) -> None:
+        """Test HuggingFace Dataset creation with Snowflake data sources.
+
+        Note: Detailed parameter testing (limit, drop_last_batch, etc.) is covered
+        by faster unit tests in data_connector_test.py. This integration test focuses on
+        verifying functionality with real Snowflake DataFrame and Dataset sources.
+        """
+        import datasets as hf_datasets
+
+        for sut in self.suts:
+            with self.subTest(type(sut.data_sources[0]).__name__):
+                # Test non-streaming (in-memory Dataset)
+                ds = sut.to_huggingface_dataset(streaming=False)
+                self.assertIsInstance(ds, hf_datasets.Dataset)
+                self.assertEqual(len(ds), self.num_rows)
+                self._validate_pandas(ds.to_pandas())
+
+                # Test streaming (IterableDataset)
+                ds_streaming = sut.to_huggingface_dataset(streaming=True)
+                self.assertIsInstance(ds_streaming, hf_datasets.IterableDataset)
+                row_count = sum(1 for _ in ds_streaming)
+                self.assertEqual(row_count, self.num_rows)
 
     def _validate_batches(
         self,

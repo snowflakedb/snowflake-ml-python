@@ -83,17 +83,17 @@ class PayloadUtilsTests(parameterized.TestCase):
         (TestAsset("src/main.py"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 1),
         (TestAsset("src/main.py"), None, "/mnt/job_stage/app/main.py", 1),
         # Entrypoint as relative path inside payload directory
-        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 20),
+        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 28),
         (
             TestAsset("src"),
             TestAsset("subdir/sub_main.py", resolve_path=False),
             "/mnt/job_stage/app/subdir/sub_main.py",
-            20,
+            28,
         ),
         (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "/mnt/job_stage/app/sub_main.py", 2),
         # Entrypoint as absolute path
-        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 20),
-        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 20),
+        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 28),
+        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 28),
         (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/sub_main.py", 2),
         # Function as payload
         (function_with_pos_arg, pathlib.Path("function_payload.py"), "/mnt/job_stage/app/function_payload.py", 1),
@@ -126,7 +126,7 @@ class PayloadUtilsTests(parameterized.TestCase):
             self.session.sql(f"LIST {stage_path}/{constants.APP_STAGE_SUBPATH}").collect(),
         )
 
-    @parameterized.parameters(
+    @parameterized.parameters(  # type: ignore[misc]
         (
             TestAsset("src/main.py"),
             f"@{_TEST_STAGE}/main.py",
@@ -135,14 +135,14 @@ class PayloadUtilsTests(parameterized.TestCase):
             1,
         ),
         (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 1),
-        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 20),
-        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 20),
+        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 28),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 28),
         (
             TestAsset("src"),
             f"@{_TEST_STAGE}/",
             f"@{_TEST_STAGE}/subdir/sub_main.py",
             "/mnt/job_stage/app/subdir/sub_main.py",
-            20,
+            28,
         ),
         (
             TestAsset("src"),
@@ -184,18 +184,32 @@ class PayloadUtilsTests(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         (
-            TestAsset("src"),
-            TestAsset("src/third.py"),
-            [(TestAsset("src/subdir/utils").path.as_posix(), "remote.src.utils")],
-            "/mnt/job_stage/app/third.py",
-            21,
+            TestAsset("src/entry.py"),
+            TestAsset("src/entry.py"),
+            [(TestAsset("src/subdir/utils").path.as_posix(), "src.subdir.utils")],
+            "/mnt/job_stage/app/entry.py",
+            2,
+        ),
+        (
+            TestAsset("src/subdir2/eight.py"),
+            TestAsset("src/subdir2/eight.py"),
+            [(TestAsset("src/subdir3").path.as_posix(), None)],
+            "/mnt/job_stage/app/eight.py",
+            2,
+        ),
+        (
+            TestAsset("src/secondary.py"),
+            TestAsset("src/secondary.py"),
+            [(TestAsset("src/main.py").path.as_posix(), "main")],
+            "/mnt/job_stage/app/secondary.py",
+            2,
         ),
     )
-    def test_upload_payload_additional_packages_local(
+    def test_upload_payload_additional_imports_local(
         self,
         source: Union[TestAsset, Callable[..., Any]],
         entrypoint: Optional[Union[TestAsset, pathlib.Path]],
-        additional_payloads: list[Union[str, tuple[str, str]]],
+        imports: list[Union[str, tuple[str, str]]],
         expected_entrypoint: str,
         expected_file_count: int,
     ) -> None:
@@ -205,7 +219,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         payload = payload_utils.JobPayload(
             pathlib.Path(source.path) if isinstance(source, TestAsset) else source,
             pathlib.Path(entrypoint.path) if isinstance(entrypoint, TestAsset) else entrypoint,
-            additional_payloads=additional_payloads,
+            imports=imports,
         )
         uploaded_payload = payload.upload(self.session, stage_path)
         actual_entrypoint = next(
@@ -222,23 +236,23 @@ class PayloadUtilsTests(parameterized.TestCase):
         {
             "source": f"@{_TEST_STAGE}/",
             "entrypoint": f"@{_TEST_STAGE}/subdir/sub_main.py",
-            "additional_payloads": [(f"@{_TEST_STAGE}/subdir/utils", "remote.subdir.utils")],
+            "imports": [(f"@{_TEST_STAGE}/subdir/utils/tool.py", "subdir.utils.tool")],
             "expected_entrypoint": "/mnt/job_stage/app/subdir/sub_main.py",
-            "expected_file_count": 21,
+            "expected_file_count": 29,
         },
         {
             "source": f"@{_TEST_STAGE}/subdir",
             "entrypoint": f"@{_TEST_STAGE}/subdir/sub_main.py",
-            "additional_payloads": [(f"@{_TEST_STAGE}/subdir2/", "subdir2")],
+            "imports": [(f"@{_TEST_STAGE}/subdir2/eight.py", "subdir2.eight")],
             "expected_entrypoint": "/mnt/job_stage/app/sub_main.py",
-            "expected_file_count": 4,
+            "expected_file_count": 3,
         },
     )
-    def test_upload_payload_additional_packages_stage(
+    def test_upload_payload_imports_stage(
         self,
         source: str,
         entrypoint: str,
-        additional_payloads: list,
+        imports: list,
         expected_entrypoint: str,
         expected_file_count: int,
     ) -> None:
@@ -251,7 +265,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         payload = payload_utils.JobPayload(
             source=source,
             entrypoint=entrypoint,
-            additional_payloads=additional_payloads,
+            imports=imports,
         )
 
         uploaded_payload = payload.upload(self.session, stage_path)

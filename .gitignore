@@ -398,3 +398,6 @@ html_coverage_report/
 
 # VSCode configuration
 .vscode
+
+# Cursor rules
+.cursor/

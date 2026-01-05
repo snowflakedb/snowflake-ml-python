@@ -1,13 +1,61 @@
 # Release History
 
+## 1.21.0
+
+### New Features
+
+* Inference Autocapture (Preview): The `create_service` API will now accept `autocapture` as a new argument to indicate
+  whether inference data will be captured.
+* DataConnector: Added `to_huggingface_dataset()` method for converting Snowflake data to HuggingFace datasets.
+  Supports both in-memory `Dataset` (streaming=False) and streaming `IterableDataset` (streaming=True) modes.
+* Introducing `snowflake.ml.model.models.huggingface.TransformersPipeline` model which will replace object
+`snowflake.ml.model.models.huggingface_pipeline.HuggingfacePipelineModel`. This is a wrapper class to
+  `transformers.Pipeline` model. Currently, following tasks
+  are supported to log without manually specifying model signatures:
+  * "fill-mask"
+  * "question-answering"
+  * "summarization"
+  * "table-question-answering"
+  * "text2text-generation"
+  * "text-classification" (alias "sentiment-analysis" available)
+  * "text-generation"
+  * "token-classification" (alias "ner" available)
+  * "translation"
+  * "translation_xx_to_yy"
+  * "zero-shot-classification"
+  which provides utility to log the model without loading the model in memory.
+
+### Bug Fixes
+
+* Experiment Tracking (PuPr): Reaching the run metadata size limit in `log_metrics` or `log_params` will warn the user
+  instead of raising an exception.
+* Registry: `ModelVersion.run()` will now raise a `ValueError` if the model does not support running on warehouse
+  (e.g. SPCS-only models) and `service_name` is not provided.
+
+### Behavior Changes
+
+* ML Job: The `additional_payloads` (Preview API) behavior is changing.
+  Use the `imports` argument to declare additional dependencies, such as zip files and Python modules.
+  Local directories and Python files are automatically compressed, and their internal layout is determined by the
+  specified import path. The import path applies only to local directories, Python files and staged python files;
+  it has no effect on other import types. When referencing files in a stage, only individual files
+  are supported—not directories.
+* Online Inference (PuPr): `list_services()` now shows internal endpoint that does not need EAI to call from another
+  SPCS node or Notebook.
+* Inference Autocapture (Preview): `list_services()` now shows if model service has autocapture enabled.
+* Experiment Tracking (PuPr): `ExperimentTracking` is now a singleton class.
+
+### Deprecations
+
+* Deprecating `snowflake.ml.model.models.huggingface_pipeline.HuggingfacePipelineModel` and will be removed in later
+ version with a notice.
+
 ## 1.20.0
 
 ### Bug Fixes
 
 * Experiment Tracking (PuPr): Reaching the run metadata size limit in `log_metrics` or `log_params` will warn the user
   instead of raising an exception.
-
-### Behavior Changes
 
 ### New Features
 
@@ -38,8 +86,6 @@ mv.create_service(
     }
 )
 ```
-
-### Deprecations
 
 ## 1.19.0 (11-13-2025)
 
@@ -146,8 +192,6 @@ options = {
 
 * Registry: Dropping support for deprecated `conversational` task type for Huggingface models.
   To read more <https://github.com/huggingface/transformers/pull/31165>
-
-### New Features
 
 ## 1.14.0 (09-18-2025)
 

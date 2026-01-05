@@ -1,6 +1,6 @@
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import payload_utils
+from snowflake.ml.jobs._utils import stage_utils
 
 """
 StagePath inherits the PurePosixPath
@@ -21,8 +21,8 @@ class StageUtilsTests(parameterized.TestCase):
         ("snow://headless/abc/versions/v9.8.7///dirs", "snow://headless/abc/versions/v9.8.7/main.py", False),
     )
     def test_is_relative_to(self, path1: str, path2: str, expected: bool) -> None:
-        stagePath1 = payload_utils.resolve_path(path1)
-        stagePath2 = payload_utils.resolve_path(path2)
+        stagePath1 = stage_utils.resolve_path(path1)
+        stagePath2 = stage_utils.resolve_path(path2)
         self.assertEqual(stagePath2.is_relative_to(stagePath1), expected)
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -32,7 +32,7 @@ class StageUtilsTests(parameterized.TestCase):
         ("@test_stage/", "@test_stage"),
     )
     def test_root(self, path: str, expected: str) -> None:
-        self.assertEqual(payload_utils.resolve_path(path).root, expected)
+        self.assertEqual(stage_utils.resolve_path(path).root, expected)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("@test_stage/src/", "@test_stage/src"),
@@ -41,7 +41,7 @@ class StageUtilsTests(parameterized.TestCase):
         ("snow://headless/abc/versions/v9.8.7", "snow://headless/abc/versions/v9.8.7"),
     )
     def test_absolute(self, path: str, expected_path: str) -> None:
-        self.assertEqual(payload_utils.resolve_path(path).absolute().as_posix(), expected_path)
+        self.assertEqual(stage_utils.resolve_path(path).absolute().as_posix(), expected_path)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("@test_stage/src/", "@test_stage"),
@@ -52,7 +52,7 @@ class StageUtilsTests(parameterized.TestCase):
         ("snow://headless/abc/versions/v9.8.7/dirs/main.py", "snow://headless/abc/versions/v9.8.7/dirs"),
     )
     def test_parent(self, path: str, expected_path: str) -> None:
-        self.assertEqual(payload_utils.resolve_path(path).parent.as_posix(), expected_path)
+        self.assertEqual(stage_utils.resolve_path(path).parent.as_posix(), expected_path)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("@test_stage/src/", "@test_stage/src"),
@@ -65,7 +65,7 @@ class StageUtilsTests(parameterized.TestCase):
         ("snow://headless/abc/versions/v9.8.7/dirs/dir", "snow://headless/abc/versions/v9.8.7/dirs/dir"),
     )
     def test_posix(self, path: str, expected_path: str) -> None:
-        self.assertEqual(payload_utils.resolve_path(path).as_posix(), expected_path)
+        self.assertEqual(stage_utils.resolve_path(path).as_posix(), expected_path)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("@test_stage/src/", "@test_stage/src", True),
@@ -78,7 +78,7 @@ class StageUtilsTests(parameterized.TestCase):
         ),
     )
     def test_equal(self, path1: str, path2: str, expected_result: bool) -> None:
-        self.assertEqual(payload_utils.resolve_path(path1) == payload_utils.resolve_path(path2), expected_result)
+        self.assertEqual(stage_utils.resolve_path(path1) == stage_utils.resolve_path(path2), expected_result)
 
     @parameterized.parameters(  # type: ignore[misc]
         ("@test_stage/dir1", ("dir2",), "@test_stage/dir1/dir2"),
@@ -90,10 +90,10 @@ class StageUtilsTests(parameterized.TestCase):
         ("@test_stage/src/", ("dir1", "/dir2"), "@test_stage/dir2"),
     )
     def test_joinpath(self, path1: str, paths: tuple[str], expected_path: str) -> None:
-        stagePath1 = payload_utils.resolve_path(path1)
+        stagePath1 = stage_utils.resolve_path(path1)
         stagePaths = []
         for path in paths:
-            stagePaths.append(payload_utils.resolve_path(path))
+            stagePaths.append(stage_utils.resolve_path(path))
         self.assertEqual(stagePath1.joinpath(*tuple(stagePaths)).as_posix(), expected_path)
 
 

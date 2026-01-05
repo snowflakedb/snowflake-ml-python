@@ -1,6 +1,7 @@
 import json
 import os
 import pickle
+import subprocess
 import sys
 import tempfile
 import time
@@ -292,6 +293,144 @@ class MLJobLauncherTests(parameterized.TestCase):
 
             self.assertIn("Timed out after 6s waiting for 2 instances", str(cm.exception))
             self.assertIn("only 1 available", str(cm.exception))
+
+
+class IsPythonScriptTests(absltest.TestCase):
+    """Tests for the is_python_script function."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_python_shebang(self) -> None:
+        """Test that files with python shebang are detected."""
+        script_path = os.path.join(self.temp_dir.name, "script.sh")
+        with open(script_path, "w") as f:
+            f.write("#!/usr/bin/env python3\nprint('hello')\n")
+        self.assertTrue(mljob_launcher.is_python_script(script_path))
+
+    def test_shebang_variations(self) -> None:
+        """Test various python shebang formats."""
+        shebangs = [
+            "#!/usr/bin/python",
+            "#!/usr/bin/python3",
+            "#!/usr/bin/env python",
+            "#!/usr/bin/env python3.11",
+        ]
+        for i, shebang in enumerate(shebangs):
+            script_path = os.path.join(self.temp_dir.name, f"script_{i}.py")
+            with open(script_path, "w") as f:
+                f.write(f"{shebang}\nprint('hello')\n")
+            self.assertTrue(mljob_launcher.is_python_script(script_path), f"Failed for shebang: {shebang}")
+
+    def test_non_python_shebang(self) -> None:
+        """Test that files with non-python shebang are not detected as Python."""
+        script_path = os.path.join(self.temp_dir.name, "script.sh")
+        with open(script_path, "w") as f:
+            f.write("#!/bin/bash\necho 'hello'\n")
+        self.assertFalse(mljob_launcher.is_python_script(script_path))
+
+    def test_no_shebang(self) -> None:
+        """Test that files without shebang are not detected as Python."""
+        script_path = os.path.join(self.temp_dir.name, "script.txt")
+        with open(script_path, "w") as f:
+            f.write("just some text\n")
+        self.assertFalse(mljob_launcher.is_python_script(script_path))
+
+    def test_nonexistent_file(self) -> None:
+        """Test that non-existent files return False."""
+        self.assertFalse(mljob_launcher.is_python_script("/nonexistent/path/script.py"))
+
+
+class ResolveEntrypointTests(absltest.TestCase):
+    """Tests for the resolve_entrypoint function."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.test_dir = resolve_path("mljob_launcher_tests")
+        self.simple_script = os.path.join(self.test_dir, "simple_script.py")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_existing_py_file(self) -> None:
+        """Test that existing .py files are resolved as Python scripts."""
+        resolved, is_python = mljob_launcher.resolve_entrypoint(self.simple_script)
+        self.assertEqual(resolved, self.simple_script)
+        self.assertTrue(is_python)
+
+    def test_existing_file_without_extension(self) -> None:
+        """Test that existing files without .py extension are treated as Python for backward compatibility."""
+        script_path = os.path.join(self.temp_dir.name, "my_script")
+        with open(script_path, "w") as f:
+            f.write("print('hello')\n")
+        resolved, is_python = mljob_launcher.resolve_entrypoint(script_path)
+        self.assertEqual(resolved, script_path)
+        self.assertTrue(is_python)  # Backward compatibility
+
+    def test_command_name_non_python(self) -> None:
+        """Test that command names like 'echo' are resolved as non-Python."""
+        resolved, is_python = mljob_launcher.resolve_entrypoint("echo")
+        self.assertEqual(resolved, "echo")
+        self.assertFalse(is_python)
+
+    def test_command_with_python_shebang(self) -> None:
+        """Test that commands with python shebang are resolved as Python."""
+        # Create a script with python shebang in a directory on PATH
+        script_path = os.path.join(self.temp_dir.name, "my_python_cmd")
+        with open(script_path, "w") as f:
+            f.write("#!/usr/bin/env python3\nprint('hello')\n")
+        os.chmod(script_path, 0o755)
+
+        # Add temp_dir to PATH temporarily
+        original_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{self.temp_dir.name}:{original_path}"
+        try:
+            resolved, is_python = mljob_launcher.resolve_entrypoint("my_python_cmd")
+            self.assertEqual(resolved, script_path)
+            self.assertTrue(is_python)
+        finally:
+            os.environ["PATH"] = original_path
+
+    def test_nonexistent_path(self) -> None:
+        """Test that non-existent paths are treated as Python (backward compatibility)."""
+        resolved, is_python = mljob_launcher.resolve_entrypoint("/nonexistent/script.py")
+        self.assertEqual(resolved, "/nonexistent/script.py")
+        self.assertTrue(is_python)
+
+
+class RunCommandTests(absltest.TestCase):
+    """Tests for the run_command function."""
+
+    def test_successful_command(self) -> None:
+        """Test running a successful command."""
+        # 'true' exits with 0 on both macOS and Linux
+        mljob_launcher.run_command("true")
+
+    def test_command_with_args(self) -> None:
+        """Test running a command with arguments."""
+        # 'echo' works on both macOS and Linux
+        mljob_launcher.run_command("echo", "hello", "world")
+
+    def test_failing_command(self) -> None:
+        """Test that failing commands raise CalledProcessError."""
+        # 'false' exits with 1 on both macOS and Linux
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            mljob_launcher.run_command("false")
+        self.assertEqual(cm.exception.returncode, 1)
+
+    def test_shell_command(self) -> None:
+        """Test running a shell command."""
+        # Use sh -c to run a shell command
+        mljob_launcher.run_command("sh", "-c", "exit 0")
+
+    def test_shell_command_failure(self) -> None:
+        """Test that shell commands with non-zero exit raise CalledProcessError."""
+        with self.assertRaises(subprocess.CalledProcessError) as cm:
+            mljob_launcher.run_command("sh", "-c", "exit 42")
+        self.assertEqual(cm.exception.returncode, 42)
 
 
 def _load_result_dict(path: str) -> dict[str, Any]:

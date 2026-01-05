@@ -12,6 +12,7 @@ cloudpickle==2.2.1
 cmdstanpy==1.1.0
 coverage==7.6.1
 cryptography==41.0.3
+datasets==3.3.2
 flask-cors==3.0.10
 flask==2.2.2
 fsspec[http]==2024.6.1
@@ -52,10 +53,12 @@ snowflake.core==1.0.5
 sphinx==5.0.2
 sqlparse==0.4.4
 starlette==0.27.0
+tokenizers==0.15.1
 toml==0.10.2
 torch==2.5.1
 torchdata==0.8.0
 tqdm==4.67.1
+transformers==4.39.3
 types-PyYAML==6.0.12.12
 types-cachetools==4.2.2
 types-protobuf==4.23.0.1

@@ -29,12 +29,16 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import (
+    huggingface as huggingface_base,
+    huggingface_pipeline,
+)
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import torch
     import transformers
 
 DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"  # noqa: E501
@@ -77,8 +81,14 @@ def sanitize_output(data: Any) -> Any:
 
 
 @final
-class HuggingFacePipelineHandler(
-    _base.BaseModelHandler[Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"]]
+class TransformersPipelineHandler(
+    _base.BaseModelHandler[
+        Union[
+            huggingface_base.TransformersPipeline,
+            huggingface_pipeline.HuggingFacePipelineModel,
+            "transformers.Pipeline",
+        ]
+    ]
 ):
     """Handler for custom model."""
 
@@ -97,10 +107,18 @@ class HuggingFacePipelineHandler(
     def can_handle(
         cls,
         model: model_types.SupportedModelType,
-    ) -> TypeGuard[Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"]]:
+    ) -> TypeGuard[
+        Union[
+            huggingface_base.TransformersPipeline,
+            huggingface_pipeline.HuggingFacePipelineModel,
+            "transformers.Pipeline",
+        ]
+    ]:
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             return True
         if isinstance(model, huggingface_pipeline.HuggingFacePipelineModel):
+            return True
+        if isinstance(model, huggingface_base.TransformersPipeline):
             return True
         return False
 
@@ -108,24 +126,29 @@ class HuggingFacePipelineHandler(
     def cast_model(
         cls,
         model: model_types.SupportedModelType,
-    ) -> Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"]:
-        try:
-            if isinstance(model, huggingface_pipeline.HuggingFacePipelineModel):
-                raise ImportError
-            else:
-                import transformers
-        except ImportError:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
+    ) -> Union[
+        huggingface_base.TransformersPipeline,
+        huggingface_pipeline.HuggingFacePipelineModel,
+        "transformers.Pipeline",
+    ]:
+        if type_utils.LazyType("transformers.Pipeline").isinstance(model):
+            return model
+        elif isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
+            model, huggingface_base.TransformersPipeline
+        ):
             return model
         else:
-            assert isinstance(model, transformers.Pipeline)
-            return model
+            raise ValueError(f"Model {model} is not a valid Hugging Face model.")
 
     @classmethod
     def save_model(
         cls,
         name: str,
-        model: Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"],
+        model: Union[
+            huggingface_base.TransformersPipeline,
+            huggingface_pipeline.HuggingFacePipelineModel,
+            "transformers.Pipeline",
+        ],
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -140,7 +163,9 @@ class HuggingFacePipelineHandler(
             framework = model.framework  # type:ignore[attr-defined]
             batch_size = model._batch_size  # type:ignore[attr-defined]
         else:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
+            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
+                model, huggingface_base.TransformersPipeline
+            )
             task = model.task
             framework = getattr(model, "framework", None)
             batch_size = getattr(model, "batch_size", None)
@@ -156,7 +181,9 @@ class HuggingFacePipelineHandler(
                 **model._postprocess_params,  # type:ignore[attr-defined]
             }
         else:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
+            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
+                model, huggingface_base.TransformersPipeline
+            )
             params = {**model.__dict__, **model.model_kwargs}
 
         inferred_pipe_sig = model_signature_utils.huggingface_pipeline_signature_auto_infer(
@@ -177,7 +204,7 @@ class HuggingFacePipelineHandler(
                 else:
                     warnings.warn(
                         "It is impossible to validate your model signatures when using a"
-                        " `snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel` object. "
+                        f" {type(model).__name__} object. "
                         "Please make sure you are providing correct model signatures.",
                         UserWarning,
                         stacklevel=2,
@@ -302,14 +329,16 @@ class HuggingFacePipelineHandler(
     def _load_pickle_model(
         pickle_file: str,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
-    ) -> huggingface_pipeline.HuggingFacePipelineModel:
+    ) -> Union[huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline]:
         with open(pickle_file, "rb") as f:
             m = cloudpickle.load(f)
-        assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel)
+        assert isinstance(m, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
+            m, huggingface_base.TransformersPipeline
+        )
         torch_dtype: Optional[str] = None
         device_config = None
         if getattr(m, "device", None) is None and getattr(m, "device_map", None) is None:
-            device_config = HuggingFacePipelineHandler._get_device_config(**kwargs)
+            device_config = TransformersPipelineHandler._get_device_config(**kwargs)
             m.__dict__.update(device_config)
 
         if getattr(m, "torch_dtype", None) is None and kwargs.get("use_gpu", False):
@@ -326,7 +355,9 @@ class HuggingFacePipelineHandler(
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
-    ) -> Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"]:
+    ) -> Union[
+        huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline, "transformers.Pipeline"
+    ]:
         if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
             # We need to redirect the some folders to a writable location in the sandbox.
             os.environ["HF_HOME"] = "/tmp"
@@ -369,7 +400,7 @@ class HuggingFacePipelineHandler(
             ) as f:
                 pipeline_params = cloudpickle.load(f)
 
-            device_config = HuggingFacePipelineHandler._get_device_config(**kwargs)
+            device_config = TransformersPipelineHandler._get_device_config(**kwargs)
 
             m = transformers.pipeline(
                 model_blob_options["task"],
@@ -402,7 +433,7 @@ class HuggingFacePipelineHandler(
 
         def _create_pipeline_from_model(
             model_blob_file_or_dir_path: str,
-            m: huggingface_pipeline.HuggingFacePipelineModel,
+            m: Union[huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline],
             **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
         ) -> "transformers.Pipeline":
             import transformers
@@ -414,7 +445,7 @@ class HuggingFacePipelineHandler(
                 torch_dtype=getattr(m, "torch_dtype", None),
                 revision=m.revision,
                 # pass device or device_map when creating the pipeline
-                **HuggingFacePipelineHandler._get_device_config(**kwargs),
+                **TransformersPipelineHandler._get_device_config(**kwargs),
                 # pass other model_kwargs to transformers.pipeline.from_pretrained method
                 **m.model_kwargs,
             )
@@ -455,7 +486,11 @@ class HuggingFacePipelineHandler(
     @classmethod
     def convert_as_custom_model(
         cls,
-        raw_model: Union[huggingface_pipeline.HuggingFacePipelineModel, "transformers.Pipeline"],
+        raw_model: Union[
+            huggingface_pipeline.HuggingFacePipelineModel,
+            huggingface_base.TransformersPipeline,
+            "transformers.Pipeline",
+        ],
         model_meta: model_meta_api.ModelMetadata,
         background_data: Optional[pd.DataFrame] = None,
         **kwargs: Unpack[model_types.HuggingFaceLoadOptions],
@@ -609,7 +644,9 @@ class HuggingFacePipelineHandler(
 
             return _HFPipelineModel
 
-        if isinstance(raw_model, huggingface_pipeline.HuggingFacePipelineModel):
+        if isinstance(raw_model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
+            raw_model, huggingface_base.TransformersPipeline
+        ):
             if version.parse(transformers.__version__) < version.parse("4.32.0"):
                 # Backward compatibility since HF interface change.
                 raw_model.__dict__["use_auth_token"] = raw_model.__dict__["token"]
@@ -668,43 +705,64 @@ class HuggingFaceOpenAICompatibleModel:
 
         self.model_name = self.pipeline.model.name_or_path
 
+        if self.tokenizer.pad_token is None:
+            self.tokenizer.pad_token = self.tokenizer.eos_token
+
+        # Ensure the tokenizer has a chat template.
+        # If not, we inject the default ChatML template which supports prompt generation.
+        if not getattr(self.tokenizer, "chat_template", None):
+            logger.warning(f"No chat template found for {self.model_name}. Using default ChatML template.")
+            self.tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
+
     def _apply_chat_template(self, messages: list[dict[str, Any]]) -> str:
         """
         Applies a chat template to a list of messages.
-        If the tokenizer has a chat template, it uses that.
-        Otherwise, it falls back to a simple concatenation.
 
         Args:
-            messages (list[dict]): A list of message dictionaries, e.g.,
-                                   [{"role": "user", "content": "Hello!"}, ...]
+            messages (list[dict]): A list of message dictionaries.
 
         Returns:
             The formatted prompt string ready for model input.
         """
-
-        if hasattr(self.tokenizer, "apply_chat_template") and self.tokenizer.chat_template:
-            # Use the tokenizer's built-in chat template if available
-            # `tokenize=False` means it returns a string, not token IDs
+        # Use the tokenizer's apply_chat_template method.
+        # We ensured a template exists in __init__.
+        if hasattr(self.tokenizer, "apply_chat_template"):
             return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
                 messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
-        else:
-            # Fallback to a simple concatenation for models without a specific chat template
-            # This is a basic example; real chat models often need specific formatting.
-            prompt = ""
-            for message in messages:
-                role = message.get("role", "user")
-                content = message.get("content", "")
-                if role == "system":
-                    prompt += f"System: {content}\n"
-                elif role == "user":
-                    prompt += f"User: {content}\n"
-                elif role == "assistant":
-                    prompt += f"Assistant: {content}\n"
-            prompt += "Assistant:"  # Indicate that the assistant should respond
-            return prompt
+
+        # Fallback for very old transformers without apply_chat_template
+        # Manually apply ChatML-like formatting
+        prompt = ""
+        for message in messages:
+            role = message.get("role", "user")
+            content = message.get("content", "")
+            prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
+        prompt += "<|im_start|>assistant\n"
+        return prompt
+
+    def _get_stopping_criteria(self, stop_strings: list[str]) -> "transformers.StoppingCriteriaList":
+
+        import transformers
+
+        class StopStringsStoppingCriteria(transformers.StoppingCriteria):
+            def __init__(self, stop_strings: list[str], tokenizer: Any) -> None:
+                self.stop_strings = stop_strings
+                self.tokenizer = tokenizer
+
+            def __call__(self, input_ids: "torch.Tensor", scores: "torch.Tensor", **kwargs: Any) -> bool:
+                # Decode the generated text for each sequence
+                for i in range(input_ids.shape[0]):
+                    generated_text = self.tokenizer.decode(input_ids[i], skip_special_tokens=True)
+                    # Check if any stop string appears in the generated text
+                    for stop_str in self.stop_strings:
+                        if stop_str in generated_text:
+                            return True
+                return False
+
+        return transformers.StoppingCriteriaList([StopStringsStoppingCriteria(stop_strings, self.tokenizer)])
 
     def generate_chat_completion(
         self,
@@ -727,18 +785,17 @@ class HuggingFaceOpenAICompatibleModel:
                                     {"role": "user", "content": "What is deep learning?"}]
             max_completion_tokens (int): The maximum number of completion tokens to generate.
             stop_strings (list[str]): A list of strings to stop generation.
-            temperature (float): The temperature for sampling.
-            top_p (float): The top-p value for sampling.
-            stream (bool): Whether to stream the generation.
-            frequency_penalty (float): The frequency penalty for sampling.
-            presence_penalty (float): The presence penalty for sampling.
+            temperature (float): The temperature for sampling. 0 means greedy decoding.
+            top_p (float): The top-p value for nucleus sampling.
+            stream (bool): Whether to stream the generation (not yet supported).
+            frequency_penalty (float): The frequency penalty for sampling (maps to repetition_penalty).
+            presence_penalty (float): The presence penalty for sampling (not directly supported).
             n (int): The number of samples to generate.
 
         Returns:
             dict: An OpenAI-compatible dictionary representing the chat completion.
         """
         # Apply chat template to convert messages into a single prompt string
-
         prompt_text = self._apply_chat_template(messages)
 
         # Tokenize the prompt
@@ -749,42 +806,112 @@ class HuggingFaceOpenAICompatibleModel:
         ).to(self.model.device)
         prompt_tokens = inputs.input_ids.shape[1]
 
-        from transformers import GenerationConfig
+        if stream:
+            logger.warning(
+                "Streaming is not supported using transformers.Pipeline implementation. Ignoring stream=True."
+            )
+            stream = False
 
-        generation_config = GenerationConfig(
-            max_new_tokens=max_completion_tokens,
-            temperature=temperature,
-            top_p=top_p,
+        if presence_penalty is not None:
+            logger.warning(
+                "Presence penalty is not supported using transformers.Pipeline implementation."
+                " Ignoring presence_penalty."
+            )
+            presence_penalty = None
+
+        import transformers
+
+        transformers_version = version.parse(transformers.__version__)
+
+        # Stop strings are supported in transformers >= 4.43.0
+        can_handle_stop_strings = transformers_version >= version.parse("4.43.0")
+
+        # Determine sampling based on temperature (following serve.py logic)
+        # Default temperature to 1.0 if not specified
+        actual_temperature = temperature if temperature is not None else 1.0
+        do_sample = actual_temperature > 0.0
+
+        # Set up generation config following best practices from serve.py
+        generation_config = transformers.GenerationConfig(
+            max_new_tokens=max_completion_tokens if max_completion_tokens is not None else 1024,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
-            stop_strings=stop_strings,
-            stream=stream,
-            num_return_sequences=n,
-            num_beams=max(1, n),  # must be >1
-            repetition_penalty=frequency_penalty,
-            # TODO: Handle diversity_penalty and num_beam_groups
-            # not all models support them making it hard to support any huggingface model
-            # diversity_penalty=presence_penalty if n > 1 else None,
-            # num_beam_groups=max(2, n) if presence_penalty else 1,
-            do_sample=False,
+            do_sample=do_sample,
         )
 
+        # Only set temperature and top_p if sampling is enabled
+        if do_sample:
+            generation_config.temperature = actual_temperature
+            if top_p is not None:
+                generation_config.top_p = top_p
+
+        # Handle repetition penalty (mapped from frequency_penalty)
+        if frequency_penalty is not None:
+            # OpenAI's frequency_penalty is typically in range [-2.0, 2.0]
+            # HuggingFace's repetition_penalty is typically > 0, with 1.0 = no penalty
+            # We need to convert: frequency_penalty=0 -> repetition_penalty=1.0
+            # Higher frequency_penalty should increase repetition_penalty
+            generation_config.repetition_penalty = 1.0 + (frequency_penalty if frequency_penalty > 0 else 0)
+
+        # For multiple completions (n > 1), use sampling not beam search
+        if n > 1:
+            generation_config.num_return_sequences = n
+            # Force sampling on for multiple sequences
+            if not do_sample:
+                logger.warning("Forcing do_sample=True for n>1. Consider setting temperature > 0 for better diversity.")
+                generation_config.do_sample = True
+                generation_config.temperature = 1.0
+        else:
+            generation_config.num_return_sequences = 1
+
+        # Handle stop strings if provided
+        stopping_criteria = None
+        if stop_strings and not can_handle_stop_strings:
+            logger.warning("Stop strings are not supported in transformers < 4.41.0. Ignoring stop strings.")
+
+        if stop_strings and can_handle_stop_strings:
+            stopping_criteria = self._get_stopping_criteria(stop_strings)
+            output_ids = self.model.generate(
+                inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                generation_config=generation_config,
+                # Pass tokenizer for proper handling of stop strings
+                tokenizer=self.tokenizer,
+                stopping_criteria=stopping_criteria,
+            )
+        else:
+            output_ids = self.model.generate(
+                inputs.input_ids,
+                attention_mask=inputs.attention_mask,
+                generation_config=generation_config,
+            )
+
         # Generate text
-        output_ids = self.model.generate(
-            inputs.input_ids,
-            attention_mask=inputs.attention_mask,
-            generation_config=generation_config,
-        )
+        # Handle the case where output might be 1D if n=1
+        if output_ids.dim() == 1:
+            output_ids = output_ids.unsqueeze(0)
 
         generated_texts = []
         completion_tokens = 0
         total_tokens = prompt_tokens
+
         for output_id in output_ids:
             # The output_ids include the input prompt
             # Decode the generated text, excluding the input prompt
             # so we slice to get only new tokens
             generated_tokens = output_id[prompt_tokens:]
             generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+
+            # Trim stop strings from generated text if they appear
+            # The stop criteria would stop generating further tokens, so we need to trim the generated text
+            if stop_strings and can_handle_stop_strings:
+                for stop_str in stop_strings:
+                    if stop_str in generated_text:
+                        # Find the first occurrence and trim everything from there
+                        stop_idx = generated_text.find(stop_str)
+                        generated_text = generated_text[:stop_idx]
+                        break  # Stop after finding the first stop string
+
             generated_texts.append(generated_text)
 
             # Calculate completion tokens

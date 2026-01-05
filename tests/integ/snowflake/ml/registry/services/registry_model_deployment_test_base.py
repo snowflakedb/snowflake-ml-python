@@ -68,6 +68,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
         use_model_logging: bool = False,
@@ -114,6 +115,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,
             use_default_repo=use_default_repo,
+            autocapture=autocapture,
             inference_engine_options=inference_engine_options,
             experimental_options=experimental_options,
             pip_requirements=pip_requirements,
@@ -133,12 +135,11 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         force_rebuild: bool = True,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> None:
         """Deploy model with image override."""
-        # Extract autocapture from experimental_options
-        autocapture = experimental_options.get("autocapture") if experimental_options else None
         is_gpu = gpu_requests is not None
         image_path = self.BASE_GPU_IMAGE_PATH if is_gpu else self.BASE_CPU_IMAGE_PATH
         assert image_path is not None, "Base image path must be set for image override deployment."
@@ -228,6 +229,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
+        autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
         pip_requirements: Optional[list[str]] = None,
@@ -253,6 +255,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     force_rebuild=False,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,
+                    autocapture=autocapture,
                     inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
                 )
@@ -270,6 +273,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     ingress_enabled=True,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,
+                    autocapture=autocapture,
                     inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
                 )
