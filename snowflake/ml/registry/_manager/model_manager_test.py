@@ -1264,6 +1264,219 @@ class ModelManagerTest(parameterized.TestCase):
                 experiment_info=None,
             )
 
+    def test_log_remote_huggingface_model(self) -> None:
+        """Test remote logging of HuggingFace model with compute pool."""
+        from snowflake.ml.model.models import huggingface
+
+        # Create a mock HuggingFace TransformersPipeline model
+        m_hf_model = mock.MagicMock(spec=huggingface.TransformersPipeline)
+        m_hf_model.model = "bert-base-uncased"
+        m_hf_model.task = "fill-mask"
+        m_hf_model.revision = "main"
+        m_hf_model.tokenizer = None
+        m_hf_model.token_or_secret = None
+        m_hf_model.secret_identifier = None
+        m_hf_model.trust_remote_code = False
+        m_hf_model.model_kwargs = {}
+        m_hf_model.compute_pool_for_log = "MY_COMPUTE_POOL"
+        m_hf_model.repo_snapshot_dir = None
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_hf_model,
+                model_name="MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            # Verify run_import_model_query was called with proper arguments
+            mock_run_import_model_query.assert_called_once()
+            call_args = mock_run_import_model_query.call_args
+            self.assertEqual(call_args.kwargs["database_name"], "TEMP")
+            self.assertEqual(call_args.kwargs["schema_name"], "TEST")
+            self.assertIn("compute_pool:", call_args.kwargs["yaml_content"])
+            self.assertIn("MY_COMPUTE_POOL", call_args.kwargs["yaml_content"])
+            self.assertIn("bert-base-uncased", call_args.kwargs["yaml_content"])
+            self.assertIn("fill-mask", call_args.kwargs["yaml_content"])
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    self.m_r._model_ops,
+                    service_ops=self.m_r._service_ops,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                ),
+            )
+
+    def test_log_remote_huggingface_model_with_secret(self) -> None:
+        """Test remote logging of HuggingFace model with token secret."""
+        from snowflake.ml.model.models import huggingface
+
+        # Create a mock HuggingFace TransformersPipeline model with secret
+        m_hf_model = mock.MagicMock(spec=huggingface.TransformersPipeline)
+        m_hf_model.model = "meta-llama/Llama-2-7b-hf"
+        m_hf_model.task = "text-generation"
+        m_hf_model.revision = "main"
+        m_hf_model.tokenizer = None
+        m_hf_model.token_or_secret = None
+        m_hf_model.secret_identifier = "MYDB.MYSCHEMA.HF_TOKEN_SECRET"
+        m_hf_model.trust_remote_code = True
+        m_hf_model.model_kwargs = {"torch_dtype": "float16"}
+        m_hf_model.compute_pool_for_log = "GPU_POOL"
+        m_hf_model.repo_snapshot_dir = None
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_hf_model,
+                model_name="LLAMA_MODEL",
+                version_name="V1",
+                comment="Llama 2 model",
+                pip_requirements=["torch==2.0.0"],
+                conda_dependencies=["python=3.9"],
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            # Verify run_import_model_query was called with proper arguments
+            mock_run_import_model_query.assert_called_once()
+            call_args = mock_run_import_model_query.call_args
+            self.assertEqual(call_args.kwargs["database_name"], "TEMP")
+            self.assertEqual(call_args.kwargs["schema_name"], "TEST")
+            yaml_content = call_args.kwargs["yaml_content"]
+            self.assertIn("compute_pool:", yaml_content)
+            self.assertIn("GPU_POOL", yaml_content)
+            self.assertIn("meta-llama/Llama-2-7b-hf", yaml_content)
+            self.assertIn("text-generation", yaml_content)
+            self.assertIn("MYDB.MYSCHEMA.HF_TOKEN_SECRET", yaml_content)
+            self.assertIn("trust_remote_code: true", yaml_content)
+            self.assertIn("torch==2.0.0", yaml_content)
+            self.assertIn("python=3.9", yaml_content)
+            self.assertIn("Llama 2 model", yaml_content)
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    self.m_r._model_ops,
+                    service_ops=self.m_r._service_ops,
+                    model_name=sql_identifier.SqlIdentifier("LLAMA_MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                ),
+            )
+
+    def test_log_remote_huggingface_model_fully_qualified(self) -> None:
+        """Test remote logging of HuggingFace model with fully qualified model name."""
+        from snowflake.ml.model.models import huggingface
+
+        # Create a mock HuggingFace TransformersPipeline model
+        m_hf_model = mock.MagicMock(spec=huggingface.TransformersPipeline)
+        m_hf_model.model = "distilbert-base-uncased"
+        m_hf_model.task = "text-classification"
+        m_hf_model.revision = None
+        m_hf_model.tokenizer = None
+        m_hf_model.token_or_secret = None
+        m_hf_model.secret_identifier = None
+        m_hf_model.trust_remote_code = None
+        m_hf_model.model_kwargs = None
+        m_hf_model.compute_pool_for_log = "MY_POOL"
+        m_hf_model.repo_snapshot_dir = None
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "run_import_model_query") as mock_run_import_model_query,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
+        ):
+            mv = self.m_r.log_model(
+                model=m_hf_model,
+                model_name="FOO.BAR.MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            # Verify run_import_model_query was called with proper arguments
+            mock_run_import_model_query.assert_called_once()
+            call_args = mock_run_import_model_query.call_args
+            self.assertEqual(call_args.kwargs["database_name"], "FOO")
+            self.assertEqual(call_args.kwargs["schema_name"], "BAR")
+            yaml_content = call_args.kwargs["yaml_content"]
+            self.assertIn("FOO.BAR.MODEL", yaml_content)
+            self.assertIn("distilbert-base-uncased", yaml_content)
+            self.assertIn("text-classification", yaml_content)
+            self.assertEqual(
+                mv,
+                model_version_impl.ModelVersion._ref(
+                    ModelOperator(
+                        self.c_session,
+                        database_name=sql_identifier.SqlIdentifier("FOO"),
+                        schema_name=sql_identifier.SqlIdentifier("BAR"),
+                    ),
+                    service_ops=service_ops.ServiceOperator(
+                        self.c_session,
+                        database_name=sql_identifier.SqlIdentifier("FOO"),
+                        schema_name=sql_identifier.SqlIdentifier("BAR"),
+                    ),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                ),
+            )
+
+    def test_log_huggingface_model_with_snapshot_dir(self) -> None:
+        """Test HuggingFace model with repo_snapshot_dir uses regular logging path."""
+        from snowflake.ml.model.models import huggingface
+
+        # Create a mock HuggingFace TransformersPipeline model with repo_snapshot_dir
+        m_hf_model = mock.MagicMock(spec=huggingface.TransformersPipeline)
+        m_hf_model.model = "bert-base-uncased"
+        m_hf_model.task = "fill-mask"
+        m_hf_model.compute_pool_for_log = "MY_POOL"
+        m_hf_model.repo_snapshot_dir = "/path/to/snapshot"
+
+        m_stage_path = "@TEMP.TEST.MODEL/V1"
+        m_model_metadata = mock.MagicMock()
+        m_model_metadata.telemetry_metadata = mock.MagicMock(return_value=self.model_md_telemetry)
+
+        with (
+            mock.patch.object(self.m_r._model_ops, "validate_existence", return_value=False),
+            mock.patch.object(self.m_r._model_ops, "prepare_model_temp_stage_path", return_value=m_stage_path),
+            mock.patch.object(model_composer.ModelComposer, "save", return_value=m_model_metadata) as mock_save,
+            mock.patch.object(self.m_r._model_ops, "create_from_stage") as mock_create_from_stage,
+            mock.patch.object(model_version_impl.ModelVersion, "_get_functions", return_value=[]),
+            mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ),
+            platform_capabilities.PlatformCapabilities.mock_features(
+                {platform_capabilities.LIVE_COMMIT_PARAMETER: False}
+            ),
+        ):
+            # Should use regular logging path, not remote
+            mv = self.m_r.log_model(
+                model=m_hf_model,
+                model_name="MODEL",
+                version_name="V1",
+                statement_params=self.base_statement_params,
+                progress_status=create_mock_progress_status(),
+            )
+            # Verify that the regular save path was used
+            mock_save.assert_called_once()
+            mock_create_from_stage.assert_called_once()
+            self.assertEqual(mv, self.m_mv)
+
 
 if __name__ == "__main__":
     absltest.main()

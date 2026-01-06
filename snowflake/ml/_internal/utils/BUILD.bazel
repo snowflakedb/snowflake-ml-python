@@ -138,6 +138,23 @@ py_test(
 )
 
 py_library(
+    name = "url",
+    srcs = ["url.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+    ],
+)
+
+py_test(
+    name = "url_test",
+    srcs = ["url_test.py"],
+    tags = ["feature:core"],
+    deps = [
+        ":url",
+    ],
+)
+
+py_library(
     name = "rbac",
     srcs = ["rbac.py"],
 )

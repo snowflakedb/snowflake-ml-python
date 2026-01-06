@@ -246,6 +246,17 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_empty_struct_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_empty_struct_test.py"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_explainability_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_explainability_test.py"],

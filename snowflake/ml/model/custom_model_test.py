@@ -40,7 +40,7 @@ class ModelTest(absltest.TestCase):
             return pd.DataFrame(input)
 
         with self.assertRaises(TypeError):
-            good_model.predict = bad_predict_1  # type: ignore[assignment]
+            good_model.predict = bad_predict_1  # type: ignore[method-assign,assignment]
 
         with self.assertRaises(TypeError):
 
@@ -50,7 +50,7 @@ class ModelTest(absltest.TestCase):
 
             bad_predict_2 = bad_predict_2.__get__(good_model, type(good_model))
 
-            good_model.predict = bad_predict_2  # type: ignore[assignment]
+            good_model.predict = bad_predict_2  # type: ignore[method-assign,assignment]
 
         class AnotherBadModel(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
@@ -78,6 +78,103 @@ class ModelTest(absltest.TestCase):
                 _ = await bad_async_model.predict(d)
 
         asyncio.get_event_loop().run_until_complete(_test(self))
+
+    def test_custom_model_with_keyword_args(self) -> None:
+        """Test that keyword-only arguments with defaults are allowed."""
+
+        class ModelWithKwargs(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(self, input: pd.DataFrame, *, param1: int = 10, param2: str = "default") -> pd.DataFrame:
+                return pd.DataFrame({"output": input["c1"] * param1, "param2": param2})
+
+        model = ModelWithKwargs(custom_model.ModelContext())
+        arr = np.array([[1, 2], [3, 4]])
+        d = pd.DataFrame(arr, columns=["c1", "c2"])
+
+        # Test with default kwargs
+        res = model.predict(d)
+        self.assertTrue(np.allclose(res["output"], pd.Series(np.array([10, 30]))))
+
+        # Test with custom kwargs
+        res = model.predict(d, param1=5)
+        self.assertTrue(np.allclose(res["output"], pd.Series(np.array([5, 15]))))
+
+    def test_custom_model_keyword_args_validation(self) -> None:
+        """Test that additional parameters must be keyword-only with defaults."""
+
+        # Positional argument after input should fail
+        with self.assertRaises(TypeError) as cm:
+
+            class BadModelNoKeyword(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(self, input: pd.DataFrame, extra_param: int = 5) -> pd.DataFrame:
+                    return pd.DataFrame(input)
+
+            _ = BadModelNoKeyword(custom_model.ModelContext())
+
+        self.assertIn("keyword-only", str(cm.exception))
+
+        # Keyword-only argument without default should fail
+        with self.assertRaises(TypeError) as cm:
+
+            class BadModelNoDefault(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(self, input: pd.DataFrame, *, required_param: int) -> pd.DataFrame:
+                    return pd.DataFrame(input)
+
+            _ = BadModelNoDefault(custom_model.ModelContext())
+
+        self.assertIn("default value", str(cm.exception))
+
+        # Keyword-only argument without type annotation should fail
+        with self.assertRaises(TypeError) as cm:
+
+            class BadModelNoTypeAnnotation(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(  # type: ignore[no-untyped-def]
+                    self, input: pd.DataFrame, *, required_param=5
+                ) -> pd.DataFrame:
+                    return pd.DataFrame(input)
+
+            _ = BadModelNoTypeAnnotation(custom_model.ModelContext())
+
+        self.assertIn("type annotation", str(cm.exception))
+
+    def test_get_method_parameters(self) -> None:
+        """Test that get_method_parameters extracts keyword-only parameters correctly."""
+
+        class ModelWithParams(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(self, input: pd.DataFrame, *, threshold: float = 0.5, name: str = "test") -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        model = ModelWithParams(custom_model.ModelContext())
+
+        # Get the method and extract parameters
+        for method in model._get_infer_methods():
+            params = custom_model.get_method_parameters(method)
+            self.assertEqual(len(params), 2)
+            self.assertEqual(params[0][0], "threshold")
+            self.assertEqual(params[0][1], float)
+            self.assertEqual(params[0][2], 0.5)
+            self.assertEqual(params[1][0], "name")
+            self.assertEqual(params[1][1], str)
+            self.assertEqual(params[1][2], "test")
 
     def test_custom_model_type(self) -> None:
         class DemoModel(custom_model.CustomModel):

@@ -20,6 +20,7 @@ from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta_schema
 from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
 from snowflake.ml.model._packager.model_runtime import model_runtime
+from snowflake.ml.model.code_path import CodePath
 
 MODEL_METADATA_FILE = "model.yaml"
 MODEL_CODE_DIR = "code"
@@ -39,7 +40,7 @@ def create_model_metadata(
     signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
     function_properties: Optional[dict[str, dict[str, Any]]] = None,
     metadata: Optional[dict[str, str]] = None,
-    code_paths: Optional[list[str]] = None,
+    code_paths: Optional[list[model_types.CodePathLike]] = None,
     ext_modules: Optional[list[ModuleType]] = None,
     conda_dependencies: Optional[list[str]] = None,
     pip_requirements: Optional[list[str]] = None,
@@ -77,7 +78,8 @@ def create_model_metadata(
         **kwargs: Dict of attributes and values of the metadata. Used when loading from file.
 
     Raises:
-        ValueError: Raised when the code path contains reserved file or directory.
+        ValueError: Raised when the code path contains reserved file or directory, or destination conflicts.
+        FileNotFoundError: Raised when a code path does not exist.
 
     Yields:
         A model metadata object.
@@ -134,13 +136,44 @@ def create_model_metadata(
         os.makedirs(code_dir_path, exist_ok=True)
 
     if code_paths:
+        # Resolve all code paths and check for conflicts
+        resolved_paths: list[tuple[str, str]] = []  # (source, destination_relative)
         for code_path in code_paths:
-            # This part is to prevent users from providing code following our naming and overwrite our code.
-            if (
-                os.path.isfile(code_path) and os.path.splitext(os.path.basename(code_path))[0] == _SNOWFLAKE_PKG_NAME
-            ) or (os.path.isdir(code_path) and os.path.basename(code_path) == _SNOWFLAKE_PKG_NAME):
+            if isinstance(code_path, CodePath):
+                source, dest_relative = code_path._resolve()
+            else:
+                # String path: keep existing behavior
+                source = os.path.normpath(os.path.abspath(code_path))
+                if not os.path.exists(source):
+                    raise FileNotFoundError(f"Code path '{code_path}' does not exist (resolved to {source}).")
+                dest_relative = os.path.basename(source)
+            resolved_paths.append((source, dest_relative))
+
+        # Check for destination conflicts
+        seen: dict[str, str] = {}
+        for source, dest in resolved_paths:
+            if dest in seen:
+                raise ValueError(
+                    f"Destination path conflict: '{dest}' is targeted by both '{seen[dest]}' and '{source}'."
+                )
+            seen[dest] = source
+
+        # Copy files
+        for source, dest_relative in resolved_paths:
+            # Prevent reserved name conflicts
+            dest_name = dest_relative.split(os.sep)[0] if os.sep in dest_relative else dest_relative
+            if (os.path.isfile(source) and os.path.splitext(dest_name)[0] == _SNOWFLAKE_PKG_NAME) or (
+                os.path.isdir(source) and dest_name == _SNOWFLAKE_PKG_NAME
+            ):
                 raise ValueError("`snowflake` is a reserved name and you cannot contain that into code path.")
-            file_utils.copy_file_or_tree(code_path, code_dir_path)
+
+            parent_dir = (
+                os.path.join(code_dir_path, os.path.dirname(dest_relative))
+                if os.path.dirname(dest_relative)
+                else code_dir_path
+            )
+            os.makedirs(parent_dir, exist_ok=True)
+            file_utils.copy_file_or_tree(source, parent_dir)
 
     try:
         imported_modules = []

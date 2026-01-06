@@ -37,6 +37,25 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.STRING, core.DataType.from_snowpark_type(spt.StringType()))
         self.assertEqual(core.DataType.BYTES, core.DataType.from_snowpark_type(spt.BinaryType()))
 
+    def test_python_type(self) -> None:
+        """Test conversion from Python built-in types to DataType."""
+        self.assertEqual(core.DataType.INT64, core.DataType.from_python_type(int))
+        self.assertEqual(core.DataType.DOUBLE, core.DataType.from_python_type(float))
+        self.assertEqual(core.DataType.STRING, core.DataType.from_python_type(str))
+        self.assertEqual(core.DataType.BOOL, core.DataType.from_python_type(bool))
+
+    def test_python_type_unsupported(self) -> None:
+        """Test that unsupported Python types raise NotImplementedError."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="not supported as a DataType"
+        ):
+            core.DataType.from_python_type(list)
+
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="not supported as a DataType"
+        ):
+            core.DataType.from_python_type(dict)
+
 
 class FeatureSpecTest(absltest.TestCase):
     def test_feature_spec(self) -> None:
@@ -441,6 +460,86 @@ class ModelSignatureTest(absltest.TestCase):
 
         # Verify collapsible structure
         self.assertIn("open", html)  # Details should be open by default
+
+    def test_name_validation(self) -> None:
+        """Test name validation for ModelSignature."""
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Found duplicate parameter named resolved as param.",
+        ):
+            core.ModelSignature(
+                inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="input")],
+                outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
+                params=[
+                    core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.1),
+                    core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.5),
+                ],
+            )
+
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Found duplicate parameter named resolved as param.",
+        ):
+            core.ModelSignature(
+                inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="input")],
+                outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
+                params=[
+                    core.ParamGroupSpec(
+                        name="param_group",
+                        specs=[core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.5)],
+                    ),
+                    core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.5),
+                ],
+            )
+
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex="Found duplicate parameter named resolved as param.",
+        ):
+            core.ModelSignature(
+                inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="input")],
+                outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
+                params=[
+                    core.ParamGroupSpec(
+                        name="param_group",
+                        specs=[
+                            core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.1),
+                            core.ParamSpec(name="param", dtype=core.DataType.FLOAT, default_value=0.5),
+                        ],
+                    ),
+                ],
+            )
+
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex=r"Found parameter\(s\) with the same name as input feature\(s\): Param",
+        ):
+            core.ModelSignature(
+                inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="param")],
+                outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
+                params=[core.ParamSpec(name="Param", dtype=core.DataType.FLOAT, default_value=0.5)],
+            )
+
+        # Test ParamGroupSpec param name conflicting with input feature
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=ValueError,
+            expected_regex=r"Found parameter\(s\) with the same name as input feature\(s\): Param",
+        ):
+            core.ModelSignature(
+                inputs=[core.FeatureSpec(dtype=core.DataType.FLOAT, name="param")],
+                outputs=[core.FeatureSpec(name="output", dtype=core.DataType.FLOAT)],
+                params=[
+                    core.ParamGroupSpec(
+                        name="param_group",
+                        specs=[core.ParamSpec(name="Param", dtype=core.DataType.FLOAT, default_value=0.5)],
+                    ),
+                ],
+            )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
-        "//snowflake/ml/model",
+        "//snowflake/ml/model",  # brings in only the specific //snowflake/ml/model:model target, not everything in that package
         "//snowflake/ml/model:event_handler",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
@@ -41,7 +41,6 @@ py_test(
     deps = [
         ":registry_impl",
         "//snowflake/ml/_internal:platform_capabilities",
-        "//snowflake/ml/model",
         "//snowflake/ml/test_utils:mock_data_frame",
         "//snowflake/ml/test_utils:mock_progress",
         "//snowflake/ml/test_utils:mock_session",

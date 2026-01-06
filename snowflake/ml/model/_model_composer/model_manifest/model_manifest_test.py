@@ -875,6 +875,118 @@ class ModelManifestTest(parameterized.TestCase):
                 method = manifest_content["methods"][0]
                 self.assertNotIn("volatility", method)
 
+    def test_model_manifest_with_parameters(self) -> None:
+        """Test that ModelManifest.save() generates MANIFEST.yml with parameters when capability is enabled."""
+        sig_with_params = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT),
+                ],
+                params=[
+                    model_signature.ParamSpec(
+                        name="threshold", dtype=model_signature.DataType.FLOAT, default_value=0.5
+                    ),
+                    model_signature.ParamSpec(
+                        name="max_iterations", dtype=model_signature.DataType.INT64, default_value=100
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=sig_with_params,
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(relax_version=False)
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            self.assertEqual(len(manifest_content["methods"]), 1)
+            method = manifest_content["methods"][0]
+            self.assertIn("params", method)
+            self.assertEqual(len(method["params"]), 2)
+            self.assertEqual(method["params"][0]["name"], "THRESHOLD")
+            self.assertEqual(method["params"][0]["type"], "FLOAT")
+            self.assertEqual(method["params"][0]["default"], 0.5)
+            self.assertEqual(method["params"][1]["name"], "MAX_ITERATIONS")
+            self.assertEqual(method["params"][1]["type"], "BIGINT")
+            self.assertEqual(method["params"][1]["default"], 100)
+
+    def test_model_manifest_with_parameter_default_none(self) -> None:
+        """Test that ModelManifest.save() handles parameters with default_value=None."""
+        sig_with_none_default = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT),
+                ],
+                params=[
+                    model_signature.ParamSpec(
+                        name="optional_param", dtype=model_signature.DataType.STRING, default_value=None
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=sig_with_none_default,
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(relax_version=False)
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            method = manifest_content["methods"][0]
+            self.assertIn("params", method)
+            self.assertEqual(len(method["params"]), 1)
+            self.assertEqual(method["params"][0]["name"], "OPTIONAL_PARAM")
+            self.assertIsNone(method["params"][0]["default"])
+
 
 if __name__ == "__main__":
     absltest.main()

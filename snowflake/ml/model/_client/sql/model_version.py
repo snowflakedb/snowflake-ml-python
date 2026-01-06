@@ -22,6 +22,14 @@ def _normalize_url_for_sql(url: str) -> str:
     return f"'{url}'"
 
 
+def _format_param_value(value: Any) -> str:
+    if isinstance(value, str):
+        return f"'{snowpark_utils.escape_single_quotes(value)}'"  # type: ignore[no-untyped-call]
+    elif value is None:
+        return "NULL"
+    return str(value)
+
+
 class ModelVersionSQLClient(_base._BaseSQLClient):
     FUNCTION_NAME_COL_NAME = "name"
     FUNCTION_RETURN_TYPE_COL_NAME = "return_type"
@@ -354,6 +362,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         input_args: list[sql_identifier.SqlIdentifier],
         returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         statement_params: Optional[dict[str, Any]] = None,
+        params: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -392,10 +401,17 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
         args_sql = ", ".join(args_sql_list)
 
-        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if params:
+            param_sql = ", ".join(_format_param_value(val) for _, val in params)
+            args_sql = f"{args_sql}, {param_sql}" if args_sql else param_sql
+
+        total_args = len(input_args) + (len(params) if params else 0)
+        wide_input = total_args > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
         if wide_input:
-            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
-            args_sql = f"object_construct_keep_null({input_args_sql})"
+            parts = [f"'{arg}', {arg.identifier()}" for arg in input_args]
+            if params:
+                parts.extend(f"'{name}', {_format_param_value(val)}" for name, val in params)
+            args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
         sql = textwrap.dedent(
             f"""WITH {','.join(with_statements)}
@@ -439,6 +455,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         statement_params: Optional[dict[str, Any]] = None,
         is_partitioned: bool = True,
         explain_case_sensitive: bool = False,
+        params: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None,
     ) -> dataframe.DataFrame:
         with_statements = []
         if len(input_df.queries["queries"]) == 1 and len(input_df.queries["post_actions"]) == 0:
@@ -477,10 +494,17 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
         args_sql = ", ".join(args_sql_list)
 
-        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if params:
+            param_sql = ", ".join(_format_param_value(val) for _, val in params)
+            args_sql = f"{args_sql}, {param_sql}" if args_sql else param_sql
+
+        total_args = len(input_args) + (len(params) if params else 0)
+        wide_input = total_args > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
         if wide_input:
-            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
-            args_sql = f"object_construct_keep_null({input_args_sql})"
+            parts = [f"'{arg}', {arg.identifier()}" for arg in input_args]
+            if params:
+                parts.extend(f"'{name}', {_format_param_value(val)}" for name, val in params)
+            args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
         sql = textwrap.dedent(
             f"""WITH {','.join(with_statements)}

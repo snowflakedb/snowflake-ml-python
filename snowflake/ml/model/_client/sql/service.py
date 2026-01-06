@@ -20,6 +20,15 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
 
+
+def _format_param_value(value: Any) -> str:
+    if isinstance(value, str):
+        return f"'{snowpark_utils.escape_single_quotes(value)}'"  # type: ignore[no-untyped-call]
+    elif value is None:
+        return "NULL"
+    return str(value)
+
+
 # Using this token instead of '?' to avoid escaping issues
 # After quotes are escaped, we replace this token with '|| ? ||'
 QMARK_RESERVED_TOKEN = "<QMARK_RESERVED_TOKEN>"
@@ -140,6 +149,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
         input_args: list[sql_identifier.SqlIdentifier],
         returns: list[tuple[str, spt.DataType, sql_identifier.SqlIdentifier]],
         statement_params: Optional[dict[str, Any]] = None,
+        params: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None,
     ) -> dataframe.DataFrame:
         with_statements = []
         actual_database_name = database_name or self._database_name
@@ -170,10 +180,17 @@ class ServiceSQLClient(_base._BaseSQLClient):
             args_sql_list.append(input_arg_value)
         args_sql = ", ".join(args_sql_list)
 
-        wide_input = len(input_args) > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
+        if params:
+            param_sql = ", ".join(_format_param_value(val) for _, val in params)
+            args_sql = f"{args_sql}, {param_sql}" if args_sql else param_sql
+
+        total_args = len(input_args) + (len(params) if params else 0)
+        wide_input = total_args > constants.SNOWPARK_UDF_INPUT_COL_LIMIT
         if wide_input:
-            input_args_sql = ", ".join(f"'{arg}', {arg.identifier()}" for arg in input_args)
-            args_sql = f"object_construct_keep_null({input_args_sql})"
+            parts = [f"'{arg}', {arg.identifier()}" for arg in input_args]
+            if params:
+                parts.extend(f"'{name}', {_format_param_value(val)}" for name, val in params)
+            args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
         fully_qualified_service_name = self.fully_qualified_object_name(
             actual_database_name, actual_schema_name, service_name
@@ -301,7 +318,12 @@ class ServiceSQLClient(_base._BaseSQLClient):
             False if service doesn't have proxy container
         """
         try:
-            spec_raw = yaml.safe_load(row[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME])
+            spec_yaml = row[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME]
+            if spec_yaml is None:
+                return False
+            spec_raw = yaml.safe_load(spec_yaml)
+            if spec_raw is None:
+                return False
             spec = cast(dict[str, Any], spec_raw)
 
             proxy_container_spec = next(

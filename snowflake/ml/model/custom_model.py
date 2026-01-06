@@ -4,9 +4,12 @@ from typing import Any, Callable, Coroutine, Generator, Optional, Union
 
 import anyio
 import pandas as pd
-from typing_extensions import deprecated
+from typing_extensions import Concatenate, ParamSpec, deprecated
 
 from snowflake.ml.model import type_hints as model_types
+
+# Captures additional keyword-only parameters for inference methods
+InferenceParams = ParamSpec("InferenceParams")
 
 
 class MethodRef:
@@ -217,7 +220,7 @@ class CustomModel:
 
     def _get_infer_methods(
         self,
-    ) -> Generator[Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame], None, None]:
+    ) -> Generator[Callable[..., pd.DataFrame], None, None]:
         """Returns all methods in CLS with `inference_api` decorator as the outermost decorator."""
         for cls_method_str in dir(self):
             cls_method = getattr(self, cls_method_str)
@@ -240,7 +243,7 @@ class CustomModel:
         return rv
 
 
-def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]) -> None:
+def _validate_predict_function(func: Callable[..., pd.DataFrame]) -> None:
     """Validate the user provided predict method.
 
     Args:
@@ -248,19 +251,22 @@ def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.D
 
     Raises:
         TypeError: Raised when the method is not a callable object.
-        TypeError: Raised when the method does not have 2 arguments (self and X).
+        TypeError: Raised when the method does not have at least 2 arguments (self and X).
         TypeError: Raised when the method does not have typing annotation.
         TypeError: Raised when the method's input (X) does not have type pd.DataFrame.
         TypeError: Raised when the method's output does not have type pd.DataFrame.
+        TypeError: Raised when additional parameters are not keyword-only with defaults.
     """
     if not callable(func):
         raise TypeError("Predict method is not callable.")
 
     func_signature = inspect.signature(func)
-    if len(func_signature.parameters) != 2:
-        raise TypeError("Predict method should have exact 2 arguments.")
+    func_signature_params = list(func_signature.parameters.values())
 
-    input_annotation = list(func_signature.parameters.values())[1].annotation
+    if len(func_signature_params) < 2:
+        raise TypeError("Predict method should have at least 2 arguments.")
+
+    input_annotation = func_signature_params[1].annotation
     output_annotation = func_signature.return_annotation
 
     if input_annotation == inspect.Parameter.empty or output_annotation == inspect.Signature.empty:
@@ -275,17 +281,53 @@ def _validate_predict_function(func: Callable[[model_types.CustomModelType, pd.D
     ):
         raise TypeError("Output for predict method should have type pandas.DataFrame.")
 
+    # Validate additional parameters (beyond self and input) are keyword-only with defaults
+    for func_signature_param in func_signature_params[2:]:
+        _validate_parameter(func_signature_param)
+
+
+def _validate_parameter(param: inspect.Parameter) -> None:
+    """Validate a parameter."""
+    if param.kind != inspect.Parameter.KEYWORD_ONLY:
+        raise TypeError(f"Parameter '{param.name}' must be keyword-only (defined after '*' in signature).")
+    if param.default == inspect.Parameter.empty:
+        raise TypeError(f"Parameter '{param.name}' must have a default value.")
+    if param.annotation == inspect.Parameter.empty:
+        raise TypeError(f"Parameter '{param.name}' must have a type annotation.")
+
+    # Validate annotation is a supported type
+    supported_types = {int, float, str, bool}
+    if param.annotation not in supported_types:
+        raise TypeError(
+            f"Parameter '{param.name}' has unsupported type annotation '{param.annotation}'. "
+            f"Supported types are: int, float, str, bool"
+        )
+
+
+def get_method_parameters(func: Callable[..., Any]) -> list[tuple[str, Any, Any]]:
+    """Extract keyword-only parameters with defaults from an inference method.
+
+    Args:
+        func: The inference method.
+
+    Returns:
+        A list of tuples (name, type annotation, default value) for each keyword-only parameter.
+    """
+    func_signature = inspect.signature(func)
+    params = list(func_signature.parameters.values())
+    return [(param.name, param.annotation, param.default) for param in params[2:]]
+
 
 def inference_api(
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
-) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
+) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
     return func
 
 
 def partitioned_api(
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
-) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
+) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
     func.__dict__["_is_partitioned_api"] = True
     return func
@@ -296,8 +338,8 @@ def partitioned_api(
     " Use snowflake.ml.custom_model.partitioned_api instead."
 )
 def partitioned_inference_api(
-    func: Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame],
-) -> Callable[[model_types.CustomModelType, pd.DataFrame], pd.DataFrame]:
+    func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
+) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:
     func.__dict__["_is_inference_api"] = True
     func.__dict__["_is_partitioned_api"] = True
     return func

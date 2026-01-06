@@ -1,5 +1,33 @@
 # Release History
 
+## 1.22.0
+
+### New Features
+
+* Registry: Introducing remotely logging a transformer pipeline model using SPCS job.
+
+```python
+# create reference of the model
+model = huggingface.TransformersPipeline(
+    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    task="text-generation",
+)
+
+# Remotely log the model, a SPCS job will run async and log the model
+mv = registry.log_model(
+    model=model,
+    model_name="tinyllama_remote_log",
+    target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+    signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+)
+```
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
 ## 1.21.0
 
 ### New Features

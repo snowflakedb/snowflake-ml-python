@@ -278,5 +278,138 @@ class XgboostHandlerTest(absltest.TestCase):
             )
 
 
+class XgboostVersionHandlingTest(absltest.TestCase):
+    """Tests for XGBoost version-specific handling."""
+
+    def test_gpu_params_xgboost_before_3_1_0(self) -> None:
+        """Test that XGBoost < 3.1.0 uses legacy gpu_hist tree_method."""
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = xgboost.XGBClassifier(n_estimators=10, max_depth=3, n_jobs=1)
+        classifier.fit(cal_X_train, cal_y_train)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                sample_input_data=cal_X_test,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=False),
+            )
+
+            # Test with XGBoost version < 3.1.0
+            with mock.patch.object(xgboost, "__version__", "2.1.4"):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(options={"use_gpu": True})
+
+                assert pk.model is not None
+                assert isinstance(pk.model, xgboost.XGBModel)
+                # For XGBModel, get_params() returns the parameters
+                params = pk.model.get_params()
+                self.assertEqual(params.get("tree_method"), "gpu_hist")
+                self.assertEqual(params.get("predictor"), "gpu_predictor")
+
+    def test_gpu_params_xgboost_3_1_0_and_later(self) -> None:
+        """Test that XGBoost >= 3.1.0 uses device=cuda for GPU acceleration."""
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = xgboost.XGBClassifier(n_estimators=10, max_depth=3, n_jobs=1)
+        classifier.fit(cal_X_train, cal_y_train)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                sample_input_data=cal_X_test,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=False),
+            )
+
+            # Test with XGBoost version >= 3.1.0
+            with mock.patch.object(xgboost, "__version__", "3.1.0"):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(options={"use_gpu": True})
+
+                assert pk.model is not None
+                assert isinstance(pk.model, xgboost.XGBModel)
+                params = pk.model.get_params()
+                self.assertEqual(params.get("tree_method"), "hist")
+                self.assertEqual(params.get("device"), "cuda")
+
+    def test_shap_incompatible_with_xgboost_3_1_raises_error(self) -> None:
+        """Test that SHAP < 0.50.0 with XGBoost >= 3.1.0 raises RuntimeError."""
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = xgboost.XGBClassifier(n_estimators=10, max_depth=3, n_jobs=1)
+        classifier.fit(cal_X_train, cal_y_train)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                sample_input_data=cal_X_test,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=True),
+            )
+
+            # Test with XGBoost >= 3.1.0 and SHAP < 0.50.0
+            with mock.patch.object(xgboost, "__version__", "3.1.0"):
+                with mock.patch.object(shap, "__version__", "0.46.0"):
+                    pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                    pk.load(as_custom_model=True)
+
+                    explain_method = getattr(pk.model, "explain", None)
+                    assert callable(explain_method)
+
+                    with self.assertRaises(RuntimeError) as context:
+                        explain_method(cal_X_test)
+
+                    self.assertIn("SHAP version 0.46.0 is incompatible", str(context.exception))
+                    self.assertIn("XGBoost version 3.1.0", str(context.exception))
+                    self.assertIn("SHAP >= 0.50.0", str(context.exception))
+
+    def test_shap_compatible_with_xgboost_before_3_1(self) -> None:
+        """Test that any SHAP version works with XGBoost < 3.1.0."""
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = xgboost.XGBClassifier(n_estimators=10, max_depth=3, n_jobs=1)
+        classifier.fit(cal_X_train, cal_y_train)
+        expected_explanations = shap.TreeExplainer(classifier)(cal_X_test).values
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                sample_input_data=cal_X_test,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.XGBModelSaveOptions(enable_explainability=True),
+            )
+
+            # Test with XGBoost < 3.1.0 and old SHAP - should work fine
+            with mock.patch.object(xgboost, "__version__", "2.1.4"):
+                with mock.patch.object(shap, "__version__", "0.46.0"):
+                    pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                    pk.load(as_custom_model=True)
+
+                    explain_method = getattr(pk.model, "explain", None)
+                    assert callable(explain_method)
+
+                    # Should not raise error
+                    result = explain_method(cal_X_test)
+                    np.testing.assert_allclose(result, expected_explanations)
+
+
 if __name__ == "__main__":
     absltest.main()

@@ -4,11 +4,11 @@ from unittest import mock
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import spec_utils
+from snowflake.ml.jobs._utils import runtime_env_utils
 from snowflake.snowpark.row import Row
 
 
-class SpecUtilsTests(parameterized.TestCase):
+class RuntimeEnvUtilsTests(parameterized.TestCase):
     @parameterized.named_parameters(  # type: ignore[misc]
         {
             "testcase_name": "basic_spcs_runtime",
@@ -24,7 +24,10 @@ class SpecUtilsTests(parameterized.TestCase):
                                         "/snowflake/images/snowflake_images/st_plat/runtime/"
                                         "x86/runtime_image/snowbooks:1.5.0"
                                     ),
-                                }
+                                },
+                                "createdOn": "2025-01-16T10:30:45.123Z",
+                                "description": "First ML Job Runtime with Python 3.11",
+                                "id": "nre-3.11-runtime-a",
                             }
                         }
                     )
@@ -51,6 +54,9 @@ class SpecUtilsTests(parameterized.TestCase):
                                 },
                                 "randomOuterKey": "outerValue",
                                 "extraOuterField": 42,
+                                "createdOn": "2025-01-16T10:30:45.123Z",
+                                "description": "First ML Job Runtime with Python 3.11",
+                                "id": "nre-3.11-runtime-a",
                             },
                             "random_key": "random_value",
                         }
@@ -73,7 +79,10 @@ class SpecUtilsTests(parameterized.TestCase):
                                         "/snowflake/images/snowflake_images/st_plat/runtime/"
                                         "x86/runtime_image/snowbooks:1.5.0"
                                     ),
-                                }
+                                },
+                                "createdOn": "2025-01-16T10:30:45.123Z",
+                                "description": "First ML Job Runtime with Python 3.11",
+                                "id": "nre-3.11-runtime-a",
                             }
                         }
                     )
@@ -94,7 +103,10 @@ class SpecUtilsTests(parameterized.TestCase):
                                     "runtimeContainerImage": (
                                         "/snowflake/images/snowflake_images/st_plat/runtime/x86/runtime_image/snowbooks"
                                     ),
-                                }
+                                },
+                                "createdOn": "2025-01-16T10:30:45.123Z",
+                                "description": "First ML Job Runtime with Python 3.11",
+                                "id": "nre-3.11-runtime-a",
                             }
                         }
                     )
@@ -116,7 +128,10 @@ class SpecUtilsTests(parameterized.TestCase):
                                         "/snowflake/images/snowflake_images/st_plat/runtime/"
                                         "x86/runtime_image/snowbooks:1.5.0"
                                     ),
-                                }
+                                },
+                                "createdOn": "2025-01-16T10:30:45.123Z",
+                                "description": "First ML Job Runtime with Python 3.11",
+                                "id": "nre-3.11-runtime-a",
                             }
                         }
                     )
@@ -131,7 +146,7 @@ class SpecUtilsTests(parameterized.TestCase):
                     RESULT=json.dumps(
                         {
                             "MLJOB-RUNTIME-A:spcs": {
-                                "createdOn": "2025-01-15T10:30:45.123Z",
+                                "createdOn": "2025-01-16T10:30:45.123Z",
                                 "description": "First ML Job Runtime with Python 3.11",
                                 "id": "nre-3.11-runtime-a",
                                 "title": "ML Job Runtime A",
@@ -395,9 +410,10 @@ class SpecUtilsTests(parameterized.TestCase):
 
             mock_query.return_value = query_result
 
-            result = spec_utils._get_runtime_image(
+            result = runtime_env_utils.find_runtime_image(
                 mock.Mock(),
                 "CPU",
+                "3.11",
             )
             self.assertEqual(expected, result)
 

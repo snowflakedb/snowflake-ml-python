@@ -4,6 +4,7 @@ package(default_visibility = [
     "//bazel:snowml_public_common",
     "//snowflake/ml/model/_client/ops:__pkg__",
     "//snowflake/ml/model/models:__pkg__",
+    "//snowflake/ml/registry/_manager:__pkg__",
 ])
 
 py_library(
@@ -31,5 +32,13 @@ py_test(
         ":model_deployment_spec",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:inference_engine",
+    ],
+)
+
+py_library(
+    name = "import_model_spec_schema",
+    srcs = ["import_model_spec_schema.py"],
+    deps = [
+        ":model_deployment_spec_schema",
     ],
 )

@@ -1,5 +1,6 @@
 import enum
 import json
+import logging
 import os
 import pathlib
 import tempfile
@@ -11,9 +12,9 @@ from typing_extensions import NotRequired
 
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.exceptions import error_codes, exceptions
-from snowflake.ml._internal.utils import formatting, identifier, sql_identifier
+from snowflake.ml._internal.utils import formatting, identifier, sql_identifier, url
 from snowflake.ml.model import model_signature, type_hints
-from snowflake.ml.model._client.ops import metadata_ops
+from snowflake.ml.model._client.ops import deployment_step, metadata_ops
 from snowflake.ml.model._client.sql import (
     model as model_sql,
     model_version as model_version_sql,
@@ -32,6 +33,8 @@ from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model._signatures import snowpark_handler
 from snowflake.snowpark import dataframe, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
+
+logger = logging.getLogger(__name__)
 
 
 # An enum class to represent Create Or Alter Model SQL command.
@@ -986,6 +989,7 @@ class ModelOperator:
         statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
         explain_case_sensitive: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -1002,6 +1006,7 @@ class ModelOperator:
         strict_input_validation: bool = False,
         statement_params: Optional[dict[str, str]] = None,
         explain_case_sensitive: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         ...
 
@@ -1022,6 +1027,7 @@ class ModelOperator:
         statement_params: Optional[dict[str, str]] = None,
         is_partitioned: Optional[bool] = None,
         explain_case_sensitive: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[type_hints.SupportedDataType, dataframe.DataFrame]:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
@@ -1057,6 +1063,24 @@ class ModelOperator:
                 col_name = sql_identifier.SqlIdentifier(input_feature.name.upper(), case_sensitive=True)
             input_args.append(col_name)
 
+        method_parameters: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None
+        if signature.params:
+            # Start with defaults from signature
+            final_params = {}
+            for param_spec in signature.params:
+                if hasattr(param_spec, "default_value"):
+                    final_params[param_spec.name] = param_spec.default_value
+
+            # Override with provided runtime parameters
+            if params:
+                final_params.update(params)
+
+            # Convert to list of tuples with SqlIdentifier for parameter names
+            method_parameters = [
+                (sql_identifier.SqlIdentifier(param_name), param_value)
+                for param_name, param_value in final_params.items()
+            ]
+
         returns = []
         for output_feature in signature.outputs:
             output_name = identifier_rule.get_sql_identifier_from_feature(output_feature.name)
@@ -1075,6 +1099,7 @@ class ModelOperator:
                 schema_name=schema_name,
                 service_name=service_name,
                 statement_params=statement_params,
+                params=method_parameters,
             )
         else:
             assert model_name is not None
@@ -1090,6 +1115,7 @@ class ModelOperator:
                     model_name=model_name,
                     version_name=version_name,
                     statement_params=statement_params,
+                    params=method_parameters,
                 )
             elif method_function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value:
                 df_res = self._model_version_client.invoke_table_function_method(
@@ -1105,6 +1131,7 @@ class ModelOperator:
                     statement_params=statement_params,
                     is_partitioned=is_partitioned or False,
                     explain_case_sensitive=explain_case_sensitive,
+                    params=method_parameters,
                 )
 
         if keep_order:
@@ -1238,3 +1265,35 @@ class ModelOperator:
                     target_path=local_file_dir,
                     statement_params=statement_params,
                 )
+
+    def run_import_model_query(
+        self,
+        *,
+        database_name: str,
+        schema_name: str,
+        yaml_content: str,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> None:
+        yaml_content_escaped = snowpark_utils.escape_single_quotes(yaml_content)  # type: ignore[no-untyped-call]
+
+        async_job = self._session.sql(
+            f"SELECT SYSTEM$IMPORT_MODEL('{yaml_content_escaped}')",
+        ).collect(block=False, statement_params=statement_params)
+        query_id = async_job.query_id  # type: ignore[attr-defined]
+
+        logger.info(f"Remotely importing model, with the query id: {query_id}")
+        model_logger_service_name = sql_identifier.SqlIdentifier(
+            deployment_step.get_service_id_from_deployment_step(
+                query_id,
+                deployment_step.DeploymentStep.MODEL_LOGGING,
+            )
+        )
+
+        logger_name = model_logger_service_name.identifier()
+        job_url = f"{url.JOB_URL_PREFIX}/{database_name}/{schema_name}/{logger_name}"
+        snowflake_url = url.get_snowflake_url(session=self._session, url_path=job_url)
+        logger.info(
+            f"To monitor the progress of the model logging job, head to the job monitoring page {snowflake_url}"
+        )
+
+        async_job.result()  # type: ignore[attr-defined]

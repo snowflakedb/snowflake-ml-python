@@ -1711,6 +1711,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                params=None,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1764,6 +1765,7 @@ class ModelOpsTest(absltest.TestCase):
                     model_name=sql_identifier.SqlIdentifier("MODEL"),
                     version_name=sql_identifier.SqlIdentifier("V1"),
                     statement_params=self.m_statement_params,
+                    params=None,
                 )
                 mock_convert_to_df.assert_called_once_with(
                     m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1816,6 +1818,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                params=None,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -1861,6 +1864,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                params=None,
             )
             mock_convert_to_df.assert_not_called()
 
@@ -1905,6 +1909,7 @@ class ModelOpsTest(absltest.TestCase):
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("V1"),
                 statement_params=self.m_statement_params,
+                params=None,
             )
             mock_convert_to_df.assert_not_called()
 
@@ -1960,6 +1965,7 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
                 explain_case_sensitive=False,
+                params=None,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -2019,6 +2025,7 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
                 is_partitioned=True,
                 explain_case_sensitive=False,
+                params=None,
             )
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
@@ -2061,7 +2068,140 @@ class ModelOpsTest(absltest.TestCase):
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 statement_params=self.m_statement_params,
+                params=None,
             )
+            mock_convert_to_df.assert_not_called()
+
+    def test_invoke_method_with_params(self) -> None:
+        """Test that method parameters are correctly passed through invoke_method."""
+        # Create a signature with params
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+                model_signature.ParamSpec(name="top_k", dtype=model_signature.DataType.INT64, default_value=10),
+                model_signature.ParamSpec(
+                    name="message", dtype=model_signature.DataType.STRING, default_value="default"
+                ),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ) as mock_validate_snowpark_data,
+            mock.patch.object(
+                self.m_ops._model_version_client, "invoke_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
+        ):
+            # Pass runtime params that override defaults
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                params={"temperature": 0.7, "message": "it's a test"},  # Override some defaults
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+
+            # Verify parameters were passed correctly
+            mock_invoke_method.assert_called_once()
+            call_kwargs = mock_invoke_method.call_args.kwargs
+            self.assertEqual(call_kwargs["method_name"], sql_identifier.SqlIdentifier("PREDICT"))
+            self.assertEqual(call_kwargs["input_df"], m_df)
+            self.assertEqual(call_kwargs["input_args"], ["INPUT"])
+
+            # Check parameters: should have all three params with overrides applied
+            parameters = call_kwargs["params"]
+            self.assertIsNotNone(parameters)
+            self.assertEqual(len(parameters), 3)
+
+            # Convert to dict for easier assertion
+            params_dict = {param_name.identifier(): param_value for param_name, param_value in parameters}
+            self.assertEqual(params_dict["TEMPERATURE"], 0.7)  # Overridden
+            self.assertEqual(params_dict["TOP_K"], 10)  # Default
+            self.assertEqual(params_dict["MESSAGE"], "it's a test")  # Overridden with single quote
+
+            mock_convert_to_df.assert_not_called()
+
+    def test_invoke_method_service_with_params(self) -> None:
+        """Test that method parameters are correctly passed through invoke_method for service invocation."""
+        # Create a signature with params
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+                model_signature.ParamSpec(name="top_k", dtype=model_signature.DataType.INT64, default_value=10),
+                model_signature.ParamSpec(
+                    name="message", dtype=model_signature.DataType.STRING, default_value="default"
+                ),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ) as mock_validate_snowpark_data,
+            mock.patch.object(
+                self.m_ops._service_client, "invoke_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
+        ):
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                statement_params=self.m_statement_params,
+                params={"temperature": 0.5},
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+
+            # Verify parameters were passed correctly to service client
+            mock_invoke_method.assert_called_once()
+            call_kwargs = mock_invoke_method.call_args.kwargs
+            parameters = call_kwargs["params"]
+            self.assertIsNotNone(parameters)
+            self.assertEqual(len(parameters), 3)
+
+            param_name, param_value = parameters[0]
+            self.assertEqual(param_name.identifier(), "TEMPERATURE")
+            self.assertEqual(param_value, 0.5)
+
+            param_name, param_value = parameters[1]
+            self.assertEqual(param_name.identifier(), "TOP_K")
+            self.assertEqual(param_value, 10)
+
+            param_name, param_value = parameters[2]
+            self.assertEqual(param_name.identifier(), "MESSAGE")
+            self.assertEqual(param_value, "default")
+
             mock_convert_to_df.assert_not_called()
 
     def test_get_comment_1(self) -> None:

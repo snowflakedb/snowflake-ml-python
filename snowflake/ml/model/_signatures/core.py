@@ -191,6 +191,35 @@ class DataType(Enum):
             original_exception=NotImplementedError(f"Type {snowpark_type} is not supported as a DataType."),
         )
 
+    @classmethod
+    def from_python_type(cls, python_type: type) -> "DataType":
+        """Translate Python built-in type to DataType for signature definition.
+
+        Args:
+            python_type: A Python built-in type (int, float, str, bool).
+
+        Raises:
+            SnowflakeMLException: NotImplementedError: Raised when the given Python type is not supported.
+
+        Returns:
+            Corresponding DataType.
+        """
+        python_to_snowml_type_mapping: dict[type, "DataType"] = {
+            int: DataType.INT64,
+            float: DataType.DOUBLE,
+            str: DataType.STRING,
+            bool: DataType.BOOL,
+        }
+        if python_type in python_to_snowml_type_mapping:
+            return python_to_snowml_type_mapping[python_type]
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_IMPLEMENTED,
+            original_exception=NotImplementedError(
+                f"Python type {python_type} is not supported as a DataType. "
+                f"Supported types are: {list(python_to_snowml_type_mapping.keys())}."
+            ),
+        )
+
 
 class BaseFeatureSpec(ABC):
     """Abstract Class for specification of a feature."""
@@ -764,10 +793,17 @@ class ModelSignature:
                 the output of the model.
             params: A sequence of parameter specifications and parameter group specifications that will compose
                 the parameters of the model. Defaults to None.
+
+        Raises:
+            SnowflakeMLException: ValueError: When the parameters have duplicate names or the same
+                names as input features.
+
+        # noqa: DAR402
         """
         self._inputs = inputs
         self._outputs = outputs
         self._params = params or []
+        self._name_validation()
 
     @property
     def inputs(self) -> Sequence[BaseFeatureSpec]:
@@ -878,6 +914,55 @@ class ModelSignature:
         """
 
         return html_utils.create_base_container("Model Signature", content)
+
+    def _name_validation(self) -> None:
+        """Validate the names of the inputs and parameters.
+
+        Names are compared case-insensitively (matches Snowflake identifier behavior).
+
+        Raises:
+            SnowflakeMLException: ValueError: When the parameters have duplicate names or the same
+                names as input features.
+        """
+        input_names: set[str] = set()
+        for input_spec in self._inputs:
+            names = (
+                [input_spec.name.upper() for spec in input_spec._specs]
+                if isinstance(input_spec, FeatureGroupSpec)
+                else [input_spec.name.upper()]
+            )
+            input_names.update(names)
+
+        param_names: set[str] = set()
+        dup_params: set[str] = set()
+        collision_names: set[str] = set()
+
+        for param in self._params:
+            names = [spec.name for spec in param.specs] if isinstance(param, ParamGroupSpec) else [param.name]
+            for name in names:
+                if name.upper() in param_names:
+                    dup_params.add(name)
+                if name.upper() in input_names:
+                    collision_names.add(name)
+                param_names.add(name.upper())
+
+        if dup_params:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Found duplicate parameter named resolved as {', '.join(sorted(dup_params))}."
+                    " Parameters must have distinct names (case-insensitive)."
+                ),
+            )
+
+        if collision_names:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Found parameter(s) with the same name as input feature(s): {', '.join(sorted(collision_names))}."
+                    " Parameters and inputs must have distinct names (case-insensitive)."
+                ),
+            )
 
     @classmethod
     def from_mlflow_sig(cls, mlflow_sig: "mlflow.models.ModelSignature") -> "ModelSignature":

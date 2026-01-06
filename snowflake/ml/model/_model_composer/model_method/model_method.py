@@ -105,7 +105,7 @@ class ModelMethod:
         except ValueError as e:
             raise ValueError(
                 f"Your target method {self.target_method} cannot be resolved as valid SQL identifier. "
-                "Try specify `case_sensitive` as True."
+                "Try specifying `case_sensitive` as True."
             ) from e
 
         if self.target_method not in self.model_meta.signatures.keys():
@@ -127,10 +127,39 @@ class ModelMethod:
         except ValueError as e:
             raise ValueError(
                 f"Your feature {feature.name} cannot be resolved as valid SQL identifier. "
-                "Try specify `case_sensitive` as True."
+                "Try specifying `case_sensitive` as True."
             ) from e
         return model_manifest_schema.ModelMethodSignatureFieldWithName(
             name=feature_name.resolved(), type=type_utils.convert_sp_to_sf_type(feature.as_snowpark_type())
+        )
+
+    @staticmethod
+    def _flatten_params(params: list[model_signature.BaseParamSpec]) -> list[model_signature.ParamSpec]:
+        """Flatten ParamGroupSpec into leaf ParamSpec items."""
+        result: list[model_signature.ParamSpec] = []
+        for param in params:
+            if isinstance(param, model_signature.ParamSpec):
+                result.append(param)
+            elif isinstance(param, model_signature.ParamGroupSpec):
+                result.extend(ModelMethod._flatten_params(param.specs))
+        return result
+
+    @staticmethod
+    def _get_method_arg_from_param(
+        param_spec: model_signature.ParamSpec,
+        case_sensitive: bool = False,
+    ) -> model_manifest_schema.ModelMethodSignatureFieldWithNameAndDefault:
+        try:
+            param_name = sql_identifier.SqlIdentifier(param_spec.name, case_sensitive=case_sensitive)
+        except ValueError as e:
+            raise ValueError(
+                f"Your parameter {param_spec.name} cannot be resolved as valid SQL identifier. "
+                "Try specifying `case_sensitive` as True."
+            ) from e
+        return model_manifest_schema.ModelMethodSignatureFieldWithNameAndDefault(
+            name=param_name.resolved(),
+            type=type_utils.convert_sp_to_sf_type(param_spec.dtype.as_snowpark_type()),
+            default=param_spec.default_value,
         )
 
     def save(
@@ -182,6 +211,36 @@ class ModelMethod:
             inputs=input_list,
             outputs=outputs,
         )
+
+        # Add parameters if signature has parameters
+        if self.model_meta.signatures[self.target_method].params:
+            flat_params = ModelMethod._flatten_params(list(self.model_meta.signatures[self.target_method].params))
+            param_list = [
+                ModelMethod._get_method_arg_from_param(
+                    param_spec, case_sensitive=self.options.get("case_sensitive", False)
+                )
+                for param_spec in flat_params
+            ]
+            param_name_counter = collections.Counter([param_info["name"] for param_info in param_list])
+            dup_param_names = [k for k, v in param_name_counter.items() if v > 1]
+            if dup_param_names:
+                raise ValueError(
+                    f"Found duplicate parameter named resolved as {', '.join(dup_param_names)} in the method"
+                    f" {self.target_method}. This might be because you have parameters with same letters but "
+                    "different cases. In this case, set case_sensitive as True for those methods to distinguish them."
+                )
+
+            # Check for name collisions between parameters and inputs using existing counters
+            collision_names = [name for name in param_name_counter if name in input_name_counter]
+            if collision_names:
+                raise ValueError(
+                    f"Found parameter(s) with the same name as input feature(s): {', '.join(sorted(collision_names))} "
+                    f"in the method {self.target_method}. Parameters and inputs must have distinct names. "
+                    "Try using case_sensitive=True if the names differ only by case."
+                )
+
+            method_dict["params"] = param_list
+
         should_set_volatility = (
             platform_capabilities.PlatformCapabilities.get_instance().is_set_module_functions_volatility_from_manifest()
         )

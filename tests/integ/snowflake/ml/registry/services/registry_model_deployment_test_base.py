@@ -14,7 +14,7 @@ import retrying
 from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
 from snowflake.ml.model._client.model import inference_engine_utils
-from snowflake.ml.model._client.ops import service_ops
+from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.ml.utils import authentication
 from snowflake.snowpark import row
@@ -186,19 +186,22 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
 
         # stream service logs in a thread
         model_build_service_name = sql_identifier.SqlIdentifier(
-            mv._service_ops._get_service_id_from_deployment_step(query_id, service_ops.DeploymentStep.MODEL_BUILD)
+            deployment_step.get_service_id_from_deployment_step(
+                query_id,
+                deployment_step.DeploymentStep.MODEL_BUILD,
+            )
         )
         model_build_service = service_ops.ServiceLogInfo(
             database_name=database,
             schema_name=schema,
             service_name=model_build_service_name,
-            deployment_step=service_ops.DeploymentStep.MODEL_BUILD,
+            deployment_step=deployment_step.DeploymentStep.MODEL_BUILD,
         )
         model_inference_service = service_ops.ServiceLogInfo(
             database_name=database,
             schema_name=schema,
             service_name=service,
-            deployment_step=service_ops.DeploymentStep.MODEL_INFERENCE,
+            deployment_step=deployment_step.DeploymentStep.MODEL_INFERENCE,
         )
 
         log_thread = mv._service_ops._start_service_log_streaming(

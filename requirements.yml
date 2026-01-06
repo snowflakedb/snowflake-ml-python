@@ -104,6 +104,8 @@
   dev_version: 7.6.1
 - name_pypi: datasets
   dev_version_pypi: 3.3.2
+  tags:
+    - build_test_env
 - name: flask-cors
   dev_version: 3.0.10
 - name: flask
@@ -261,6 +263,11 @@
 - name: sqlparse
   dev_version: 0.4.4
   version_requirements: '>=0.4,<1'
+- name_conda: snappy
+  dev_version: 1.2.1
+  requirements_extra_tags:
+    - tensorflow
+    - keras
 - name: tensorflow
   dev_version: 2.17.0
   version_requirements: '>=2.17.0,<3'

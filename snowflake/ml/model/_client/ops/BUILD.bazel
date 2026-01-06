@@ -8,6 +8,12 @@ package(default_visibility = [
 ])
 
 py_library(
+    name = "deployment_step",
+    srcs = ["deployment_step.py"],
+    deps = [],
+)
+
+py_library(
     name = "model_ops",
     srcs = ["model_ops.py"],
     deps = [
@@ -15,8 +21,10 @@ py_library(
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:url",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_client/ops:deployment_step",
         "//snowflake/ml/model/_client/sql:model",
         "//snowflake/ml/model/_client/sql:model_version",
         "//snowflake/ml/model/_client/sql:service",
@@ -81,6 +89,7 @@ py_library(
         "//snowflake/ml/jobs:ml_job",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_client/model:batch_inference_specs",
+        "//snowflake/ml/model/_client/ops:deployment_step",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",
         "//snowflake/ml/model/_client/sql:stage",

@@ -3,6 +3,21 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
+    name = "code_path",
+    srcs = ["code_path.py"],
+    deps = [],
+)
+
+py_test(
+    name = "code_path_test",
+    srcs = ["code_path_test.py"],
+    tags = ["feature:model_registry"],
+    deps = [
+        ":code_path",
+    ],
+)
+
+py_library(
     name = "event_handler",
     srcs = ["event_handler.py"],
     deps = [],
@@ -12,6 +27,7 @@ py_library(
     name = "type_hints",
     srcs = ["type_hints.py"],
     deps = [
+        ":code_path",
         ":target_platform",
         ":task",
         ":volatility",
@@ -88,6 +104,7 @@ py_library(
     name = "model",
     srcs = ["__init__.py"],
     deps = [
+        ":code_path",
         "//snowflake/ml/model/_client/model:batch_inference_specs",
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",

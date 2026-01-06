@@ -28,6 +28,7 @@ from snowflake.ml.jobs._utils import (
     feature_flags,
     payload_utils,
     query_helper,
+    runtime_env_utils,
     spec_utils,
     types,
 )
@@ -1285,7 +1286,9 @@ class JobManagerTest(JobTestBase):
         resources = spec_utils._get_node_resources(self.session, self.compute_pool)
         hardware = "GPU" if resources.gpu > 0 else "CPU"
         try:
-            expected_runtime_image = spec_utils._get_runtime_image(self.session, hardware)
+            expected_runtime_image = runtime_env_utils._get_runtime_image(
+                self.session, hardware, f"{sys.version_info.major}.{sys.version_info.minor}"
+            )
         except Exception:
             expected_runtime_image = None
 

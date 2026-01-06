@@ -5,8 +5,8 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import openai_signatures
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model import compute_pool, openai_signatures
+from snowflake.ml.model.models import huggingface, huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -136,6 +136,38 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             },
             use_model_logging=True,
         )
+
+    @parameterized.product(  # type: ignore[misc]
+        compute_pool_for_log=[
+            compute_pool.DEFAULT_CPU_COMPUTE_POOL,
+            compute_pool.DEFAULT_GPU_COMPUTE_POOL,
+            None,
+        ],
+    )
+    def test_remote_log_model(self, compute_pool_for_log: Optional[str]) -> None:
+        if compute_pool_for_log is compute_pool.DEFAULT_CPU_COMPUTE_POOL:
+            # test the default behavior, do not pass compute_pool_for_log
+            model = huggingface.TransformersPipeline(
+                model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                task="text-generation",
+            )
+        else:
+            # test
+            # 1. the remote logging behavior, pass compute_pool_for_log
+            # 2. the local mode behavior, pass None
+            model = huggingface.TransformersPipeline(
+                model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                task="text-generation",
+                compute_pool_for_log=compute_pool_for_log,
+            )
+        mv = self.registry.log_model(
+            model=model,
+            model_name="tinyllama_remote_log",
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+        )
+
+        assert mv is not None
 
 
 if __name__ == "__main__":

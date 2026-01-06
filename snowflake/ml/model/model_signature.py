@@ -34,6 +34,9 @@ DataType = core.DataType
 BaseFeatureSpec = core.BaseFeatureSpec
 FeatureSpec = core.FeatureSpec
 FeatureGroupSpec = core.FeatureGroupSpec
+BaseParamSpec = core.BaseParamSpec
+ParamSpec = core.ParamSpec
+ParamGroupSpec = core.ParamGroupSpec
 ModelSignature = core.ModelSignature
 
 
@@ -711,6 +714,7 @@ def infer_signature(
     output_feature_names: Optional[list[str]] = None,
     input_data_limit: Optional[int] = 100,
     output_data_limit: Optional[int] = 100,
+    params: Optional[Sequence[core.BaseParamSpec]] = None,
 ) -> core.ModelSignature:
     """
     Infer model signature from given input and output sample data.
@@ -740,12 +744,20 @@ def infer_signature(
         output_data_limit: Limit the number of rows to be used in signature inference in the output data. Defaults to
             100. If None, all rows are used. If the number of rows in the output data is less than the limit, all rows
             are used.
+        params: Optional sequence of parameter specifications to include in the signature. Parameters define
+            optional configuration values that can be passed to model inference. Defaults to None.
+
+    Raises:
+        SnowflakeMLException: ValueError: Raised when input data contains columns matching parameter names.
 
     Returns:
         A model signature inferred from the given input and output sample data.
+
+    # noqa: DAR402
     """
     inputs = _infer_signature(_truncate_data(input_data, input_data_limit), role="input")
     inputs = utils.rename_features(inputs, input_feature_names)
+
     outputs = _infer_signature(_truncate_data(output_data, output_data_limit), role="output")
     outputs = utils.rename_features(outputs, output_feature_names)
-    return core.ModelSignature(inputs, outputs)
+    return core.ModelSignature(inputs, outputs, params=params)
