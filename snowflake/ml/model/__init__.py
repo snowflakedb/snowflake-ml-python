@@ -2,16 +2,20 @@ import sys
 import warnings
 
 from snowflake.ml.model._client.model.batch_inference_specs import (
+    ColumnHandlingOptions,
+    FileEncoding,
     JobSpec,
     OutputSpec,
     SaveMode,
 )
 from snowflake.ml.model._client.model.model_impl import Model
 from snowflake.ml.model._client.model.model_version_impl import ExportMode, ModelVersion
+from snowflake.ml.model.code_path import CodePath
 from snowflake.ml.model.models.huggingface_pipeline import HuggingFacePipelineModel
 from snowflake.ml.model.volatility import Volatility
 
 __all__ = [
+    "CodePath",
     "Model",
     "ModelVersion",
     "ExportMode",
@@ -20,6 +24,8 @@ __all__ = [
     "OutputSpec",
     "SaveMode",
     "Volatility",
+    "FileEncoding",
+    "ColumnHandlingOptions",
 ]
 
 _deprecation_warning_msg_for_3_9 = (

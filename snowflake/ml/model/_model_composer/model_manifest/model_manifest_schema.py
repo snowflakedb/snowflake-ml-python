@@ -39,6 +39,10 @@ class ModelMethodSignatureFieldWithName(ModelMethodSignatureField):
     name: Required[str]
 
 
+class ModelMethodSignatureFieldWithNameAndDefault(ModelMethodSignatureFieldWithName):
+    default: Required[Any]
+
+
 class ModelFunctionMethodDict(TypedDict):
     name: Required[str]
     runtime: Required[str]
@@ -46,6 +50,7 @@ class ModelFunctionMethodDict(TypedDict):
     handler: Required[str]
     inputs: Required[list[ModelMethodSignatureFieldWithName]]
     outputs: Required[Union[list[ModelMethodSignatureField], list[ModelMethodSignatureFieldWithName]]]
+    params: NotRequired[list[ModelMethodSignatureFieldWithNameAndDefault]]
     volatility: NotRequired[str]
 
 

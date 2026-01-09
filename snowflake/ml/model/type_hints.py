@@ -13,6 +13,7 @@ from typing import (
 import numpy.typing as npt
 from typing_extensions import NotRequired
 
+from snowflake.ml.model.code_path import CodePath
 from snowflake.ml.model.compute_pool import (
     DEFAULT_CPU_COMPUTE_POOL,
     DEFAULT_GPU_COMPUTE_POOL,
@@ -366,6 +367,7 @@ ModelLoadOption = Union[
 
 
 SupportedTargetPlatformType = Union[TargetPlatform, str]
+CodePathLike = Union[str, CodePath]
 
 
 class ProgressStatus(Protocol):

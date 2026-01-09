@@ -71,6 +71,7 @@ py_test(
         ":test_file_helper",
         "//snowflake/ml/data",
         "//snowflake/ml/jobs",
+        "//snowflake/ml/jobs/_utils:runtime_env_utils",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

@@ -79,6 +79,7 @@ py_test(
 
 py_library(
     name = "callback",
+    srcs = ["__init__.py"],
     deps = [
         ":keras",
         ":lightgbm",

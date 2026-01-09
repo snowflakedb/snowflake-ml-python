@@ -739,6 +739,140 @@ class ModelSignatureMiscTest(absltest.TestCase):
 
         self.assertListEqual(df.columns.to_list(), ["input_feature_0"])
 
+    def test_infer_signature_with_parameters(self) -> None:
+        """Test that infer_signature can accept and pass through parameters."""
+        input_data = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=["a", "b", "c"])
+        output_data = pd.DataFrame([[10], [20]], columns=["result"])
+
+        # Test without parameters (default behavior)
+        sig_no_params = model_signature.infer_signature(input_data, output_data)
+        self.assertEqual(len(sig_no_params.inputs), 3)
+        self.assertEqual(len(sig_no_params.outputs), 1)
+        self.assertEqual(len(sig_no_params.params), 0)
+
+        # Test with parameters passthrough
+        params = [
+            model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=0.7),
+            model_signature.ParamSpec(name="max_tokens", dtype=model_signature.DataType.INT64, default_value=100),
+            model_signature.ParamSpec(name="stop_sequence", dtype=model_signature.DataType.STRING, default_value="END"),
+        ]
+        sig_with_params = model_signature.infer_signature(input_data, output_data, params=params)
+
+        # Verify inputs and outputs are still correctly inferred
+        self.assertEqual(len(sig_with_params.inputs), 3)
+        self.assertEqual(sig_with_params.inputs[0].name, "a")
+        self.assertEqual(sig_with_params.inputs[1].name, "b")
+        self.assertEqual(sig_with_params.inputs[2].name, "c")
+        self.assertEqual(len(sig_with_params.outputs), 1)
+        self.assertEqual(sig_with_params.outputs[0].name, "result")
+
+        # Verify parameters are correctly passed through
+        self.assertEqual(len(sig_with_params.params), 3)
+        self.assertEqual(sig_with_params.params[0].name, "temperature")
+        self.assertEqual(sig_with_params.params[0].dtype, model_signature.DataType.FLOAT)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[0].default_value, 0.7)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[1].name, "max_tokens")
+        self.assertEqual(sig_with_params.params[1].dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[1].default_value, 100)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[2].name, "stop_sequence")
+        self.assertEqual(sig_with_params.params[2].dtype, model_signature.DataType.STRING)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[2].default_value, "END")  # type: ignore[attr-defined]
+
+    def test_infer_signature_with_parameters_serialization(self) -> None:
+        """Test that signatures inferred with parameters can be serialized and deserialized."""
+        input_data = np.array([[1.0, 2.0], [3.0, 4.0]])
+        output_data = np.array([[5.0], [6.0]])
+
+        params = [
+            model_signature.ParamSpec(name="threshold", dtype=model_signature.DataType.DOUBLE, default_value=0.5),
+            model_signature.ParamSpec(name="verbose", dtype=model_signature.DataType.BOOL, default_value=True),
+        ]
+        sig = model_signature.infer_signature(input_data, output_data, params=params)
+
+        # Serialize to dict
+        sig_dict = sig.to_dict()
+        self.assertIn("params", sig_dict)
+        self.assertEqual(len(sig_dict["params"]), 2)
+        self.assertEqual(sig_dict["params"][0]["name"], "threshold")
+        self.assertEqual(sig_dict["params"][0]["dtype"], "DOUBLE")
+        self.assertEqual(sig_dict["params"][0]["default_value"], 0.5)
+
+        # Deserialize from dict
+        restored_sig = model_signature.ModelSignature.from_dict(sig_dict)
+        self.assertEqual(sig, restored_sig)
+        self.assertEqual(len(restored_sig.params), 2)
+        self.assertEqual(restored_sig.params[0].name, "threshold")
+        self.assertEqual(restored_sig.params[1].name, "verbose")
+
+    def test_infer_signature_with_empty_parameters(self) -> None:
+        """Test that infer_signature works with an empty parameters list."""
+        input_data = pd.DataFrame([[1], [2]], columns=["x"])
+        output_data = pd.DataFrame([[1], [2]], columns=["y"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params=[])
+        self.assertEqual(len(sig.params), 0)
+
+        # Verify serialization works
+        sig_dict = sig.to_dict()
+        self.assertEqual(sig_dict["params"], [])
+
+    def test_infer_signature_with_all_options(self) -> None:
+        """Test infer_signature with all optional arguments including parameters."""
+        input_data = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
+        output_data = pd.DataFrame([[10], [20]], columns=["result"])
+
+        params = [
+            model_signature.ParamSpec(name="learning_rate", dtype=model_signature.DataType.FLOAT, default_value=0.01),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=input_data,
+            output_data=output_data,
+            input_feature_names=["input_x", "input_y"],
+            output_feature_names=["prediction"],
+            input_data_limit=50,
+            output_data_limit=50,
+            params=params,
+        )
+
+        # Verify feature names were renamed
+        self.assertEqual(sig.inputs[0].name, "input_x")
+        self.assertEqual(sig.inputs[1].name, "input_y")
+        self.assertEqual(sig.outputs[0].name, "prediction")
+
+        # Verify parameters
+        self.assertEqual(len(sig.params), 1)
+        self.assertEqual(sig.params[0].name, "learning_rate")
+
+    def test_infer_signature_rejects_parameter_columns_in_input(self) -> None:
+        """Test that infer_signature raises an error when input data contains parameter columns."""
+        input_data = pd.DataFrame([[1, 0.5], [2, 0.7]], columns=["value", "temperature"])
+        output_data = pd.DataFrame([[10], [20]], columns=["result"])
+        params = [
+            model_signature.ParamSpec(name="Temperature", dtype=model_signature.DataType.FLOAT, default_value=0.7),
+            model_signature.ParamSpec(name="max_tokens", dtype=model_signature.DataType.INT64, default_value=100),
+        ]
+
+        with self.assertRaisesRegex(ValueError, r"Parameters and inputs must have distinct names") as ctx:
+            model_signature.infer_signature(input_data, output_data, params=params)
+        self.assertIn("Temperature", str(ctx.exception))
+        self.assertIn("Parameters and inputs must have distinct names", str(ctx.exception))
+
+        # Renamed columns matching params should also fail
+        input_data2 = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
+        with self.assertRaisesRegex(ValueError, r"Parameters and inputs must have distinct names") as ctx:
+            model_signature.infer_signature(
+                input_data2, output_data, input_feature_names=["temperature", "other"], params=params
+            )
+        self.assertIn("Temperature", str(ctx.exception))
+        self.assertIn("Parameters and inputs must have distinct names", str(ctx.exception))
+
+        # Non-conflicting columns should succeed
+        input_data3 = pd.DataFrame([[1, 2], [3, 4]], columns=["feature_a", "feature_b"])
+        sig = model_signature.infer_signature(input_data3, output_data, params=params)
+        self.assertEqual(len(sig.inputs), 2)
+        self.assertEqual(len(sig.params), 2)
+
 
 if __name__ == "__main__":
     absltest.main()

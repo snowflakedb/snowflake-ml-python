@@ -2,6 +2,7 @@ from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel
+from typing_extensions import TypedDict
 
 
 class SaveMode(str, Enum):
@@ -16,6 +17,20 @@ class SaveMode(str, Enum):
 
     OVERWRITE = "overwrite"
     ERROR = "error"
+
+
+class FileEncoding(str, Enum):
+    """The encoding of the file content that will be passed to the custom model."""
+
+    RAW_BYTES = "raw_bytes"
+    BASE64 = "base64"
+    BASE64_DATA_URL = "base64_data_url"
+
+
+class ColumnHandlingOptions(TypedDict):
+    """Options for handling specific columns during run_batch for file I/O."""
+
+    encoding: FileEncoding
 
 
 class OutputSpec(BaseModel):
@@ -74,7 +89,7 @@ class JobSpec(BaseModel):
             the memory of the node.
         gpu_requests (Optional[str]): The gpu limit for GPU based inference. Can be integer or
             string values. Use CPU if None.
-        replicas (Optional[int]): Number of job replicas to run for high availability.
+        replicas (Optional[int]): Number of SPCS job nodes used for distributed inference.
             If not specified, defaults to 1 replica.
 
     Example:

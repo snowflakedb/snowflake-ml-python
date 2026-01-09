@@ -131,7 +131,7 @@ class ModelComposer:
         python_version: Optional[str] = None,
         user_files: Optional[dict[str, list[str]]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        code_paths: Optional[list[str]] = None,
+        code_paths: Optional[list[model_types.CodePathLike]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         experiment_info: Optional["ExperimentInfo"] = None,
         options: Optional[model_types.ModelSaveOption] = None,

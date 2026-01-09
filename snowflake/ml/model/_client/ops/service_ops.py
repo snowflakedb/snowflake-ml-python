@@ -1,6 +1,4 @@
 import dataclasses
-import enum
-import hashlib
 import logging
 import pathlib
 import re
@@ -16,6 +14,7 @@ from snowflake.ml._internal.utils import identifier, service_logger, sql_identif
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.ops import deployment_step
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.snowpark import async_job, exceptions, row, session
@@ -25,32 +24,12 @@ module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY
 module_logger.propagate = False
 
 
-class DeploymentStep(enum.Enum):
-    MODEL_BUILD = ("model-build", "model_build_")
-    MODEL_INFERENCE = ("model-inference", None)
-    MODEL_LOGGING = ("model-logging", "model_logging_")
-
-    def __init__(self, container_name: str, service_name_prefix: Optional[str]) -> None:
-        self._container_name = container_name
-        self._service_name_prefix = service_name_prefix
-
-    @property
-    def container_name(self) -> str:
-        """Get the container name for the deployment step."""
-        return self._container_name
-
-    @property
-    def service_name_prefix(self) -> Optional[str]:
-        """Get the service name prefix for the deployment step."""
-        return self._service_name_prefix
-
-
 @dataclasses.dataclass
 class ServiceLogInfo:
     database_name: Optional[sql_identifier.SqlIdentifier]
     schema_name: Optional[sql_identifier.SqlIdentifier]
     service_name: sql_identifier.SqlIdentifier
-    deployment_step: DeploymentStep
+    deployment_step: deployment_step.DeploymentStep
     instance_id: str = "0"
     log_color: service_logger.LogColor = service_logger.LogColor.GREY
 
@@ -353,13 +332,16 @@ class ServiceOperator:
         if is_enable_image_build:
             # stream service logs in a thread
             model_build_service_name = sql_identifier.SqlIdentifier(
-                self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_BUILD)
+                deployment_step.get_service_id_from_deployment_step(
+                    query_id,
+                    deployment_step.DeploymentStep.MODEL_BUILD,
+                )
             )
             model_build_service = ServiceLogInfo(
                 database_name=service_database_name,
                 schema_name=service_schema_name,
                 service_name=model_build_service_name,
-                deployment_step=DeploymentStep.MODEL_BUILD,
+                deployment_step=deployment_step.DeploymentStep.MODEL_BUILD,
                 log_color=service_logger.LogColor.GREEN,
             )
 
@@ -367,21 +349,23 @@ class ServiceOperator:
             database_name=service_database_name,
             schema_name=service_schema_name,
             service_name=service_name,
-            deployment_step=DeploymentStep.MODEL_INFERENCE,
+            deployment_step=deployment_step.DeploymentStep.MODEL_INFERENCE,
             log_color=service_logger.LogColor.BLUE,
         )
 
         model_logger_service: Optional[ServiceLogInfo] = None
         if hf_model_args:
             model_logger_service_name = sql_identifier.SqlIdentifier(
-                self._get_service_id_from_deployment_step(query_id, DeploymentStep.MODEL_LOGGING)
+                deployment_step.get_service_id_from_deployment_step(
+                    query_id, deployment_step.DeploymentStep.MODEL_LOGGING
+                )
             )
 
             model_logger_service = ServiceLogInfo(
                 database_name=service_database_name,
                 schema_name=service_schema_name,
                 service_name=model_logger_service_name,
-                deployment_step=DeploymentStep.MODEL_LOGGING,
+                deployment_step=deployment_step.DeploymentStep.MODEL_LOGGING,
                 log_color=service_logger.LogColor.ORANGE,
             )
 
@@ -536,7 +520,7 @@ class ServiceOperator:
         service = service_log_meta.service
         # check if using an existing model build image
         if (
-            service.deployment_step == DeploymentStep.MODEL_BUILD
+            service.deployment_step == deployment_step.DeploymentStep.MODEL_BUILD
             and not force_rebuild
             and service_log_meta.is_model_logger_service_done
             and not service_log_meta.is_model_build_service_done
@@ -582,16 +566,16 @@ class ServiceOperator:
         if (service_status != service_sql.ServiceStatus.RUNNING) or (service_status != service_log_meta.service_status):
             service_log_meta.service_status = service_status
 
-            if service.deployment_step == DeploymentStep.MODEL_BUILD:
+            if service.deployment_step == deployment_step.DeploymentStep.MODEL_BUILD:
                 module_logger.info(
                     f"Image build service {service.display_service_name} is "
                     f"{service_log_meta.service_status.value}."
                 )
-            elif service.deployment_step == DeploymentStep.MODEL_INFERENCE:
+            elif service.deployment_step == deployment_step.DeploymentStep.MODEL_INFERENCE:
                 module_logger.info(
                     f"Inference service {service.display_service_name} is {service_log_meta.service_status.value}."
                 )
-            elif service.deployment_step == DeploymentStep.MODEL_LOGGING:
+            elif service.deployment_step == deployment_step.DeploymentStep.MODEL_LOGGING:
                 module_logger.info(
                     f"Model logger service {service.display_service_name} is "
                     f"{service_log_meta.service_status.value}."
@@ -627,7 +611,7 @@ class ServiceOperator:
         if service_status == service_sql.ServiceStatus.DONE:
             # check if model logger service is done
             # and transition the service log metadata to the model image build service
-            if service.deployment_step == DeploymentStep.MODEL_LOGGING:
+            if service.deployment_step == deployment_step.DeploymentStep.MODEL_LOGGING:
                 if model_build_service:
                     # building the inference image, transition to the model build service
                     service_log_meta.transition_service_log_metadata(
@@ -648,7 +632,7 @@ class ServiceOperator:
                     )
             # check if model build service is done
             # and transition the service log metadata to the model inference service
-            elif service.deployment_step == DeploymentStep.MODEL_BUILD:
+            elif service.deployment_step == deployment_step.DeploymentStep.MODEL_BUILD:
                 service_log_meta.transition_service_log_metadata(
                     model_inference_service,
                     f"Image build service {service.display_service_name} complete.",
@@ -656,7 +640,7 @@ class ServiceOperator:
                     is_model_logger_service_done=service_log_meta.is_model_logger_service_done,
                     operation_id=operation_id,
                 )
-            elif service.deployment_step == DeploymentStep.MODEL_INFERENCE:
+            elif service.deployment_step == deployment_step.DeploymentStep.MODEL_INFERENCE:
                 module_logger.info(f"Inference service {service.display_service_name} is deployed.")
             else:
                 module_logger.warning(f"Service {service.display_service_name} is done, but not transitioning.")
@@ -916,19 +900,6 @@ class ServiceOperator:
 
             time.sleep(2)  # Poll every 2 seconds
 
-    @staticmethod
-    def _get_service_id_from_deployment_step(query_id: str, deployment_step: DeploymentStep) -> str:
-        """Get the service ID through the server-side logic."""
-        uuid = query_id.replace("-", "")
-        big_int = int(uuid, 16)
-        md5_hash = hashlib.md5(str(big_int).encode()).hexdigest()
-        identifier = md5_hash[:8]
-        service_name_prefix = deployment_step.service_name_prefix
-        if service_name_prefix is None:
-            # raise an exception if the service name prefix is None
-            raise ValueError(f"Service name prefix is {service_name_prefix} for deployment step {deployment_step}.")
-        return (service_name_prefix + identifier).upper()
-
     def _check_if_service_exists(
         self,
         database_name: Optional[sql_identifier.SqlIdentifier],
@@ -971,6 +942,8 @@ class ServiceOperator:
         image_repo_name: Optional[str],
         input_stage_location: str,
         input_file_pattern: str,
+        column_handling: Optional[str],
+        params: Optional[str],
         output_stage_location: str,
         completion_filename: str,
         force_rebuild: bool,
@@ -1007,6 +980,8 @@ class ServiceOperator:
             max_batch_rows=max_batch_rows,
             input_stage_location=input_stage_location,
             input_file_pattern=input_file_pattern,
+            column_handling=column_handling,
+            params=params,
             output_stage_location=output_stage_location,
             completion_filename=completion_filename,
             function_name=function_name,

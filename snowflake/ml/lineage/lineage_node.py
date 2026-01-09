@@ -7,7 +7,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier, mixins
 
 if TYPE_CHECKING:
-    from snowflake.ml import dataset
+    from snowflake.ml.dataset import dataset
     from snowflake.ml.feature_store import feature_view
     from snowflake.ml.model._client.model import model_version_impl
 

@@ -285,6 +285,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 output_stage_location="output_stage_location",
                 completion_filename="completion_filename",
                 input_file_pattern="*",
+                column_handling=None,
+                params=None,
             )
             file_path_str = mds.save()
 
@@ -511,6 +513,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 output_stage_location="output_stage_location",
                 completion_filename="completion_filename",
                 input_file_pattern="*",
+                column_handling=None,
+                params=None,
             )
 
         mds_job = model_deployment_spec.ModelDeploymentSpec()
@@ -529,6 +533,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             output_stage_location="output_stage_location",
             completion_filename="completion_filename",
             input_file_pattern="*",
+            column_handling=None,
+            params=None,
             num_workers=1,
         )
         with self.assertRaisesRegex(ValueError, "Cannot add a service spec when a job spec already exists"):

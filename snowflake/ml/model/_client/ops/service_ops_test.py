@@ -13,7 +13,7 @@ from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine, model_signature
 from snowflake.ml.model._client.model import batch_inference_specs
-from snowflake.ml.model._client.ops import service_ops
+from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.test_utils import mock_data_frame, mock_session
@@ -764,9 +764,9 @@ class ServiceOpsTest(parameterized.TestCase):
         identifier = "81edd120"
         expected = ("model_build_" + identifier).upper()
         self.assertEqual(
-            self.m_ops._get_service_id_from_deployment_step(
+            deployment_step.get_service_id_from_deployment_step(
                 query_id,
-                service_ops.DeploymentStep.MODEL_BUILD,
+                deployment_step.DeploymentStep.MODEL_BUILD,
             ),
             expected,
         )
@@ -1173,6 +1173,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 image_repo_name="IMAGE_REPO",
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
+                column_handling="column_handling",
+                params="params",
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 force_rebuild=True,
@@ -1211,6 +1213,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1000,
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
+                column_handling="column_handling",
+                params="params",
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 function_name="predict",
@@ -1312,6 +1316,8 @@ class ServiceOpsTest(parameterized.TestCase):
                     image_repo_name="IMAGE_REPO",
                     input_stage_location="@input_stage/",
                     input_file_pattern="*.parquet",
+                    column_handling="column_handling",
+                    params="params",
                     output_stage_location="@output_stage/",
                     completion_filename="completion.txt",
                     force_rebuild=True,
@@ -1400,6 +1406,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 image_repo_name=None,
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 force_rebuild=False,
@@ -1422,6 +1430,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=None,
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 function_name="predict",

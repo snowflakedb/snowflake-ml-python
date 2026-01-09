@@ -63,7 +63,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 
-autodoc_mock_imports: list[str] = []
+autodoc_mock_imports: list[str] = ["keras", "lightgbm", "xgboost"]
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 

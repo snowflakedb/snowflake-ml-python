@@ -39,6 +39,8 @@ class Service(BaseModel):
 class Input(BaseModel):
     input_stage_location: str
     input_file_pattern: str
+    column_handling: Optional[str] = None
+    params: Optional[str] = None
 
 
 class Output(BaseModel):
@@ -74,6 +76,7 @@ class HuggingFaceModel(BaseModel):
     task: Optional[str] = None
     tokenizer: Optional[str] = None
     token: Optional[str] = None
+    token_secret_object: Optional[str] = None
     trust_remote_code: Optional[bool] = False
     revision: Optional[str] = None
     hf_model_kwargs: Optional[str] = "{}"

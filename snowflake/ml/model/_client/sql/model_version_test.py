@@ -8,6 +8,7 @@ from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.sql import model_version as model_version_sql
+from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import DataFrame, Row, Session, functions as F, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -491,6 +492,79 @@ class ModelVersionSQLTest(absltest.TestCase):
                 statement_params=m_statement_params,
             )
 
+    def test_invoke_function_method_with_parameters(self) -> None:
+        """Test invoke_function_method with optional parameters."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
+            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2, 0.7, 50)
+                    AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.7),
+                    (sql_identifier.SqlIdentifier("TOP_K"), 50),
+                ],
+            )
+
+    def test_invoke_function_method_with_string_parameter(self) -> None:
+        """Test invoke_function_method with string parameter value."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
+            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, 'gpt-4')
+                    AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("MODEL_NAME"), "gpt-4"),
+                ],
+            )
+
     def test_invoke_table_function_method_no_partition_col(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
@@ -622,6 +696,183 @@ class ModelVersionSQLTest(absltest.TestCase):
                 table_type="temporary",
                 statement_params=m_statement_params,
             )
+
+    def test_invoke_table_function_method_with_parameters(self) -> None:
+        """Test invoke_table_function_method with optional parameters."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        partition_column = "partition_col"
+        self.m_session.add_mock_sql(
+            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+            FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2, 0.5, 40)
+                     OVER (PARTITION BY {partition_column}))
+            """,
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")])
+        c_session = cast(Session, self.m_session)
+        mock_writer = mock.MagicMock()
+        m_df.__setattr__("write", mock_writer)
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
+        with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_table_function_method(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                partition_column=sql_identifier.SqlIdentifier(partition_column),
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.5),
+                    (sql_identifier.SqlIdentifier("TOP_K"), 40),
+                ],
+            )
+            mock_save_as_table.assert_called_once_with(
+                table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
+                mode="errorifexists",
+                table_type="temporary",
+                statement_params=m_statement_params,
+            )
+
+    def test_invoke_table_function_method_with_string_parameter(self) -> None:
+        """Test invoke_table_function_method with string parameter value."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
+            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123,
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, 'gpt-4') OVER (PARTITION BY 1))
+            """,
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")])
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            model_version_sql.ModelVersionSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_table_function_method(
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                partition_column=None,
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("MODEL_NAME"), "gpt-4"),
+                ],
+            )
+
+    def test_invoke_function_method_wide_input_with_params(self) -> None:
+        """Test invoke_function_method with wide input format including params."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
+            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(object_construct_keep_null("""
+            """'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.7, 'TOP_K', 50))
+                    AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            with mock.patch.object(constants, "SNOWPARK_UDF_INPUT_COL_LIMIT", 2):
+                model_version_sql.ModelVersionSQLClient(
+                    c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ).invoke_function_method(
+                    database_name=None,
+                    schema_name=None,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    input_df=cast(DataFrame, m_df),
+                    input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                    returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                    statement_params=m_statement_params,
+                    params=[
+                        (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.7),
+                        (sql_identifier.SqlIdentifier("TOP_K"), 50),
+                    ],
+                )
+
+    def test_invoke_table_function_method_wide_input_with_params(self) -> None:
+        """Test invoke_table_function_method with wide input format including params."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        partition_column = "partition_col"
+        self.m_session.add_mock_sql(
+            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            SELECT *,
+            FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
+                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(object_construct_keep_null("""
+            f"""'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.5))
+                     OVER (PARTITION BY {partition_column}))
+            """,
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")])
+        c_session = cast(Session, self.m_session)
+        mock_writer = mock.MagicMock()
+        m_df.__setattr__("write", mock_writer)
+        m_df.add_query("queries", "query_1")
+        m_df.add_query("queries", "query_2")
+        with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
+            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        ):
+            with mock.patch.object(constants, "SNOWPARK_UDF_INPUT_COL_LIMIT", 2):
+                model_version_sql.ModelVersionSQLClient(
+                    c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ).invoke_table_function_method(
+                    database_name=None,
+                    schema_name=None,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                    input_df=cast(DataFrame, m_df),
+                    input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                    returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                    partition_column=sql_identifier.SqlIdentifier(partition_column),
+                    statement_params=m_statement_params,
+                    params=[
+                        (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.5),
+                    ],
+                )
+                mock_save_as_table.assert_called_once_with(
+                    table_name='TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123',
+                    mode="errorifexists",
+                    table_type="temporary",
+                    statement_params=m_statement_params,
+                )
 
     def test_set_metadata(self) -> None:
         m_statement_params = {"test": "1"}

@@ -32,19 +32,17 @@ py_library(
         ":constants",
         ":feature_flags",
         ":query_helper",
-        ":runtime_env_utils",
         ":types",
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
 )
 
 py_test(
-    name = "spec_utils_test",
-    srcs = ["spec_utils_test.py"],
+    name = "runtime_env_utils_test",
+    srcs = ["runtime_env_utils_test.py"],
     tags = ["feature:jobs"],
     deps = [
-        ":spec_utils",
-        ":test_file_helper",
+        ":runtime_env_utils",
     ],
 )
 
@@ -113,6 +111,10 @@ py_library(
 py_library(
     name = "runtime_env_utils",
     srcs = ["runtime_env_utils.py"],
+    deps = [
+        ":constants",
+        ":query_helper",
+    ],
 )
 
 py_library(
@@ -145,5 +147,21 @@ py_test(
         ":test_file_helper",
         "//snowflake/ml/jobs/_interop:legacy",
         "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
+    name = "job_utils",
+    srcs = [
+        "__init__.py",
+    ],
+    deps = [
+        ":payload_utils",
+        ":query_helper",
+        ":runtime_env_utils",
+        ":spec_utils",
+        ":stage_utils",
+        "//snowflake/ml/_internal/utils:mixins",
+        "//snowflake/ml/jobs/_interop:legacy",
     ],
 )

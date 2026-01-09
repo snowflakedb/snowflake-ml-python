@@ -195,6 +195,7 @@ class ModelDeploymentSpec:
 
     def add_job_spec(
         self,
+        *,
         job_name: sql_identifier.SqlIdentifier,
         inference_compute_pool_name: sql_identifier.SqlIdentifier,
         function_name: str,
@@ -202,6 +203,8 @@ class ModelDeploymentSpec:
         output_stage_location: str,
         completion_filename: str,
         input_file_pattern: str,
+        column_handling: Optional[str] = None,
+        params: Optional[str] = None,
         warehouse: sql_identifier.SqlIdentifier,
         job_database_name: Optional[sql_identifier.SqlIdentifier] = None,
         job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
@@ -217,14 +220,16 @@ class ModelDeploymentSpec:
         Args:
             job_name: Name of the job.
             inference_compute_pool_name: Compute pool for inference.
-            warehouse: Warehouse for the job.
             function_name: Function name.
             input_stage_location: Stage location for input data.
             output_stage_location: Stage location for output data.
+            completion_filename: Name of completion file (default: "completion.txt").
+            input_file_pattern: Pattern for input files (optional).
+            column_handling: Column handling mode for input data.
+            params: Additional parameters for the job.
+            warehouse: Warehouse for the job.
             job_database_name: Database name for the job.
             job_schema_name: Schema name for the job.
-            input_file_pattern: Pattern for input files (optional).
-            completion_filename: Name of completion file (default: "completion.txt").
             cpu: CPU requirement.
             memory: Memory requirement.
             gpu: GPU requirement.
@@ -259,7 +264,10 @@ class ModelDeploymentSpec:
             warehouse=warehouse.identifier() if warehouse else None,
             function_name=function_name,
             input=model_deployment_spec_schema.Input(
-                input_stage_location=input_stage_location, input_file_pattern=input_file_pattern
+                input_stage_location=input_stage_location,
+                input_file_pattern=input_file_pattern,
+                column_handling=column_handling,
+                params=params,
             ),
             output=model_deployment_spec_schema.Output(
                 output_stage_location=output_stage_location,

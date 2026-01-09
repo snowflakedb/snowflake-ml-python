@@ -8,6 +8,7 @@ from absl.testing import absltest
 from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier, string_matcher
 from snowflake.ml.model._client.sql import service as service_sql
+from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.snowpark import DataFrame, Row, Session, functions as F, types as spt
 from snowflake.snowpark._internal import utils as snowpark_utils
@@ -183,6 +184,109 @@ class ServiceSQLTest(absltest.TestCase):
                 returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
                 statement_params=m_statement_params,
             )
+
+    def test_invoke_function_method_with_parameters(self) -> None:
+        """Test invoke_function_method with optional parameters."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
+            SELECT *,
+                TEMP."test".SERVICE!PREDICT(COL1, COL2, 0.7, 50) AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            service_sql.ServiceSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.7),
+                    (sql_identifier.SqlIdentifier("TOP_K"), 50),
+                ],
+            )
+
+    def test_invoke_function_method_with_string_parameter(self) -> None:
+        """Test invoke_function_method with string parameter value."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
+            SELECT *,
+                TEMP."test".SERVICE!PREDICT(COL1, 'gpt-4') AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            service_sql.ServiceSQLClient(
+                c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            ).invoke_function_method(
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                input_df=cast(DataFrame, m_df),
+                input_args=[sql_identifier.SqlIdentifier("COL1")],
+                returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                statement_params=m_statement_params,
+                params=[
+                    (sql_identifier.SqlIdentifier("MODEL_NAME"), "gpt-4"),
+                ],
+            )
+
+    def test_invoke_function_method_wide_input_with_params(self) -> None:
+        """Test invoke_function_method with wide input format including params."""
+        m_statement_params = {"test": "1"}
+        m_df = mock_data_frame.MockDataFrame()
+        self.m_session.add_mock_sql(
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
+            SELECT *,
+                TEMP."test".SERVICE!PREDICT(object_construct_keep_null("""
+            """'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.7, 'TOP_K', 50)) AS TMP_RESULT_ABCDEF0123
+            FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
+            m_df,
+        )
+        m_df.add_mock_with_columns(["OUTPUT_1"], [F.col("OUTPUT_1")]).add_mock_drop("TMP_RESULT_ABCDEF0123")
+        c_session = cast(Session, self.m_session)
+        m_df.add_query("queries", "query_1")
+        with mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"):
+            with mock.patch.object(constants, "SNOWPARK_UDF_INPUT_COL_LIMIT", 2):
+                service_sql.ServiceSQLClient(
+                    c_session,
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                ).invoke_function_method(
+                    database_name=None,
+                    schema_name=None,
+                    service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    input_df=cast(DataFrame, m_df),
+                    input_args=[sql_identifier.SqlIdentifier("COL1"), sql_identifier.SqlIdentifier("COL2")],
+                    returns=[("output_1", spt.IntegerType(), sql_identifier.SqlIdentifier("OUTPUT_1"))],
+                    statement_params=m_statement_params,
+                    params=[
+                        (sql_identifier.SqlIdentifier("TEMPERATURE"), 0.7),
+                        (sql_identifier.SqlIdentifier("TOP_K"), 50),
+                    ],
+                )
 
     def test_get_service_logs(self) -> None:
         m_statement_params = {"test": "1"}

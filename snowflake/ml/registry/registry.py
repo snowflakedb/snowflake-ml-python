@@ -146,7 +146,7 @@ class Registry:
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[str]] = None,
+        code_paths: Optional[list[type_hints.CodePathLike]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: task.Task = task.Task.UNKNOWN,
         options: Optional[type_hints.ModelSaveOption] = None,
@@ -200,7 +200,7 @@ class Registry:
                 It would also be used as background data in explanation and to capture data lineage. Defaults to None.
             user_files: Dictionary where the keys are subdirectories, and values are lists of local file name
                 strings. The local file name strings can include wildcards (? or *) for matching multiple files.
-            code_paths: List of directories containing code to import. Defaults to None.
+            code_paths: List of directories or CodePath objects containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
                 Only supported when logging the following types of model:
                 Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.
@@ -298,7 +298,7 @@ class Registry:
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         sample_input_data: Optional[type_hints.SupportedDataType] = None,
         user_files: Optional[dict[str, list[str]]] = None,
-        code_paths: Optional[list[str]] = None,
+        code_paths: Optional[list[type_hints.CodePathLike]] = None,
         ext_modules: Optional[list[ModuleType]] = None,
         task: task.Task = task.Task.UNKNOWN,
         options: Optional[type_hints.ModelSaveOption] = None,
@@ -352,7 +352,7 @@ class Registry:
                 It would also be used as background data in explanation and to capture data lineage. Defaults to None.
             user_files: Dictionary where the keys are subdirectories, and values are lists of local file name
                 strings. The local file name strings can include wildcards (? or *) for matching multiple files.
-            code_paths: List of directories containing code to import. Defaults to None.
+            code_paths: List of directories or CodePath objects containing code to import. Defaults to None.
             ext_modules: List of external modules to pickle with the model object.
                 Only supported when logging the following types of model:
                 Scikit-learn, Snowpark ML, PyTorch, TorchScript and Custom Model. Defaults to None.

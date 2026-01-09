@@ -194,7 +194,18 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
 
         if kwargs.get("use_gpu", False):
             assert type(kwargs.get("use_gpu", False)) == bool
-            gpu_params = {"tree_method": "gpu_hist", "predictor": "gpu_predictor"}
+            from packaging import version
+
+            xgb_version = version.parse(xgboost.__version__)
+            if xgb_version >= version.parse("3.1.0"):
+                # XGBoost 3.1.0+: Use device="cuda" for GPU acceleration
+                # gpu_hist and gpu_predictor were removed in XGBoost 3.1.0
+                # See: https://xgboost.readthedocs.io/en/latest/changes/v3.1.0.html
+                gpu_params = {"tree_method": "hist", "device": "cuda"}
+            else:
+                # XGBoost < 3.1.0: Use legacy gpu_hist tree_method
+                gpu_params = {"tree_method": "gpu_hist", "predictor": "gpu_predictor"}
+
             if isinstance(m, xgboost.Booster):
                 m.set_param(gpu_params)
             elif isinstance(m, xgboost.XGBModel):
@@ -256,6 +267,20 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
                 @custom_model.inference_api
                 def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
                     import shap
+                    from packaging import version
+
+                    xgb_version = version.parse(xgboost.__version__)
+                    shap_version = version.parse(shap.__version__)
+
+                    # SHAP < 0.50.0 is incompatible with XGBoost >= 3.1.0 due to base_score format change
+                    # (base_score is now stored as a vector for multi-output models)
+                    # See: https://xgboost.readthedocs.io/en/latest/changes/v3.1.0.html
+                    if xgb_version >= version.parse("3.1.0") and shap_version < version.parse("0.50.0"):
+                        raise RuntimeError(
+                            f"SHAP version {shap.__version__} is incompatible with XGBoost version "
+                            f"{xgboost.__version__}. XGBoost 3.1+ changed the model format which requires "
+                            f"SHAP >= 0.50.0. Please upgrade SHAP or use XGBoost < 3.1."
+                        )
 
                     explainer = shap.TreeExplainer(raw_model)
                     df = handlers_utils.convert_explanations_to_2D_df(raw_model, explainer.shap_values(X))

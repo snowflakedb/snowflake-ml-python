@@ -86,6 +86,9 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 get_prediction_fn=get_prediction,
             )
 
+            # Add parameters extracted from custom model inference methods to signatures
+            cls._add_method_parameters_to_signatures(model, model_meta)
+
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
         if model.context.artifacts:
@@ -187,6 +190,55 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
 
         assert isinstance(model, custom_model.CustomModel)
         return model
+
+    @classmethod
+    def _add_method_parameters_to_signatures(
+        cls,
+        model: "custom_model.CustomModel",
+        model_meta: model_meta_api.ModelMetadata,
+    ) -> None:
+        """Extract parameters from custom model inference methods and add them to signatures.
+
+        For each inference method, if the signature doesn't already have parameters and the method
+        has keyword-only parameters with defaults, create ParamSpecs and add them to the signature.
+
+        Args:
+            model: The custom model instance.
+            model_meta: The model metadata containing signatures to augment.
+        """
+        for method in model._get_infer_methods():
+            method_name = method.__name__
+            if method_name not in model_meta.signatures:
+                continue
+
+            sig = model_meta.signatures[method_name]
+
+            # Skip if the signature already has parameters (user-provided or previously set)
+            if sig.params:
+                continue
+
+            # Extract parameters from the method
+            method_params = custom_model.get_method_parameters(method)
+            if not method_params:
+                continue
+
+            # Create ParamSpecs from the method parameters
+            param_specs = []
+            for param_name, param_type, param_default in method_params:
+                dtype = model_signature.DataType.from_python_type(param_type)
+                param_spec = model_signature.ParamSpec(
+                    name=param_name,
+                    dtype=dtype,
+                    default_value=param_default,
+                )
+                param_specs.append(param_spec)
+
+            # Create a new signature with parameters
+            model_meta.signatures[method_name] = model_signature.ModelSignature(
+                inputs=sig.inputs,
+                outputs=sig.outputs,
+                params=param_specs,
+            )
 
     @classmethod
     def convert_as_custom_model(

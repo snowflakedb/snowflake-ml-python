@@ -21,6 +21,19 @@ class DemoModel(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"]})
 
 
+class DemoModelWithParams(custom_model.CustomModel):
+    """Custom model with keyword-only parameters for testing parameter extraction."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(
+        self, input: pd.DataFrame, *, threshold: float = 0.5, max_iter: int = 100, name: str = "default"
+    ) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"] * threshold})
+
+
 class PartitionedDemoModel(custom_model.CustomModel):
     @custom_model.partitioned_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
@@ -304,6 +317,83 @@ class CustomHandlerTest(absltest.TestCase):
             assert isinstance(pk.model, PartitionedDemoModel)
             res = pk.model.predict(d)
             np.testing.assert_allclose(res["output"], pd.Series(np.array([1, 4])))
+
+    def test_custom_model_with_parameters_inferred(self) -> None:
+        """Test that parameters are automatically extracted from custom model methods."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = DemoModelWithParams(custom_model.ModelContext())
+
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+
+            # Save without explicit signature - parameters should be inferred
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=lm,
+                sample_input_data=d,
+                options=model_types.CustomModelSaveOption(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, DemoModelWithParams)
+
+            # Verify parameters were added to the signature
+            sig = pk.meta.signatures["predict"]
+            self.assertEqual(len(sig.params), 3)
+
+            # Verify parameter details
+            param_names = [p.name for p in sig.params]
+            self.assertIn("threshold", param_names)
+            self.assertIn("max_iter", param_names)
+            self.assertIn("name", param_names)
+
+            # Verify types and defaults
+            for param in sig.params:
+                assert isinstance(param, model_signature.ParamSpec)
+                if param.name == "threshold":
+                    self.assertEqual(param.dtype, model_signature.DataType.DOUBLE)
+                    self.assertEqual(param.default_value, 0.5)
+                elif param.name == "max_iter":
+                    self.assertEqual(param.dtype, model_signature.DataType.INT64)
+                    self.assertEqual(param.default_value, 100)
+                elif param.name == "name":
+                    self.assertEqual(param.dtype, model_signature.DataType.STRING)
+                    self.assertEqual(param.default_value, "default")
+
+    def test_custom_model_with_user_provided_signature_preserves_params(self) -> None:
+        """Test that user-provided signatures with params are not overwritten."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = DemoModelWithParams(custom_model.ModelContext())
+
+            # Create signature with user-provided params
+            user_sig = model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="c1")],
+                outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output")],
+                params=[
+                    model_signature.ParamSpec(
+                        name="custom_param", dtype=model_signature.DataType.FLOAT, default_value=1.0
+                    )
+                ],
+            )
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=lm,
+                signatures={"predict": user_sig},
+                options=model_types.CustomModelSaveOption(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load()
+            assert pk.meta
+
+            # Verify user-provided params are preserved (not overwritten)
+            sig = pk.meta.signatures["predict"]
+            self.assertEqual(len(sig.params), 1)
+            self.assertEqual(sig.params[0].name, "custom_param")
 
 
 if __name__ == "__main__":

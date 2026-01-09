@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 import pathlib
 import tempfile
@@ -35,6 +37,19 @@ _DUMMY_SIG = {
             model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
         ],
         outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+    ),
+    "predict_with_params": model_signature.ModelSignature(
+        inputs=[
+            model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+        ],
+        outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+        params=[
+            model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=0.5),
+            model_signature.ParamSpec(name="top_k", dtype=model_signature.DataType.INT64, default_value=10),
+            model_signature.ParamSpec(name="max_tokens", dtype=model_signature.DataType.INT64, default_value=100),
+            model_signature.ParamSpec(name="stop", dtype=model_signature.DataType.STRING, default_value="\n"),
+            model_signature.ParamSpec(name="message", dtype=model_signature.DataType.STRING, default_value="hello"),
+        ],
     ),
     "predict_table": model_signature.ModelSignature(
         inputs=[
@@ -311,6 +326,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=False,
                 explain_case_sensitive=False,
+                params=None,
             )
 
         with (
@@ -332,6 +348,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=False,
                 explain_case_sensitive=False,
+                params=None,
             )
 
     def test_run_without_method_name(self) -> None:
@@ -370,6 +387,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=False,
                 explain_case_sensitive=False,
+                params=None,
             )
 
     def test_run_strict(self) -> None:
@@ -408,6 +426,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=False,
                 explain_case_sensitive=False,
+                params=None,
             )
 
     def test_run_table_function_method(self) -> None:
@@ -454,6 +473,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=True,
                 explain_case_sensitive=False,
+                params=None,
             )
 
         with (
@@ -476,6 +496,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=True,
                 explain_case_sensitive=False,
+                params=None,
             )
 
     def test_run_table_function_method_no_partition(self) -> None:
@@ -534,6 +555,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 is_partitioned=False,
                 explain_case_sensitive=False,
+                params=None,
             )
 
     def test_run_service(self) -> None:
@@ -563,6 +585,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 strict_input_validation=False,
                 statement_params=mock.ANY,
+                params=None,
             )
 
         with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
@@ -576,6 +599,82 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name=sql_identifier.SqlIdentifier("SERVICE"),
                 strict_input_validation=False,
                 statement_params=mock.ANY,
+                params=None,
+            )
+
+    def test_run_with_params(self) -> None:
+        """Test run with params for warehouse invocation."""
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict_with_params"',
+                    "target_method": "predict_with_params",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict_with_params"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+
+        self.m_mv._functions = m_methods
+
+        test_params = {"temperature": 0.7, "top_k": 50, "message": "it's a test"}
+
+        with (
+            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
+            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+        ):
+            self._add_show_versions_mock()
+            self.m_mv.run(m_df, function_name='"predict_with_params"', params=test_params)
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict_with_params"',
+                method_function_type="FUNCTION",
+                signature=_DUMMY_SIG["predict_with_params"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                strict_input_validation=False,
+                partition_column=None,
+                statement_params=mock.ANY,
+                is_partitioned=False,
+                explain_case_sensitive=False,
+                params=test_params,
+            )
+
+    def test_run_service_with_params(self) -> None:
+        """Test run with params for service invocation."""
+        m_df = mock_data_frame.MockDataFrame()
+        m_methods = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": '"predict_with_params"',
+                    "target_method": "predict_with_params",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict_with_params"],
+                    "is_partitioned": False,
+                }
+            ),
+        ]
+
+        self.m_mv._functions = m_methods
+
+        test_params = {"temperature": 0.7, "top_k": 50, "message": "it's a test"}
+
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
+            self.m_mv.run(m_df, service_name="SERVICE", function_name='"predict_with_params"', params=test_params)
+            mock_invoke_method.assert_called_once_with(
+                method_name='"predict_with_params"',
+                signature=_DUMMY_SIG["predict_with_params"],
+                X=m_df,
+                database_name=None,
+                schema_name=None,
+                service_name=sql_identifier.SqlIdentifier("SERVICE"),
+                strict_input_validation=False,
+                statement_params=mock.ANY,
+                params=test_params,
             )
 
     def test_run_no_service_name_spcs_only(self) -> None:
@@ -1848,6 +1947,133 @@ class ModelVersionImplTest(absltest.TestCase):
                 replicas=10,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
+                column_handling=None,
+                params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                statement_params=mock.ANY,
+            )
+
+            self.assertEqual(result, mock_job)
+
+    def test_run_batch_with_column_handling(self) -> None:
+        """Test run_batch properly encodes and passes column_handling to invoke_batch_job_method."""
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        # Test column_handling dictionary
+        test_column_handling = {"image_col": {"encoding": batch_inference_specs.FileEncoding.BASE64}}
+        # Expected encoding: TypeAdapter validates and serializes (compact JSON), then base64 encodes
+        expected_json = {"image_col": {"encoding": "base64"}}
+        # Use separators to produce compact JSON like Pydantic's dump_json
+        expected_encoded = base64.b64encode(json.dumps(expected_json, separators=(",", ":")).encode("utf-8")).decode(
+            "utf-8"
+        )
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(
+                compute_pool="TEST_POOL",
+                input_spec=input_df,
+                output_spec=output_spec,
+                job_spec=job_spec,
+                column_handling=test_column_handling,
+            )
+
+            # Verify column_handling is properly encoded and passed
+            mock_invoke_batch_job.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                function_name="predict",
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
+                force_rebuild=False,
+                image_repo_name=None,
+                num_workers=None,
+                max_batch_rows=1024,
+                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                job_name="TEST_JOB",
+                replicas=None,
+                input_stage_location="@output_stage/_temporary/",
+                input_file_pattern="*",
+                column_handling=expected_encoded,
+                params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                statement_params=mock.ANY,
+            )
+
+            self.assertEqual(result, mock_job)
+
+    def test_run_batch_with_params(self) -> None:
+        """Test run_batch properly encodes and passes params to invoke_batch_job_method."""
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        # Test params dictionary
+        test_params = {"temperature": 0.7, "top_k": 50, "max_tokens": 100}
+        expected_encoded_params = base64.b64encode(json.dumps(test_params).encode("utf-8")).decode("utf-8")
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(
+                compute_pool="TEST_POOL",
+                input_spec=input_df,
+                output_spec=output_spec,
+                job_spec=job_spec,
+                params=test_params,
+            )
+
+            # Verify params is properly encoded and passed
+            mock_invoke_batch_job.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                function_name="predict",
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
+                force_rebuild=False,
+                image_repo_name=None,
+                num_workers=None,
+                max_batch_rows=1024,
+                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                job_name="TEST_JOB",
+                replicas=None,
+                input_stage_location="@output_stage/_temporary/",
+                input_file_pattern="*",
+                column_handling=None,
+                params=expected_encoded_params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
@@ -2027,6 +2253,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 replicas=None,  # JobSpec default
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",  # InputSpec default
+                column_handling=None,
+                params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",  # OutputSpec default
                 statement_params=mock.ANY,

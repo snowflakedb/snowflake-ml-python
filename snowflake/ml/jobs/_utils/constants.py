@@ -30,6 +30,7 @@ DEFAULT_IMAGE_CPU = "st_plat/runtime/x86/runtime_image/snowbooks"
 DEFAULT_IMAGE_GPU = "st_plat/runtime/x86/generic_gpu/runtime_image/snowbooks"
 DEFAULT_IMAGE_TAG = "1.8.0"
 DEFAULT_ENTRYPOINT_PATH = "func.py"
+DEFAULT_PYTHON_VERSION = "3.10"
 
 # Percent of container memory to allocate for /dev/shm volume
 MEMORY_VOLUME_SIZE = 0.3

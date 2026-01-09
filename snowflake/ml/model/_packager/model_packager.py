@@ -49,7 +49,7 @@ class ModelPackager:
         target_platforms: Optional[list[model_types.TargetPlatform]] = None,
         python_version: Optional[str] = None,
         ext_modules: Optional[list[ModuleType]] = None,
-        code_paths: Optional[list[str]] = None,
+        code_paths: Optional[list[model_types.CodePathLike]] = None,
         options: model_types.ModelSaveOption,
         task: model_types.Task = model_types.Task.UNKNOWN,
     ) -> model_meta.ModelMetadata:

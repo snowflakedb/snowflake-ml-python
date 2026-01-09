@@ -432,6 +432,92 @@ class ModelMethodTest(parameterized.TestCase):
             }
             self.assertDictEqual(method_dict, expected_dict)
 
+    def test_model_method_with_parameters_enabled(self) -> None:
+        """Test that ModelMethod.save() includes parameters when capability is enabled."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        sig_with_params = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+                params=[
+                    model_signature.ParamSpec(
+                        name="threshold", dtype=model_signature.DataType.FLOAT, default_value=0.5
+                    ),
+                    model_signature.ParamSpec(name="max_iter", dtype=model_signature.DataType.INT64, default_value=100),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig_with_params
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify params are included
+            self.assertIn("params", method_dict)
+            self.assertEqual(len(method_dict["params"]), 2)
+            self.assertEqual(method_dict["params"][0]["name"], "THRESHOLD")
+            self.assertEqual(method_dict["params"][0]["type"], "FLOAT")
+            self.assertEqual(method_dict["params"][0]["default"], 0.5)
+            self.assertEqual(method_dict["params"][1]["name"], "MAX_ITER")
+            self.assertEqual(method_dict["params"][1]["type"], "BIGINT")
+            self.assertEqual(method_dict["params"][1]["default"], 100)
+
+    def test_model_method_with_parameters_case_sensitive(self) -> None:
+        """Test that parameters respect case_sensitive option."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        sig_with_params = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+                params=[
+                    model_signature.ParamSpec(name="myParam", dtype=model_signature.DataType.FLOAT, default_value=0.5),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig_with_params
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(case_sensitive=True),
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify parameter name is case-sensitive
+            self.assertIn("params", method_dict)
+            self.assertEqual(method_dict["params"][0]["name"], "myParam")
+
 
 class ModelMethodOptionsTest(absltest.TestCase):
     def test_get_model_method_options(self) -> None:

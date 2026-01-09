@@ -1,4 +1,6 @@
+import base64
 import enum
+import json
 import pathlib
 import tempfile
 import uuid
@@ -6,6 +8,7 @@ import warnings
 from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
+from pydantic import TypeAdapter
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -30,6 +33,7 @@ _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
 _BATCH_INFERENCE_JOB_ID_PREFIX = "BATCH_INFERENCE_"
 _BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
+_UTF8_ENCODING = "utf-8"
 
 
 class ExportMode(enum.Enum):
@@ -495,6 +499,7 @@ class ModelVersion(lineage_node.LineageNode):
         function_name: Optional[str] = None,
         partition_column: Optional[str] = None,
         strict_input_validation: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[pd.DataFrame, dataframe.DataFrame]:
         """Invoke a method in a model version object.
 
@@ -505,6 +510,8 @@ class ModelVersion(lineage_node.LineageNode):
             partition_column: The partition column name to partition by.
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
+            params: Optional dictionary of model inference parameters (e.g., temperature, top_k for LLMs).
+                These are passed as keyword arguments to the model's inference method. Defaults to None.
         """
         ...
 
@@ -516,6 +523,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_name: str,
         function_name: Optional[str] = None,
         strict_input_validation: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[pd.DataFrame, dataframe.DataFrame]:
         """Invoke a method in a model version object via a service.
 
@@ -525,6 +533,8 @@ class ModelVersion(lineage_node.LineageNode):
             function_name: The function name to run. It is the name used to call a function in SQL.
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
+            params: Optional dictionary of model inference parameters (e.g., temperature, top_k for LLMs).
+                These are passed as keyword arguments to the model's inference method. Defaults to None.
         """
         ...
 
@@ -541,6 +551,7 @@ class ModelVersion(lineage_node.LineageNode):
         function_name: Optional[str] = None,
         partition_column: Optional[str] = None,
         strict_input_validation: bool = False,
+        params: Optional[dict[str, Any]] = None,
     ) -> Union[pd.DataFrame, "dataframe.DataFrame"]:
         """Invoke a method in a model version object via the warehouse or a service.
 
@@ -552,6 +563,8 @@ class ModelVersion(lineage_node.LineageNode):
             partition_column: The partition column name to partition by.
             strict_input_validation: Enable stricter validation for the input data. This will result value range based
                 type validation to make sure your input data won't overflow when providing to the model.
+            params: Optional dictionary of model inference parameters (e.g., temperature, top_k for LLMs).
+                These are passed as keyword arguments to the model's inference method. Defaults to None.
 
         Returns:
             The prediction data. It would be the same type dataframe as your input.
@@ -582,6 +595,7 @@ class ModelVersion(lineage_node.LineageNode):
                 service_name=service_name_id,
                 strict_input_validation=strict_input_validation,
                 statement_params=statement_params,
+                params=params,
             )
         else:
             manifest = self._get_model_manifest(statement_params=statement_params)
@@ -621,6 +635,7 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
                 is_partitioned=target_function_info["is_partitioned"],
                 explain_case_sensitive=explain_case_sensitive,
+                params=params,
             )
 
     def _determine_explain_case_sensitivity(
@@ -633,6 +648,41 @@ class ModelVersion(lineage_node.LineageNode):
         return model_method_utils.determine_explain_case_sensitive_from_method_options(
             method_options, target_function_info["name"]
         )
+
+    @staticmethod
+    def _encode_column_handling(
+        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
+    ) -> Optional[str]:
+        """Validate and encode column_handling to a base64 string.
+
+        Args:
+            column_handling: Optional dictionary mapping column names to file encoding options.
+
+        Returns:
+            Base64 encoded JSON string of the column handling options, or None if input is None.
+        """
+        # TODO: validation for column names
+        if column_handling is None:
+            return None
+        adapter = TypeAdapter(dict[str, batch_inference_specs.ColumnHandlingOptions])
+        # TODO: throw error if the validate_python function fails
+        validated_input = adapter.validate_python(column_handling)
+        return base64.b64encode(adapter.dump_json(validated_input)).decode(_UTF8_ENCODING)
+
+    @staticmethod
+    def _encode_params(params: Optional[dict[str, Any]]) -> Optional[str]:
+        """Encode params dictionary to a base64 string.
+
+        Args:
+            params: Optional dictionary of model inference parameters.
+
+        Returns:
+            Base64 encoded JSON string of the params, or None if input is None.
+        """
+        if params is None:
+            return None
+        # TODO: validation for param names, types
+        return base64.b64encode(json.dumps(params).encode(_UTF8_ENCODING)).decode(_UTF8_ENCODING)
 
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
@@ -651,6 +701,8 @@ class ModelVersion(lineage_node.LineageNode):
         input_spec: dataframe.DataFrame,
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
+        params: Optional[dict[str, Any]] = None,
+        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]] = None,
     ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
 
@@ -664,6 +716,12 @@ class ModelVersion(lineage_node.LineageNode):
             job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
                 execution parameters such as compute resources, worker counts, and job naming.
                 If None, default values will be used.
+            params (Optional[dict[str, Any]]): Optional dictionary of model inference parameters
+                (e.g., temperature, top_k for LLMs). These are passed as keyword arguments to the
+                model's inference method. Defaults to None.
+            column_handling (Optional[dict[str, batch_inference_specs.FileEncoding]]): Optional dictionary
+                specifying how to handle specific columns during file I/O. Maps column names to their
+                file encoding configuration.
 
         Returns:
             job.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
@@ -719,6 +777,9 @@ class ModelVersion(lineage_node.LineageNode):
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
+        column_handling_as_string = self._encode_column_handling(column_handling)
+        params_as_string = self._encode_params(params)
+
         if job_spec is None:
             job_spec = batch_inference_specs.JobSpec()
 
@@ -766,6 +827,8 @@ class ModelVersion(lineage_node.LineageNode):
             # input and output
             input_stage_location=input_stage_location,
             input_file_pattern="*",
+            column_handling=column_handling_as_string,
+            params=params_as_string,
             output_stage_location=output_stage_location,
             completion_filename="_SUCCESS",
             # misc
