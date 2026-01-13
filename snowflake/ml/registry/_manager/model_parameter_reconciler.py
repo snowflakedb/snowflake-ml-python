@@ -126,7 +126,7 @@ class ModelParameterReconciler:
         # Default the target platform to SPCS if not specified when running in ML runtime
         if env.IN_ML_RUNTIME:
             logger.info(
-                "Logging the model on Container Runtime for ML without specifying `target_platforms`. "
+                "Logging the model on Container Runtime without specifying `target_platforms`. "
                 'Default to `target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`.'
             )
             return [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]

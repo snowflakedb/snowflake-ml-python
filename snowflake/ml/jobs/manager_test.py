@@ -1,10 +1,10 @@
-import json
 import pathlib
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs import manager
+from snowflake.ml.jobs import job_definition
 from snowflake.ml.jobs._utils import types
 
 
@@ -19,10 +19,10 @@ class ManagerTest(parameterized.TestCase):
             pathlib.PurePosixPath("/mnt/job_stage/app/entry.py"),
         ),
     )
-    def test_do_submit_job_preserves_windows_absolute_paths(
+    def test_job_definition_preserves_windows_absolute_paths(
         self, launcher_script: pathlib.PurePath, entrypoint: pathlib.PurePath
     ) -> None:
-        payload = types.UploadedPayload(
+        uploaded_payload = types.UploadedPayload(
             stage_path=pathlib.PurePosixPath("@payload_stage/job_id"),
             entrypoint=[
                 launcher_script,
@@ -31,34 +31,31 @@ class ManagerTest(parameterized.TestCase):
             env_vars={},
         )
 
+        session = MagicMock()
+        session.get_current_warehouse.return_value = "TEST_WH"
+        session.get_current_database.return_value = "TEST_DB"
+        session.get_current_schema.return_value = "TEST_SCHEMA"
+
         with patch(
-            "snowflake.ml.jobs.manager.query_helper.run_query",
-            return_value=[["JOB_ID"]],
-        ) as run_query, patch("snowflake.ml.jobs.manager.get_job"):
-            manager._do_submit_job(
-                session=MagicMock(),
-                payload=payload,
-                args=None,
-                env_vars={},
-                spec_overrides={},
+            "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
+            return_value=MagicMock(upload=MagicMock(return_value=uploaded_payload)),
+        ):
+            definition: job_definition.MLJobDefinition[Any, Any] = job_definition.MLJobDefinition.register(
+                source="entry.py",
+                entrypoint="entry.py",
                 compute_pool="POOL",
-                job_id=None,
-                external_access_integrations=None,
-                query_warehouse=None,
-                target_instances=1,
-                min_instances=1,
-                enable_metrics=True,
-                use_async=True,
-                runtime_environment=None,
+                stage_name="@payload_stage/job_id",
+                session=session,
+                # Avoid hitting runtime image discovery logic, which may require external access.
+                runtime_environment="test_runtime",
             )
 
-        spec_options = json.loads(run_query.call_args.kwargs["params"][2])
         self.assertEqual(
             [
                 "/mnt/job_stage/system/mljob_launcher.py",
                 "/mnt/job_stage/app/entry.py",
             ],
-            spec_options["ARGS"],
+            definition.entrypoint_args,
         )
 
 

@@ -61,6 +61,7 @@ class Job(BaseModel):
     input: Input
     output: Output
     replicas: Optional[int] = None
+    inference_engine_spec: Optional[InferenceEngineSpec] = None
 
 
 class LogModelArgs(BaseModel):

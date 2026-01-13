@@ -52,7 +52,7 @@ class StagePath:
         if self._path.parent == Path(""):
             return StagePath(self._root)
         else:
-            return StagePath(f"{self._root}/{self._path.parent}")
+            return StagePath(f"{self._root}/{self._path.parent.as_posix()}")
 
     @property
     def root(self) -> str:
@@ -67,7 +67,7 @@ class StagePath:
         if path == Path(""):
             return self.root
         else:
-            return f"{self.root}/{path}"
+            return f"{self.root}/{path.as_posix()}"
 
     def is_relative_to(self, *other: Union[str, os.PathLike[str]]) -> bool:
         if not other:

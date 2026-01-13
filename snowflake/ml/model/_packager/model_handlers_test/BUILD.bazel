@@ -192,6 +192,7 @@ py_test(
     timeout = "long",
     srcs = ["sentence_transformers_test.py"],
     optional_dependencies = ["transformers"],
+    shard_count = 2,
     tags = ["feature:model_registry"],
     deps = [
         "//snowflake/ml/model/_packager:model_packager",

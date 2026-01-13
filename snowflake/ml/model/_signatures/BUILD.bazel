@@ -159,6 +159,7 @@ py_library(
     deps = [
         ":core",
         "//snowflake/ml/_internal/exceptions",
+        "//snowflake/ml/model:openai_signatures",
     ],
 )
 

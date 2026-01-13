@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from pathlib import PurePath
-from typing import Literal, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Literal, Optional, Protocol, Union, runtime_checkable
 
 from typing_extensions import Self
 
@@ -103,7 +103,6 @@ class UploadedPayload:
     stage_path: PurePath
     entrypoint: list[Union[str, PurePath]]
     env_vars: dict[str, str] = field(default_factory=dict)
-    payload_name: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -128,3 +127,24 @@ class ServiceInfo:
     status: str
     compute_pool: str
     target_instances: int
+
+
+@dataclass
+class JobOptions:
+    external_access_integrations: Optional[list[str]] = None
+    query_warehouse: Optional[str] = None
+    target_instances: Optional[int] = None
+    min_instances: Optional[int] = None
+    use_async: Optional[bool] = True
+    generate_suffix: Optional[bool] = True
+
+
+@dataclass
+class SpecOptions:
+    stage_path: str
+    args: Optional[list[str]] = None
+    env_vars: Optional[dict[str, str]] = None
+    enable_metrics: Optional[bool] = None
+    spec_overrides: Optional[dict[str, Any]] = None
+    runtime: Optional[str] = None
+    enable_stage_mount_v2: Optional[bool] = True

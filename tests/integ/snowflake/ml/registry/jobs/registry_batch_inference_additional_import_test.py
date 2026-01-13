@@ -57,7 +57,7 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         input_spec, expected_predictions = self._prepare_batch_inference_data(X, model_output_df)
 
         # Prepare service name and output stage for batch inference
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         class MyModel(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:

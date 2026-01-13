@@ -14,10 +14,17 @@ def result_set_to_rows(session: snowpark.Session, result: dict[str, Any]) -> lis
 
 
 @snowflake_plan.SnowflakePlan.Decorator.wrap_exception  # type: ignore[misc]
-def run_query(session: snowpark.Session, query_text: str, params: Optional[Sequence[Any]] = None) -> list[Row]:
+def run_query(
+    session: snowpark.Session,
+    query_text: str,
+    params: Optional[Sequence[Any]] = None,
+    statement_params: Optional[dict[str, Any]] = None,
+) -> list[Row]:
     kwargs: dict[str, Any] = {"query": query_text, "params": params}
     if not is_in_stored_procedure():  # type: ignore[no-untyped-call]
         kwargs["_force_qmark_paramstyle"] = True
+    if statement_params:
+        kwargs["_statement_params"] = statement_params
     result = session._conn.run_query(**kwargs)
     if not isinstance(result, dict) or "data" not in result:
         raise ValueError(f"Unprocessable result: {result}")

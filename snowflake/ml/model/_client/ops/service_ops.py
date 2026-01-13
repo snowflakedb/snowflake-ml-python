@@ -1,4 +1,6 @@
+import base64
 import dataclasses
+import json
 import logging
 import pathlib
 import re
@@ -6,7 +8,9 @@ import tempfile
 import threading
 import time
 import warnings
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Sequence, Union, cast
+
+from pydantic import TypeAdapter
 
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
@@ -14,9 +18,10 @@ from snowflake.ml._internal.utils import identifier, service_logger, sql_identif
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
 from snowflake.ml.model._client.model import batch_inference_specs
-from snowflake.ml.model._client.ops import deployment_step
+from snowflake.ml.model._client.ops import deployment_step, param_utils
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
+from snowflake.ml.model._signatures import core
 from snowflake.snowpark import async_job, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
@@ -582,15 +587,10 @@ class ServiceOperator:
                 )
             for status in statuses:
                 if status.instance_id is not None:
-                    instance_status, container_status = None, None
-                    if status.instance_status is not None:
-                        instance_status = status.instance_status.value
-                    if status.container_status is not None:
-                        container_status = status.container_status.value
                     module_logger.info(
                         f"Instance[{status.instance_id}]: "
-                        f"instance status: {instance_status}, "
-                        f"container status: {container_status}, "
+                        f"instance status: {status.instance_status}, "
+                        f"container status: {status.container_status}, "
                         f"message: {status.message}"
                     )
             time.sleep(5)
@@ -930,6 +930,38 @@ class ServiceOperator:
         except exceptions.SnowparkSQLException:
             return False
 
+    @staticmethod
+    def _encode_params(params: Optional[dict[str, Any]]) -> Optional[str]:
+        """Encode params dictionary to a base64 string.
+
+        Args:
+            params: Optional dictionary of model inference parameters.
+
+        Returns:
+            Base64 encoded JSON string of the params, or None if input is None.
+        """
+        if params is None:
+            return None
+        return base64.b64encode(json.dumps(params).encode("utf-8")).decode("utf-8")
+
+    @staticmethod
+    def _encode_column_handling(
+        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
+    ) -> Optional[str]:
+        """Validate and encode column_handling to a base64 string.
+
+        Args:
+            column_handling: Optional dictionary mapping column names to file encoding options.
+
+        Returns:
+            Base64 encoded JSON string of the column handling options, or None if input is None.
+        """
+        if column_handling is None:
+            return None
+        adapter = TypeAdapter(dict[str, batch_inference_specs.ColumnHandlingOptions])
+        validated_input = adapter.validate_python(column_handling)
+        return base64.b64encode(adapter.dump_json(validated_input)).decode("utf-8")
+
     def invoke_batch_job_method(
         self,
         *,
@@ -942,8 +974,9 @@ class ServiceOperator:
         image_repo_name: Optional[str],
         input_stage_location: str,
         input_file_pattern: str,
-        column_handling: Optional[str],
-        params: Optional[str],
+        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
+        params: Optional[dict[str, Any]],
+        signature_params: Optional[Sequence[core.BaseParamSpec]],
         output_stage_location: str,
         completion_filename: str,
         force_rebuild: bool,
@@ -954,7 +987,13 @@ class ServiceOperator:
         gpu_requests: Optional[str],
         replicas: Optional[int],
         statement_params: Optional[dict[str, Any]] = None,
+        inference_engine_args: Optional[InferenceEngineArgs] = None,
     ) -> job.MLJob[Any]:
+        # Validate and encode params
+        param_utils.validate_params(params, signature_params)
+        params_encoded = self._encode_params(params)
+        column_handling_encoded = self._encode_column_handling(column_handling)
+
         database_name = self._database_name
         schema_name = self._schema_name
 
@@ -980,8 +1019,8 @@ class ServiceOperator:
             max_batch_rows=max_batch_rows,
             input_stage_location=input_stage_location,
             input_file_pattern=input_file_pattern,
-            column_handling=column_handling,
-            params=params,
+            column_handling=column_handling_encoded,
+            params=params_encoded,
             output_stage_location=output_stage_location,
             completion_filename=completion_filename,
             function_name=function_name,
@@ -992,11 +1031,17 @@ class ServiceOperator:
             replicas=replicas,
         )
 
-        self._model_deployment_spec.add_image_build_spec(
-            image_build_compute_pool_name=compute_pool_name,
-            fully_qualified_image_repo_name=self._get_image_repo_fqn(image_repo_name, database_name, schema_name),
-            force_rebuild=force_rebuild,
-        )
+        if inference_engine_args:
+            self._model_deployment_spec.add_inference_engine_spec(
+                inference_engine=inference_engine_args.inference_engine,
+                inference_engine_args=inference_engine_args.inference_engine_args_override,
+            )
+        else:
+            self._model_deployment_spec.add_image_build_spec(
+                image_build_compute_pool_name=compute_pool_name,
+                fully_qualified_image_repo_name=self._get_image_repo_fqn(image_repo_name, database_name, schema_name),
+                force_rebuild=force_rebuild,
+            )
 
         spec_yaml_str_or_path = self._model_deployment_spec.save()
 

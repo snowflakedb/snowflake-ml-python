@@ -11,6 +11,8 @@ from pandas.testing import assert_frame_equal
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
+    _ALLOWED_TARGET_METHODS,
+    SentenceTransformerHandler,
     _validate_sentence_transformers_signatures,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
@@ -34,37 +36,103 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             del os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR]
         self.cache_dir.cleanup()
 
-    def test_validate_sentence_transformers_signatures(self) -> None:
-        """
-        Test the _validate_sentence_transformers_signatures function to ensure it correctly validates
-        the signatures of sentence transformers models.
+    def test_convert_as_custom_model_unsupported_method_raises(self) -> None:
+        """Test that convert_as_custom_model raises ValueError for unsupported methods.
 
-        This test checks the following cases:
-        - A valid signature with the correct method name, input, and output types.
-        - An invalid signature with an incorrect method name.
-        - An invalid signature with multiple input features.
-        - An invalid signature with multiple output features.
-        - An invalid signature with an input feature having a specific shape.
-        - An invalid signature with an input feature of a different data type.
-
-        Raises:
-            ValueError: If the signature is invalid.
+        This test verifies the fix for the missing-raise bug where unsupported methods
+        would silently construct a ValueError but not raise it.
         """
-        valid_signature = {
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Create a mock model_meta with an unsupported method
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # First save a valid model to get proper metadata
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=pd.DataFrame({"text": ["test sentence"]}),
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta
+
+            # Manually add an unsupported method to signatures
+            pk.meta.signatures["unsupported_method"] = pk.meta.signatures["encode"]
+
+            # Verify that convert_as_custom_model now raises ValueError
+            with self.assertRaises(ValueError) as ctx:
+                SentenceTransformerHandler.convert_as_custom_model(
+                    raw_model=model,
+                    model_meta=pk.meta,
+                )
+            self.assertIn("unsupported_method", str(ctx.exception))
+            self.assertIn("not supported", str(ctx.exception))
+
+    def test_allowed_target_methods(self) -> None:
+        """Test that _ALLOWED_TARGET_METHODS contains expected methods."""
+        self.assertEqual(_ALLOWED_TARGET_METHODS, ["encode", "encode_queries", "encode_documents"])
+
+    def test_validate_sentence_transformers_signatures_valid(self) -> None:
+        """Test valid signatures for all supported methods."""
+        # Valid signature with encode only
+        valid_encode_only = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
             )
         }
+        _validate_sentence_transformers_signatures(valid_encode_only)
 
-        invalid_signature_1 = {
+        # Valid signature with all three methods
+        valid_all_methods = {
+            "encode": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(name="text", dtype=model_signature.DataType.STRING, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="embedding", dtype=model_signature.DataType.FLOAT, shape=None)
+                ],
+            ),
+            "encode_queries": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(name="query", dtype=model_signature.DataType.STRING, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(
+                        name="query_embedding", dtype=model_signature.DataType.FLOAT, shape=None
+                    )
+                ],
+            ),
+            "encode_documents": model_signature.ModelSignature(
+                inputs=[model_signature.FeatureSpec(name="doc", dtype=model_signature.DataType.STRING, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="doc_embedding", dtype=model_signature.DataType.FLOAT, shape=None)
+                ],
+            ),
+        }
+        _validate_sentence_transformers_signatures(valid_all_methods)
+
+    def test_validate_sentence_transformers_signatures_empty(self) -> None:
+        """Test that empty signatures raise ValueError."""
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures({})
+        self.assertIn("At least one signature", str(ctx.exception))
+
+    def test_validate_sentence_transformers_signatures_unsupported_method(self) -> None:
+        """Test that unsupported method names raise ValueError."""
+        invalid_signature = {
             "another_method": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
             )
         }
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures(invalid_signature)
+        self.assertIn("Unsupported target methods", str(ctx.exception))
+        self.assertIn("another_method", str(ctx.exception))
 
-        invalid_signature_2 = {
+    def test_validate_sentence_transformers_signatures_multiple_inputs(self) -> None:
+        """Test that multiple inputs raise ValueError."""
+        invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[
                     model_signature.FeatureSpec(name="input1", dtype=model_signature.DataType.STRING, shape=None),
@@ -73,8 +141,13 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                 outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
             )
         }
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures(invalid_signature)
+        self.assertIn("exactly 1 input column", str(ctx.exception))
 
-        invalid_signature_3 = {
+    def test_validate_sentence_transformers_signatures_multiple_outputs(self) -> None:
+        """Test that multiple outputs raise ValueError."""
+        invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[
@@ -83,37 +156,33 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                 ],
             )
         }
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures(invalid_signature)
+        self.assertIn("exactly 1 output column", str(ctx.exception))
 
-        invalid_signature_4 = {
+    def test_validate_sentence_transformers_signatures_with_shape(self) -> None:
+        """Test that input with shape raises ValueError."""
+        invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=(1,))],
                 outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
             )
         }
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures(invalid_signature)
+        self.assertIn("does not support input shape", str(ctx.exception))
 
-        invalid_signature_5 = {
+    def test_validate_sentence_transformers_signatures_non_string_input(self) -> None:
+        """Test that non-STRING input raises ValueError."""
+        invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.INT32, shape=None)],
                 outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
             )
         }
-
-        _validate_sentence_transformers_signatures(valid_signature)
-
-        with self.assertRaises(ValueError):
-            _validate_sentence_transformers_signatures(invalid_signature_1)
-
-        with self.assertRaises(ValueError):
-            _validate_sentence_transformers_signatures(invalid_signature_2)
-
-        with self.assertRaises(ValueError):
-            _validate_sentence_transformers_signatures(invalid_signature_3)
-
-        with self.assertRaises(ValueError):
-            _validate_sentence_transformers_signatures(invalid_signature_4)
-
-        with self.assertRaises(ValueError):
-            _validate_sentence_transformers_signatures(invalid_signature_5)
+        with self.assertRaises(ValueError) as ctx:
+            _validate_sentence_transformers_signatures(invalid_signature)
+        self.assertIn("only accepts STRING input", str(ctx.exception))
 
     def test_sentence_transformers(self) -> None:
         # Sample Data

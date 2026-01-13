@@ -41,7 +41,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         # Prepare input data and expected predictions using common function
         input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
@@ -84,7 +84,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         # Prepare input data and expected predictions using common function
         input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
@@ -127,7 +127,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         # Prepare input data and expected predictions using common function
         input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
@@ -222,7 +222,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         # Prepare input data and expected predictions using common function
         input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=pipeline,
@@ -309,7 +309,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         # Prepare input data and expected predictions using common function
         input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=pipeline,

@@ -50,6 +50,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
+        code_paths: Optional[list[model_types.CodePathLike]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -76,6 +77,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             artifact_repository_map=artifact_repository_map,
             resource_constraint=resource_constraint,
             pip_requirements=pip_requirements,
+            code_paths=code_paths,
         )
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():

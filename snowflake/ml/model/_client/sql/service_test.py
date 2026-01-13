@@ -86,8 +86,9 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
 
-        with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        with (
+            mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table,
+            mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"),
         ):
             service_sql.ServiceSQLClient(
                 c_session,
@@ -129,10 +130,12 @@ class ServiceSQLTest(absltest.TestCase):
         m_df.add_query("queries", "query_1")
         m_df.add_query("queries", "query_2")
 
-        with mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table, mock.patch.object(
-            snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
-        ) as mock_random_name_for_temp_object, mock.patch.object(
-            snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"
+        with (
+            mock.patch.object(mock_writer, "save_as_table") as mock_save_as_table,
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_TABLE_ABCDEF0123"
+            ) as mock_random_name_for_temp_object,
+            mock.patch.object(snowpark_utils, "generate_random_alphanumeric", return_value="ABCDEF0123"),
         ):
             service_sql.ServiceSQLClient(
                 c_session,
@@ -323,15 +326,15 @@ class ServiceSQLTest(absltest.TestCase):
             Outcome(
                 m_service_status,
                 0,
-                service_sql.InstanceStatus("READY"),
-                service_sql.ContainerStatus("READY"),
+                "READY",
+                "READY",
                 m_message,
             ),
             Outcome(
                 m_service_status,
                 1,
-                service_sql.InstanceStatus("TERMINATING"),
-                service_sql.ContainerStatus("UNKNOWN"),
+                "TERMINATING",
+                "UNKNOWN",
                 m_message,
             ),
         ]
@@ -356,15 +359,15 @@ class ServiceSQLTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=m_service_status,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus("READY"),
-                container_status=service_sql.ContainerStatus("READY"),
+                instance_status="READY",
+                container_status="READY",
                 message=m_message,
             ),
             service_sql.ServiceStatusInfo(
                 service_status=m_service_status,
                 instance_id=1,
-                instance_status=service_sql.InstanceStatus("TERMINATING"),
-                container_status=service_sql.ContainerStatus("UNKNOWN"),
+                instance_status="TERMINATING",
+                container_status="UNKNOWN",
                 message=m_message,
             ),
         ]
@@ -379,8 +382,8 @@ class ServiceSQLTest(absltest.TestCase):
             Outcome(
                 m_service_status,
                 0,
-                service_sql.InstanceStatus("READY"),
-                service_sql.ContainerStatus("READY"),
+                "READY",
+                "READY",
                 m_message,
             ),
         ]
@@ -405,8 +408,8 @@ class ServiceSQLTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=m_service_status,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus("READY"),
-                container_status=service_sql.ContainerStatus("READY"),
+                instance_status="READY",
+                container_status="READY",
                 message=None,
             ),
         ]

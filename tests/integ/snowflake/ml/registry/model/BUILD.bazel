@@ -317,3 +317,15 @@ py_test(
         ":registry_model_test_base",
     ],
 )
+
+py_test(
+    name = "code_path_test",
+    timeout = "long",
+    srcs = ["code_path_test.py"],
+    shard_count = 4,
+    tags = ["feature:model_registry"],
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model:custom_model",
+    ],
+)

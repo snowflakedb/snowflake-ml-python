@@ -405,3 +405,6 @@ html_coverage_report/
 
 # Cursor rules
 .cursor/
+
+# Claude local
+CLAUDE.local.md

@@ -58,7 +58,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
                 self.assertIsInstance(row, list)
                 self.assertIn("generated_text", row[0])
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         input_spec = self.session.create_dataframe(x_df)
 

@@ -4,10 +4,8 @@ from typing import Any
 import pandas as pd
 import xgboost
 from absl.testing import absltest
-from packaging import version
 
 from snowflake.ml import jobs
-from snowflake.ml._internal import env
 from snowflake.ml.jobs import remote
 from snowflake.ml.jobs._utils import query_helper
 from snowflake.snowpark import DataFrame
@@ -32,11 +30,9 @@ class MultiNodeJobsTest(JobTestBase):
         def dummy_remote_multinode() -> None:
             print("hello world")
 
-        # TODO(SNOW-1911482): Enable test for Python 3.11+
-        if version.Version(env.PYTHON_VERSION) < version.Version("3.11"):
-            job_from_func = dummy_remote_multinode()
-            self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs())
-            self.assertIn("hello world", file_job_logs)
+        job_from_func = dummy_remote_multinode()
+        self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs())
+        self.assertIn("hello world", file_job_logs)
 
     def test_multinode_job_ray_task(self) -> None:
         def ray_workload() -> int:
@@ -256,10 +252,6 @@ class XGBDistributedTest(DistributedEstimatorTestBase):
         """Prepare data as XGBoost DMatrix."""
         return xgboost.DMatrix(test_df[feature_cols])
 
-    @absltest.skipIf(  # type: ignore[misc]
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_xgb_distributed(self) -> None:
         self._run_distributed_training_test()
 
@@ -298,10 +290,6 @@ class LightGBMDistributedTest(DistributedEstimatorTestBase):
         """Prepare data as numpy array for LightGBM."""
         return test_df[feature_cols].values
 
-    @absltest.skipIf(  # type: ignore[misc]
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_lightgbm_distributed(self) -> None:
         self._run_distributed_training_test()
 

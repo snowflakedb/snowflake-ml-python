@@ -1,11 +1,5 @@
-import json
 import logging
-import os
-import pathlib
-import sys
-from pathlib import PurePath
 from typing import Any, Callable, Optional, TypeVar, Union, cast, overload
-from uuid import uuid4
 
 import pandas as pd
 
@@ -13,13 +7,8 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jb
-from snowflake.ml.jobs._utils import (
-    constants,
-    feature_flags,
-    payload_utils,
-    query_helper,
-    types,
-)
+from snowflake.ml.jobs._utils import query_helper
+from snowflake.ml.jobs.job_definition import MLJobDefinition
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.functions import coalesce, col, lit, when
@@ -457,7 +446,6 @@ def _submit_job(
         An object representing the submitted job.
 
     Raises:
-        ValueError: If database or schema value(s) are invalid
         RuntimeError: If schema is not specified in session context or job submission
     """
     session = _ensure_session(session)
@@ -469,94 +457,30 @@ def _submit_job(
         )
         target_instances = max(target_instances, kwargs.pop("num_instances"))
 
-    imports = None
     if "additional_payloads" in kwargs:
         logger.warning(
             "'additional_payloads' is deprecated and will be removed in a future release. Use 'imports' instead."
         )
-        imports = kwargs.pop("additional_payloads")
+        if "imports" not in kwargs:
+            imports = kwargs.pop("additional_payloads", None)
+            kwargs.update({"imports": imports})
 
     if "runtime_environment" in kwargs:
         logger.warning("'runtime_environment' is in private preview since 1.15.0, do not use it in production.")
 
-    # Use kwargs for less common optional parameters
-    database = kwargs.pop("database", None)
-    schema = kwargs.pop("schema", None)
-    min_instances = kwargs.pop("min_instances", target_instances)
-    pip_requirements = kwargs.pop("pip_requirements", None)
-    external_access_integrations = kwargs.pop("external_access_integrations", None)
-    env_vars = kwargs.pop("env_vars", None)
-    spec_overrides = kwargs.pop("spec_overrides", None)
-    enable_metrics = kwargs.pop("enable_metrics", True)
-    query_warehouse = kwargs.pop("query_warehouse", session.get_current_warehouse())
-    imports = kwargs.pop("imports", None) or imports
-    # if the mljob is submitted from a notebook, we use the same image tag as the notebook
-    runtime_environment = kwargs.pop("runtime_environment", os.environ.get(constants.RUNTIME_IMAGE_TAG_ENV_VAR, None))
-
-    # Warn if there are unknown kwargs
-    if kwargs:
-        logger.warning(f"Ignoring unknown kwargs: {kwargs.keys()}")
-
-    # Validate parameters
-    if database and not schema:
-        raise ValueError("Schema must be specified if database is specified.")
-    if target_instances < 1:
-        raise ValueError("target_instances must be greater than 0.")
-    if not (0 < min_instances <= target_instances):
-        raise ValueError("min_instances must be greater than 0 and less than or equal to target_instances.")
-    if min_instances > 1:
-        # Validate min_instances against compute pool max_nodes
-        pool_info = jb._get_compute_pool_info(session, compute_pool)
-        max_nodes = int(pool_info["max_nodes"])
-        if min_instances > max_nodes:
-            raise ValueError(
-                f"The requested min_instances ({min_instances}) exceeds the max_nodes ({max_nodes}) "
-                f"of compute pool '{compute_pool}'. Reduce min_instances or increase max_nodes."
-            )
-
-    job_name = f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
-    job_id = identifier.get_schema_level_object_identifier(database, schema, job_name)
-    stage_path_parts = identifier.parse_snowflake_stage_path(stage_name.lstrip("@"))
-    stage_name = f"@{'.'.join(filter(None, stage_path_parts[:3]))}"
-    stage_path = pathlib.PurePosixPath(f"{stage_name}{stage_path_parts[-1].rstrip('/')}/{job_name}")
+    job_definition = MLJobDefinition.register(
+        source,
+        compute_pool,
+        stage_name,
+        session or get_active_session(),
+        entrypoint,
+        target_instances,
+        generate_suffix=True,
+        **kwargs,
+    )
 
     try:
-        # Upload payload
-        uploaded_payload = payload_utils.JobPayload(
-            source, entrypoint=entrypoint, pip_requirements=pip_requirements, imports=imports
-        ).upload(session, stage_path)
-    except SnowparkSQLException as e:
-        if e.sql_error_code == 90106:
-            raise RuntimeError(
-                "Please specify a schema, either in the session context or as a parameter in the job submission"
-            )
-        elif e.sql_error_code == 3001 and "schema" in str(e).lower():
-            raise RuntimeError(
-                "please grant privileges on schema before submitting a job, see",
-                "https://docs.snowflake.com/en/developer-guide/snowflake-ml/ml-jobs/access-control-requirements",
-                " for more details",
-            ) from e
-        raise
-
-    combined_env_vars = {**uploaded_payload.env_vars, **(env_vars or {})}
-
-    try:
-        return _do_submit_job(
-            session=session,
-            payload=uploaded_payload,
-            args=args,
-            env_vars=combined_env_vars,
-            spec_overrides=spec_overrides,
-            compute_pool=compute_pool,
-            job_id=job_id,
-            external_access_integrations=external_access_integrations,
-            query_warehouse=query_warehouse,
-            target_instances=target_instances,
-            min_instances=min_instances,
-            enable_metrics=enable_metrics,
-            use_async=True,
-            runtime_environment=runtime_environment,
-        )
+        return job_definition(*(args or []))
     except SnowparkSQLException as e:
         if e.sql_error_code == 3001 and "schema" in str(e).lower():
             raise RuntimeError(
@@ -565,91 +489,6 @@ def _submit_job(
                 " for more details",
             ) from e
         raise
-
-
-def _do_submit_job(
-    session: snowpark.Session,
-    payload: types.UploadedPayload,
-    args: Optional[list[str]],
-    env_vars: dict[str, str],
-    spec_overrides: dict[str, Any],
-    compute_pool: str,
-    job_id: Optional[str] = None,
-    external_access_integrations: Optional[list[str]] = None,
-    query_warehouse: Optional[str] = None,
-    target_instances: int = 1,
-    min_instances: int = 1,
-    enable_metrics: bool = True,
-    use_async: bool = True,
-    runtime_environment: Optional[str] = None,
-) -> jb.MLJob[Any]:
-    """
-    Generate the SQL query for job submission.
-
-    Args:
-        session: The Snowpark session to use.
-        payload: The uploaded job payload.
-        args: Arguments to pass to the entrypoint script.
-        env_vars: Environment variables to set in the job container.
-        spec_overrides: Custom service specification overrides.
-        compute_pool: The compute pool to use for job execution.
-        job_id: The ID of the job.
-        external_access_integrations: Optional list of external access integrations.
-        query_warehouse: Optional query warehouse to use.
-        target_instances: Number of instances for multi-node job.
-        min_instances: Minimum number of instances required to start the job.
-        enable_metrics: Whether to enable platform metrics for the job.
-        use_async: Whether to run the job asynchronously.
-        runtime_environment: image tag or full image URL to use for the job.
-
-    Returns:
-        The job object.
-    """
-    args = [(v.as_posix() if isinstance(v, PurePath) else v) for v in payload.entrypoint] + (args or [])
-    spec_options = {
-        "STAGE_PATH": payload.stage_path.as_posix(),
-        "ENTRYPOINT": ["/usr/local/bin/_entrypoint.sh"],
-        "ARGS": args,
-        "ENV_VARS": env_vars,
-        "ENABLE_METRICS": enable_metrics,
-        "SPEC_OVERRIDES": spec_overrides,
-    }
-    if runtime_environment:
-        # for the image tag or full image URL, we use that directly
-        spec_options["RUNTIME"] = runtime_environment
-    elif feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
-        # when feature flag is enabled, we get the local python version and wrap it in a dict
-        # in system function, we can know whether it is python version or image tag or full image URL through the format
-        spec_options["RUNTIME"] = json.dumps({"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"})
-
-    job_options = {
-        "EXTERNAL_ACCESS_INTEGRATIONS": external_access_integrations,
-        "QUERY_WAREHOUSE": query_warehouse,
-        "TARGET_INSTANCES": target_instances,
-        "MIN_INSTANCES": min_instances,
-        "ASYNC": use_async,
-    }
-
-    if feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(default=True):
-        spec_options["ENABLE_STAGE_MOUNT_V2"] = True
-    if payload.payload_name:
-        job_options["GENERATE_SUFFIX"] = True
-    job_options = {k: v for k, v in job_options.items() if v is not None}
-
-    query_template = "CALL SYSTEM$EXECUTE_ML_JOB(?, ?, ?, ?)"
-    if job_id:
-        database, schema, _ = identifier.parse_schema_level_object_identifier(job_id)
-    params = [
-        job_id
-        if payload.payload_name is None
-        else identifier.get_schema_level_object_identifier(database, schema, payload.payload_name) + "_",
-        compute_pool,
-        json.dumps(spec_options),
-        json.dumps(job_options),
-    ]
-    actual_job_id = query_helper.run_query(session, query_template, params=params)[0][0]
-
-    return get_job(actual_job_id, session=session)
 
 
 def _ensure_session(session: Optional[snowpark.Session]) -> snowpark.Session:

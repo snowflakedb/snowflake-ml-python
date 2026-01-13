@@ -3,10 +3,8 @@ import tempfile
 
 import numpy as np
 from absl.testing import absltest
-from packaging import version
 
 from snowflake.ml import jobs
-from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.model.model_signature import DataType, FeatureSpec, ModelSignature
 from snowflake.ml.registry import Registry
@@ -15,10 +13,6 @@ from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
 
 
 class AccessTest(JobTestBase):
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_save_table(self) -> None:
         table = "TEST_FEATURE"
 
@@ -42,10 +36,6 @@ class AccessTest(JobTestBase):
             )
         )
 
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_save_model_registry(self):
         model_name = "test_model"
         version_name = "v1"
@@ -88,10 +78,6 @@ class AccessTest(JobTestBase):
         model_version = model.version(version_name)
         self.assertEqual(model_version.version_name, identifier.resolve_identifier(version_name))
 
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_save_stage(self):
         TEST_STAGE = "headless_test_stage"
         TEST_FILE = "test.csv"

@@ -48,6 +48,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         expected_predictions: Optional[pd.DataFrame] = None,
         blocking: bool = True,
         prediction_assert_fn: Optional[Any] = None,
+        column_handling: Optional[dict[str, Any]] = None,
     ) -> job.MLJob[Any]:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -88,6 +89,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             blocking=blocking,
             use_default_repo=use_default_repo,
             prediction_assert_fn=prediction_assert_fn,
+            column_handling=column_handling,
         )
 
     def _deploy_batch_inference_with_image_override(
@@ -183,6 +185,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         blocking: bool = True,
         use_default_repo: bool = False,
         prediction_assert_fn: Optional[Any] = None,
+        column_handling: Optional[dict[str, Any]] = None,
     ) -> job.MLJob[Any]:
         if self.BUILDER_IMAGE_PATH and self.BASE_CPU_IMAGE_PATH and self.BASE_GPU_IMAGE_PATH:
             with_image_override = True
@@ -233,6 +236,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                     replicas=replicas,
                     function_name=function_name,
                 ),
+                column_handling=column_handling,
             )
 
         if not blocking:
@@ -337,19 +341,23 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
 
         return input_spec, expected_predictions
 
-    def _prepare_service_name_and_stage_for_batch_inference(self) -> tuple[str, str]:
-        """Prepare batch inference setup by generating unique identifiers and output stage location.
+    def _prepare_service_name_and_stage_for_batch_inference(self) -> tuple[str, str, str]:
+        """Prepare batch inference setup by generating unique identifiers and stage locations.
 
-        Creates a unique name based on UUID and constructs the corresponding output stage
-        location path for batch inference operations.
+        Creates a unique name based on UUID and constructs the corresponding stage
+        location paths for batch inference operations.
 
         Returns:
-            tuple[str, str]: A tuple containing:
+            tuple[str, str, str]: A tuple containing:
                 - service_name: Unique identifier with underscores (replacing hyphens from UUID)
                 - output_stage_location: Full stage path for batch inference output files
+                - input_files_stage_location: Full stage path for input files (e.g., images, videos)
         """
         name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
         service_name = f"BATCH_INFERENCE_{name}"
         output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{service_name}/output/"
+        input_files_stage_location = (
+            f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{service_name}/input_files/"
+        )
 
-        return service_name, output_stage_location
+        return service_name, output_stage_location, input_files_stage_location

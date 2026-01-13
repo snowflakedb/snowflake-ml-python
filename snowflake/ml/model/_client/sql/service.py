@@ -47,22 +47,6 @@ class ServiceStatus(enum.Enum):
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
-class InstanceStatus(enum.Enum):
-    PENDING = "PENDING"
-    READY = "READY"
-    FAILED = "FAILED"
-    TERMINATING = "TERMINATING"
-    SUCCEEDED = "SUCCEEDED"
-
-
-class ContainerStatus(enum.Enum):
-    PENDING = "PENDING"
-    READY = "READY"
-    DONE = "DONE"
-    FAILED = "FAILED"
-    UNKNOWN = "UNKNOWN"
-
-
 @dataclasses.dataclass
 class ServiceStatusInfo:
     """
@@ -72,8 +56,8 @@ class ServiceStatusInfo:
 
     service_status: ServiceStatus
     instance_id: Optional[int] = None
-    instance_status: Optional[InstanceStatus] = None
-    container_status: Optional[ContainerStatus] = None
+    instance_status: Optional[str] = None
+    container_status: Optional[str] = None
     message: Optional[str] = None
 
 
@@ -272,17 +256,12 @@ class ServiceSQLClient(_base._BaseSQLClient):
         )
         statuses = []
         for r in rows:
-            instance_status, container_status = None, None
-            if r[ServiceSQLClient.INSTANCE_STATUS] is not None:
-                instance_status = InstanceStatus(r[ServiceSQLClient.INSTANCE_STATUS])
-            if r[ServiceSQLClient.CONTAINER_STATUS] is not None:
-                container_status = ContainerStatus(r[ServiceSQLClient.CONTAINER_STATUS])
             statuses.append(
                 ServiceStatusInfo(
                     service_status=ServiceStatus(r[ServiceSQLClient.SERVICE_STATUS]),
                     instance_id=r[ServiceSQLClient.INSTANCE_ID],
-                    instance_status=instance_status,
-                    container_status=container_status,
+                    instance_status=r[ServiceSQLClient.INSTANCE_STATUS],
+                    container_status=r[ServiceSQLClient.CONTAINER_STATUS],
                     message=r[ServiceSQLClient.MESSAGE] if include_message else None,
                 )
             )

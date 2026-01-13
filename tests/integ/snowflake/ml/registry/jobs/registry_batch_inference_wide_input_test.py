@@ -43,7 +43,7 @@ class TestBatchInferenceWideInputInteg(registry_batch_inference_test_base.Regist
 
         input_spec, expected_predictions = self._prepare_batch_inference_data(train_df, model_output)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=wide_model,

@@ -536,8 +536,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -545,8 +545,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.RUNNING,
                 instance_id=1,
-                instance_status=service_sql.InstanceStatus.READY,
-                container_status=service_sql.ContainerStatus.READY,
+                instance_status="READY",
+                container_status="READY",
                 message=None,
             )
         ]
@@ -716,8 +716,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -810,8 +810,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -896,8 +896,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -978,8 +978,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -987,8 +987,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.RUNNING,
                 instance_id=1,
-                instance_status=service_sql.InstanceStatus.READY,
-                container_status=service_sql.ContainerStatus.READY,
+                instance_status="READY",
+                container_status="READY",
                 message=None,
             )
         ]
@@ -1175,8 +1175,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -1250,8 +1250,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -1367,8 +1367,8 @@ class ModelOpsTest(absltest.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -2203,6 +2203,210 @@ class ModelOpsTest(absltest.TestCase):
             self.assertEqual(param_value, "default")
 
             mock_convert_to_df.assert_not_called()
+
+    def test_invoke_method_with_unknown_param(self) -> None:
+        """Test that invoke_method raises an error when unknown params are provided."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"Unknown parameter\(s\): \['unknown_param'\].*Valid parameters are: \['temperature'\]",
+            ):
+                self.m_ops.invoke_method(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    signature=m_sig,
+                    X=cast(DataFrame, m_df),
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                    params={"unknown_param": 0.5},
+                )
+
+    def test_invoke_method_with_invalid_param_type(self) -> None:
+        """Test that invoke_method raises an error when param value has incompatible type."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"not compatible with dtype",
+            ):
+                self.m_ops.invoke_method(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    signature=m_sig,
+                    X=cast(DataFrame, m_df),
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                    params={"temperature": "not_a_float"},  # String cannot be converted to float
+                )
+
+    def test_invoke_method_with_params_but_no_signature_params(self) -> None:
+        """Test that invoke_method raises an error when params provided but signature has none."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            # No params in signature
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"Parameters were provided.*but this method does not accept any parameters",
+            ):
+                self.m_ops.invoke_method(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    signature=m_sig,
+                    X=cast(DataFrame, m_df),
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                    params={"temperature": 0.5},
+                )
+
+    def test_invoke_method_with_case_insensitive_param_matching(self) -> None:
+        """Test that param names are matched case-insensitively."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["INPUT"])
+
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+            mock.patch.object(
+                snowpark_handler.SnowparkDataFrameHandler,
+                "convert_to_df",
+            ) as mock_convert_to_df,
+            mock.patch.object(
+                self.m_ops._model_version_client,
+                "invoke_function_method",
+                return_value=cast(DataFrame, m_df),
+            ) as mock_invoke_method,
+        ):
+            # User provides "TEMPERATURE" (upper case), signature has "temperature" (lower case)
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                params={"TEMPERATURE": 0.5},  # Upper case should match "temperature"
+            )
+            mock_invoke_method.assert_called_once()
+            call_kwargs = mock_invoke_method.call_args.kwargs
+            parameters = call_kwargs["params"]
+            self.assertIsNotNone(parameters)
+            self.assertEqual(len(parameters), 1)
+            # Parameter name should use the signature's original case
+            param_name, param_value = parameters[0]
+            self.assertEqual(param_name.identifier(), "TEMPERATURE")
+            self.assertEqual(param_value, 0.5)
+            mock_convert_to_df.assert_not_called()
+
+    def test_invoke_method_with_duplicate_params_different_cases(self) -> None:
+        """Test that duplicate params with different cases raises an error."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0),
+            ],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                exceptions.SnowflakeMLException,
+                r"Duplicate parameter\(s\) provided with different cases.*case-insensitive",
+            ):
+                self.m_ops.invoke_method(
+                    method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                    method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                    signature=m_sig,
+                    X=cast(DataFrame, m_df),
+                    database_name=sql_identifier.SqlIdentifier("TEMP"),
+                    schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    statement_params=self.m_statement_params,
+                    params={"temperature": 0.5, "TEMPERATURE": 0.7},  # Duplicate with different cases
+                )
 
     def test_get_comment_1(self) -> None:
         m_list_res = [

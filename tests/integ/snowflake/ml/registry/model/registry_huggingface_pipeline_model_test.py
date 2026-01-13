@@ -68,6 +68,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         x_df = pd.DataFrame(
             [
                 ["My name is Izumi and I live in Tokyo, Japan."],
+                ["Gibberish jabberish jabberish"],
             ]
         )
 
@@ -76,12 +77,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
             for row in res["outputs"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("entity", row[0])
-                self.assertIn("score", row[0])
-                self.assertIn("index", row[0])
-                self.assertIn("word", row[0])
-                self.assertIn("start", row[0])
-                self.assertIn("end", row[0])
+                if len(row) > 0:
+                    self.assertIn("entity", row[0])
+                    self.assertIn("score", row[0])
+                    self.assertIn("index", row[0])
+                    self.assertIn("word", row[0])
+                    self.assertIn("start", row[0])
+                    self.assertIn("end", row[0])
 
         self._test_registry_model(
             model=model,
@@ -410,10 +412,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             [
                 {
                     "messages": [
-                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "system",
+                            "content": "Complete the sentence.",
+                        },
                         {
                             "role": "user",
-                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
                         },
                     ],
                     "max_completion_tokens": 250,
@@ -448,7 +453,8 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
-            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+            # testing non-default signature for text-generation chat template pipeline
+            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
         )
 
     def test_hf_pipeline_text2text_generation(self) -> None:

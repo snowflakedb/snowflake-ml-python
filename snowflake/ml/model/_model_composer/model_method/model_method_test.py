@@ -469,15 +469,27 @@ class ModelMethodTest(parameterized.TestCase):
             )
             method_dict = mm.save(pathlib.Path(workspace))
 
-            # Verify params are included
+            # Verify params are included in method_dict
             self.assertIn("params", method_dict)
             self.assertEqual(len(method_dict["params"]), 2)
             self.assertEqual(method_dict["params"][0]["name"], "THRESHOLD")
             self.assertEqual(method_dict["params"][0]["type"], "FLOAT")
-            self.assertEqual(method_dict["params"][0]["default"], 0.5)
+            self.assertEqual(method_dict["params"][0]["default"], "0.5")
             self.assertEqual(method_dict["params"][1]["name"], "MAX_ITER")
             self.assertEqual(method_dict["params"][1]["type"], "BIGINT")
-            self.assertEqual(method_dict["params"][1]["default"], 100)
+            self.assertEqual(method_dict["params"][1]["default"], "100")
+
+            # Verify generated code matches expected fixture (same structure regardless of params)
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_1.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
 
     def test_model_method_with_parameters_case_sensitive(self) -> None:
         """Test that parameters respect case_sensitive option."""
