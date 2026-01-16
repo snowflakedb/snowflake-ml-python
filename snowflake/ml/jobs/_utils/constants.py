@@ -5,6 +5,7 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 DEFAULT_CONTAINER_NAME = "main"
 MEMORY_VOLUME_NAME = "dshm"
 STAGE_VOLUME_NAME = "stage-volume"
+DEFAULT_PYTHON_VERSION = "3.10"
 
 # Environment variables
 STAGE_MOUNT_PATH_ENV_VAR = "MLRS_STAGE_MOUNT_PATH"

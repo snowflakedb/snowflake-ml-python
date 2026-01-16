@@ -1,6 +1,4 @@
-import base64
 import enum
-import json
 import pathlib
 import tempfile
 import uuid
@@ -8,7 +6,6 @@ import warnings
 from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
-from pydantic import TypeAdapter
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -33,7 +30,10 @@ _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
 _BATCH_INFERENCE_JOB_ID_PREFIX = "BATCH_INFERENCE_"
 _BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
-_UTF8_ENCODING = "utf-8"
+VLLM_SUPPORTED_TASKS = [
+    "text-generation",
+    "image-text-to-text",
+]
 
 
 class ExportMode(enum.Enum):
@@ -649,41 +649,6 @@ class ModelVersion(lineage_node.LineageNode):
             method_options, target_function_info["name"]
         )
 
-    @staticmethod
-    def _encode_column_handling(
-        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
-    ) -> Optional[str]:
-        """Validate and encode column_handling to a base64 string.
-
-        Args:
-            column_handling: Optional dictionary mapping column names to file encoding options.
-
-        Returns:
-            Base64 encoded JSON string of the column handling options, or None if input is None.
-        """
-        # TODO: validation for column names
-        if column_handling is None:
-            return None
-        adapter = TypeAdapter(dict[str, batch_inference_specs.ColumnHandlingOptions])
-        # TODO: throw error if the validate_python function fails
-        validated_input = adapter.validate_python(column_handling)
-        return base64.b64encode(adapter.dump_json(validated_input)).decode(_UTF8_ENCODING)
-
-    @staticmethod
-    def _encode_params(params: Optional[dict[str, Any]]) -> Optional[str]:
-        """Encode params dictionary to a base64 string.
-
-        Args:
-            params: Optional dictionary of model inference parameters.
-
-        Returns:
-            Base64 encoded JSON string of the params, or None if input is None.
-        """
-        if params is None:
-            return None
-        # TODO: validation for param names, types
-        return base64.b64encode(json.dumps(params).encode(_UTF8_ENCODING)).decode(_UTF8_ENCODING)
-
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
@@ -703,6 +668,7 @@ class ModelVersion(lineage_node.LineageNode):
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
         params: Optional[dict[str, Any]] = None,
         column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]] = None,
+        inference_engine_options: Optional[dict[str, Any]] = None,
     ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
 
@@ -722,6 +688,10 @@ class ModelVersion(lineage_node.LineageNode):
             column_handling (Optional[dict[str, batch_inference_specs.FileEncoding]]): Optional dictionary
                 specifying how to handle specific columns during file I/O. Maps column names to their
                 file encoding configuration.
+            inference_engine_options: Options for the service creation with custom inference engine.
+                Supports `engine` and `engine_args_override`.
+                `engine` is the type of the inference engine to use.
+                `engine_args_override` is a list of string arguments to pass to the inference engine.
 
         Returns:
             job.MLJob[Any]: A batch inference job object that can be used to monitor progress and manage the job
@@ -777,11 +747,17 @@ class ModelVersion(lineage_node.LineageNode):
             subproject=_TELEMETRY_SUBPROJECT,
         )
 
-        column_handling_as_string = self._encode_column_handling(column_handling)
-        params_as_string = self._encode_params(params)
-
         if job_spec is None:
             job_spec = batch_inference_specs.JobSpec()
+
+        # Validate GPU support if GPU resources are requested
+        self._throw_error_if_gpu_is_not_supported(job_spec.gpu_requests, statement_params)
+
+        inference_engine_args = self._prepare_inference_engine_args(
+            inference_engine_options,
+            job_spec.gpu_requests,
+            statement_params,
+        )
 
         warehouse = job_spec.warehouse or self._service_ops._session.get_current_warehouse()
         if warehouse is None:
@@ -807,12 +783,14 @@ class ModelVersion(lineage_node.LineageNode):
         else:
             job_name = job_spec.job_name
 
+        target_function_info = self._get_function_info(function_name=job_spec.function_name)
+
         return self._service_ops.invoke_batch_job_method(
             # model version info
             model_name=self._model_name,
             version_name=self._version_name,
             # job spec
-            function_name=self._get_function_info(function_name=job_spec.function_name)["target_method"],
+            function_name=target_function_info["target_method"],
             compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
             force_rebuild=job_spec.force_rebuild,
             image_repo_name=job_spec.image_repo,
@@ -827,12 +805,14 @@ class ModelVersion(lineage_node.LineageNode):
             # input and output
             input_stage_location=input_stage_location,
             input_file_pattern="*",
-            column_handling=column_handling_as_string,
-            params=params_as_string,
+            column_handling=column_handling,
+            params=params,
+            signature_params=target_function_info["signature"].params,
             output_stage_location=output_stage_location,
             completion_filename="_SUCCESS",
             # misc
             statement_params=statement_params,
+            inference_engine_args=inference_engine_args,
         )
 
     def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
@@ -1048,20 +1028,55 @@ class ModelVersion(lineage_node.LineageNode):
                 " the `log_model` function."
             )
 
-    def _check_huggingface_text_generation_model(
+    def _prepare_inference_engine_args(
+        self,
+        inference_engine_options: Optional[dict[str, Any]],
+        gpu_requests: Optional[Union[str, int]],
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> Optional[service_ops.InferenceEngineArgs]:
+        """Prepare and validate inference engine arguments.
+
+        This method handles the common logic for processing inference engine options:
+        1. Parse inference engine options into InferenceEngineArgs
+        2. Validate that the model is a HuggingFace text-generation model (if inference engine is specified)
+        3. Enrich inference engine args
+
+        Args:
+            inference_engine_options: Optional dictionary containing inference engine configuration.
+            gpu_requests: GPU resource request string (e.g., "4").
+            statement_params: Optional dictionary of statement parameters for SQL commands.
+
+        Returns:
+            Prepared InferenceEngineArgs or None if no inference engine is specified.
+        """
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
+
+        if inference_engine_args is not None:
+            # Validate that model is HuggingFace vLLM supported model and is logged with
+            # OpenAI compatible signature.
+            self._check_huggingface_vllm_supported_model(statement_params)
+            # Enrich with GPU configuration
+            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
+                inference_engine_args,
+                gpu_requests,
+            )
+
+        return inference_engine_args
+
+    def _check_huggingface_vllm_supported_model(
         self,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Check if the model is a HuggingFace pipeline with text-generation task
-        and is logged with OPENAI_CHAT_SIGNATURE.
+        """Check if the model is a HuggingFace pipeline with vLLM supported task
+        and is logged with OpenAI compatible signature.
 
         Args:
             statement_params: Optional dictionary of statement parameters to include
                 in the SQL command to fetch model spec.
 
         Raises:
-            ValueError: If the model is not a HuggingFace text-generation model or
-                if the model is not logged with OPENAI_CHAT_SIGNATURE.
+            ValueError: If the model is not a HuggingFace vLLM supported model or
+                if the model is not logged with OpenAI compatible signature.
         """
         # Fetch model spec
         model_spec = self._get_model_spec(statement_params)
@@ -1070,34 +1085,37 @@ class ModelVersion(lineage_node.LineageNode):
         model_type = model_spec.get("model_type")
         if model_type != "huggingface_pipeline":
             raise ValueError(
-                f"Inference engine is only supported for HuggingFace text-generation models. "
+                f"Inference engine is only supported for HuggingFace vLLM supported models. "
                 f"Found model_type: {model_type}"
             )
 
-        # Check if model supports text-generation task
+        # Check if model supports vLLM supported task
         # There should only be one model in the list because we don't support multiple models in a single model spec
         models = model_spec.get("models", {})
-        is_text_generation = False
+        is_vllm_supported_task = False
         found_tasks: list[str] = []
 
-        # As long as the model supports text-generation task, we can use it
+        # As long as the model supports vLLM supported task, we can use it
         for _, model_info in models.items():
             options = model_info.get("options", {})
             task = options.get("task")
             if task:
                 found_tasks.append(str(task))
-                if task == "text-generation":
-                    is_text_generation = True
+                if task in VLLM_SUPPORTED_TASKS:
+                    is_vllm_supported_task = True
                     break
 
-        if not is_text_generation:
+        if not is_vllm_supported_task:
             tasks_str = ", ".join(found_tasks)
             found_tasks_str = (
                 f"Found task(s): {tasks_str} in model spec." if found_tasks else "No task found in model spec."
             )
-            raise ValueError(f"Inference engine is only supported for task 'text-generation'. {found_tasks_str}")
+            supported_tasks_str = ", ".join(VLLM_SUPPORTED_TASKS)
+            raise ValueError(
+                f"Inference engine is only supported for vLLM supported tasks. {supported_tasks_str}. {found_tasks_str}"
+            )
 
-        # Check if the model is logged with OPENAI_CHAT_SIGNATURE
+        # Check if the model is logged with OpenAI compatible signature.
         signatures_dict = model_spec.get("signatures", {})
 
         # Deserialize signatures from model spec to ModelSignature objects for proper semantic comparison.
@@ -1105,11 +1123,16 @@ class ModelVersion(lineage_node.LineageNode):
             func_name: core.ModelSignature.from_dict(sig_dict) for func_name, sig_dict in signatures_dict.items()
         }
 
-        if deserialized_signatures != openai_signatures.OPENAI_CHAT_SIGNATURE:
+        if deserialized_signatures not in [
+            openai_signatures.OPENAI_CHAT_SIGNATURE,
+            openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
+        ]:
             raise ValueError(
-                "Inference engine requires the model to be logged with OPENAI_CHAT_SIGNATURE. "
+                "Inference engine requires the model to be logged with openai_signatures.OPENAI_CHAT_SIGNATURE or "
+                "openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING. "
                 f"Found signatures: {signatures_dict}. "
-                "Please log the model with: signatures=openai_signatures.OPENAI_CHAT_SIGNATURE"
+                "Please log the model again with: signatures=openai_signatures.OPENAI_CHAT_SIGNATURE or "
+                "signatures=openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING"
             )
 
     @overload
@@ -1350,20 +1373,11 @@ class ModelVersion(lineage_node.LineageNode):
         # Validate GPU support if GPU resources are requested
         self._throw_error_if_gpu_is_not_supported(gpu_requests, statement_params)
 
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
-
-        # Check if model is HuggingFace text-generation and is logged with
-        # OPENAI_CHAT_SIGNATURE before doing inference engine checks
-        # Only validate if inference engine is actually specified
-        if inference_engine_args is not None:
-            self._check_huggingface_text_generation_model(statement_params)
-
-        # Enrich inference engine args if inference engine is specified
-        if inference_engine_args is not None:
-            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
-                inference_engine_args,
-                gpu_requests,
-            )
+        inference_engine_args = self._prepare_inference_engine_args(
+            inference_engine_options,
+            gpu_requests,
+            statement_params,
+        )
 
         from snowflake.ml.model import event_handler
         from snowflake.snowpark import exceptions

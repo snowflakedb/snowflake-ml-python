@@ -8,7 +8,7 @@
 Distributed Modeling Classes
 ****************************
 
-When using `Container Runtime for ML <https://docs.snowflake.com/user-guide/ui-snowsight/notebooks-on-spcs>`_
+When using `Container Runtime <https://docs.snowflake.com/user-guide/ui-snowsight/notebooks-on-spcs>`_
 in a `Snowflake Notebook <https://docs.snowflake.com/user-guide/ui-snowsight/notebooks>`_, a set of distributed
 modeling classes is available to train selected types of models on large datasets using the full resources of a
 Snowpark Container Services (SPCS) `compute pool <https://docs.snowflake.com/en/developer-guide/snowflake-cli/services/manage-compute-pools>`_.

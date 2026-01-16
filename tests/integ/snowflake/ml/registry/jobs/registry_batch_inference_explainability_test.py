@@ -24,7 +24,7 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             columns=["output_feature_0"],
         )
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         cal_X_test = pd.DataFrame(cal_X_test)
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values

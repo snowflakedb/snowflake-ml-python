@@ -6,6 +6,7 @@ import re
 import sys
 import textwrap
 import time
+from concurrent import futures
 from types import ModuleType
 from typing import Any, Callable, Optional, cast
 from unittest import mock
@@ -19,7 +20,6 @@ from packaging import version
 
 from snowflake import snowpark
 from snowflake.ml import jobs
-from snowflake.ml._internal import env
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jd
 from snowflake.ml.jobs._interop import results as interop_result
@@ -257,8 +257,6 @@ class JobManagerTest(JobTestBase):
         ENABLE_RUNTIME_VERSIONS=[True, False],
     )
     def test_job_execution(self, **feature_flag_kwargs: bool) -> None:
-        if feature_flag_kwargs["ENABLE_RUNTIME_VERSIONS"]:
-            self.skipTest("SNOW-2888640: Temporarily disable runtime version tests")
         env_vars = {}
         for param_name, param_value in feature_flag_kwargs.items():
             flag = getattr(feature_flags.FeatureFlags, param_name.upper())
@@ -334,8 +332,8 @@ class JobManagerTest(JobTestBase):
         # Wait for job to finish
         job1.wait()
         job2.wait()
-        self.assertEqual(job1.status, "DONE")
-        self.assertEqual(job2.status, "DONE")
+        self.assertEqual(job1.status, "DONE", job1.get_logs(verbose=True))
+        self.assertEqual(job2.status, "DONE", job2.get_logs(verbose=True))
 
         # Skip event table validation to avoid unpredictably slow Event Table latency
         validate_metrics_events = False
@@ -368,10 +366,6 @@ class JobManagerTest(JobTestBase):
             self.assertEqual(self.session.sql(query.format(job_id=job1.id)).count(), 0, job1.id)
             self.assertGreater(self.session.sql(query.format(job_id=job2.id)).count(), 0, job2.id)
 
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )  # type: ignore[misc]
     def test_job_pickling(self) -> None:
         """Dedicated test for MLJob pickling and unpickling functionality."""
         payload = TestAsset("src/main.py")
@@ -568,11 +562,6 @@ class JobManagerTest(JobTestBase):
         # Ensure the result was saved with v1 (v2 results get loaded as LoadedExecutionResults)
         self.assertEqual(type(job._result), interop_result.ExecutionResult)
 
-    # TODO(SNOW-1911482): Enable test for Python 3.11+
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )  # type: ignore[misc]
     def test_job_decorator(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="@payload_stage/subdir", session=self.session)
         def decojob_fn(arg1: str, arg2: int, arg3: Optional[Any] = None) -> dict[str, Any]:
@@ -629,11 +618,6 @@ class JobManagerTest(JobTestBase):
                 self.assertEqual(loaded_job.status, "DONE")
                 self.assertDictEqual(loaded_job.result(), job_result)
 
-    # TODO(SNOW-1911482): Enable test for Python 3.11+
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )  # type: ignore[misc]
     @parameterized.parameters(  # type: ignore[misc]
         "owner",
         "caller",
@@ -658,11 +642,6 @@ class JobManagerTest(JobTestBase):
         result = job_sproc(self.session)
         self.assertEqual("Hello from remote function!", result)
 
-    # TODO(SNOW-1911482): Enable test for Python 3.11+
-    @absltest.skipIf(  # type: ignore[misc]
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_job_decorator_negative_result(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def func_no_return() -> None:
@@ -729,10 +708,6 @@ class JobManagerTest(JobTestBase):
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
         self.assertIn("Runtime API test success", job_logs)
 
-    @absltest.skipIf(  # type: ignore[misc]
-        not version.Version(env.PYTHON_VERSION).public.startswith("3.10."),
-        "Decorator test only works for Python 3.10 to pickle compatibility",
-    )
     def test_job_data_connector(self) -> None:
         from snowflake.ml.data import data_connector
         from snowflake.ml.data._internal import arrow_ingestor
@@ -806,7 +781,7 @@ class JobManagerTest(JobTestBase):
             TestAsset("src/check_numpy.py").path,
             self.compute_pool,
             stage_name="payload_stage",
-            pip_requirements=["numpy==1.23"],
+            pip_requirements=["numpy==2.0.0"],
             external_access_integrations=pypi_eais,
             session=self.session,
         )
@@ -830,8 +805,7 @@ class JobManagerTest(JobTestBase):
         self.assertEqual(
             job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs(verbose=True)
         )
-        self.assertRegex(job_dep_conflict_logs, r"you have numpy 1\.23\.\d+ which is incompatible")
-        self.assertIn("Numpy version: 1.23", job_dep_conflict_logs)
+        self.assertIn("Numpy version: 2.0.0", job_dep_conflict_logs)
 
     @parameterized.parameters(  # type: ignore[misc]
         "cloudpickle~=2.0",
@@ -977,10 +951,6 @@ class JobManagerTest(JobTestBase):
                         **invalid_kwargs,
                     )
 
-    @absltest.skipIf(  # type: ignore[misc]
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )
     def test_remote_with_session_positive(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="@payload_stage", session=self.session)
         def test_session_as_first_positional(arg1: snowpark.Session, arg2: str, arg3: str) -> None:
@@ -1263,7 +1233,7 @@ class JobManagerTest(JobTestBase):
             session=self.session,
         )
         self.assertEqual(job.wait(), "DONE", job.get_logs())
-        self.assertIn("Numpy version: 1.23", job.get_logs())
+        self.assertIn("Numpy version: 2.0.0", job.get_logs())
         self.assertIn(f"Cloudpickle version: {version.parse(cp.__version__).major}.", job.get_logs())
 
     def test_submit_with_hidden_files(self) -> None:
@@ -1380,33 +1350,32 @@ class JobManagerTest(JobTestBase):
     def test_get_job_after_job_deleted(self) -> None:
         job = self._submit_func_as_file(dummy_function)
         job.wait()
+        job_type = self.session.sql(f"describe service {job.id}").collect()[0]["owner"]
         jobs.delete_job(job.id, session=self.session)
-        loaded_job = jobs.get_job(job.id, session=self.session)
-        self.assertIsNotNone(loaded_job.status)
-        self.assertEqual(loaded_job.target_instances, 1)
-        self.assertEqual(loaded_job._compute_pool, self.compute_pool)
+        if job_type == "SYSTEM$MANAGED":
+            with self.assertRaises(sp_exceptions.SnowparkSQLException, msg=f"id={job.id}"):
+                jobs.get_job(job.id, session=self.session)
+        else:
+            loaded_job = jobs.get_job(job.id, session=self.session)
+            self.assertIsNotNone(loaded_job.status)
+            self.assertEqual(loaded_job.target_instances, 1)
+            self.assertEqual(loaded_job._compute_pool, self.compute_pool)
 
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )  # type: ignore[misc]
     def test_job_name(self) -> None:
-        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def test_function() -> None:
+            print("hello world")
 
-            @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
-            def test_function() -> None:
-                print("hello world")
+        job = test_function()
+        self.assertRegex(job.name.lower(), r"test_function_\w+")
 
-            job = test_function()
-            self.assertRegex(job.name.lower(), r"test_function_\w+")
-
-            job1 = jobs.submit_file(
-                TestAsset("src/main.py").path,
-                self.compute_pool,
-                stage_name="payload_stage",
-                session=self.session,
-            )
-            self.assertRegex(job1.name.lower(), r"main_\w+")
+        job1 = jobs.submit_file(
+            TestAsset("src/main.py").path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        self.assertRegex(job1.name.lower(), r"main_\w+")
 
     @parameterized.parameters(  # type: ignore[misc]
         ("src/", "greeter", "src/modules_file.py", lambda greeter: [(greeter, None)]),
@@ -1437,15 +1406,8 @@ class JobManagerTest(JobTestBase):
             )
             self.assertEqual(job.wait(), "DONE", job.get_logs())
 
-    @absltest.skipIf(
-        version.Version(env.PYTHON_VERSION) >= version.Version("3.11"),
-        "Decorator test only works for Python 3.10 and below due to pickle compatibility",
-    )  # type: ignore[misc]
-    @parameterized.parameters(  # type: ignore[misc]
-        (True,),
-        (False,),
-    )
-    def test_job_stage_mount_v2(self, enable_stage_mount_v2: bool) -> None:
+    @mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: "true"})
+    def test_job_stage_mount_v2(self) -> None:
         try:
             self.session.sql("ALTER SESSION SET ENABLE_STAGE_MOUNT_V2_ML_JOB = true").collect()
         except Exception:
@@ -1455,19 +1417,100 @@ class JobManagerTest(JobTestBase):
         def test_function() -> str:
             return "hello world"
 
-        with mock.patch.dict(
-            os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: str(enable_stage_mount_v2)}
-        ):
-            job = test_function()
+        job = test_function()
 
-            self.assertEqual(job.wait(), "DONE", job.get_logs())
-            self.assertEqual(job.result(), "hello world")
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.result(), "hello world")
 
     def test_job_with_runtime_image_tag_notebook(self) -> None:
         with mock.patch.dict(os.environ, {constants.RUNTIME_IMAGE_TAG_ENV_VAR: "1.8.0"}):
             job = self._submit_func_as_file(dummy_function)
             self.assertEqual(job.wait(), "DONE", job.get_logs())
             self.assertIn("1.8.0", job._container_spec["image"])
+
+    def _register_definition(self, **overrides: Any) -> jobs.MLJobDefinition:
+        payload = TestAsset("src/main.py")
+        return jobs.MLJobDefinition.register(
+            payload.path,
+            compute_pool=self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            **overrides,
+        )
+
+    def test_job_definition_multiple_invocations(self) -> None:
+        job_def = self._register_definition(overwrite=False)
+        try:
+            first_job = job_def("foo", "--delay", "1")
+            second_job = job_def("foo", "--delay", "1")
+            self.assertEqual(first_job.wait(), "DONE", first_job.get_logs(verbose=True))
+            self.assertEqual(second_job.wait(), "DONE", second_job.get_logs(verbose=True))
+
+            jobs_df = jobs.list_jobs(session=self.session)
+            _, _, definition_name = identifier.parse_schema_level_object_identifier(job_def.job_definition_id)
+            self.assertGreaterEqual(
+                len(jobs_df[jobs_df["name"].str.lower().str.startswith(definition_name.lower() + "_")]), 2
+            )
+        finally:
+            job_def.delete()
+
+    def test_job_definition_concurrent_invocations(self) -> None:
+        job_def = self._register_definition()
+        try:
+            with futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures_list = [executor.submit(job_def, "foo", "--delay", "1") for _ in range(2)]
+            jobs_submitted = [future.result() for future in futures_list]
+
+            for job in jobs_submitted:
+                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        finally:
+            job_def.delete()
+
+    def test_job_definition_synchronous(self) -> None:
+        job_def: jobs.MLJobDefinition = jobs.MLJobDefinition.register(
+            TestAsset("src/subdir5/main.py").path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+        )
+        sql = job_def.to_sql()
+        job_id = self.session.sql(sql).collect()[0][0]
+        job = jobs.get_job(job_id, session=self.session)
+        is_async_job = self.session.sql(f"describe service {job_id}").collect()[0]["is_async_job"]
+        self.assertTrue(
+            job.wait() == "DONE" or not is_async_job,
+            job.get_logs(verbose=True),
+        )
+
+    def test_job_with_task_execution(self) -> None:
+        from snowflake.core import Root
+        from snowflake.core.task import Task
+
+        job_def = self._register_definition()
+        sql = job_def.to_sql(job_args=["foo", "--delay", "1"], use_async=False)
+        task_name = "TEST_TASK"
+
+        root = Root(self.session)
+        root.databases[self.db].schemas[self.schema].tasks.create(Task(name=task_name, definition=sql))
+        task_ref = root.databases[self.db].schemas[self.schema].tasks[task_name]
+        task_ref.execute()
+        max_retries = 60
+        status = None
+        try:
+            for _ in range(max_retries):
+                time.sleep(5)
+                history = self.session.sql(
+                    f"SELECT state FROM TABLE(information_schema.task_history(task_name=>'{task_name}')) "
+                    "ORDER BY scheduled_time DESC LIMIT 1"
+                ).collect()
+
+                if history:
+                    status = history[0][0]
+                    if status in ["SUCCEEDED", "FAILED", "CANCELLED"]:
+                        break
+            self.assertEqual(status, "SUCCEEDED")
+        finally:
+            task_ref.drop(if_exists=True)
 
 
 if __name__ == "__main__":

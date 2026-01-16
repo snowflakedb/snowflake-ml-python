@@ -45,10 +45,23 @@ class TestRegistryHuggingFacePipelineBatchInferenceInteg(
             [
                 {
                     "messages": [
-                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Complete the sentence.",
+                                },
+                            ],
+                        },
                         {
                             "role": "user",
-                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
+                                },
+                            ],
                         },
                     ],
                     "temperature": 0.9,
@@ -96,7 +109,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceInteg(
                 self.assertIn("message", row[0])
                 self.assertIn("content", row[0]["message"])
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         input_spec = self.session.create_dataframe(x_df)
 

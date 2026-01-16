@@ -29,6 +29,7 @@ py_library(
     name = "job_manager",
     srcs = ["manager.py"],
     deps = [
+        ":job_definition",
         ":ml_job",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:identifier",
@@ -69,6 +70,15 @@ py_test(
 )
 
 py_test(
+    name = "job_definition_test",
+    srcs = ["job_definition_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        "//snowflake/ml/jobs",
+    ],
+)
+
+py_test(
     name = "manager_test",
     srcs = ["manager_test.py"],
     tags = ["feature:jobs"],
@@ -87,5 +97,14 @@ py_library(
         ":job_manager",
         "//snowflake/ml/jobs/_interop:exception_utils",
         "//snowflake/ml/jobs/_utils:types",
+    ],
+)
+
+py_library(
+    name = "job_definition",
+    srcs = ["job_definition.py"],
+    deps = [
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/jobs/_utils:job_utils",
     ],
 )

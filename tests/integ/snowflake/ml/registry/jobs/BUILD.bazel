@@ -257,6 +257,19 @@ py_test(
 )
 
 py_test(
+    name = "registry_multi_modality_hugging_face_pipeline_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_multi_modality_hugging_face_pipeline_batch_inference_test.py"],
+    data = ["//tests/integ/snowflake/ml/test_data:cat.jpeg"],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_explainability_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_explainability_test.py"],

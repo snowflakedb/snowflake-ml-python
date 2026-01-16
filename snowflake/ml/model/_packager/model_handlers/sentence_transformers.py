@@ -23,24 +23,55 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Allowlist of supported target methods for SentenceTransformer models.
+_ALLOWED_TARGET_METHODS = ["encode", "encode_queries", "encode_documents"]
+
 
 def _validate_sentence_transformers_signatures(sigs: dict[str, model_signature.ModelSignature]) -> None:
-    if list(sigs.keys()) != ["encode"]:
-        raise ValueError("target_methods can only be ['encode']")
+    """Validate signatures for SentenceTransformer models.
 
-    if len(sigs["encode"].inputs) != 1:
-        raise ValueError("SentenceTransformer can only accept 1 input column")
+    Args:
+        sigs: Dictionary mapping method names to their signatures.
 
-    if len(sigs["encode"].outputs) != 1:
-        raise ValueError("SentenceTransformer can only return 1 output column")
+    Raises:
+        ValueError: If signatures are empty, contain unsupported methods, or violate per-method constraints.
+    """
+    # Check that signatures are non-empty
+    if not sigs:
+        raise ValueError("At least one signature must be provided.")
 
-    assert isinstance(sigs["encode"].inputs[0], model_signature.FeatureSpec)
+    # Check that all methods are in the allowlist
+    unsupported_methods = set(sigs.keys()) - set(_ALLOWED_TARGET_METHODS)
+    if unsupported_methods:
+        raise ValueError(
+            f"Unsupported target methods: {sorted(unsupported_methods)}. "
+            f"Supported methods are: {_ALLOWED_TARGET_METHODS}."
+        )
 
-    if sigs["encode"].inputs[0]._shape is not None:
-        raise ValueError("SentenceTransformer does not support input shape")
+    # Validate per-method constraints
+    for method_name, sig in sigs.items():
+        if len(sig.inputs) != 1:
+            raise ValueError(f"SentenceTransformer method '{method_name}' must have exactly 1 input column.")
 
-    if sigs["encode"].inputs[0]._dtype != model_signature.DataType.STRING:
-        raise ValueError("SentenceTransformer only accepts string input")
+        if len(sig.outputs) != 1:
+            raise ValueError(f"SentenceTransformer method '{method_name}' must have exactly 1 output column.")
+
+        # FeatureSpec is expected here; FeatureGroupSpec would indicate a nested/grouped input
+        # which SentenceTransformer does not support.
+        if not isinstance(sig.inputs[0], model_signature.FeatureSpec):
+            raise ValueError(
+                f"SentenceTransformer method '{method_name}' requires a FeatureSpec input, "
+                f"got {type(sig.inputs[0]).__name__}."
+            )
+
+        if sig.inputs[0]._shape is not None:
+            raise ValueError(f"SentenceTransformer method '{method_name}' does not support input shape.")
+
+        if sig.inputs[0]._dtype != model_signature.DataType.STRING:
+            raise ValueError(
+                f"SentenceTransformer method '{method_name}' only accepts STRING input, "
+                f"got {sig.inputs[0]._dtype.name}."
+            )
 
 
 @final
@@ -51,7 +82,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
-    DEFAULT_TARGET_METHODS = ["encode"]
+    DEFAULT_TARGET_METHODS = ["encode", "encode_queries", "encode_documents"]
 
     @classmethod
     def can_handle(
@@ -98,8 +129,13 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 target_methods=kwargs.pop("target_methods", None),
                 default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
-            if target_methods != ["encode"]:
-                raise ValueError("target_methods can only be ['encode']")
+
+            # Validate target_methods
+            if not target_methods:
+                raise ValueError("At least one target method must be specified.")
+
+            if not set(target_methods).issubset(_ALLOWED_TARGET_METHODS):
+                raise ValueError(f"target_methods {target_methods} must be a subset of {_ALLOWED_TARGET_METHODS}.")
 
             def get_prediction(
                 target_method_name: str, sample_input_data: model_types.SupportedLocalDataType
@@ -246,10 +282,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
 
             type_method_dict = {}
             for target_method_name, sig in model_meta.signatures.items():
-                if target_method_name == "encode":
+                if target_method_name in _ALLOWED_TARGET_METHODS:
                     type_method_dict[target_method_name] = get_prediction(raw_model, sig, target_method_name)
                 else:
-                    ValueError(f"{target_method_name} is currently not supported.")
+                    raise ValueError(f"{target_method_name} is currently not supported.")
 
             _SentenceTransformer = type(
                 "_SentenceTransformer",

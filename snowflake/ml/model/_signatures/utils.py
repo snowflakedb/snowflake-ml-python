@@ -9,6 +9,7 @@ from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
+from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._signatures import core
 
 
@@ -259,6 +260,48 @@ def huggingface_pipeline_signature_auto_infer(
             ],
         )
 
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageClassificationPipeline
+    if task == "image-classification":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.AutomaticSpeechRecognitionPipeline
+    if task == "automatic-speech-recognition":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="audio", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[
+                        core.FeatureSpec(name="text", dtype=core.DataType.STRING),
+                        core.FeatureGroupSpec(
+                            name="chunks",
+                            specs=[
+                                core.FeatureSpec(name="timestamp", dtype=core.DataType.DOUBLE, shape=(2,)),
+                                core.FeatureSpec(name="text", dtype=core.DataType.STRING),
+                            ],
+                            shape=(-1,),  # Variable length list of chunks
+                        ),
+                    ],
+                ),
+            ],
+        )
+
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TextGenerationPipeline
     if task == "text-generation":
         if params.get("return_tensors", False):
@@ -288,6 +331,18 @@ def huggingface_pipeline_signature_auto_infer(
                 )
             ],
         )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageTextToTextPipeline
+    if task == "image-text-to-text":
+        if params.get("return_tensors", False):
+            raise NotImplementedError(
+                f"Auto deployment for HuggingFace pipeline {task} "
+                "when `return_tensors` set to `True` has not been supported yet."
+            )
+        # Always generate a dict per input
+        # defaulting to OPENAI_CHAT_SIGNATURE_SPEC for image-text-to-text pipeline
+        return openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC
+
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.Text2TextGenerationPipeline
     if task == "text2text-generation":
         if params.get("return_tensors", False):

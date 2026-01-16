@@ -36,7 +36,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         # Create sample input data without INDEX column for model signature
         sp_df = self.session.create_dataframe(input_data, schema=input_cols)
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         return model, service_name, output_stage_location, input_spec, expected_predictions, sp_df
 

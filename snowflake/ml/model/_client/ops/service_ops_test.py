@@ -16,6 +16,7 @@ from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql
+from snowflake.ml.model._signatures import core
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Session, row
@@ -36,9 +37,19 @@ _DUMMY_SIG = {
     ),
 }
 
+_DUMMY_SIG_WITH_PARAMS = model_signature.ModelSignature(
+    inputs=[
+        model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+    ],
+    outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+    params=[
+        core.ParamSpec(name="temperature", dtype=core.DataType.FLOAT, default_value=0.7),
+        core.ParamSpec(name="max_tokens", dtype=core.DataType.INT32, default_value=100),
+    ],
+)
+
 
 class ServiceOpsTest(parameterized.TestCase):
-
     _default_hf_args = {
         "hf_model_name": None,
         "hf_task": None,
@@ -131,8 +142,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -277,8 +288,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -438,8 +449,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -599,8 +610,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -679,8 +690,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.DONE,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -778,8 +789,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -943,8 +954,8 @@ class ServiceOpsTest(parameterized.TestCase):
             service_sql.ServiceStatusInfo(
                 service_status=service_sql.ServiceStatus.PENDING,
                 instance_id=0,
-                instance_status=service_sql.InstanceStatus.PENDING,
-                container_status=service_sql.ContainerStatus.PENDING,
+                instance_status="PENDING",
+                container_status="PENDING",
                 message=None,
             )
         ]
@@ -1173,8 +1184,9 @@ class ServiceOpsTest(parameterized.TestCase):
                 image_repo_name="IMAGE_REPO",
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
-                column_handling="column_handling",
-                params="params",
+                column_handling=None,
+                params=None,
+                signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 force_rebuild=True,
@@ -1213,8 +1225,8 @@ class ServiceOpsTest(parameterized.TestCase):
                 max_batch_rows=1000,
                 input_stage_location="@input_stage/",
                 input_file_pattern="*.parquet",
-                column_handling="column_handling",
-                params="params",
+                column_handling=None,
+                params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 function_name="predict",
@@ -1316,8 +1328,9 @@ class ServiceOpsTest(parameterized.TestCase):
                     image_repo_name="IMAGE_REPO",
                     input_stage_location="@input_stage/",
                     input_file_pattern="*.parquet",
-                    column_handling="column_handling",
-                    params="params",
+                    column_handling=None,
+                    params=None,
+                    signature_params=None,
                     output_stage_location="@output_stage/",
                     completion_filename="completion.txt",
                     force_rebuild=True,
@@ -1408,6 +1421,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 force_rebuild=False,
@@ -1567,6 +1581,338 @@ class ServiceOpsTest(parameterized.TestCase):
         self.assertIn("Must be one of", str(cm.exception))
 
         mock_stage_client.list_stage.assert_called_once_with("@test_stage/")
+
+    def test_invoke_batch_job_method_with_inference_engine_args(self) -> None:
+        """Test invoke_batch_job_method with inference_engine_args parameter."""
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "clear",
+            ) as mock_clear,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_job_spec",
+            ) as mock_add_job_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+        ):
+            inference_engine_args = service_ops.InferenceEngineArgs(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args_override=["--tensor_parallel_size=2", "--max-model-len=4096"],
+            )
+
+            result = self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name="BATCH_JOB",
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
+                signature_params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests="4",
+                replicas=1,
+                statement_params=self.m_statement_params,
+                inference_engine_args=inference_engine_args,
+            )
+
+            # Verify clear was called
+            mock_clear.assert_called_once()
+
+            # Verify model spec was added
+            mock_add_model_spec.assert_called_once()
+
+            # Verify job spec was added
+            mock_add_job_spec.assert_called_once()
+
+            # Verify inference engine spec was added (when inference_engine_args is provided)
+            mock_add_inference_engine_spec.assert_called_once_with(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=["--tensor_parallel_size=2", "--max-model-len=4096"],
+            )
+
+            # Verify image build spec was NOT called (skipped when inference_engine_args is provided)
+            mock_add_image_build_spec.assert_not_called()
+
+            # Verify save was called
+            mock_save.assert_called_once()
+
+            # Verify returned MLJob
+            self.assertIsInstance(result, job.MLJob)
+            self.assertEqual(result.id, 'TEMP."test".BATCH_JOB')
+
+    def test_invoke_batch_job_method_without_inference_engine_args(self) -> None:
+        """Test invoke_batch_job_method without inference_engine_args adds image_build_spec."""
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "clear",
+            ) as mock_clear,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_job_spec",
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+        ):
+            result = self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name="BATCH_JOB",
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
+                signature_params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                replicas=None,
+                statement_params=self.m_statement_params,
+                inference_engine_args=None,  # No inference engine args
+            )
+
+            # Verify clear was called
+            mock_clear.assert_called_once()
+
+            # Verify image build spec was called (since inference_engine_args is None)
+            mock_add_image_build_spec.assert_called_once_with(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                fully_qualified_image_repo_name='TEMP."test".IMAGE_REPO',
+                force_rebuild=False,
+            )
+
+            # Verify inference engine spec was NOT called
+            mock_add_inference_engine_spec.assert_not_called()
+
+            # Verify returned MLJob
+            self.assertIsInstance(result, job.MLJob)
+
+    def test_invoke_batch_job_method_with_params(self) -> None:
+        """Test invoke_batch_job_method with params and signature_params."""
+        import base64
+        import json
+
+        test_params = {"temperature": 0.5, "max_tokens": 50}
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(self.m_ops._model_deployment_spec, "clear"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_job_spec") as mock_add_job_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+        ):
+            self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name="BATCH_JOB",
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=None,
+                params=test_params,
+                signature_params=_DUMMY_SIG_WITH_PARAMS.params,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                replicas=None,
+            )
+
+            # Verify params were encoded and passed to add_job_spec
+            mock_add_job_spec.assert_called_once()
+            call_kwargs = mock_add_job_spec.call_args.kwargs
+            params_encoded = call_kwargs["params"]
+            self.assertIsNotNone(params_encoded)
+            # Decode and verify
+            decoded_params = json.loads(base64.b64decode(params_encoded).decode("utf-8"))
+            self.assertEqual(decoded_params, test_params)
+
+    def test_invoke_batch_job_method_with_column_handling(self) -> None:
+        """Test invoke_batch_job_method with column_handling."""
+        import base64
+        import json
+
+        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+            "image_col": {"encoding": batch_inference_specs.FileEncoding.BASE64}
+        }
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(self.m_ops._model_deployment_spec, "clear"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_job_spec") as mock_add_job_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+        ):
+            self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name="BATCH_JOB",
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=test_column_handling,
+                params=None,
+                signature_params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                replicas=None,
+            )
+
+            # Verify column_handling was encoded and passed to add_job_spec
+            mock_add_job_spec.assert_called_once()
+            call_kwargs = mock_add_job_spec.call_args.kwargs
+            column_handling_encoded = call_kwargs["column_handling"]
+            self.assertIsNotNone(column_handling_encoded)
+            # Decode and verify - FileEncoding enum serializes to lowercase "base64"
+            decoded_column_handling = json.loads(base64.b64decode(column_handling_encoded).decode("utf-8"))
+            self.assertEqual(decoded_column_handling["image_col"]["encoding"], "base64")
 
 
 if __name__ == "__main__":

@@ -597,7 +597,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
 
-    def test_inference_engine_options_minimal(self) -> None:
+    def test_inference_engine_spec_with_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -653,7 +653,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 )
         mds.clear()
 
-    def test_inference_engine_options_minimal_with_blocklist_args(self) -> None:
+    def test_inference_engine_spec_with_service_blocklist_args(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -707,7 +707,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 )
         mds.clear()
 
-    def test_skip_image_build_with_inference_engine(self) -> None:
+    def test_inference_engine_spec_with_service_skip_image_build(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
             mds.add_model_spec(
@@ -747,6 +747,126 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
         mds.clear()
+
+    def test_inference_engine_spec_with_job(self) -> None:
+        """Test add_inference_engine_spec works with job spec."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_job_spec(
+                job_name=sql_identifier.SqlIdentifier("batch_job"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+                function_name="predict",
+                input_stage_location="@input_stage/",
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                input_file_pattern="*.parquet",
+                warehouse=sql_identifier.SqlIdentifier("warehouse"),
+                gpu="4",
+                replicas=2,
+            )
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=[
+                    "--tensor_parallel_size=4",
+                    "--max-model-len=4096",
+                ],
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "job": {
+                            "name": "DB.SCHEMA.BATCH_JOB",
+                            "compute_pool": "POOL",
+                            "warehouse": "WAREHOUSE",
+                            "function_name": "predict",
+                            "gpu": "4",
+                            "input": {
+                                "input_stage_location": "@input_stage/",
+                                "input_file_pattern": "*.parquet",
+                            },
+                            "output": {
+                                "output_stage_location": "@output_stage/",
+                                "completion_filename": "_SUCCESS",
+                            },
+                            "replicas": 2,
+                            "inference_engine_spec": {
+                                "inference_engine_name": "vllm",
+                                "inference_engine_args": [
+                                    "--tensor_parallel_size=4",
+                                    "--max-model-len=4096",
+                                ],
+                            },
+                        },
+                    },
+                )
+        mds.clear()
+
+    def test_inference_engine_spec_requires_service_or_job(self) -> None:
+        """Test add_inference_engine_spec raises error when called before add_service_spec or add_job_spec."""
+        mds = model_deployment_spec.ModelDeploymentSpec()
+        mds.add_model_spec(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+        )
+        with self.assertRaises(ValueError) as cm:
+            mds.add_inference_engine_spec(
+                inference_engine=inference_engine.InferenceEngine.VLLM,
+                inference_engine_args=["--tensor_parallel_size=2"],
+            )
+
+        self.assertIn(
+            "Inference engine specification must be called after add_service_spec() or add_job_spec().",
+            str(cm.exception),
+        )
+
+    def test_inference_engine_spec_with_job_skip_image_build(self) -> None:
+        """Test that job spec with inference engine skips image build and produces valid yaml."""
+        mds = model_deployment_spec.ModelDeploymentSpec()  # No workspace path - inline yaml
+        mds.add_model_spec(
+            database_name=sql_identifier.SqlIdentifier("db"),
+            schema_name=sql_identifier.SqlIdentifier("schema"),
+            model_name=sql_identifier.SqlIdentifier("model"),
+            version_name=sql_identifier.SqlIdentifier("version"),
+        )
+        mds.add_job_spec(
+            job_name=sql_identifier.SqlIdentifier("batch_job"),
+            inference_compute_pool_name=sql_identifier.SqlIdentifier("pool"),
+            function_name="predict",
+            input_stage_location="@input_stage/",
+            output_stage_location="@output_stage/",
+            completion_filename="_SUCCESS",
+            input_file_pattern="*.parquet",
+            warehouse=sql_identifier.SqlIdentifier("warehouse"),
+        )
+        mds.add_inference_engine_spec(
+            inference_engine=inference_engine.InferenceEngine.VLLM,
+            inference_engine_args=None,  # No args
+        )
+        yaml_str = mds.save()
+
+        assert yaml_str
+        result = yaml.safe_load(yaml_str)
+        # Verify no image_build key present
+        self.assertNotIn("image_build", result)
+        # Verify inference_engine_spec is in job
+        self.assertIn("inference_engine_spec", result["job"])
+        self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_name"], "vllm")
+        self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_args"], [])
 
 
 if __name__ == "__main__":

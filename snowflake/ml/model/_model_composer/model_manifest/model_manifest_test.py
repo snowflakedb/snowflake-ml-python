@@ -930,10 +930,10 @@ class ModelManifestTest(parameterized.TestCase):
             self.assertEqual(len(method["params"]), 2)
             self.assertEqual(method["params"][0]["name"], "THRESHOLD")
             self.assertEqual(method["params"][0]["type"], "FLOAT")
-            self.assertEqual(method["params"][0]["default"], 0.5)
+            self.assertEqual(method["params"][0]["default"], "0.5")
             self.assertEqual(method["params"][1]["name"], "MAX_ITERATIONS")
             self.assertEqual(method["params"][1]["type"], "BIGINT")
-            self.assertEqual(method["params"][1]["default"], 100)
+            self.assertEqual(method["params"][1]["default"], "100")
 
     def test_model_manifest_with_parameter_default_none(self) -> None:
         """Test that ModelManifest.save() handles parameters with default_value=None."""

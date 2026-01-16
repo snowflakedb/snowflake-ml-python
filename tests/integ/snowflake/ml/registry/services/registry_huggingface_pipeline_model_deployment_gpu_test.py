@@ -65,13 +65,15 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
         return inference_engine_options if inference_engine_options else None
 
-    def _test_text_generation_with_model_logging(
+    def _test_with_model_logging(
         self,
         model_name: str,
         inference_engine: str = "Default",
         requires_token: bool = False,
+        task: str = "text-generation",
+        base_inference_engine_options: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Helper method to test text generation with model logging.
+        """Helper method to test with model logging.
 
         Tests both single-row and batch inference to ensure the model handles
         multiple records correctly.
@@ -85,8 +87,13 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         if requires_token and not self.hf_token:
             self.skipTest(f"Skipping test for gated model {model_name} - HF_TOKEN not available")
 
+        # TODO: Remove this once the proxy image that can handle content parts protocol
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         model = huggingface_pipeline.HuggingFacePipelineModel(
-            task="text-generation",
+            task=task,
             model=model_name,
             download_snapshot=False,
             token=self.hf_token if requires_token else None,
@@ -96,10 +103,23 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             [
                 {
                     "messages": [
-                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Complete the sentence.",
+                                }
+                            ],
+                        },
                         {
                             "role": "user",
-                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
+                                },
+                            ],
                         },
                     ],
                     "temperature": 0.9,
@@ -140,7 +160,10 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             use_model_logging=True,
-            inference_engine_options=self._get_inference_engine_options_for_inference_engine(inference_engine),
+            inference_engine_options=self._get_inference_engine_options_for_inference_engine(
+                inference_engine,
+                base_inference_engine_options,
+            ),
         )
 
         test_prompts = [
@@ -274,7 +297,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
     def test_text_generation_with_model_logging_tiny_llama(self) -> None:
         """Test text generation with TinyLlama model."""
-        self._test_text_generation_with_model_logging(
+        self._test_with_model_logging(
             model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
             requires_token=False,
         )
@@ -286,7 +309,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     @pytest.mark.conda_incompatible
     def test_text_generation_with_model_logging_qwen(self, inference_engine: str) -> None:
         """Test text generation with Qwen model."""
-        self._test_text_generation_with_model_logging(
+        self._test_with_model_logging(
             model_name="Qwen/Qwen3-1.7B",
             inference_engine=inference_engine,
             requires_token=False,
@@ -295,10 +318,25 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     @pytest.mark.conda_incompatible
     def test_text_generation_with_model_logging_gemma(self) -> None:
         """Test text generation with Gemma model (gated - requires HF token) using vLLM."""
-        self._test_text_generation_with_model_logging(
+        self._test_with_model_logging(
             model_name="google/gemma-3-1b-it",
             inference_engine="vLLM",
             requires_token=True,  # This is a gated model
+        )
+
+    @pytest.mark.conda_incompatible
+    def test_image_text_to_text_with_model_logging_gemma(self) -> None:
+        """Test image text to text with Gemma model (gated - requires HF token) using vLLM."""
+        self._test_with_model_logging(
+            model_name="Qwen/Qwen3-VL-2B-Instruct",
+            task="image-text-to-text",
+            inference_engine="vLLM",
+            base_inference_engine_options={
+                "engine_args_override": [
+                    "--gpu-memory-utilization=0.9",
+                    "--max-model-len=1024",
+                ],
+            },
         )
 
     @pytest.mark.conda_incompatible

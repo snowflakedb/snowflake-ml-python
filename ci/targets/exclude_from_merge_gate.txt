@@ -13,6 +13,7 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_lightgbm_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_mlflow_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_modeling_batch_inference_test
+//tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_hugging_face_pipeline_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_pytorch_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_sentence_transformers_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_sklearn_batch_inference_test

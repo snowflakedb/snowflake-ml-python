@@ -1,3 +1,6 @@
+import pathlib
+from unittest import mock
+
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.jobs._utils import stage_utils
@@ -95,6 +98,14 @@ class StageUtilsTests(parameterized.TestCase):
         for path in paths:
             stagePaths.append(stage_utils.resolve_path(path))
         self.assertEqual(stagePath1.joinpath(*tuple(stagePaths)).as_posix(), expected_path)
+
+    def test_as_posix_normalizes_windows_separators(self) -> None:
+        # Simulate Windows semantics even when running tests on non-Windows.
+        with mock.patch.object(stage_utils, "Path", pathlib.PureWindowsPath):
+            p = stage_utils.resolve_path("@test_stage/dir1/dir2")
+            self.assertEqual(p.as_posix(), "@test_stage/dir1/dir2")
+            self.assertNotIn("\\", p.as_posix())
+            self.assertEqual(p.parent.as_posix(), "@test_stage/dir1")
 
 
 if __name__ == "__main__":

@@ -43,6 +43,12 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
+
+        # TODO: Remove this once the proxy image that can handle content parts protocol
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         import transformers
 
         model = transformers.pipeline(
@@ -56,10 +62,23 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             [
                 {
                     "messages": [
-                        {"role": "system", "content": "Complete the sentence."},
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Complete the sentence.",
+                                },
+                            ],
+                        },
                         {
                             "role": "user",
-                            "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
+                                },
+                            ],
                         },
                     ],
                     "temperature": 0.9,

@@ -1,7 +1,7 @@
-ML APIs available in ``snowflake-ml-python`` running on Container Runtime for ML
+ML APIs available in ``snowflake-ml-python`` running on Container Runtime
 =================================================================================
 
-These APIs ara available only in notebooks running on Container Runtime for ML.
+These APIs ara available only in notebooks running on Container Runtime.
 
 .. toctree::
    :maxdepth: 3

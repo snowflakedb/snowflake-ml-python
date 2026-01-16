@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -28,7 +29,10 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
 )
-from snowflake.ml.model._signatures import utils as model_signature_utils
+from snowflake.ml.model._signatures import (
+    core as model_signature_core,
+    utils as model_signature_utils,
+)
 from snowflake.ml.model.models import (
     huggingface as huggingface_base,
     huggingface_pipeline,
@@ -530,7 +534,10 @@ class TransformersPipelineHandler(
                         # verify when the target method is __call__ and
                         # if the signature is default text-generation signature
                         # then use the HuggingFaceOpenAICompatibleModel to wrap the pipeline
-                        if signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC:
+                        if (
+                            signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC
+                            or signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC_WITH_CONTENT_FORMAT_STRING
+                        ):
                             wrapped_model = HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
 
                             temp_res = X.apply(
@@ -554,6 +561,19 @@ class TransformersPipelineHandler(
                             else:
                                 input_data = X[signature.inputs[0].name].to_list()
                             temp_res = getattr(raw_model, target_method)(input_data)
+                    elif isinstance(raw_model, transformers.ImageClassificationPipeline):
+                        # Image classification expects PIL Images. Convert bytes to PIL Images.
+                        from PIL import Image
+
+                        input_col = signature.inputs[0].name
+                        images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
+                        temp_res = getattr(raw_model, target_method)(images)
+                    elif isinstance(raw_model, transformers.AutomaticSpeechRecognitionPipeline):
+                        # ASR pipeline accepts a single audio input (bytes, str, np.ndarray, or dict),
+                        # not a list. Process each audio input individually.
+                        input_col = signature.inputs[0].name
+                        audio_inputs = X[input_col].to_list()
+                        temp_res = [getattr(raw_model, target_method)(audio) for audio in audio_inputs]
                     else:
                         # TODO: remove conversational pipeline code
                         # For others, we could offer the whole dataframe as a list.
@@ -615,11 +635,14 @@ class TransformersPipelineHandler(
                         temp_res = [[conv.generated_responses] for conv in temp_res]
 
                     # To concat those who outputs a list with one input.
-                    if isinstance(temp_res[0], list):
-                        if isinstance(temp_res[0][0], dict):
-                            res = pd.DataFrame({0: temp_res})
-                        else:
-                            res = pd.DataFrame(temp_res)
+                    # if `signature.outputs` is single valued and is a FeatureGroupSpec,
+                    # we create a DataFrame with one column and the values are stored as a dictionary.
+                    # Otherwise, we create a DataFrame with the output as the column.
+                    if len(signature.outputs) == 1 and isinstance(
+                        signature.outputs[0], model_signature_core.FeatureGroupSpec
+                    ):
+                        # creating a dataframe with one column
+                        res = pd.DataFrame({signature.outputs[0].name: temp_res})
                     else:
                         res = pd.DataFrame(temp_res)
 
@@ -702,7 +725,6 @@ class HuggingFaceOpenAICompatibleModel:
         self.pipeline = pipeline
         self.model = self.pipeline.model
         self.tokenizer = self.pipeline.tokenizer
-
         self.model_name = self.pipeline.model.name_or_path
 
         if self.tokenizer.pad_token is None:
@@ -724,11 +746,33 @@ class HuggingFaceOpenAICompatibleModel:
         Returns:
             The formatted prompt string ready for model input.
         """
+
+        final_messages = []
+        for message in messages:
+            if isinstance(message.get("content", ""), str):
+                final_messages.append({"role": message.get("role", "user"), "content": message.get("content", "")})
+            else:
+                # extract only the text from the content
+                # sample data:
+                # {
+                #     "role": "user",
+                #     "content": [
+                #         {"type": "text", "text": "Hello, how are you?"}, # extracted
+                #         {"type": "image", "image": "https://example.com/image.png"}, # not extracted
+                #     ],
+                # }
+                for content_part in message.get("content", []):
+                    if content_part.get("type", "") == "text":
+                        final_messages.append(
+                            {"role": message.get("role", "user"), "content": content_part.get("text", "")}
+                        )
+                    # TODO: implement other content types
+
         # Use the tokenizer's apply_chat_template method.
         # We ensured a template exists in __init__.
         if hasattr(self.tokenizer, "apply_chat_template"):
             return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
-                messages,
+                final_messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
@@ -736,7 +780,7 @@ class HuggingFaceOpenAICompatibleModel:
         # Fallback for very old transformers without apply_chat_template
         # Manually apply ChatML-like formatting
         prompt = ""
-        for message in messages:
+        for message in final_messages:
             role = message.get("role", "user")
             content = message.get("content", "")
             prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"

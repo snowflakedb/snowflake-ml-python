@@ -32,6 +32,7 @@ py_library(
         ":constants",
         ":feature_flags",
         ":query_helper",
+        ":runtime_env_utils",
         ":types",
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],

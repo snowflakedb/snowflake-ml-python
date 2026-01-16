@@ -14,7 +14,7 @@ from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier, url
 from snowflake.ml.model import model_signature, type_hints
-from snowflake.ml.model._client.ops import deployment_step, metadata_ops
+from snowflake.ml.model._client.ops import deployment_step, metadata_ops, param_utils
 from snowflake.ml.model._client.sql import (
     model as model_sql,
     model_version as model_version_sql,
@@ -1063,23 +1063,7 @@ class ModelOperator:
                 col_name = sql_identifier.SqlIdentifier(input_feature.name.upper(), case_sensitive=True)
             input_args.append(col_name)
 
-        method_parameters: Optional[list[tuple[sql_identifier.SqlIdentifier, Any]]] = None
-        if signature.params:
-            # Start with defaults from signature
-            final_params = {}
-            for param_spec in signature.params:
-                if hasattr(param_spec, "default_value"):
-                    final_params[param_spec.name] = param_spec.default_value
-
-            # Override with provided runtime parameters
-            if params:
-                final_params.update(params)
-
-            # Convert to list of tuples with SqlIdentifier for parameter names
-            method_parameters = [
-                (sql_identifier.SqlIdentifier(param_name), param_value)
-                for param_name, param_value in final_params.items()
-            ]
+        method_parameters = param_utils.validate_and_resolve_params(params, signature.params)
 
         returns = []
         for output_feature in signature.outputs:

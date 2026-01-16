@@ -52,7 +52,7 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
             ],
         )
 
-        service_name, output_stage_location = self._prepare_service_name_and_stage_for_batch_inference()
+        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
 
         # Test that batch inference can handle empty struct output without issues
         self._test_registry_batch_inference(

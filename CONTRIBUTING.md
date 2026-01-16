@@ -493,6 +493,8 @@ and they fix the style violations in-place. The minimal `pre-commit` version req
 Tip: if you want to isolate those fixes, avoid the `-a` the option in `git commit`. This way the automated changes
 will be unstaged changes.
 
+If you are developing on Cloud Workspaces, install and use `pre-commit` in a conda environment with Python >=3.10.
+
 ### Darglint
 
 The [darglint](https://github.com/terrencepreilly/darglint) pre-commit hook lints docstrings to make sure they

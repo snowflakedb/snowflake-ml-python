@@ -45,11 +45,29 @@ features = meta.signatures[TARGET_METHOD].inputs
 input_cols = [feature.name for feature in features]
 dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
 
+# Load inference parameters from method signature (if any)
+param_cols = []
+param_defaults = {{}}
+if hasattr(meta.signatures[TARGET_METHOD], "params") and meta.signatures[TARGET_METHOD].params:
+    for param_spec in meta.signatures[TARGET_METHOD].params:
+        param_cols.append(param_spec.name)
+        param_defaults[param_spec.name] = param_spec.default_value
+
 
 # Actual table function
 class {function_name}:
     @vectorized(input=pd.DataFrame, flatten_object_input={wide_input})
     def end_partition(self, df: pd.DataFrame) -> pd.DataFrame:
-        df.columns = input_cols
-        input_df = df.astype(dtype=dtype_map)
-        return runner(input_df[input_cols])
+        df.columns = input_cols + param_cols
+        input_df = df[input_cols].astype(dtype=dtype_map)
+
+        # Extract runtime param values, using defaults if None
+        method_params = {{}}
+        for col in param_cols:
+            val = df[col].iloc[0]
+            if val is None or pd.isna(val):
+                method_params[col] = param_defaults[col]
+            else:
+                method_params[col] = val
+
+        return runner(input_df, **method_params)

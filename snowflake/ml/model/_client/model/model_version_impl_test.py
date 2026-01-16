@@ -1,5 +1,3 @@
-import base64
-import json
 import os
 import pathlib
 import tempfile
@@ -1240,8 +1238,8 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
             mock.patch.object(
-                self.m_mv, "_check_huggingface_text_generation_model"
-            ) as mock_check_huggingface_text_generation_model,
+                self.m_mv, "_check_huggingface_vllm_supported_model"
+            ) as mock_check_huggingface_vllm_supported_model,
             mock.patch.object(
                 self.m_mv._model_ops,
                 "_fetch_model_spec",
@@ -1274,7 +1272,7 @@ class ModelVersionImplTest(absltest.TestCase):
             )
 
             # This check should happen when inference_engine_options is provided
-            mock_check_huggingface_text_generation_model.assert_called_once()
+            mock_check_huggingface_vllm_supported_model.assert_called_once()
 
             # Verify that the enriched kwargs were passed to create_service
             mock_create_service.assert_called_once()
@@ -1770,8 +1768,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=test_statement_params,
             )
 
-    def test_check_huggingface_text_generation_model(self) -> None:
-        """Test _check_huggingface_text_generation_model method."""
+    def test_check_huggingface_vllm_supported_model(self) -> None:
+        """Test _check_huggingface_vllm_supported_model method."""
         # Test successful case - HuggingFace text-generation model
         # Serialize the OPENAI_CHAT_SIGNATURE to match what the model spec returns
         serialized_signatures = {
@@ -1793,7 +1791,35 @@ class ModelVersionImplTest(absltest.TestCase):
             },
         ) as mock_fetch:
             # Should not raise any exception
-            self.m_mv._check_huggingface_text_generation_model()
+            self.m_mv._check_huggingface_vllm_supported_model()
+            mock_fetch.assert_called_once_with(
+                database_name=None,
+                schema_name=None,
+                model_name=self.m_mv._model_name,
+                version_name=self.m_mv._version_name,
+                statement_params=None,
+            )
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test successful case - HuggingFace image-text-to-text model
+        with mock.patch.object(
+            self.m_mv._model_ops,
+            "_fetch_model_spec",
+            return_value={
+                "model_type": "huggingface_pipeline",
+                "signatures": serialized_signatures,
+                "models": {
+                    "model1": {
+                        "model_type": "huggingface_pipeline",
+                        "options": {"task": "image-text-to-text"},
+                    }
+                },
+            },
+        ) as mock_fetch:
+            # Should not raise any exception
+            self.m_mv._check_huggingface_vllm_supported_model()
             mock_fetch.assert_called_once_with(
                 database_name=None,
                 schema_name=None,
@@ -1815,10 +1841,8 @@ class ModelVersionImplTest(absltest.TestCase):
             },
         ):
             with self.assertRaises(ValueError) as cm:
-                self.m_mv._check_huggingface_text_generation_model()
-            self.assertIn(
-                "Inference engine is only supported for HuggingFace text-generation models", str(cm.exception)
-            )
+                self.m_mv._check_huggingface_vllm_supported_model()
+            self.assertIn("Inference engine is only supported for HuggingFace vLLM supported models", str(cm.exception))
             self.assertIn("Found model_type: sklearn", str(cm.exception))
 
         # Reset the cached model spec
@@ -1839,8 +1863,8 @@ class ModelVersionImplTest(absltest.TestCase):
             },
         ):
             with self.assertRaises(ValueError) as cm:
-                self.m_mv._check_huggingface_text_generation_model()
-            self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
+                self.m_mv._check_huggingface_vllm_supported_model()
+            self.assertIn("Inference engine is only supported for vLLM supported tasks", str(cm.exception))
             self.assertIn("Found task(s): image-classification", str(cm.exception))
 
         # Reset the cached model spec
@@ -1861,8 +1885,8 @@ class ModelVersionImplTest(absltest.TestCase):
             },
         ):
             with self.assertRaises(ValueError) as cm:
-                self.m_mv._check_huggingface_text_generation_model()
-            self.assertIn("Inference engine is only supported for task 'text-generation'", str(cm.exception))
+                self.m_mv._check_huggingface_vllm_supported_model()
+            self.assertIn("Inference engine is only supported for vLLM supported tasks", str(cm.exception))
             self.assertIn("No task found in model spec.", str(cm.exception))
 
         # Reset the cached model spec
@@ -1890,9 +1914,10 @@ class ModelVersionImplTest(absltest.TestCase):
             },
         ):
             with self.assertRaises(ValueError) as cm:
-                self.m_mv._check_huggingface_text_generation_model()
+                self.m_mv._check_huggingface_vllm_supported_model()
             self.assertIn(
-                "Inference engine requires the model to be logged with OPENAI_CHAT_SIGNATURE", str(cm.exception)
+                "OPENAI_CHAT_SIGNATURE",
+                str(cm.exception),
             )
 
     def test_run_batch_all_parameters(self) -> None:
@@ -1919,7 +1944,11 @@ class ModelVersionImplTest(absltest.TestCase):
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -1949,15 +1978,17 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",
                 column_handling=None,
                 params=None,
+                signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
+                inference_engine_args=None,
             )
 
             self.assertEqual(result, mock_job)
 
     def test_run_batch_with_column_handling(self) -> None:
-        """Test run_batch properly encodes and passes column_handling to invoke_batch_job_method."""
+        """Test run_batch properly passes column_handling to invoke_batch_job_method."""
         input_df = mock.MagicMock()
         input_df.write.copy_into_location = mock.MagicMock()
 
@@ -1970,17 +2001,15 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test column_handling dictionary
         test_column_handling = {"image_col": {"encoding": batch_inference_specs.FileEncoding.BASE64}}
-        # Expected encoding: TypeAdapter validates and serializes (compact JSON), then base64 encodes
-        expected_json = {"image_col": {"encoding": "base64"}}
-        # Use separators to produce compact JSON like Pydantic's dump_json
-        expected_encoded = base64.b64encode(json.dumps(expected_json, separators=(",", ":")).encode("utf-8")).decode(
-            "utf-8"
-        )
 
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -1994,7 +2023,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 column_handling=test_column_handling,
             )
 
-            # Verify column_handling is properly encoded and passed
+            # Verify column_handling is passed
             mock_invoke_batch_job.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
@@ -2012,17 +2041,19 @@ class ModelVersionImplTest(absltest.TestCase):
                 replicas=None,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
-                column_handling=expected_encoded,
+                column_handling=test_column_handling,
                 params=None,
+                signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
+                inference_engine_args=None,
             )
 
             self.assertEqual(result, mock_job)
 
     def test_run_batch_with_params(self) -> None:
-        """Test run_batch properly encodes and passes params to invoke_batch_job_method."""
+        """Test run_batch properly passes params to invoke_batch_job_method."""
         input_df = mock.MagicMock()
         input_df.write.copy_into_location = mock.MagicMock()
 
@@ -2035,12 +2066,15 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test params dictionary
         test_params = {"temperature": 0.7, "top_k": 50, "max_tokens": 100}
-        expected_encoded_params = base64.b64encode(json.dumps(test_params).encode("utf-8")).decode("utf-8")
 
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -2054,7 +2088,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 params=test_params,
             )
 
-            # Verify params is properly encoded and passed
+            # Verify params is passed
             mock_invoke_batch_job.assert_called_once_with(
                 model_name=sql_identifier.SqlIdentifier("MODEL"),
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
@@ -2073,10 +2107,12 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
                 column_handling=None,
-                params=expected_encoded_params,
+                params=test_params,
+                signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
+                inference_engine_args=None,
             )
 
             self.assertEqual(result, mock_job)
@@ -2102,7 +2138,11 @@ class ModelVersionImplTest(absltest.TestCase):
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -2145,7 +2185,11 @@ class ModelVersionImplTest(absltest.TestCase):
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -2212,7 +2256,11 @@ class ModelVersionImplTest(absltest.TestCase):
         mock_job = mock.MagicMock(spec=job.MLJob)
 
         with (
-            mock.patch.object(self.m_mv, "_get_function_info", return_value={"target_method": "predict"}),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
@@ -2255,9 +2303,71 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",  # InputSpec default
                 column_handling=None,
                 params=None,
+                signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",  # OutputSpec default
                 statement_params=mock.ANY,
+                inference_engine_args=None,
+            )
+
+    def test_run_batch_with_inference_engine_options(self) -> None:
+        """Test run_batch with inference engine options."""
+        input_df = mock.MagicMock()
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(
+            stage_location="@output_stage",
+        )
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="CUSTOM_JOB_NAME",
+            warehouse="CUSTOM_WAREHOUSE",
+            gpu_requests="4",
+        )
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+            mock.patch.object(
+                self.m_mv, "_check_huggingface_vllm_supported_model"
+            ) as mock_check_huggingface_vllm_supported_model,
+            mock.patch.object(self.m_mv, "_throw_error_if_gpu_is_not_supported"),
+        ):
+            self.m_mv.run_batch(
+                compute_pool="CUSTOM_POOL",
+                input_spec=input_df,
+                output_spec=output_spec,
+                job_spec=job_spec,
+                inference_engine_options={
+                    "engine": inference_engine.InferenceEngine.VLLM,
+                    "engine_args_override": ["--max_tokens=1000", "--temperature=0.8"],
+                },
+            )
+
+            mock_check_huggingface_vllm_supported_model.assert_called_once()
+
+            call_args = mock_invoke_batch_job.call_args
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine, inference_engine.InferenceEngine.VLLM
+            )
+            # Check that inference_engine_args is enriched correctly
+            expected_args = [
+                "--max_tokens=1000",
+                "--temperature=0.8",
+                "--tensor-parallel-size=4",
+            ]
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine_args_override,
+                expected_args,
             )
 
     def _add_show_versions_mock(self) -> None:

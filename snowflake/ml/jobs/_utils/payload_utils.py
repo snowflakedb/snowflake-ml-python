@@ -11,6 +11,7 @@ from importlib.abc import Traversable
 from pathlib import Path, PurePath
 from types import ModuleType
 from typing import IO, Any, Callable, Optional, Union, cast, get_args, get_origin
+from uuid import uuid4
 
 import cloudpickle as cp
 from packaging import version
@@ -36,10 +37,15 @@ _SUPPORTED_ARG_TYPES = {str, int, float}
 _SUPPORTED_ENTRYPOINT_EXTENSIONS = {".py"}
 _ENTRYPOINT_FUNC_NAME = "func"
 _STARTUP_SCRIPT_PATH = PurePath("startup.sh")
+JOB_ID_PREFIX = "MLJOB_"
 
 
 def _compress_and_upload_file(
-    session: snowpark.Session, source_path: Path, stage_path: PurePath, import_path: Optional[str] = None
+    session: snowpark.Session,
+    source_path: Path,
+    stage_path: PurePath,
+    import_path: Optional[str] = None,
+    overwrite: bool = True,
 ) -> None:
     absolute_source_path = source_path.absolute()
     leading_path = absolute_source_path.as_posix()[: -len(import_path)] if import_path else None
@@ -49,11 +55,13 @@ def _compress_and_upload_file(
             cast(IO[bytes], stream),
             stage_path.joinpath(filename).as_posix(),
             auto_compress=False,
-            overwrite=True,
+            overwrite=overwrite,
         )
 
 
-def _upload_directory(session: snowpark.Session, source_path: Path, payload_stage_path: PurePath) -> None:
+def _upload_directory(
+    session: snowpark.Session, source_path: Path, payload_stage_path: PurePath, overwrite: bool = True
+) -> None:
     # Manually traverse the directory and upload each file, since Snowflake PUT
     # can't handle directories. Reduce the number of PUT operations by using
     # wildcard patterns to batch upload files with the same extension.
@@ -81,12 +89,14 @@ def _upload_directory(session: snowpark.Session, source_path: Path, payload_stag
         session.file.put(
             str(path),
             payload_stage_path.joinpath(path.parent.relative_to(source_path)).as_posix(),
-            overwrite=True,
+            overwrite=overwrite,
             auto_compress=False,
         )
 
 
-def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_specs: types.PayloadSpec) -> None:
+def upload_payloads(
+    session: snowpark.Session, stage_path: PurePath, *payload_specs: types.PayloadSpec, overwrite: bool = True
+) -> None:
     for spec in payload_specs:
         source_path = spec.source_path
         remote_relative_path = spec.remote_relative_path
@@ -109,6 +119,7 @@ def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_sp
                         source_path,
                         stage_path,
                         remote_relative_path.as_posix() if remote_relative_path else None,
+                        overwrite=overwrite,
                     )
                 else:
                     _upload_directory(session, source_path, payload_stage_path)
@@ -120,12 +131,13 @@ def upload_payloads(session: snowpark.Session, stage_path: PurePath, *payload_sp
                         source_path,
                         stage_path,
                         remote_relative_path.as_posix() if remote_relative_path else None,
+                        overwrite=overwrite,
                     )
                 else:
                     session.file.put(
                         str(source_path.resolve()),
                         payload_stage_path.as_posix(),
-                        overwrite=True,
+                        overwrite=overwrite,
                         auto_compress=False,
                     )
 
@@ -455,7 +467,9 @@ class JobPayload:
         self.pip_requirements = pip_requirements
         self.imports = imports
 
-    def upload(self, session: snowpark.Session, stage_path: Union[str, PurePath]) -> types.UploadedPayload:
+    def upload(
+        self, session: snowpark.Session, stage_path: Union[str, PurePath], overwrite: bool = False
+    ) -> types.UploadedPayload:
         # Prepare local variables
         stage_path = PurePath(stage_path) if isinstance(stage_path, str) else stage_path
         source = resolve_source(self.source)
@@ -482,7 +496,6 @@ class JobPayload:
 
         # Handle list entrypoints (custom commands like ["arctic_training"])
         if isinstance(entrypoint, (list, tuple)):
-            payload_name = entrypoint[0] if entrypoint else None
             # For list entrypoints, still upload source if it's a path
             if isinstance(source, Path):
                 upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
@@ -491,30 +504,24 @@ class JobPayload:
             python_entrypoint: list[Union[str, PurePath]] = list(entrypoint)
         else:
             # Standard file-based entrypoint handling
-            payload_name = None
             if not isinstance(source, types.PayloadPath):
-                if isinstance(source, function_payload_utils.FunctionPayload):
-                    payload_name = source.function.__name__
-
                 source_code = generate_python_code(source, source_code_display=True)
                 _ = session.file.put_stream(
                     io.BytesIO(source_code.encode()),
                     stage_location=app_stage_path.joinpath(entrypoint.file_path).as_posix(),
                     auto_compress=False,
-                    overwrite=True,
+                    overwrite=overwrite,
                 )
                 source = Path(entrypoint.file_path.parent)
 
             elif isinstance(source, stage_utils.StagePath):
-                payload_name = entrypoint.file_path.stem
                 # copy payload to stage
                 if source == entrypoint.file_path:
                     source = source.parent
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
+                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None), overwrite=overwrite)
 
             elif isinstance(source, Path):
-                payload_name = entrypoint.file_path.stem
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
+                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None), overwrite=overwrite)
                 if source.is_file():
                     source = source.parent
 
@@ -565,7 +572,6 @@ class JobPayload:
                 *python_entrypoint,
             ],
             env_vars=env_vars,
-            payload_name=payload_name,
         )
 
 
@@ -759,3 +765,17 @@ def create_function_payload(
     payload = function_payload_utils.FunctionPayload(func, session, session_argument, *bound.args, **bound.kwargs)
 
     return payload
+
+
+def get_payload_name(source: Union[str, Callable[..., Any]], entrypoint: Optional[Union[str, list[str]]] = None) -> str:
+
+    if entrypoint and isinstance(entrypoint, (list, tuple)):
+        return entrypoint[0]
+    elif entrypoint and isinstance(entrypoint, str):
+        return f"{PurePath(entrypoint).stem}"
+    elif source and not callable(source):
+        return f"{PurePath(source).stem}"
+    elif isinstance(source, function_payload_utils.FunctionPayload):
+        return f"{source.function.__name__}"
+    else:
+        return f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"

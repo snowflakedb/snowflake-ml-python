@@ -363,7 +363,7 @@ class ModelDeploymentSpec:
         inference_engine: inference_engine_module.InferenceEngine,
         inference_engine_args: Optional[list[str]] = None,
     ) -> "ModelDeploymentSpec":
-        """Add inference engine specification. This must be called after self.add_service_spec().
+        """Add inference engine specification. This must be called after self.add_service_spec() or self.add_job_spec().
 
         Args:
             inference_engine: Inference engine.
@@ -376,9 +376,10 @@ class ModelDeploymentSpec:
             ValueError: If inference engine specification is called before add_service_spec().
             ValueError: If the argument does not have a '--' prefix.
         """
-        # TODO: needs to eventually support job deployment spec
-        if self._service is None:
-            raise ValueError("Inference engine specification must be called after add_service_spec().")
+        if self._service is None and self._job is None:
+            raise ValueError(
+                "Inference engine specification must be called after add_service_spec() or add_job_spec()."
+            )
 
         if inference_engine_args is None:
             inference_engine_args = []
@@ -431,11 +432,17 @@ class ModelDeploymentSpec:
 
             inference_engine_args = filtered_args
 
-        self._service.inference_engine_spec = model_deployment_spec_schema.InferenceEngineSpec(
+        inference_engine_spec = model_deployment_spec_schema.InferenceEngineSpec(
             # convert to string to be saved in the deployment spec
             inference_engine_name=inference_engine.value,
             inference_engine_args=inference_engine_args,
         )
+
+        if self._service:
+            self._service.inference_engine_spec = inference_engine_spec
+        elif self._job:
+            self._job.inference_engine_spec = inference_engine_spec
+
         return self
 
     def save(self) -> str:

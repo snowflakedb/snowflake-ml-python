@@ -8,7 +8,7 @@
 Sharded Data Connector
 ****************************
 
-When using Container Runtime for ML in a Snowflake Notebook, a sharded data connector is available to allow each process in distributed training to read a subset of the data.
+When using Container Runtime in a Snowflake Notebook, a sharded data connector is available to allow each process in distributed training to read a subset of the data.
 
 .. _label-sharded-data:
 

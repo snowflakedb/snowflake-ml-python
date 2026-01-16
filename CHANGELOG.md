@@ -1,5 +1,21 @@
 # Release History
 
+## 1.23.0
+
+### New Features
+
+* ML Jobs: Enabled support for Python 3.11 and Python 3.12 by default. Jobs will automatically select a
+  runtime environment matching the client Python version.
+
+### Bug Fixes
+
+* Registry: Fix failures on empty output in HuggingFace's Token Classification (aka Named Entity Recognition) models.
+* Model serving: don't parse instance or container statuses to fix bug with missing container status.
+
+### Behavior Changes
+
+### Deprecations
+
 ## 1.22.0
 
 ### New Features
@@ -22,9 +38,59 @@ mv = registry.log_model(
 )
 ```
 
+* Registry: Added support for `image-text-to-text` task type in `huggingface.TransformersPipeline`.
+  Note: Requires vLLM inference engine while creating the service.
+
 ### Bug Fixes
 
 ### Behavior Changes
+
+* Registry: The `openai_signatures.OPENAI_CHAT_SIGNATURE` signature now handles content parts and
+  requires input data to be passed in list of dictionary. To use string content (previous behavior),
+  use `openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING`.
+
+```python
+from snowflake.ml.model import openai_signatures
+import pandas as pd
+
+mv = snowflake_registry.log_model(
+    model=generator,
+    model_name=...,
+    ...,
+    signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+)
+
+# create a pd.DataFrame with openai.client.chat.completions arguments like below:
+x_df = pd.DataFrame.from_records(
+    [
+        {
+            "messages": [
+                {"role": "system", "content": "Complete the sentence."},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
+                        }
+                    ],
+                },
+            ],
+            "max_completion_tokens": 250,
+            "temperature": 0.9,
+            "stop": None,
+            "n": 3,
+            "stream": False,
+            "top_p": 1.0,
+            "frequency_penalty": 0.1,
+            "presence_penalty": 0.2,
+        }
+    ],
+)
+
+# OpenAI Chat Completion compatible output
+output_df = mv.run(X=x_df)
+```
 
 ### Deprecations
 
