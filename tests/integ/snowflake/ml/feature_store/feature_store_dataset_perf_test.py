@@ -20,6 +20,7 @@ from common_utils import create_random_schema
 from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     CreationMode,
     Entity,
+    Feature,
     FeatureStore,
     FeatureView,
 )
@@ -83,9 +84,19 @@ SPINE_ROWS = SPINE_ROWS_MILLIONS * 1_000_000
 NUM_COMPANIES = 100
 NUM_SUBSCRIBERS = 100
 
-# Timestamp range (in seconds)
-MIN_TIMESTAMP = 1000
-MAX_TIMESTAMP = 2000
+# Timestamp range (in days from base date 2024-01-01)
+DATA_DAYS_SPAN = 30
+
+# ============================================================================
+# TILED FV CONFIGURATION
+# ============================================================================
+
+# How many of each FV type should be tiled (rest are non-tiled)
+TILED_COMPANY_FVS = NUM_COMPANY_FVS // 2  # e.g., 2 out of 5
+TILED_SUBSCRIBER_FVS = NUM_SUBSCRIBER_FVS // 2  # e.g., 2 out of 5
+
+# Tile aggregation interval
+TILED_FEATURE_GRANULARITY = "1h"
 
 # ============================================================================
 
@@ -180,7 +191,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
         # Build column definitions for multiple features
         feature_columns = [f"feature_{i} FLOAT" for i in range(num_features)]
-        columns_def = f"{join_key} INT, ts INT, " + ", ".join(feature_columns)
+        columns_def = f"{join_key} INT, event_ts TIMESTAMP_NTZ, " + ", ".join(feature_columns)
 
         # Create table
         self._session.sql(
@@ -195,7 +206,8 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
         feature_selects = [f"UNIFORM(0, 1000, RANDOM())::FLOAT AS feature_{i}" for i in range(num_features)]
         select_clause = (
             f"UNIFORM(1, {num_unique_keys}, RANDOM()) AS {join_key}, "
-            f"UNIFORM({MIN_TIMESTAMP}, {MAX_TIMESTAMP}, RANDOM()) AS ts, " + ", ".join(feature_selects)
+            f"DATEADD('minute', UNIFORM(0, {DATA_DAYS_SPAN * 1440}, RANDOM()), "
+            f"'2024-01-01'::TIMESTAMP_NTZ) AS event_ts, " + ", ".join(feature_selects)
         )
 
         # Insert data using generator
@@ -259,12 +271,12 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
                     f"""
                     SELECT
                         company_id,
-                        ts,
+                        event_ts,
                         {feature_cols}
                     FROM {table_path}
                 """
                 ),
-                timestamp_col="ts",
+                timestamp_col="event_ts",
                 refresh_freq="DOWNSTREAM",
             )
             fv = fs.register_feature_view(feature_view=fv, version="v1")
@@ -296,12 +308,12 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
                     f"""
                     SELECT
                         subscriber_id,
-                        ts,
+                        event_ts,
                         {feature_cols}
                     FROM {table_path}
                 """
                 ),
-                timestamp_col="ts",
+                timestamp_col="event_ts",
                 refresh_freq="DOWNSTREAM",
             )
             fv = fs.register_feature_view(feature_view=fv, version="v1")
@@ -319,19 +331,21 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
             CREATE OR REPLACE TABLE {spine_table_path} (
                 company_id INT,
                 subscriber_id INT,
-                ts INT
+                event_ts TIMESTAMP_NTZ
             )
         """
         ).collect()
 
         # Generate spine with duplicates: multiple subscribers per company at same timestamp
+        # Spine timestamps start after some days to have history for aggregations
         self._session.sql(
             f"""
             INSERT INTO {spine_table_path}
             SELECT
                 UNIFORM(1, {NUM_COMPANIES}, RANDOM()) AS company_id,
                 UNIFORM(1, {NUM_SUBSCRIBERS}, RANDOM()) AS subscriber_id,
-                UNIFORM({MIN_TIMESTAMP}, {MAX_TIMESTAMP}, RANDOM()) AS ts
+                DATEADD('minute', UNIFORM({DATA_DAYS_SPAN * 1440 // 4}, {DATA_DAYS_SPAN * 1440}, RANDOM()),
+                    '2024-01-01'::TIMESTAMP_NTZ) AS event_ts
             FROM TABLE(GENERATOR(ROWCOUNT => {SPINE_ROWS}))
         """
         ).collect()
@@ -343,8 +357,8 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
             f"""
             SELECT
                 COUNT(*) as total_rows,
-                COUNT(DISTINCT company_id, ts) as unique_company_ts,
-                COUNT(*) - COUNT(DISTINCT company_id, ts) as duplicate_company_ts
+                COUNT(DISTINCT company_id, event_ts) as unique_company_ts,
+                COUNT(*) - COUNT(DISTINCT company_id, event_ts) as duplicate_company_ts
             FROM {spine_table_path}
         """
         ).collect()[0]
@@ -368,7 +382,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
                 name=dataset_name,
                 spine_df=spine_df,
                 features=all_fvs,
-                spine_timestamp_col="ts",
+                spine_timestamp_col="event_ts",
                 output_type="table",
                 join_method=join_method,
             )
@@ -396,7 +410,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
             # Verify all expected columns are present
             result_columns = set(result_df.columns)
-            expected_columns = {"COMPANY_ID", "SUBSCRIBER_ID", "TS"}
+            expected_columns = {"COMPANY_ID", "SUBSCRIBER_ID", "EVENT_TS"}
 
             # Add company feature columns (NUM_FEATURES_PER_FV features per FV)
             for i in range(NUM_COMPANY_FVS):
@@ -436,6 +450,203 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
             f"\nPerformance: CTE={cte_time:.2f}s, Sequential={seq_time:.2f}s, "
             + f"CTE is {speedup:.2f}x {'faster' if speedup > 1 else 'slower'}"
         )
+
+    def test_mixed_tiled_nontiled_perf(self) -> None:
+        """Test dataset generation with mixed tiled and non-tiled feature views.
+
+        Uses the same structure as the main perf test:
+        - Company FVs: some tiled, some non-tiled
+        - Subscriber FVs: some tiled, some non-tiled
+        - Same spine with duplicates
+
+        Tiled FVs use aggregation features (SUM, COUNT, AVG, LAST_N).
+        Non-tiled FVs use raw features (ASOF JOIN).
+        """
+        nontiled_company = NUM_COMPANY_FVS - TILED_COMPANY_FVS
+        nontiled_subscriber = NUM_SUBSCRIBER_FVS - TILED_SUBSCRIBER_FVS
+
+        print("\n" + "=" * 70)
+        print("Mixed Tiled + Non-Tiled Feature View Performance Test")
+        print(f"Company FVs: {nontiled_company} non-tiled, {TILED_COMPANY_FVS} tiled")
+        print(f"Subscriber FVs: {nontiled_subscriber} non-tiled, {TILED_SUBSCRIBER_FVS} tiled")
+        print(f"Data: {FV_ROWS:,} FV rows, {SPINE_ROWS:,} spine rows")
+        print("=" * 70)
+
+        fs = self._create_feature_store()
+
+        # Create entities
+        e_company = Entity("company", ["company_id"])
+        fs.register_entity(e_company)
+
+        e_subscriber = Entity("subscriber", ["subscriber_id"])
+        fs.register_entity(e_subscriber)
+
+        all_fvs = []
+
+        # =====================================================================
+        # Create Company FVs (mix of tiled and non-tiled)
+        # =====================================================================
+        print(f"\nCreating {NUM_COMPANY_FVS} company FVs ({nontiled_company} non-tiled, {TILED_COMPANY_FVS} tiled)...")
+
+        for i in range(NUM_COMPANY_FVS):
+            table_name = f"COMPANY_FV_DATA_{i}_{uuid4().hex.upper()[:8]}"
+            table_path = self._create_large_table(
+                fs=fs,
+                table_name=table_name,
+                num_rows=FV_ROWS,
+                join_key="company_id",
+                num_unique_keys=NUM_COMPANIES,
+                num_features=NUM_FEATURES_PER_FV,
+            )
+
+            is_tiled = i >= nontiled_company  # Last TILED_COMPANY_FVS are tiled
+
+            if is_tiled:
+                # Tiled FV with aggregations
+                fv = FeatureView(
+                    name=f"company_fv_{i}",
+                    entities=[e_company],
+                    feature_df=self._session.sql(
+                        f"SELECT company_id, event_ts, feature_0, feature_1 FROM {table_path}"
+                    ),
+                    timestamp_col="event_ts",
+                    refresh_freq="1h",
+                    feature_granularity=TILED_FEATURE_GRANULARITY,
+                    features=[
+                        Feature.sum("feature_0", "7d").alias(f"company_fv{i}_sum_7d"),
+                        Feature.avg("feature_0", "14d").alias(f"company_fv{i}_avg_14d"),
+                        Feature.count("feature_1", "30d").alias(f"company_fv{i}_count_30d"),
+                    ],
+                )
+            else:
+                # Non-tiled FV with raw features
+                feature_cols = ", ".join(
+                    [f"feature_{j} AS company_fv{i}_feature_{j}" for j in range(NUM_FEATURES_PER_FV)]
+                )
+                fv = FeatureView(
+                    name=f"company_fv_{i}",
+                    entities=[e_company],
+                    feature_df=self._session.sql(f"SELECT company_id, event_ts, {feature_cols} FROM {table_path}"),
+                    timestamp_col="event_ts",
+                    refresh_freq="DOWNSTREAM",
+                )
+
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            all_fvs.append(fv)
+
+        # =====================================================================
+        # Create Subscriber FVs (mix of tiled and non-tiled)
+        # =====================================================================
+        print(
+            f"Creating {NUM_SUBSCRIBER_FVS} subscriber FVs "
+            f"({nontiled_subscriber} non-tiled, {TILED_SUBSCRIBER_FVS} tiled)..."
+        )
+
+        for i in range(NUM_SUBSCRIBER_FVS):
+            table_name = f"SUBSCRIBER_FV_DATA_{i}_{uuid4().hex.upper()[:8]}"
+            table_path = self._create_large_table(
+                fs=fs,
+                table_name=table_name,
+                num_rows=FV_ROWS,
+                join_key="subscriber_id",
+                num_unique_keys=NUM_SUBSCRIBERS,
+                num_features=NUM_FEATURES_PER_FV,
+            )
+
+            is_tiled = i >= nontiled_subscriber  # Last TILED_SUBSCRIBER_FVS are tiled
+
+            if is_tiled:
+                # Tiled FV with aggregations (including list agg)
+                fv = FeatureView(
+                    name=f"subscriber_fv_{i}",
+                    entities=[e_subscriber],
+                    feature_df=self._session.sql(
+                        f"SELECT subscriber_id, event_ts, feature_0, feature_1 FROM {table_path}"
+                    ),
+                    timestamp_col="event_ts",
+                    refresh_freq="1h",
+                    feature_granularity=TILED_FEATURE_GRANULARITY,
+                    features=[
+                        Feature.sum("feature_0", "7d").alias(f"subscriber_fv{i}_sum_7d"),
+                        Feature.std("feature_0", "14d").alias(f"subscriber_fv{i}_std_14d"),
+                    ],
+                )
+            else:
+                # Non-tiled FV with raw features
+                feature_cols = ", ".join(
+                    [f"feature_{j} AS subscriber_fv{i}_feature_{j}" for j in range(NUM_FEATURES_PER_FV)]
+                )
+                fv = FeatureView(
+                    name=f"subscriber_fv_{i}",
+                    entities=[e_subscriber],
+                    feature_df=self._session.sql(f"SELECT subscriber_id, event_ts, {feature_cols} FROM {table_path}"),
+                    timestamp_col="event_ts",
+                    refresh_freq="DOWNSTREAM",
+                )
+
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            all_fvs.append(fv)
+
+        # =====================================================================
+        # Create spine (same as main test)
+        # =====================================================================
+        print(f"\nCreating spine with {SPINE_ROWS:,} rows...")
+        spine_table_name = f"SPINE_DATA_{uuid4().hex.upper()[:8]}"
+        spine_table_path = f"{fs._config.full_schema_path}.{spine_table_name}"
+        self._test_tables.append(spine_table_path)
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {spine_table_path} (
+                company_id INT,
+                subscriber_id INT,
+                event_ts TIMESTAMP_NTZ
+            )
+        """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {spine_table_path}
+            SELECT
+                UNIFORM(1, {NUM_COMPANIES}, RANDOM()) AS company_id,
+                UNIFORM(1, {NUM_SUBSCRIBERS}, RANDOM()) AS subscriber_id,
+                DATEADD('minute', UNIFORM({DATA_DAYS_SPAN * 1440 // 4}, {DATA_DAYS_SPAN * 1440}, RANDOM()),
+                    '2024-01-01'::TIMESTAMP_NTZ) AS event_ts
+            FROM TABLE(GENERATOR(ROWCOUNT => {SPINE_ROWS}))
+        """
+        ).collect()
+
+        spine_df = self._session.table(spine_table_path)
+
+        # =====================================================================
+        # Generate dataset with CTE method
+        # =====================================================================
+        print(f"\nGenerating dataset with {len(all_fvs)} FVs (CTE method)...")
+
+        dataset_name = f"MIXED_PERF_DATASET_{uuid4().hex.upper()}"
+
+        start_time = time.time()
+        result_df = fs.generate_dataset(
+            name=dataset_name,
+            spine_df=spine_df,
+            features=all_fvs,
+            spine_timestamp_col="event_ts",
+            output_type="table",
+            join_method="cte",
+        )
+        elapsed = time.time() - start_time
+
+        result_count = result_df.count()
+        throughput = SPINE_ROWS / elapsed
+
+        # Verify no join explosion
+        self.assertEqual(
+            result_count, SPINE_ROWS, f"Expected {SPINE_ROWS:,} rows, got {result_count:,}. Join explosion!"
+        )
+
+        print(f"\nResult: {result_count:,} rows, {elapsed:.2f}s, {throughput:,.0f} rows/s")
+        print("=" * 70)
 
 
 if __name__ == "__main__":

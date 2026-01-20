@@ -40,7 +40,7 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             sample_input_data=cal_X_test,
             options={"enable_explainability": True},
             signatures=sig,
-            input_spec=input_spec,
+            X=input_spec,
             service_name=service_name,
             output_stage_location=output_stage_location,
             function_name="explain",

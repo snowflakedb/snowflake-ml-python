@@ -155,7 +155,6 @@ class ServiceOperator:
             self._model_deployment_spec = model_deployment_spec.ModelDeploymentSpec(
                 workspace_path=pathlib.Path(self._workspace.name)
             )
-        self._inference_autocapture_enabled = pc.PlatformCapabilities.get_instance().is_inference_autocapture_enabled()
 
     def __eq__(self, __value: object) -> bool:
         if not isinstance(__value, ServiceOperator):
@@ -215,10 +214,6 @@ class ServiceOperator:
         # Step 1: Preparing deployment artifacts
         progress_status.update("preparing deployment artifacts...")
         progress_status.increment()
-
-        # If autocapture param is disabled, don't allow create service with autocapture
-        if not self._inference_autocapture_enabled and autocapture:
-            raise ValueError("Invalid Argument: Autocapture feature is not supported.")
 
         if self._workspace:
             stage_path = self._create_temp_stage(database_name, schema_name, statement_params)

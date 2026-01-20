@@ -79,7 +79,7 @@ class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryB
 
         self._test_registry_batch_inference(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,

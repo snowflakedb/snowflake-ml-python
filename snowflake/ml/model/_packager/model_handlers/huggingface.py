@@ -574,6 +574,26 @@ class TransformersPipelineHandler(
                         input_col = signature.inputs[0].name
                         audio_inputs = X[input_col].to_list()
                         temp_res = [getattr(raw_model, target_method)(audio) for audio in audio_inputs]
+                    elif isinstance(raw_model, transformers.VideoClassificationPipeline):
+                        # Video classification expects file paths. Write bytes to temp files,
+                        # process them, and clean up.
+                        import tempfile
+
+                        input_col = signature.inputs[0].name
+                        video_bytes_list = X[input_col].to_list()
+                        temp_file_paths = []
+                        temp_files = []
+                        try:
+                            # TODO: parallelize this if needed
+                            for video_bytes in video_bytes_list:
+                                temp_file = tempfile.NamedTemporaryFile()
+                                temp_file.write(video_bytes)
+                                temp_file_paths.append(temp_file.name)
+                                temp_files.append(temp_file)
+                            temp_res = getattr(raw_model, target_method)(temp_file_paths)
+                        finally:
+                            for f in temp_files:
+                                f.close()
                     else:
                         # TODO: remove conversational pipeline code
                         # For others, we could offer the whole dataframe as a list.

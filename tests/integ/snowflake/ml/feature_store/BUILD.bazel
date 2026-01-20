@@ -233,3 +233,19 @@ py_test(
         "//snowflake/ml/utils:connection_params",
     ],
 )
+
+py_test(
+    name = "feature_store_tiled_aggregation_test",
+    timeout = "eternal",
+    srcs = [
+        "feature_store_tiled_aggregation_test.py",
+    ],
+    shard_count = 4,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)

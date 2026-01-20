@@ -1849,7 +1849,10 @@ class ServiceOpsTest(parameterized.TestCase):
         import json
 
         test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
-            "image_col": {"encoding": batch_inference_specs.FileEncoding.BASE64}
+            "image_col": {
+                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+            }
         }
 
         with (
@@ -1912,7 +1915,8 @@ class ServiceOpsTest(parameterized.TestCase):
             self.assertIsNotNone(column_handling_encoded)
             # Decode and verify - FileEncoding enum serializes to lowercase "base64"
             decoded_column_handling = json.loads(base64.b64decode(column_handling_encoded).decode("utf-8"))
-            self.assertEqual(decoded_column_handling["image_col"]["encoding"], "base64")
+            self.assertEqual(decoded_column_handling["image_col"]["convert_to"], "base64")
+            self.assertEqual(decoded_column_handling["image_col"]["input_format"], "full_stage_path")
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -19,6 +19,12 @@ class SaveMode(str, Enum):
     ERROR = "error"
 
 
+class InputFormat(str, Enum):
+    """The format of the input column data."""
+
+    FULL_STAGE_PATH = "full_stage_path"
+
+
 class FileEncoding(str, Enum):
     """The encoding of the file content that will be passed to the custom model."""
 
@@ -30,7 +36,37 @@ class FileEncoding(str, Enum):
 class ColumnHandlingOptions(TypedDict):
     """Options for handling specific columns during run_batch for file I/O."""
 
-    encoding: FileEncoding
+    input_format: InputFormat
+    convert_to: FileEncoding
+
+
+class InputSpec(BaseModel):
+    """Specification for batch inference input options.
+
+    Defines optional configuration for processing input data during batch inference.
+
+    Attributes:
+        params (Optional[dict[str, Any]]): Optional dictionary of model inference parameters
+            (e.g., temperature, top_k for LLMs). These are passed as keyword arguments to the
+            model's inference method. Defaults to None.
+        column_handling (Optional[dict[str, ColumnHandlingOptions]]): Optional dictionary
+            specifying how to handle specific columns during file I/O. Maps column names to their
+            input format and file encoding configuration.
+
+    Example:
+        >>> input_spec = InputSpec(
+        ...     params={"temperature": 0.7, "top_k": 50},
+        ...     column_handling={
+        ...         "image_col": {
+        ...             "input_format": InputFormat.FULL_STAGE_PATH,
+        ...             "convert_to": FileEncoding.BASE64
+        ...         }
+        ...     }
+        ... )
+    """
+
+    params: Optional[dict[str, Any]] = None
+    column_handling: Optional[dict[str, ColumnHandlingOptions]] = None
 
 
 class OutputSpec(BaseModel):

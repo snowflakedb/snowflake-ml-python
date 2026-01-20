@@ -36,7 +36,7 @@ class TestTensorFlowBatchInferenceInteg(registry_batch_inference_test_base.Regis
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=x_df,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,

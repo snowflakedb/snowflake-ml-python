@@ -571,6 +571,120 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             },
         )
 
+    def test_image_classification_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="image-classification",
+            model="google/vit-base-patch16-224",
+        )
+
+        # Read test image as bytes
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame({"images": [image_bytes] * 3})
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("label", row[0])
+                self.assertIn("score", row[0])
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            additional_dependencies=["pillow"],
+        )
+
+    def test_automatic_speech_recognition_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="automatic-speech-recognition",
+            model="openai/whisper-tiny",
+        )
+
+        # Read test audio as bytes
+        with open("tests/integ/snowflake/ml/test_data/batman_audio.mp3", "rb") as f:
+            audio_bytes = f.read()
+
+        x_df = pd.DataFrame({"audio": [audio_bytes] * 3})
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, dict)
+                self.assertIn("text", row)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            additional_dependencies=["ffmpeg"],
+        )
+
+    # TODO: revisit this test later
+    def test_video_classification_pipeline(self) -> None:
+        self.skipTest("decord package not available in conda channel")
+        import transformers
+
+        model = transformers.pipeline(
+            task="video-classification",
+            model="nateraw/videomae-base-finetuned-ucf101-subset",
+        )
+
+        # Read test video as bytes
+        with open("tests/integ/snowflake/ml/test_data/cutting_in_kitchen.avi", "rb") as f:
+            video_bytes = f.read()
+
+        x_df = pd.DataFrame(
+            [
+                {"video": video_bytes},
+            ]
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("label", row[0])
+                self.assertIn("score", row[0])
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            additional_dependencies=[
+                "decord",
+                "ffmpeg",
+                "av",
+                "pillow",
+                "accelerate=1.12.0",
+                "pytorch=2.9.1",
+                "torchvision=0.24.1",
+            ],
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

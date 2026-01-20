@@ -33,7 +33,7 @@ class TestRegistrySklearnBatchInferenceInteg(registry_batch_inference_test_base.
             sample_input_data=iris_X,
             pip_requirements=pip_requirements,
             options={"enable_explainability": False},
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             num_workers=1,
             service_name=f"batch_inference_{name}",

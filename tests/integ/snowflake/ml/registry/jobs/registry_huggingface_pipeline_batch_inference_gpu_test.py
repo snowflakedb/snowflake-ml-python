@@ -66,7 +66,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
             model=model,
             service_name=service_name,
             output_stage_location=output_stage_location,
-            input_spec=input_spec,
+            X=input_spec,
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
             pip_requirements=pip_requirements,

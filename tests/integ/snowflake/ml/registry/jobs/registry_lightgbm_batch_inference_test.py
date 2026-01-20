@@ -41,7 +41,7 @@ class TestLightGbmModelBatchInferenceInteg(registry_batch_inference_test_base.Re
         self._test_registry_batch_inference(
             model=classifier,
             sample_input_data=cal_X_test,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=2,

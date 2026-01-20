@@ -50,7 +50,7 @@ class TestBatchInferenceWideInputInteg(registry_batch_inference_test_base.Regist
             sample_input_data=train_df,
             service_name=service_name,
             output_stage_location=output_stage_location,
-            input_spec=input_spec,
+            X=input_spec,
             expected_predictions=expected_predictions,
         )
 

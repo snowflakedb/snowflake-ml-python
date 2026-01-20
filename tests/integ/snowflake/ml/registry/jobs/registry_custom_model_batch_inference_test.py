@@ -54,7 +54,7 @@ class TestCustomModelBatchInferenceInteg(registry_batch_inference_test_base.Regi
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,

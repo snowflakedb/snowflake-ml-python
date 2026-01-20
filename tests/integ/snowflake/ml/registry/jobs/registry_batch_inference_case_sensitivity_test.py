@@ -56,7 +56,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             num_workers=1,
@@ -86,7 +86,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             num_workers=1,
@@ -116,7 +116,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             num_workers=1,
@@ -141,7 +141,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             num_workers=1,
@@ -169,7 +169,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             num_workers=1,

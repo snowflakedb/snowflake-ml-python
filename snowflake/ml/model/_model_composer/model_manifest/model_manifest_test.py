@@ -936,7 +936,11 @@ class ModelManifestTest(parameterized.TestCase):
             self.assertEqual(method["params"][1]["default"], "100")
 
     def test_model_manifest_with_parameter_default_none(self) -> None:
-        """Test that ModelManifest.save() handles parameters with default_value=None."""
+        """Test that ModelManifest.save() handles parameters with default_value=None.
+
+        When default_value is None, it should be written as "NULL" string in the MANIFEST
+        so that Snowflake's SQL parser can interpret it as SQL NULL.
+        """
         sig_with_none_default = {
             "predict": model_signature.ModelSignature(
                 inputs=[
@@ -985,7 +989,8 @@ class ModelManifestTest(parameterized.TestCase):
             self.assertIn("params", method)
             self.assertEqual(len(method["params"]), 1)
             self.assertEqual(method["params"][0]["name"], "OPTIONAL_PARAM")
-            self.assertIsNone(method["params"][0]["default"])
+            # None default_value is converted to "NULL" string for SQL parser compatibility
+            self.assertEqual(method["params"][0]["default"], "NULL")
 
 
 if __name__ == "__main__":

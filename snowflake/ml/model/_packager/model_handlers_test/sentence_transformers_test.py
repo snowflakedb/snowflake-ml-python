@@ -73,39 +73,53 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
 
     def test_allowed_target_methods(self) -> None:
         """Test that _ALLOWED_TARGET_METHODS contains expected methods."""
-        self.assertEqual(_ALLOWED_TARGET_METHODS, ["encode", "encode_queries", "encode_documents"])
+        # Both singular (new) and plural (old) naming conventions are supported
+        self.assertEqual(
+            _ALLOWED_TARGET_METHODS,
+            [
+                "encode",
+                "encode_query",
+                "encode_document",
+                "encode_queries",
+                "encode_documents",
+            ],
+        )
 
     def test_validate_sentence_transformers_signatures_valid(self) -> None:
         """Test valid signatures for all supported methods."""
-        # Valid signature with encode only
+        # Valid signature with encode only (using realistic shape for embeddings)
         valid_encode_only = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
-                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(384,))
+                ],
             )
         }
         _validate_sentence_transformers_signatures(valid_encode_only)
 
-        # Valid signature with all three methods
+        # Valid signature with all three methods (using realistic shape for embeddings)
         valid_all_methods = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="text", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[
-                    model_signature.FeatureSpec(name="embedding", dtype=model_signature.DataType.FLOAT, shape=None)
+                    model_signature.FeatureSpec(name="embedding", dtype=model_signature.DataType.FLOAT, shape=(384,))
                 ],
             ),
             "encode_queries": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="query", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[
                     model_signature.FeatureSpec(
-                        name="query_embedding", dtype=model_signature.DataType.FLOAT, shape=None
+                        name="query_embedding", dtype=model_signature.DataType.FLOAT, shape=(384,)
                     )
                 ],
             ),
             "encode_documents": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="doc", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[
-                    model_signature.FeatureSpec(name="doc_embedding", dtype=model_signature.DataType.FLOAT, shape=None)
+                    model_signature.FeatureSpec(
+                        name="doc_embedding", dtype=model_signature.DataType.FLOAT, shape=(384,)
+                    )
                 ],
             ),
         }
@@ -122,7 +136,9 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
         invalid_signature = {
             "another_method": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
-                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(384,))
+                ],
             )
         }
         with self.assertRaises(ValueError) as ctx:
@@ -138,7 +154,9 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                     model_signature.FeatureSpec(name="input1", dtype=model_signature.DataType.STRING, shape=None),
                     model_signature.FeatureSpec(name="input2", dtype=model_signature.DataType.STRING, shape=None),
                 ],
-                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(384,))
+                ],
             )
         }
         with self.assertRaises(ValueError) as ctx:
@@ -151,8 +169,8 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=None)],
                 outputs=[
-                    model_signature.FeatureSpec(name="output1", dtype=model_signature.DataType.FLOAT, shape=None),
-                    model_signature.FeatureSpec(name="output2", dtype=model_signature.DataType.FLOAT, shape=None),
+                    model_signature.FeatureSpec(name="output1", dtype=model_signature.DataType.FLOAT, shape=(384,)),
+                    model_signature.FeatureSpec(name="output2", dtype=model_signature.DataType.FLOAT, shape=(384,)),
                 ],
             )
         }
@@ -165,7 +183,9 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
         invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.STRING, shape=(1,))],
-                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(384,))
+                ],
             )
         }
         with self.assertRaises(ValueError) as ctx:
@@ -177,12 +197,341 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
         invalid_signature = {
             "encode": model_signature.ModelSignature(
                 inputs=[model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.INT32, shape=None)],
-                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=None)],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT, shape=(384,))
+                ],
             )
         }
         with self.assertRaises(ValueError) as ctx:
             _validate_sentence_transformers_signatures(invalid_signature)
         self.assertIn("only accepts STRING input", str(ctx.exception))
+
+    def test_convert_as_custom_model_multi_method(self) -> None:
+        """Test that convert_as_custom_model handles multiple target_methods for SentenceTransformers.
+
+        This test verifies that multiple encode methods work correctly when they exist on the model.
+        Note: encode_queries and encode_documents may not exist in all sentence-transformers versions,
+        so we test with encode only (which always exists).
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model - only use 'encode' which is guaranteed to exist
+            sentences = pd.DataFrame({"text": ["test sentence 1", "test sentence 2"]})
+
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+            assert pk.meta is not None
+
+            # Verify encode method is in signatures
+            self.assertIn("encode", pk.meta.signatures)
+
+            # Verify encode method is available and callable
+            method = getattr(pk.model, "encode", None)
+            self.assertIsNotNone(method, "Method 'encode' should exist")
+            self.assertTrue(callable(method), "Method 'encode' should be callable")
+
+            # Call the method and verify it returns a DataFrame
+            assert method is not None  # Type narrowing for mypy
+            result = method(sentences)
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), len(sentences))
+
+    def test_auto_signature_inference(self) -> None:
+        """Test that signatures are automatically inferred when no sample_input_data or signatures are provided.
+
+        This tests the IS_AUTO_SIGNATURE = True functionality for SentenceTransformer models.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model WITHOUT sample_input_data or signatures - should auto-infer
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify that signature was auto-inferred
+            self.assertIn("encode", pk.meta.signatures)
+            sig = pk.meta.signatures["encode"]
+
+            # Verify signature structure
+            self.assertEqual(len(sig.inputs), 1)
+            self.assertEqual(len(sig.outputs), 1)
+
+            # Verify input is STRING type
+            self.assertEqual(sig.inputs[0].name, "text")
+            assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
+
+            # Verify output is DOUBLE type with correct embedding dimension
+            self.assertEqual(sig.outputs[0].name, "output")
+            assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
+
+            # Verify embedding dimension matches model
+            expected_dim = model.get_sentence_embedding_dimension()
+            self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+            # Test that the model works correctly with auto-inferred signature
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+            test_sentences = pd.DataFrame({"text": ["Hello world", "Test sentence"]})
+            predict_method = getattr(pk.model, "encode", None)
+            assert callable(predict_method)
+            result = predict_method(test_sentences)
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 2)
+
+    def test_auto_signature_multiple_methods(self) -> None:
+        """Test auto signature inference with multiple target methods."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Only test with 'encode' since encode_queries/encode_documents may not exist in all versions
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify encode method signature
+            self.assertIn("encode", pk.meta.signatures)
+            encode_sig = pk.meta.signatures["encode"]
+            expected_dim = model.get_sentence_embedding_dimension()
+            self.assertEqual(encode_sig.outputs[0]._shape, (expected_dim,))
+
+    def test_auto_signature_encode_query(self) -> None:
+        """Test auto signature inference for encode_query method.
+
+        The encode_query method is used in asymmetric semantic search models
+        to encode query strings. It applies query-specific preprocessing (e.g., adding
+        "query: " prefix for some models) before encoding.
+
+        This test verifies:
+        1. Auto signature is correctly inferred for encode_query
+        2. The model can be saved without sample_input_data
+        3. The loaded model can perform inference with the auto-inferred signature
+
+        Note: sentence-transformers >= 3.0 uses singular names (encode_query)
+        while older versions may use plural names (encode_queries).
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check if encode_query method exists on this model (singular, new naming)
+        if not hasattr(model, "encode_query") or not callable(getattr(model, "encode_query", None)):
+            self.skipTest("Model does not support encode_query method")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model with encode_query target method - no sample_input_data
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode_query"]),
+            )
+
+            # Load and verify signature was auto-inferred
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify encode_query signature structure
+            self.assertIn("encode_query", pk.meta.signatures)
+            sig = pk.meta.signatures["encode_query"]
+
+            # Input should be STRING type with name "text"
+            self.assertEqual(len(sig.inputs), 1)
+            self.assertEqual(sig.inputs[0].name, "text")
+            assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
+
+            # Output should be DOUBLE type with correct embedding dimension
+            self.assertEqual(len(sig.outputs), 1)
+            self.assertEqual(sig.outputs[0].name, "output")
+            assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
+
+            expected_dim = model.get_sentence_embedding_dimension()
+            self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+            # Test inference with auto-inferred signature
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            test_queries = pd.DataFrame({"text": ["What is machine learning?", "How does AI work?"]})
+            predict_method = getattr(pk.model, "encode_query", None)
+            assert callable(predict_method)
+            result = predict_method(test_queries)
+
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 2)
+            self.assertIn("output", result.columns)
+            # Verify embedding dimension
+            self.assertEqual(len(result["output"].iloc[0]), expected_dim)
+
+    def test_auto_signature_encode_document(self) -> None:
+        """Test auto signature inference for encode_document method.
+
+        The encode_document method is used in asymmetric semantic search models
+        to encode document/passage strings. It applies document-specific preprocessing
+        (e.g., adding "passage: " prefix for some models) before encoding.
+
+        This test verifies:
+        1. Auto signature is correctly inferred for encode_document
+        2. The model can be saved without sample_input_data
+        3. The loaded model can perform inference with the auto-inferred signature
+
+        Note: sentence-transformers >= 3.0 uses singular names (encode_document)
+        while older versions may use plural names (encode_documents).
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check if encode_document method exists on this model (singular, new naming)
+        if not hasattr(model, "encode_document") or not callable(getattr(model, "encode_document", None)):
+            self.skipTest("Model does not support encode_document method")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model with encode_document target method - no sample_input_data
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode_document"]),
+            )
+
+            # Load and verify signature was auto-inferred
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify encode_document signature structure
+            self.assertIn("encode_document", pk.meta.signatures)
+            sig = pk.meta.signatures["encode_document"]
+
+            # Input should be STRING type with name "text"
+            self.assertEqual(len(sig.inputs), 1)
+            self.assertEqual(sig.inputs[0].name, "text")
+            assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
+
+            # Output should be DOUBLE type with correct embedding dimension
+            self.assertEqual(len(sig.outputs), 1)
+            self.assertEqual(sig.outputs[0].name, "output")
+            assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
+
+            expected_dim = model.get_sentence_embedding_dimension()
+            self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+            # Test inference with auto-inferred signature
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            test_docs = pd.DataFrame(
+                {
+                    "text": [
+                        "Machine learning is a subset of artificial intelligence.",
+                        "Neural networks are inspired by biological neurons.",
+                    ]
+                }
+            )
+            predict_method = getattr(pk.model, "encode_document", None)
+            assert callable(predict_method)
+            result = predict_method(test_docs)
+
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 2)
+            self.assertIn("output", result.columns)
+            # Verify embedding dimension
+            self.assertEqual(len(result["output"].iloc[0]), expected_dim)
+
+    def test_auto_signature_all_methods(self) -> None:
+        """Test auto signature inference with all three methods together.
+
+        This test verifies that when saving a model with all three target methods
+        (encode, encode_query, encode_document), each method gets its own
+        correctly inferred signature with the same structure but independent entries.
+
+        Note: sentence-transformers >= 3.0 uses singular names (encode_query, encode_document).
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check if all methods exist (using singular names for new sentence-transformers)
+        has_encode_query = hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None))
+        has_encode_document = hasattr(model, "encode_document") and callable(getattr(model, "encode_document", None))
+
+        if not has_encode_query or not has_encode_document:
+            self.skipTest("Model does not support all encode methods")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model with all three target methods (singular names)
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(
+                    target_methods=["encode", "encode_query", "encode_document"]
+                ),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            expected_dim = model.get_sentence_embedding_dimension()
+
+            # Verify all three methods have signatures
+            for method_name in ["encode", "encode_query", "encode_document"]:
+                self.assertIn(method_name, pk.meta.signatures)
+                sig = pk.meta.signatures[method_name]
+
+                # All methods should have same signature structure
+                self.assertEqual(len(sig.inputs), 1)
+                self.assertEqual(sig.inputs[0].name, "text")
+                assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
+                self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
+
+                self.assertEqual(len(sig.outputs), 1)
+                self.assertEqual(sig.outputs[0].name, "output")
+                assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+                self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
+                self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+            # Test inference with all methods
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            test_data = pd.DataFrame({"text": ["Test sentence"]})
+
+            # All methods should work
+            for method_name in ["encode", "encode_query", "encode_document"]:
+                predict_method = getattr(pk.model, method_name, None)
+                self.assertIsNotNone(predict_method, f"Method '{method_name}' should exist")
+                assert callable(predict_method)
+                result = predict_method(test_data)
+                self.assertIsInstance(result, pd.DataFrame)
+                self.assertEqual(len(result), 1)
 
     def test_sentence_transformers(self) -> None:
         # Sample Data

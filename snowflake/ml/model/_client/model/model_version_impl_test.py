@@ -27,7 +27,7 @@ from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
-from snowflake.snowpark import Session, row
+from snowflake.snowpark import Session, dataframe, row
 
 _DUMMY_SIG = {
     "predict": model_signature.ModelSignature(
@@ -1922,7 +1922,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(
@@ -1955,7 +1955,7 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_invoke_batch_job,
         ):
             result = self.m_mv.run_batch(
-                compute_pool="CUSTOM_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
+                input_df, compute_pool="CUSTOM_POOL", output_spec=output_spec, job_spec=job_spec
             )
 
             # Verify all parameters are passed correctly
@@ -1989,7 +1989,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_column_handling(self) -> None:
         """Test run_batch properly passes column_handling to invoke_batch_job_method."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2000,7 +2000,17 @@ class ModelVersionImplTest(absltest.TestCase):
         )
 
         # Test column_handling dictionary
-        test_column_handling = {"image_col": {"encoding": batch_inference_specs.FileEncoding.BASE64}}
+        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+            "image_col": {
+                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+            }
+        }
+
+        # Create InputSpec with column_handling
+        input_spec = batch_inference_specs.InputSpec(
+            column_handling=test_column_handling,
+        )
 
         mock_job = mock.MagicMock(spec=job.MLJob)
 
@@ -2016,11 +2026,11 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_invoke_batch_job,
         ):
             result = self.m_mv.run_batch(
+                input_df,
                 compute_pool="TEST_POOL",
-                input_spec=input_df,
                 output_spec=output_spec,
+                input_spec=input_spec,
                 job_spec=job_spec,
-                column_handling=test_column_handling,
             )
 
             # Verify column_handling is passed
@@ -2054,7 +2064,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_params(self) -> None:
         """Test run_batch properly passes params to invoke_batch_job_method."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2066,6 +2076,11 @@ class ModelVersionImplTest(absltest.TestCase):
 
         # Test params dictionary
         test_params = {"temperature": 0.7, "top_k": 50, "max_tokens": 100}
+
+        # Create InputSpec with params
+        input_spec = batch_inference_specs.InputSpec(
+            params=test_params,
+        )
 
         mock_job = mock.MagicMock(spec=job.MLJob)
 
@@ -2081,11 +2096,11 @@ class ModelVersionImplTest(absltest.TestCase):
             ) as mock_invoke_batch_job,
         ):
             result = self.m_mv.run_batch(
+                input_df,
                 compute_pool="TEST_POOL",
-                input_spec=input_df,
                 output_spec=output_spec,
+                input_spec=input_spec,
                 job_spec=job_spec,
-                params=test_params,
             )
 
             # Verify params is passed
@@ -2117,9 +2132,86 @@ class ModelVersionImplTest(absltest.TestCase):
 
             self.assertEqual(result, mock_job)
 
+    def test_run_batch_with_input_spec_all_options(self) -> None:
+        """Test run_batch with InputSpec containing both params and column_handling."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        # Test with both params and column_handling
+        test_params = {"temperature": 0.7, "top_k": 50}
+        test_column_handling: dict[str, batch_inference_specs.ColumnHandlingOptions] = {
+            "image_col": {
+                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
+                "convert_to": batch_inference_specs.FileEncoding.BASE64,
+            }
+        }
+
+        # Create InputSpec with both params and column_handling
+        input_spec = batch_inference_specs.InputSpec(
+            params=test_params,
+            column_handling=test_column_handling,
+        )
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(
+                input_df,
+                compute_pool="TEST_POOL",
+                output_spec=output_spec,
+                input_spec=input_spec,
+                job_spec=job_spec,
+            )
+
+            # Verify both params and column_handling are passed
+            mock_invoke_batch_job.assert_called_once_with(
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+                function_name="predict",
+                compute_pool_name=sql_identifier.SqlIdentifier("TEST_POOL"),
+                force_rebuild=False,
+                image_repo_name=None,
+                num_workers=None,
+                max_batch_rows=1024,
+                warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                job_name="TEST_JOB",
+                replicas=None,
+                input_stage_location="@output_stage/_temporary/",
+                input_file_pattern="*",
+                column_handling=test_column_handling,
+                params=test_params,
+                signature_params=_DUMMY_SIG["predict"].params,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                statement_params=mock.ANY,
+                inference_engine_args=None,
+            )
+
+            self.assertEqual(result, mock_job)
+
     def test_run_batch_with_generated_job_name(self) -> None:
         """Test _run_batch with job_name generated when None."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2152,9 +2244,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
 
-            result = self.m_mv.run_batch(
-                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
-            )
+            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
 
             # Verify result
             self.assertEqual(result, mock_job)
@@ -2166,7 +2256,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_warehouse_from_session(self) -> None:
         """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2198,9 +2288,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
             ) as mock_get_warehouse,
         ):
-            result = self.m_mv.run_batch(
-                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
-            )
+            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
 
             # Verify result
             self.assertEqual(result, mock_job)
@@ -2214,7 +2302,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_no_warehouse_error(self) -> None:
         """Test _run_batch raises ValueError when no warehouse is available."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2239,16 +2327,14 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "Warehouse is not set. Please set the warehouse field in the JobSpec."
             ):
-                self.m_mv.run_batch(
-                    compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=job_spec
-                )
+                self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
 
             # Verify session warehouse was called
             mock_get_warehouse.assert_called_once()
 
     def test_run_batch_with_none_job_spec(self) -> None:
         """Test _run_batch with job_spec=None uses default JobSpec values."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
@@ -2273,9 +2359,7 @@ class ModelVersionImplTest(absltest.TestCase):
             # Setup the UUID mock to return a predictable value
             mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
 
-            result = self.m_mv.run_batch(
-                compute_pool="TEST_POOL", input_spec=input_df, output_spec=output_spec, job_spec=None
-            )
+            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=None)
 
             # Verify result
             self.assertEqual(result, mock_job)
@@ -2312,7 +2396,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
     def test_run_batch_with_inference_engine_options(self) -> None:
         """Test run_batch with inference engine options."""
-        input_df = mock.MagicMock()
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(
@@ -2343,8 +2427,8 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(self.m_mv, "_throw_error_if_gpu_is_not_supported"),
         ):
             self.m_mv.run_batch(
+                input_df,
                 compute_pool="CUSTOM_POOL",
-                input_spec=input_df,
                 output_spec=output_spec,
                 job_spec=job_spec,
                 inference_engine_options={

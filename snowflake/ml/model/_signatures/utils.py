@@ -298,6 +298,24 @@ def huggingface_pipeline_signature_auto_infer(
                             shape=(-1,),  # Variable length list of chunks
                         ),
                     ],
+                )
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.VideoClassificationPipeline
+    if task == "video-classification":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="video", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
                 ),
             ],
         )
@@ -333,7 +351,11 @@ def huggingface_pipeline_signature_auto_infer(
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageTextToTextPipeline
-    if task == "image-text-to-text":
+    if task in [
+        "image-text-to-text",
+        "video-text-to-text",
+        "audio-text-to-text",
+    ]:
         if params.get("return_tensors", False):
             raise NotImplementedError(
                 f"Auto deployment for HuggingFace pipeline {task} "
@@ -461,3 +483,56 @@ def infer_dict(name: str, data: dict[str, Any]) -> core.FeatureGroupSpec:
 
 def check_if_series_is_empty(series: Optional[pd.Series]) -> bool:
     return series is None or series.empty
+
+
+def sentence_transformers_signature_auto_infer(
+    target_method: str,
+    embedding_dim: int,
+) -> Optional[core.ModelSignature]:
+    """Auto-infer signature for SentenceTransformer models.
+
+    SentenceTransformer models have a simple signature: they take a string input
+    and return an embedding vector (array of floats).
+
+    Args:
+        target_method: The target method name. Supported methods:
+            - "encode": General encoding method
+            - "encode_query" / "encode_queries": Query encoding for asymmetric search
+            - "encode_document" / "encode_documents": Document encoding for asymmetric search
+        embedding_dim: The dimension of the embedding vector output by the model.
+
+    Returns:
+        A ModelSignature for the target method, or None if the method is not supported.
+
+    Note:
+        sentence-transformers >= 3.0 uses singular names (encode_query, encode_document)
+        while older versions may use plural names (encode_queries, encode_documents).
+        Both naming conventions are supported for backward compatibility.
+    """
+    # Support both singular (new) and plural (old) naming conventions
+    supported_methods = [
+        "encode",
+        "encode_query",
+        "encode_document",
+        "encode_queries",
+        "encode_documents",
+    ]
+
+    if target_method not in supported_methods:
+        return None
+
+    # All SentenceTransformer encode methods have the same signature pattern:
+    # - Input: a single string column
+    # - Output: a single column containing embedding vectors (array of floats)
+    return core.ModelSignature(
+        inputs=[
+            core.FeatureSpec(name="text", dtype=core.DataType.STRING),
+        ],
+        outputs=[
+            core.FeatureSpec(
+                name="output",
+                dtype=core.DataType.DOUBLE,
+                shape=(embedding_dim,),
+            ),
+        ],
+    )

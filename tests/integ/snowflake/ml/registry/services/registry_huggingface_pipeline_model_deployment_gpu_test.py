@@ -1,3 +1,4 @@
+import base64
 import os
 import tempfile
 from typing import Any, Optional
@@ -72,6 +73,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         requires_token: bool = False,
         task: str = "text-generation",
         base_inference_engine_options: Optional[dict[str, Any]] = None,
+        input_data: Optional[pd.DataFrame] = None,
     ) -> None:
         """Helper method to test with model logging.
 
@@ -99,39 +101,43 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             token=self.hf_token if requires_token else None,
         )
 
-        x_df_single = pd.DataFrame.from_records(
-            [
-                {
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "Complete the sentence.",
-                                }
-                            ],
-                        },
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
-                                },
-                            ],
-                        },
-                    ],
-                    "temperature": 0.9,
-                    "max_completion_tokens": 250,
-                    "stop": None,
-                    "n": 3,
-                    "stream": False,
-                    "top_p": 1.0,
-                    "frequency_penalty": 0.1,
-                    "presence_penalty": 0.2,
-                }
-            ],
+        x_df_single = (
+            input_data
+            if input_data
+            else pd.DataFrame.from_records(
+                [
+                    {
+                        "messages": [
+                            {
+                                "role": "system",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "Complete the sentence.",
+                                    }
+                                ],
+                            },
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "text",
+                                        "text": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",  # noqa: E501
+                                    },
+                                ],
+                            },
+                        ],
+                        "temperature": 0.9,
+                        "max_completion_tokens": 250,
+                        "stop": None,
+                        "n": 3,
+                        "stream": False,
+                        "top_p": 1.0,
+                        "frequency_penalty": 0.1,
+                        "presence_penalty": 0.2,
+                    }
+                ],
+            )
         )
 
         def check_single_res(res: pd.DataFrame) -> None:
@@ -324,9 +330,58 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             requires_token=True,  # This is a gated model
         )
 
+    def _get_image_as_base64_str(self) -> str:
+        image_file = os.path.join(os.path.dirname(__file__), "data", "living-with-cats-dogs.jpg")
+        with open(image_file, "rb") as image_file:
+            bytes_data = image_file.read()
+
+        return base64.b64encode(bytes_data).decode("utf-8")
+
     @pytest.mark.conda_incompatible
     def test_image_text_to_text_with_model_logging_gemma(self) -> None:
         """Test image text to text with Gemma model (gated - requires HF token) using vLLM."""
+
+        input_data = pd.DataFrame.from_records(
+            [
+                {
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Complete the sentence.",
+                                }
+                            ],
+                        },
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Explain the image.",
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/jpeg;base64,{self._get_image_as_base64_str()}",
+                                    },
+                                },
+                            ],
+                        },
+                    ],
+                    "temperature": 0.9,
+                    "max_completion_tokens": 250,
+                    "stop": None,
+                    "n": 3,
+                    "stream": False,
+                    "top_p": 1.0,
+                    "frequency_penalty": 0.1,
+                    "presence_penalty": 0.2,
+                }
+            ],
+        )
+
         self._test_with_model_logging(
             model_name="Qwen/Qwen3-VL-2B-Instruct",
             task="image-text-to-text",
@@ -337,6 +392,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                     "--max-model-len=1024",
                 ],
             },
+            input_data=input_data,
         )
 
     @pytest.mark.conda_incompatible

@@ -57,7 +57,7 @@ class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
 
         self._test_registry_batch_inference(
             model=model,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             service_name=service_name,
             replicas=1,

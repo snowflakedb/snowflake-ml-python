@@ -47,7 +47,7 @@ class TestXGBoostBatchInferenceInteg(registry_batch_inference_test_base.Registry
                 if gpu_requests
                 else {"enable_explainability": False}
             ),
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,

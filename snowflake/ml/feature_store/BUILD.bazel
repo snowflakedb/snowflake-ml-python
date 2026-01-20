@@ -1,4 +1,4 @@
-load("//bazel:py_rules.bzl", "py_library", "py_package")
+load("//bazel:py_rules.bzl", "py_library", "py_package", "py_test")
 
 package_group(
     name = "feature_store",
@@ -24,9 +24,13 @@ py_library(
     name = "feature_store_lib",
     srcs = [
         "access_manager.py",
+        "aggregation.py",
         "entity.py",
+        "feature.py",
         "feature_store.py",
         "feature_view.py",
+        "metadata_manager.py",
+        "tile_sql_generator.py",
     ],
     deps = [
         ":init",
@@ -47,5 +51,33 @@ py_package(
     deps = [
         ":feature_store_lib",
         "//snowflake/ml/feature_store/examples:feature_store_examples",
+    ],
+)
+
+# Unit tests
+py_test(
+    name = "feature_view_test",
+    srcs = ["feature_view_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "aggregation_test",
+    srcs = ["aggregation_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "tile_sql_generator_test",
+    srcs = ["tile_sql_generator_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
     ],
 )

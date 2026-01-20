@@ -48,7 +48,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         job = self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             replicas=replicas,
@@ -76,7 +76,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         job = self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=None,
             service_name=service_name,
@@ -102,7 +102,7 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             service_name=service_name,
             replicas=2,
