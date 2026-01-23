@@ -75,10 +75,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
     DESC_SERVICE_SPEC_COL_NAME = "spec"
     DESC_SERVICE_CONTAINERS_SPEC_NAME = "containers"
     DESC_SERVICE_NAME_SPEC_NAME = "name"
-    DESC_SERVICE_PROXY_SPEC_ENV_NAME = "env"
-    PROXY_CONTAINER_NAME = "proxy"
+    DESC_SERVICE_ENV_SPEC_NAME = "env"
     MODEL_INFERENCE_AUTOCAPTURE_ENV_NAME = "SPCS_MODEL_INFERENCE_SERVER__AUTOCAPTURE_ENABLED"
-    FEATURE_MODEL_INFERENCE_AUTOCAPTURE = "FEATURE_MODEL_INFERENCE_AUTOCAPTURE"
 
     @contextlib.contextmanager
     def _qmark_paramstyle(self) -> Generator[None, None, None]:
@@ -285,39 +283,33 @@ class ServiceSQLClient(_base._BaseSQLClient):
         )
         return rows[0]
 
-    def get_proxy_container_autocapture(self, row: row.Row) -> bool:
-        """Extract whether service has autocapture enabled from proxy container spec.
+    def is_autocapture_enabled(self, row: row.Row) -> bool:
+        """Extract whether service has autocapture enabled in any container from service spec.
 
         Args:
             row: A row.Row object from DESCRIBE SERVICE containing the service YAML spec.
 
         Returns:
-            True if autocapture is enabled in proxy spec
-            False if disabled or not set in proxy spec
-            False if service doesn't have proxy container
+            True if autocapture is enabled in any container.
+            False if autocapture is disabled or not set in any container.
         """
-        try:
-            spec_yaml = row[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME]
-            if spec_yaml is None:
-                return False
-            spec_raw = yaml.safe_load(spec_yaml)
-            if spec_raw is None:
-                return False
-            spec = cast(dict[str, Any], spec_raw)
-
-            proxy_container_spec = next(
-                container
-                for container in spec[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME][
-                    ServiceSQLClient.DESC_SERVICE_CONTAINERS_SPEC_NAME
-                ]
-                if container[ServiceSQLClient.DESC_SERVICE_NAME_SPEC_NAME] == ServiceSQLClient.PROXY_CONTAINER_NAME
-            )
-            env = proxy_container_spec.get(ServiceSQLClient.DESC_SERVICE_PROXY_SPEC_ENV_NAME, {})
-            autocapture_enabled = env.get(ServiceSQLClient.MODEL_INFERENCE_AUTOCAPTURE_ENV_NAME, "false")
-            return str(autocapture_enabled).lower() == "true"
-
-        except StopIteration:
+        spec_yaml = row.as_dict().get(ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME)
+        if spec_yaml is None:
             return False
+        spec_raw = yaml.safe_load(spec_yaml)
+        if spec_raw is None:
+            return False
+        spec = cast(dict[str, Any], spec_raw)
+
+        containers = spec[ServiceSQLClient.DESC_SERVICE_SPEC_COL_NAME][
+            ServiceSQLClient.DESC_SERVICE_CONTAINERS_SPEC_NAME
+        ]
+        for container in containers:
+            env = container.get(ServiceSQLClient.DESC_SERVICE_ENV_SPEC_NAME, {})
+            autocapture_enabled = env.get(ServiceSQLClient.MODEL_INFERENCE_AUTOCAPTURE_ENV_NAME, "false")
+            if str(autocapture_enabled).lower() == "true":
+                return True
+        return False
 
     def drop_service(
         self,

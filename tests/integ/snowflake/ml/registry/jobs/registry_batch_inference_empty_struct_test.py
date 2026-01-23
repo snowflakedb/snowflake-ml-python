@@ -59,7 +59,7 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
             model=model,
             sample_input_data=None,
             signatures={"predict": sig},
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             service_name=service_name,
             replicas=1,

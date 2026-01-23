@@ -661,13 +661,12 @@ class ModelVersion(lineage_node.LineageNode):
     @snowpark._internal.utils.private_preview(version="1.18.0")
     def run_batch(
         self,
+        X: dataframe.DataFrame,
         *,
         compute_pool: str,
-        input_spec: dataframe.DataFrame,
+        input_spec: Optional[batch_inference_specs.InputSpec] = None,
         output_spec: batch_inference_specs.OutputSpec,
         job_spec: Optional[batch_inference_specs.JobSpec] = None,
-        params: Optional[dict[str, Any]] = None,
-        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
     ) -> job.MLJob[Any]:
         """Execute batch inference on datasets as an SPCS job.
@@ -675,19 +674,16 @@ class ModelVersion(lineage_node.LineageNode):
         Args:
             compute_pool (str): Name of the compute pool to use for building the image containers and batch
                 inference execution.
-            input_spec (dataframe.DataFrame): Snowpark DataFrame containing the input data for inference.
+            X (dataframe.DataFrame): Snowpark DataFrame containing the input data for inference.
                 The DataFrame should contain all required features for model prediction and passthrough columns.
             output_spec (batch_inference_specs.OutputSpec): Configuration for where and how to save
                 the inference results. Specifies the stage location and file handling behavior.
+            input_spec (Optional[batch_inference_specs.InputSpec]): Optional configuration for input
+                processing including model inference parameters and column handling options.
+                If None, default values will be used for params and column_handling.
             job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
                 execution parameters such as compute resources, worker counts, and job naming.
                 If None, default values will be used.
-            params (Optional[dict[str, Any]]): Optional dictionary of model inference parameters
-                (e.g., temperature, top_k for LLMs). These are passed as keyword arguments to the
-                model's inference method. Defaults to None.
-            column_handling (Optional[dict[str, batch_inference_specs.FileEncoding]]): Optional dictionary
-                specifying how to handle specific columns during file I/O. Maps column names to their
-                file encoding configuration.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
                 `engine` is the type of the inference engine to use.
@@ -699,7 +695,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         Raises:
             ValueError: If warehouse is not set in job_spec and no current warehouse is available.
-            RuntimeError: If the input_spec cannot be processed or written to the staging location.
+            RuntimeError: If the input data cannot be processed or written to the staging location.
 
         Example:
             >>> # Prepare input data - Example 1: From a table
@@ -732,8 +728,22 @@ class ModelVersion(lineage_node.LineageNode):
             >>> # Run batch inference
             >>> job = model_version.run_batch(
             ...     compute_pool="my_compute_pool",
-            ...     input_spec=input_df,
+            ...     X=input_df,
             ...     output_spec=output_spec,
+            ...     job_spec=job_spec
+            ... )
+            >>>
+            >>> # Run batch inference with InputSpec for additional options
+            >>> from snowflake.ml.model._client.model.batch_inference_specs import InputSpec, FileEncoding
+            >>> input_spec = InputSpec(
+            ...     params={"temperature": 0.7, "top_k": 50},
+            ...     column_handling={"image_col": {"encoding": FileEncoding.BASE64}}
+            ... )
+            >>> job = model_version.run_batch(
+            ...     compute_pool="my_compute_pool",
+            ...     X=input_df,
+            ...     output_spec=output_spec,
+            ...     input_spec=input_spec,
             ...     job_spec=job_spec
             ... )
 
@@ -746,6 +756,13 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+
+        # Extract params and column_handling from input_spec if provided
+        if input_spec is None:
+            input_spec = batch_inference_specs.InputSpec()
+
+        params = input_spec.params
+        column_handling = input_spec.column_handling
 
         if job_spec is None:
             job_spec = batch_inference_specs.JobSpec()
@@ -772,10 +789,10 @@ class ModelVersion(lineage_node.LineageNode):
         self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
 
         try:
-            input_spec.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
+            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
         # todo: be specific about the type of errors to provide better error messages.
         except Exception as e:
-            raise RuntimeError(f"Failed to process input_spec: {e}")
+            raise RuntimeError(f"Failed to process input data: {e}")
 
         if job_spec.job_name is None:
             # Same as the MLJob ID generation logic with a different prefix

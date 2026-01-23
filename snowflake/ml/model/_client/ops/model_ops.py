@@ -10,7 +10,6 @@ from typing import Any, Literal, Optional, TypedDict, Union, cast, overload
 import yaml
 from typing_extensions import NotRequired
 
-from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import formatting, identifier, sql_identifier, url
 from snowflake.ml.model import model_signature, type_hints
@@ -698,9 +697,6 @@ class ModelOperator:
 
         result: list[ServiceInfo] = []
         is_privatelink_connection = self._is_privatelink_connection()
-        is_autocapture_param_enabled = (
-            platform_capabilities.PlatformCapabilities.get_instance().is_inference_autocapture_enabled()
-        )
 
         for fully_qualified_service_name in fully_qualified_service_names:
             port: Optional[int] = None
@@ -742,10 +738,8 @@ class ModelOperator:
                 inference_endpoint=inference_endpoint,
                 internal_endpoint=f"http://{internal_dns}:{port}" if port is not None else None,
             )
-            if is_autocapture_param_enabled and self._service_client.DESC_SERVICE_SPEC_COL_NAME in service_description:
-                # Include column only if parameter is enabled and spec exists for service owner caller
-                autocapture_enabled = self._service_client.get_proxy_container_autocapture(service_description)
-                service_info["autocapture_enabled"] = autocapture_enabled
+            autocapture_enabled = self._service_client.is_autocapture_enabled(service_description)
+            service_info["autocapture_enabled"] = autocapture_enabled
 
             result.append(service_info)
 

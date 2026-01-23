@@ -156,7 +156,8 @@ class ModelMethod:
                 f"Your parameter {param_spec.name} cannot be resolved as valid SQL identifier. "
                 "Try specifying `case_sensitive` as True."
             ) from e
-        default_value = param_spec.default_value if param_spec.default_value is None else str(param_spec.default_value)
+        # Convert None to "NULL" string so MANIFEST parser can interpret it as SQL NULL
+        default_value = "NULL" if param_spec.default_value is None else str(param_spec.default_value)
         return model_manifest_schema.ModelMethodSignatureFieldWithNameAndDefault(
             name=param_name.resolved(),
             type=type_utils.convert_sp_to_sf_type(param_spec.dtype.as_snowpark_type()),

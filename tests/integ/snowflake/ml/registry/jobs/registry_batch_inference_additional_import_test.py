@@ -111,7 +111,7 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
 
         self._deploy_batch_inference(
             mv,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             service_name=service_name,
             function_name="predict",

@@ -1,5 +1,43 @@
 # Release History
 
+## 1.24.0
+
+### New Features
+
+* Feature Store: Added tile-based aggregation support with a new `Feature` API for efficient and
+  point-in-time correct time-series feature computation using pre-computed tiles stored in Dynamic Tables.
+
+* Registry: Added auto-signature inference for SentenceTransformer models. When logging a SentenceTransformer
+  model, `sample_input_data` is now optional. If not provided, the signature is automatically inferred from
+  the model's embedding dimension. Supported methods: `encode`, `encode_query`, `encode_document`,
+  `encode_queries`, `encode_documents`.
+
+```python
+import sentence_transformers
+from snowflake.ml.registry import Registry
+
+# Create model
+model = sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")
+
+# Log model without sample_input_data - signature is auto-inferred
+registry = Registry(session)
+mv = registry.log_model(
+    model=model,
+    model_name="my_sentence_transformer",
+    version_name="v1",
+)
+
+# Run inference with auto-inferred signature (input: "text", output: "output")
+import pandas as pd
+result = mv.run(pd.DataFrame({"text": ["Hello world"]}))
+```
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
 ## 1.23.0
 
 ### New Features

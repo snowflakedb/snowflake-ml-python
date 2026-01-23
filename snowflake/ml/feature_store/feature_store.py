@@ -41,6 +41,11 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewVersion,
     _FeatureViewMetadata,
 )
+from snowflake.ml.feature_store.metadata_manager import (
+    AggregationMetadata,
+    FeatureStoreMetadataManager,
+)
+from snowflake.ml.feature_store.tile_sql_generator import MergingSqlGenerator
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import DataFrame, Row, Session, functions as F
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -91,6 +96,7 @@ class _FeatureStoreObjTypes(Enum):
     FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
     TRAINING_DATA = "TRAINING_DATA"
     ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
+    INTERNAL_METADATA_TABLE = "INTERNAL_METADATA_TABLE"
 
     @classmethod
     def parse(cls, val: str) -> _FeatureStoreObjTypes:
@@ -262,6 +268,12 @@ class FeatureStore:
             database=database,
             schema=name,
         )
+        self._metadata_manager = FeatureStoreMetadataManager(
+            session=session,
+            schema_path=self._config.full_schema_path,
+            fs_object_tag_path=self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG),
+            telemetry_stmp=self._telemetry_stmp,
+        )
         self._asof_join_enabled = None
 
         # A dict from object name to tuple of search space and object domain.
@@ -295,6 +307,7 @@ class FeatureStore:
                     self._session.sql(f"CREATE TAG IF NOT EXISTS {self._get_fully_qualified_name(tag)}").collect(
                         statement_params=self._telemetry_stmp
                     )
+                # Metadata table for aggregation configs is created lazily by metadata manager
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
@@ -583,11 +596,16 @@ class FeatureStore:
                 desc = "" if desc is None else f"COMMENT '{desc}'"
                 return f"{col.name} {desc}"
 
-            column_descs = (
-                ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
-                if feature_view.feature_descs is not None
-                else ""
-            )
+            # For tiled feature views, skip column definitions since the tiling query
+            # produces different columns (TILE_START, partial aggregates)
+            if feature_view.is_tiled:
+                column_descs = ""
+            else:
+                column_descs = (
+                    ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
+                    if feature_view.feature_descs is not None
+                    else ""
+                )
 
             # Step 1: Create offline feature view (Dynamic Table or View)
             created_resources.extend(
@@ -611,10 +629,26 @@ class FeatureStore:
                     (_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, self._get_fully_qualified_name(online_table_name))
                 )
 
+            # Step 3: Save aggregation metadata for tiled feature views (atomically)
+            if feature_view.is_tiled:
+                agg_metadata = AggregationMetadata(
+                    feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
+                    features=feature_view.aggregation_specs,  # type: ignore[arg-type]
+                )
+                # Convert SqlIdentifier keys to strings if descriptions exist
+                descs = None
+                if feature_view.feature_descs:
+                    descs = {k.identifier(): v for k, v in feature_view.feature_descs.items()}
+                # Save specs and descs atomically in a single statement
+                self._metadata_manager.save_feature_view_metadata(feature_view.name, version, agg_metadata, descs)
+
         except Exception as e:
             # We can't rollback in case of overwrite.
             if not overwrite:
                 self._rollback_created_resources(created_resources)
+                # Also cleanup metadata for tiled FVs (safe even if not saved yet)
+                if feature_view.is_tiled:
+                    self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), version)
 
             if isinstance(e, snowml_exceptions.SnowflakeMLException):
                 raise
@@ -1437,6 +1471,9 @@ class FeatureStore:
                     ),
                 )
 
+        # Delete aggregation metadata and feature descriptions if exist
+        self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), str(feature_view.version))
+
         logger.info(f"Deleted FeatureView {feature_view.name}/{feature_view.version}.")
 
     @dispatch_decorator()
@@ -1916,6 +1953,15 @@ class FeatureStore:
                         " to generate the data as a Snowflake Table."
                     ),
                 )
+
+            # Cache the result to a temporary table before creating the dataset
+            # to ensure single query evaluation:
+            has_tiled_fv = any(
+                (fv.feature_view_ref if isinstance(fv, FeatureViewSlice) else fv).is_tiled for fv in features
+            )
+            if has_tiled_fv:
+                result_df = result_df.cache_result()
+
             # TODO: Add feature store tag once Dataset (version) supports tags
             ds: dataset.Dataset = dataset.create_from_dataframe(
                 self._session,
@@ -2375,8 +2421,24 @@ class FeatureStore:
     def _read_from_offline_store(
         self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
     ) -> DataFrame:
-        """Read feature values from the offline store (main feature view table)."""
+        """Read feature values from the offline store (main feature view table).
+
+        For tiled feature views, this computes aggregated features at current time
+        by creating a synthetic spine with unique entity combinations.
+
+        Args:
+            feature_view: The feature view to read from.
+            keys: Optional list of key values to filter by.
+            feature_names: Optional list of feature names to return.
+
+        Returns:
+            Snowpark DataFrame containing the feature values.
+        """
         table_name = feature_view.fully_qualified_name()
+
+        # For tiled FVs, compute features at current time
+        if feature_view.is_tiled:
+            return self._read_tiled_fv_at_current_time(feature_view, keys, feature_names)
 
         # Build SELECT and WHERE clauses using helper methods
         select_clause = self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
@@ -2384,6 +2446,78 @@ class FeatureStore:
 
         query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
         return self._session.sql(query)
+
+    def _read_tiled_fv_at_current_time(
+        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+    ) -> DataFrame:
+        """Read tiled feature view by computing aggregated features at current time.
+
+        Creates a synthetic spine with unique entity combinations from the tile table,
+        uses CURRENT_TIMESTAMP as the query time, and merges tiles to compute features.
+
+        Args:
+            feature_view: The tiled feature view to read from.
+            keys: Optional list of key values to filter by.
+            feature_names: Optional list of feature names to return.
+
+        Returns:
+            Snowpark DataFrame containing the computed feature values.
+        """
+        table_name = feature_view.fully_qualified_name()
+
+        # Get join keys from entities
+        join_keys: list[str] = []
+        for entity in feature_view.entities:
+            join_keys.extend([str(k) for k in entity.join_keys])
+
+        quoted_keys = [f'"{k}"' for k in join_keys]
+        quoted_keys_str = ", ".join(quoted_keys)
+
+        # Build WHERE clause for key filtering (if any)
+        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+
+        # Step 1: Create spine CTE with unique entities + CURRENT_TIMESTAMP
+        spine_cte = f"""
+            SELECT DISTINCT {quoted_keys_str},
+                   CURRENT_TIMESTAMP() AS "_QUERY_TS"
+            FROM {table_name}{where_clause}
+        """
+
+        # Step 2: Generate merge CTEs using MergingSqlGenerator
+        assert feature_view.aggregation_specs is not None
+        assert feature_view.feature_granularity is not None
+        assert feature_view.timestamp_col is not None
+
+        generator = MergingSqlGenerator(
+            tile_table=table_name,
+            join_keys=join_keys,
+            timestamp_col=str(feature_view.timestamp_col),
+            feature_granularity=feature_view.feature_granularity,
+            features=feature_view.aggregation_specs,
+            spine_timestamp_col="_QUERY_TS",
+            fv_index=0,
+        )
+
+        merge_ctes = generator.generate_all_ctes()
+
+        # Step 3: Build full query
+        cte_parts = [f"SPINE AS ({spine_cte})"]
+        for cte_name, cte_body in merge_ctes:
+            cte_parts.append(f"{cte_name} AS ({cte_body})")
+
+        # Get feature columns for final SELECT
+        all_feature_cols = [spec.get_sql_column_name() for spec in feature_view.aggregation_specs]
+        if feature_names:
+            # Filter to requested features
+            feature_names_upper = [f.upper() for f in feature_names]
+            all_feature_cols = [c for c in all_feature_cols if c.strip('"').upper() in feature_names_upper]
+
+        feature_cols_str = ", ".join(all_feature_cols)
+        # CTE name format matches generator: FV{index:03d}
+        final_select = f"SELECT {quoted_keys_str}, {feature_cols_str} FROM FV000"
+
+        full_query = f"WITH {', '.join(cte_parts)} {final_select}"
+        return self._session.sql(full_query)
 
     def _read_from_online_store(
         self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
@@ -2488,7 +2622,17 @@ class FeatureStore:
         query = ""
         try:
             override_clause = " OR REPLACE" if override else ""
-            query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name} ({column_descs})
+
+            # Use tiling query for tiled feature views
+            if feature_view.is_tiled:
+                source_query = feature_view._get_tile_query()
+            else:
+                source_query = feature_view.query
+
+            # Include column definitions only if provided (skip for tiled feature views)
+            column_clause = f" ({column_descs})" if column_descs else ""
+
+            query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
                 COMMENT = '{feature_view.desc}'
                 TAG (
@@ -2499,11 +2643,19 @@ class FeatureStore:
                 INITIALIZE = {feature_view.initialize}
             """
             if feature_view.cluster_by:
-                cluster_by_clause = f"CLUSTER BY ({', '.join(feature_view.cluster_by)})"
+                # For tiled FVs, replace timestamp column with TILE_START in cluster_by
+                if feature_view.is_tiled and feature_view.timestamp_col:
+                    ts_col_upper = feature_view.timestamp_col.upper()
+                    cluster_by_cols = [
+                        "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
+                    ]
+                else:
+                    cluster_by_cols = [str(col) for col in feature_view.cluster_by]
+                cluster_by_clause = f"CLUSTER BY ({', '.join(cluster_by_cols)})"
                 query += f"{cluster_by_clause}"
 
             query += f"""
-                AS {feature_view.query}
+                AS {source_query}
             """
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
 
@@ -2653,9 +2805,10 @@ class FeatureStore:
         This method supports feature views with different join keys by:
         1. Creating a spine CTE that includes all possible join keys
         2. For each feature view, creating a deduplicated spine subquery with only that FV's join keys
-        3. Performing ASOF JOINs on the deduplicated spine when timestamp columns exist
-        4. Performing LEFT JOINs on the deduplicated spine when timestamp columns are missing
-        5. Combining results by LEFT JOINing each FV CTE back to the original SPINE
+        3. For tiled FVs: Using MergingSqlGenerator to generate tile merging CTEs
+        4. For non-tiled FVs: Performing ASOF JOINs on the deduplicated spine when timestamp columns exist
+        5. Performing LEFT JOINs on the deduplicated spine when timestamp columns are missing
+        6. Combining results by LEFT JOINing each FV CTE back to the original SPINE
 
         Args:
             feature_views: A list of feature views to join.
@@ -2688,8 +2841,23 @@ class FeatureStore:
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
             join_keys_str = ", ".join(fv_join_keys)
 
+            # Handle tiled feature views using MergingSqlGenerator
+            if feature_view.is_tiled and spine_timestamp_col is not None:
+                generator = MergingSqlGenerator(
+                    tile_table=feature_view.fully_qualified_name(),
+                    join_keys=[str(k) for k in fv_join_keys],
+                    timestamp_col=str(feature_timestamp_col),
+                    feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
+                    features=feature_view.aggregation_specs,  # type: ignore[arg-type]
+                    spine_timestamp_col=str(spine_timestamp_col),
+                    fv_index=i,
+                )
+                # Add all CTEs from the merging generator
+                for cte_tuple in generator.generate_all_ctes():
+                    ctes.append(f"{cte_tuple[0]} AS (\n{cte_tuple[1]}\n)")
+
             # Use ASOF JOIN if both spine and feature view have timestamp columns, otherwise use LEFT JOIN
-            if spine_timestamp_col is not None and feature_timestamp_col is not None:
+            elif spine_timestamp_col is not None and feature_timestamp_col is not None:
                 # Build the deduplicated spine columns set (join keys + timestamp)
                 spine_dedup_cols_set = set(fv_join_keys)
                 if spine_timestamp_col not in spine_dedup_cols_set:
@@ -2760,7 +2928,11 @@ class FeatureStore:
             if spine_timestamp_col is not None and feature_view.timestamp_col is not None:
                 join_conditions.append(f'SPINE."{spine_timestamp_col}" = {cte_name}."{spine_timestamp_col}"')
 
-            if include_feature_view_timestamp_col and feature_view.timestamp_col is not None:
+            if (
+                include_feature_view_timestamp_col
+                and feature_view.timestamp_col is not None
+                and not feature_view.is_tiled
+            ):
                 f_ts_col_alias = identifier.concat_names(
                     [feature_view.name, "_", str(feature_view.version), "_", feature_view.timestamp_col]
                 )
@@ -2768,11 +2940,17 @@ class FeatureStore:
                 select_columns.append(f_ts_col_str)
 
             # Select features from the CTE
-            # feature_columns[i] is already a comma-separated string of column names
-            feature_cols_from_cte = []
-            for col in feature_columns[i].split(", "):
-                col_clean = col.strip()
-                feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
+            # For tiled FVs, get output columns from aggregation specs
+            if feature_view.is_tiled and feature_view.aggregation_specs:
+                feature_cols_from_cte = [
+                    f"{cte_name}.{spec.get_sql_column_name()}" for spec in feature_view.aggregation_specs
+                ]
+            else:
+                # feature_columns[i] is already a comma-separated string of column names
+                feature_cols_from_cte = []
+                for col in feature_columns[i].split(", "):
+                    col_clean = col.strip()
+                    feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
             select_columns.extend(feature_cols_from_cte)
 
             # Create join condition using only this feature view's join keys
@@ -2803,6 +2981,26 @@ FROM SPINE{' '.join(join_clauses)}
         # Validate join_method parameter
         if join_method not in ["sequential", "cte"]:
             raise ValueError(f"Invalid join_method '{join_method}'. Must be 'sequential' or 'cte'.")
+
+        # Check if any feature view is tiled - tiled FVs require CTE method and timestamp column
+        has_tiled_fv = False
+        for feature in features:
+            fv = feature.feature_view_ref if isinstance(feature, FeatureViewSlice) else feature
+            if fv.is_tiled:
+                has_tiled_fv = True
+                break
+
+        if has_tiled_fv and join_method != "cte":
+            raise ValueError(
+                "Tiled feature views require join_method='cte'. "
+                "Please set join_method='cte' when using feature views with tile-based aggregations."
+            )
+
+        if has_tiled_fv and spine_timestamp_col is None:
+            raise ValueError(
+                "Tiled feature views require a spine_timestamp_col for point-in-time joins. "
+                "Please provide spine_timestamp_col when using feature views with tile-based aggregations."
+            )
 
         feature_views: list[FeatureView] = []
         # Extract column selections for each feature view
@@ -3340,6 +3538,12 @@ FROM SPINE{' '.join(join_clauses)}
         online_config_json = self._determine_online_config_from_oft(name.identifier(), version)
         online_config = fv_mod.OnlineConfig.from_json(online_config_json)
 
+        # Load feature metadata if present (for tiled feature views)
+        agg_metadata = self._metadata_manager.get_feature_specs(name.identifier(), version)
+        feature_granularity = agg_metadata.feature_granularity if agg_metadata else None
+        aggregation_specs = agg_metadata.features if agg_metadata else None
+        is_tiled = agg_metadata is not None
+
         if obj_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
             df = self._session.sql(query)
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
@@ -3347,6 +3551,12 @@ FROM SPINE{' '.join(join_clauses)}
             timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
             re_initialize = re.match(_DT_INITIALIZE_PATTERN, row["text"])
             initialize = re_initialize.group("initialize") if re_initialize is not None else "ON_CREATE"
+
+            # For tiled FVs, get descriptions from metadata table; otherwise from DT columns
+            if is_tiled:
+                feature_descs = self._metadata_manager.get_feature_descs(name.identifier(), version) or {}
+            else:
+                feature_descs = self._fetch_column_descs("DYNAMIC TABLE", fv_name)
 
             fv = FeatureView._construct_feature_view(
                 name=name,
@@ -3360,7 +3570,7 @@ FROM SPINE{' '.join(join_clauses)}
                     if len(row["scheduling_state"]) > 0
                     else FeatureViewStatus.MASKED
                 ),
-                feature_descs=self._fetch_column_descs("DYNAMIC TABLE", fv_name),
+                feature_descs=feature_descs,
                 refresh_freq=row["target_lag"],
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
@@ -3377,6 +3587,8 @@ FROM SPINE{' '.join(join_clauses)}
                 session=self._session,
                 cluster_by=self._extract_cluster_by_columns(row["cluster_by"]),
                 online_config=online_config,
+                feature_granularity=feature_granularity,
+                aggregation_specs=aggregation_specs,
             )
             return fv
         else:
@@ -3405,6 +3617,8 @@ FROM SPINE{' '.join(join_clauses)}
                 infer_schema_df=infer_schema_df,
                 session=self._session,
                 online_config=online_config,
+                feature_granularity=feature_granularity,
+                aggregation_specs=aggregation_specs,
             )
             return fv
 

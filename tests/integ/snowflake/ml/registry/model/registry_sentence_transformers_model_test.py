@@ -2,6 +2,7 @@ import os
 import random
 import tempfile
 
+import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
@@ -35,11 +36,11 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )
@@ -54,6 +55,86 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                     lambda res: res.equals(embeddings),
                 ),
             },
+            additional_dependencies=["datasets>=2.15"],
+        )
+
+    def test_sentence_transformers_auto_signature(self) -> None:
+        """Test auto-signature inference without providing sample_input_data.
+
+        This test verifies that when no sample_input_data is provided, the model
+        handler automatically infers the signature from the model's embedding
+        dimension. It tests all available methods (encode, encode_query, encode_document)
+        in a single model log operation to reduce test time.
+
+        The auto-inferred signature expects:
+        - Input: a column named "text" with STRING type
+        - Output: a column named "output" with DOUBLE type and shape (embedding_dim,)
+        """
+        import sentence_transformers
+
+        from snowflake.ml.model import type_hints as model_types
+
+        model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
+
+        # Test data must match the auto-inferred signature input column name ("text")
+        test_sentences = pd.DataFrame(
+            {
+                "text": [
+                    "Why don't scientists trust atoms? Because they make up everything.",
+                    "I told my wife she should embrace her mistakes. She gave me a hug.",
+                    "Im reading a book on anti-gravity. Its impossible to put down!",
+                ]
+            }
+        )
+
+        # Build prediction_assert_fns and target_methods based on available methods
+        prediction_assert_fns = {}
+        target_methods = []
+
+        # encode is always available
+        expected_encode = model.encode(test_sentences["text"].tolist())
+
+        def check_encode(res: pd.DataFrame) -> bool:
+            if "output" not in res.columns:
+                return False
+            actual = np.array(res["output"].tolist())
+            return np.allclose(actual, expected_encode, atol=1e-6)
+
+        prediction_assert_fns["encode"] = (test_sentences, check_encode)
+        target_methods.append("encode")
+
+        # Check for encode_query (sentence-transformers >= 3.0)
+        if hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None)):
+            expected_query = model.encode_query(test_sentences["text"].tolist())
+
+            def check_query(res: pd.DataFrame) -> bool:
+                if "output" not in res.columns:
+                    return False
+                actual = np.array(res["output"].tolist())
+                return np.allclose(actual, expected_query, atol=1e-6)
+
+            prediction_assert_fns["encode_query"] = (test_sentences, check_query)
+            target_methods.append("encode_query")
+
+        # Check for encode_document (sentence-transformers >= 3.0)
+        if hasattr(model, "encode_document") and callable(getattr(model, "encode_document", None)):
+            expected_doc = model.encode_document(test_sentences["text"].tolist())
+
+            def check_doc(res: pd.DataFrame) -> bool:
+                if "output" not in res.columns:
+                    return False
+                actual = np.array(res["output"].tolist())
+                return np.allclose(actual, expected_doc, atol=1e-6)
+
+            prediction_assert_fns["encode_document"] = (test_sentences, check_doc)
+            target_methods.append("encode_document")
+
+        # Log model once with all available methods and test all of them
+        self._test_registry_model(
+            model=model,
+            sample_input_data=None,  # No sample data - triggers auto-signature inference
+            prediction_assert_fns=prediction_assert_fns,
+            options=model_types.SentenceTransformersSaveOptions(target_methods=target_methods),
             additional_dependencies=["datasets>=2.15"],
         )
 

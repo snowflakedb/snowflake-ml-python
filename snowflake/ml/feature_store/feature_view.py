@@ -20,7 +20,9 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 from snowflake.ml.feature_store import feature_store
+from snowflake.ml.feature_store.aggregation import AggregationSpec
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -92,6 +94,7 @@ class _FeatureViewMetadata:
 
     entities: list[str]
     timestamp_col: str
+    is_tiled: bool = False  # Whether FV uses tile-based aggregations
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -99,6 +102,9 @@ class _FeatureViewMetadata:
     @classmethod
     def from_json(cls, json_str: str) -> _FeatureViewMetadata:
         state_dict = json.loads(json_str)
+        # Backward compatibility: old FVs don't have is_tiled
+        if "is_tiled" not in state_dict:
+            state_dict["is_tiled"] = False
         return cls(**state_dict)
 
 
@@ -213,6 +219,8 @@ class FeatureView(lineage_node.LineageNode):
         refresh_mode: str = "AUTO",
         cluster_by: Optional[list[str]] = None,
         online_config: Optional[OnlineConfig] = None,
+        feature_granularity: Optional[str] = None,
+        features: Optional[list[Feature]] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -256,6 +264,13 @@ class FeatureView(lineage_node.LineageNode):
 
                 .. note::
                     This feature is currently in preview.
+            feature_granularity: The tile interval for time-series aggregations (e.g., "1h", "1d").
+                When specified along with ``features``, enables tile-based aggregation where a
+                Dynamic Table stores pre-computed partial aggregations (tiles), and dataset
+                generation merges these tiles for point-in-time correct results.
+            features: List of aggregation feature definitions using the ``Feature`` class.
+                Required when ``feature_granularity`` is specified. Defines the aggregations
+                to compute (e.g., SUM, COUNT, LAST_N) with their windows.
             _kwargs: Reserved kwargs for system generated args.
 
                 .. caution::
@@ -328,6 +343,19 @@ class FeatureView(lineage_node.LineageNode):
             [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
         )
         self._online_config: Optional[OnlineConfig] = online_config
+
+        # Tile-based aggregation fields
+        self._feature_granularity: Optional[str] = feature_granularity
+        self._aggregation_specs: Optional[list[AggregationSpec]] = _kwargs.pop("_aggregation_specs", None)
+        if features is not None:
+            self._aggregation_specs = [f.to_spec() for f in features]
+
+        # For tiled FVs, re-initialize feature_descs with output column names (not source column names)
+        # This ensures descriptions are keyed by the output columns users will see in datasets
+        if self.is_tiled and self._aggregation_specs:
+            self._feature_desc = OrderedDict(
+                (SqlIdentifier(spec.get_sql_column_name()), "") for spec in self._aggregation_specs
+            )
 
         # Validate kwargs
         if _kwargs:
@@ -535,6 +563,9 @@ class FeatureView(lineage_node.LineageNode):
 
     @property
     def feature_names(self) -> list[SqlIdentifier]:
+        # For tiled FVs, return output column names from aggregation specs
+        if self.is_tiled and self._aggregation_specs:
+            return [SqlIdentifier(spec.get_sql_column_name()) for spec in self._aggregation_specs]
         return list(self._feature_desc.keys()) if self._feature_desc is not None else []
 
     @property
@@ -555,6 +586,25 @@ class FeatureView(lineage_node.LineageNode):
     @property
     def online_config(self) -> Optional[OnlineConfig]:
         return self._online_config
+
+    @property
+    def is_tiled(self) -> bool:
+        """Check if this feature view uses tile-based aggregation.
+
+        Returns:
+            True if feature_granularity and features are configured.
+        """
+        return self._feature_granularity is not None and self._aggregation_specs is not None
+
+    @property
+    def feature_granularity(self) -> Optional[str]:
+        """Get the tile interval for aggregations."""
+        return self._feature_granularity
+
+    @property
+    def aggregation_specs(self) -> Optional[list[AggregationSpec]]:
+        """Get the aggregation specifications (internal use)."""
+        return self._aggregation_specs
 
     def fully_qualified_online_table_name(self) -> str:
         """Get the fully qualified name for the online feature table.
@@ -741,7 +791,7 @@ class FeatureView(lineage_node.LineageNode):
     def _metadata(self) -> _FeatureViewMetadata:
         entity_names = [e.name.identifier() for e in self.entities]
         ts_col = self.timestamp_col.identifier() if self.timestamp_col is not None else _TIMESTAMP_COL_PLACEHOLDER
-        return _FeatureViewMetadata(entity_names, ts_col)
+        return _FeatureViewMetadata(entity_names, ts_col, is_tiled=self.is_tiled)
 
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
@@ -765,7 +815,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                     if k not in df_cols:
                         raise ValueError(f"join_key {k} in Entity {e.name} is not found in input dataframe: {df_cols}")
 
-            if self._timestamp_col is not None:
+            # For tiled FVs, timestamp_col is used for tiling (not an output column)
+            # and cluster_by is adjusted to use TILE_START instead of timestamp_col
+            # So skip these validations for tiled FVs
+            if self._timestamp_col is not None and not self.is_tiled:
                 ts_col = self._timestamp_col
                 if ts_col == SqlIdentifier(_TIMESTAMP_COL_PLACEHOLDER):
                     raise ValueError(f"Invalid timestamp_col name, cannot be {_TIMESTAMP_COL_PLACEHOLDER}.")
@@ -776,7 +829,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                     raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
 
-            if self.cluster_by is not None:
+            if self.cluster_by is not None and not self.is_tiled:
                 for column in self.cluster_by:
                     if column not in df_cols:
                         raise ValueError(
@@ -789,6 +842,93 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         if self._initialize not in ["ON_CREATE", "ON_SCHEDULE"]:
             raise ValueError("'initialize' only supports ON_CREATE or ON_SCHEDULE.")
+
+        # Validate tiled aggregation configuration
+        if self._feature_granularity is not None and self._aggregation_specs is None:
+            raise ValueError(
+                "feature_granularity requires features to be specified. "
+                "Use the Feature class to define aggregations."
+            )
+        if self._aggregation_specs is not None and self._feature_granularity is None:
+            raise ValueError(
+                "features requires feature_granularity to be specified. "
+                "Specify the tile interval (e.g., '1h', '1d')."
+            )
+        if self.is_tiled:
+            if self._timestamp_col is None:
+                raise ValueError(
+                    "timestamp_col is required for tile-based aggregations. "
+                    "Specify the timestamp column used for time-series lookups."
+                )
+            if self._refresh_freq is None:
+                raise ValueError(
+                    "refresh_freq is required for tile-based aggregations. "
+                    "Tiled feature views must be managed (Dynamic Tables)."
+                )
+            # Validate window and offset are multiples of granularity
+            self._validate_window_offset_alignment()
+            # Validate feature aliases are unique
+            self._validate_unique_feature_aliases()
+
+    def _validate_window_offset_alignment(self) -> None:
+        """Validate that window and offset are multiples of feature_granularity.
+
+        This ensures clean tile boundaries for aggregations.
+        Lifetime windows are exempt from this validation as they aggregate all tiles.
+
+        Raises:
+            ValueError: If window or offset is not a multiple of feature_granularity.
+        """
+        from snowflake.ml.feature_store.aggregation import interval_to_seconds
+
+        granularity_seconds = interval_to_seconds(self._feature_granularity)  # type: ignore[arg-type]
+
+        for spec in self._aggregation_specs:  # type: ignore[union-attr]
+            # Skip validation for lifetime windows (they aggregate all tiles)
+            if spec.is_lifetime():
+                continue
+
+            # Validate window alignment
+            window_seconds = spec.get_window_seconds()
+            if window_seconds % granularity_seconds != 0:
+                raise ValueError(
+                    f"Window '{spec.window}' for feature '{spec.output_column}' must be a multiple of "
+                    f"feature_granularity '{self._feature_granularity}'. "
+                    f"Window ({window_seconds}s) is not divisible by granularity ({granularity_seconds}s)."
+                )
+
+            # Validate offset alignment (if offset is specified)
+            offset_seconds = spec.get_offset_seconds()
+            if offset_seconds > 0 and offset_seconds % granularity_seconds != 0:
+                raise ValueError(
+                    f"Offset '{spec.offset}' for feature '{spec.output_column}' must be a multiple of "
+                    f"feature_granularity '{self._feature_granularity}'. "
+                    f"Offset ({offset_seconds}s) is not divisible by granularity ({granularity_seconds}s)."
+                )
+
+    def _validate_unique_feature_aliases(self) -> None:
+        """Validate that all feature aliases are unique.
+
+        Duplicate aliases would cause SQL errors or ambiguous columns
+        in the generated tile table and dataset queries.
+
+        Raises:
+            ValueError: If duplicate feature aliases are found.
+        """
+        if self._aggregation_specs is None:
+            return
+
+        seen_aliases: dict[str, int] = {}
+        for spec in self._aggregation_specs:
+            # Normalize to uppercase for comparison (Snowflake default)
+            alias = spec.output_column.strip('"').upper()
+            if alias in seen_aliases:
+                raise ValueError(
+                    f"Duplicate feature alias '{spec.output_column}' found. "
+                    f"Each feature must have a unique alias. "
+                    f"Use .alias() to provide distinct names for features."
+                )
+            seen_aliases[alias] = 1
 
     def _get_column_names(self) -> Optional[list[SqlIdentifier]]:
         try:
@@ -861,6 +1001,12 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         fv_dict["_online_config"] = self._online_config.to_json() if self._online_config is not None else None
 
+        # Aggregation fields
+        fv_dict["_feature_granularity"] = self._feature_granularity
+        fv_dict["_aggregation_specs"] = (
+            [spec.to_dict() for spec in self._aggregation_specs] if self._aggregation_specs is not None else None
+        )
+
         lineage_node_keys = [key for key in fv_dict if key.startswith("_node") or key == "_session"]
 
         for key in lineage_node_keys:
@@ -930,6 +1076,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             e.owner = e_json["owner"]
             entities.append(e)
 
+        # Deserialize aggregation specs if present
+        aggregation_specs = None
+        if json_dict.get("_aggregation_specs"):
+            aggregation_specs = [AggregationSpec.from_dict(s) for s in json_dict["_aggregation_specs"]]
+
         return FeatureView._construct_feature_view(
             name=json_dict["_name"],
             entities=entities,
@@ -952,6 +1103,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             online_config=OnlineConfig.from_json(json_dict["_online_config"])
             if json_dict.get("_online_config")
             else None,
+            feature_granularity=json_dict.get("_feature_granularity"),
+            aggregation_specs=aggregation_specs,
         )
 
     def _get_compact_repr(self) -> _CompactRepresentation:
@@ -1025,6 +1178,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         session: Session,
         cluster_by: Optional[list[str]] = None,
         online_config: Optional[OnlineConfig] = None,
+        feature_granularity: Optional[str] = None,
+        aggregation_specs: Optional[list[AggregationSpec]] = None,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -1032,13 +1187,15 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             feature_df=feature_df,
             timestamp_col=timestamp_col,
             desc=desc,
+            refresh_freq=refresh_freq,
             _infer_schema_df=infer_schema_df,
             cluster_by=cluster_by,
             online_config=online_config,
+            feature_granularity=feature_granularity,
+            _aggregation_specs=aggregation_specs,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
-        fv._refresh_freq = refresh_freq
         fv._database = SqlIdentifier(database) if database is not None else None
         fv._schema = SqlIdentifier(schema) if schema is not None else None
         fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
@@ -1070,6 +1227,34 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             default_cluster_by_cols.append(self.timestamp_col)
 
         return default_cluster_by_cols
+
+    def _get_tile_query(self) -> str:
+        """Generate the tiling query for tile-based aggregations.
+
+        This query is used as the source for the Dynamic Table that stores
+        pre-computed partial aggregations (tiles).
+
+        Returns:
+            SQL query string for creating tile table.
+
+        Raises:
+            ValueError: If the feature view is not configured for tiling.
+        """
+        if not self.is_tiled:
+            raise ValueError("_get_tile_query called on non-tiled feature view")
+
+        from snowflake.ml.feature_store.tile_sql_generator import TilingSqlGenerator
+
+        join_keys = [str(k) for e in self._entities for k in e.join_keys]
+
+        generator = TilingSqlGenerator(
+            source_query=self._query,
+            join_keys=join_keys,
+            timestamp_col=str(self._timestamp_col),
+            feature_granularity=self._feature_granularity,  # type: ignore[arg-type]
+            features=self._aggregation_specs,  # type: ignore[arg-type]
+        )
+        return generator.generate()
 
     @staticmethod
     def _get_online_table_name(

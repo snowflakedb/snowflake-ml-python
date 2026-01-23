@@ -46,7 +46,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,
@@ -89,7 +89,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,
@@ -132,7 +132,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,
@@ -227,7 +227,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         self._test_registry_batch_inference(
             model=pipeline,
             sample_input_data=test_features,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             cpu_requests=cpu_requests,
             num_workers=num_workers,
@@ -314,7 +314,7 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         self._test_registry_batch_inference(
             model=pipeline,
             sample_input_data=test_features,
-            input_spec=input_spec,
+            X=input_spec,
             output_stage_location=output_stage_location,
             num_workers=num_workers,
             service_name=service_name,

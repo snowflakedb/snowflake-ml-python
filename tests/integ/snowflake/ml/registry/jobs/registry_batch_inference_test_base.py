@@ -9,6 +9,7 @@ from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import (
+    InputSpec,
     JobSpec,
     ModelVersion,
     OutputSpec,
@@ -28,7 +29,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
     def _test_registry_batch_inference(
         self,
         model: model_types.SupportedModelType,
-        input_spec: snowpark.DataFrame,
+        X: snowpark.DataFrame,
         output_stage_location: str,
         service_name: str,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
@@ -75,7 +76,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
 
         return self._deploy_batch_inference(
             mv,
-            input_spec=input_spec,
+            X=X,
             output_stage_location=output_stage_location,
             service_name=service_name,
             gpu_requests=gpu_requests,
@@ -96,7 +97,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         self,
         mv: ModelVersion,
         *,
-        input_spec: snowpark.DataFrame,
+        X: snowpark.DataFrame,
         output_stage_location: str,
         job_name: str,
         service_compute_pool: str,
@@ -127,9 +128,9 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         # Prepare input data
         input_stage_location = f"{output_stage_location.rstrip('/')}/_temporary/"
         try:
-            input_spec.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
+            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
         except Exception as e:
-            raise RuntimeError(f"Failed to process input_spec: {e}")
+            raise RuntimeError(f"Failed to process input data: {e}")
 
         # Add job spec
         mv._service_ops._model_deployment_spec.add_job_spec(
@@ -171,7 +172,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
     def _deploy_batch_inference(
         self,
         mv: ModelVersion,
-        input_spec: snowpark.DataFrame,
+        X: snowpark.DataFrame,
         output_stage_location: str,
         service_name: str,
         gpu_requests: Optional[str] = None,
@@ -205,7 +206,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             # Use image override deployment
             job = self._deploy_batch_inference_with_image_override(
                 mv,
-                input_spec=input_spec,
+                X=X,
                 output_stage_location=output_stage_location,
                 job_name=service_name,
                 gpu_requests=gpu_requests,
@@ -218,10 +219,14 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             )
         else:
             # Use normal deployment
+            # Create InputSpec only if column_handling is provided
+            input_spec_obj = InputSpec(column_handling=column_handling) if column_handling is not None else None
+
             job = mv.run_batch(
+                X,
                 compute_pool=service_compute_pool,
-                input_spec=input_spec,
                 output_spec=OutputSpec(stage_location=output_stage_location),
+                input_spec=input_spec_obj,
                 job_spec=JobSpec(
                     image_repo=(
                         None
@@ -236,7 +241,6 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                     replicas=replicas,
                     function_name=function_name,
                 ),
-                column_handling=column_handling,
             )
 
         if not blocking:
@@ -258,8 +262,8 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
         self.assertEqual(
             df.count(),
-            input_spec.count(),
-            f"Output row count ({df.count()}) does not match input row count ({input_spec.count()})",
+            X.count(),
+            f"Output row count ({df.count()}) does not match input row count ({X.count()})",
         )
 
         # Apply custom validation function if provided

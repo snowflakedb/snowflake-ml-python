@@ -2,5 +2,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "UCI_BANK_MARKETING_20COLUMNS.csv",
+    "batman_audio.mp3",
     "cat.jpeg",
+    "cutting_in_kitchen.avi",
 ])

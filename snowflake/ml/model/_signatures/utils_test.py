@@ -7,6 +7,44 @@ from snowflake.ml.model._signatures import core, utils
 from snowflake.ml.test_utils import exception_utils
 
 
+class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
+    def test_video_classification_signature_auto_infer(self) -> None:
+        """Test that video-classification task produces correct signature."""
+        sig = utils.huggingface_pipeline_signature_auto_infer(
+            task="video-classification",
+            params={},
+        )
+
+        self.assertIsNotNone(sig)
+
+        # Build expected signature for comparison
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="video", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        assert sig is not None
+
+        # Compare inputs
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        self.assertEqual(sig.inputs[0], expected_sig.inputs[0])
+
+        # Compare outputs using equality (which checks name, specs, and shape)
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
+
 class ModelSignatureMiscTest(absltest.TestCase):
     def testrename_features(self) -> None:
         utils.rename_features([])

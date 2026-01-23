@@ -120,7 +120,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceInteg(
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
             service_name=service_name,
             output_stage_location=output_stage_location,
-            input_spec=input_spec,
+            X=input_spec,
             prediction_assert_fn=check_res,
         )
 

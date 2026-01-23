@@ -51,6 +51,7 @@ py_test(
     name = "registry_sentence_transformers_model_deployment_gpu_test",
     timeout = "eternal",
     srcs = ["registry_sentence_transformers_model_deployment_gpu_test.py"],
+    data = ["data/living-with-cats-dogs.jpg"],
     optional_dependencies = ["transformers"],
     shard_count = 2,
     tags = ["feature:model_serving"],

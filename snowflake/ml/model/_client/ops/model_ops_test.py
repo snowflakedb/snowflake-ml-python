@@ -588,9 +588,6 @@ class ModelOpsTest(absltest.TestCase):
                     ),
                 ],
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "ENABLED"}
-            ),
         ):
 
             # Test with regular connection - should display the ingress_url
@@ -739,9 +736,6 @@ class ModelOpsTest(absltest.TestCase):
                     dns_name="abc.internal", spec=_SERVICE_SPEC_NO_AUTOCAPTURE_ENV_VAR
                 ),
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "ENABLED"}
-            ),
         ):
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -831,9 +825,6 @@ class ModelOpsTest(absltest.TestCase):
                 "describe_service",
                 return_value=self._make_mock_describe_service_row(dns_name="abc.internal", spec=_SERVICE_SPEC_NO_PROXY),
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "ENABLED"}
-            ),
         ):
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -917,9 +908,6 @@ class ModelOpsTest(absltest.TestCase):
                 "describe_service",
                 return_value=self._make_mock_describe_service_row(dns_name="abc.internal"),
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "ENABLED"}
-            ),
         ):
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -930,7 +918,6 @@ class ModelOpsTest(absltest.TestCase):
             )
             # Test with regular connection
             # Inference endpoint will be None as the name field does not contain "inference"
-            # No autocapture_enabled included due to describe service contains no spec in output
             self.assertListEqual(
                 res,
                 [
@@ -939,6 +926,7 @@ class ModelOpsTest(absltest.TestCase):
                         "status": "PENDING",
                         "inference_endpoint": None,
                         "internal_endpoint": None,
+                        "autocapture_enabled": False,
                     },
                 ],
             )
@@ -1022,9 +1010,6 @@ class ModelOpsTest(absltest.TestCase):
                     self._make_mock_describe_service_row(dns_name="def.internal"),
                 ],
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "DISABLED"}
-            ),
         ):
 
             # Test with regular connection
@@ -1036,7 +1021,6 @@ class ModelOpsTest(absltest.TestCase):
                     version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                     statement_params=self.m_statement_params,
                 )
-                # No autocapture_enabled included due to parameter disabled
                 self.assertListEqual(
                     res,
                     [
@@ -1045,12 +1029,14 @@ class ModelOpsTest(absltest.TestCase):
                             "status": "PENDING",
                             "inference_endpoint": "bar.snowflakecomputing.app",
                             "internal_endpoint": "http://abc.internal:8080",
+                            "autocapture_enabled": False,
                         },
                         {
                             "name": "d.e.f",
                             "status": "RUNNING",
                             "inference_endpoint": "foo.snowflakecomputing.app",
                             "internal_endpoint": "http://def.internal:9090",
+                            "autocapture_enabled": False,
                         },
                     ],
                 )
@@ -1066,7 +1052,6 @@ class ModelOpsTest(absltest.TestCase):
                     version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                     statement_params=self.m_statement_params,
                 )
-                # No autocapture_enabled included due to parameter disabled
                 self.assertListEqual(
                     res,
                     [
@@ -1075,12 +1060,14 @@ class ModelOpsTest(absltest.TestCase):
                             "status": "PENDING",
                             "inference_endpoint": "bar.snowflakecomputing.app",
                             "internal_endpoint": "http://abc.internal:8080",
+                            "autocapture_enabled": False,
                         },
                         {
                             "name": "d.e.f",
                             "status": "RUNNING",
                             "inference_endpoint": "foo.snowflakecomputing.app",
                             "internal_endpoint": "http://def.internal:9090",
+                            "autocapture_enabled": False,
                         },
                     ],
                 )
@@ -1194,9 +1181,6 @@ class ModelOpsTest(absltest.TestCase):
                 "describe_service",
                 return_value=self._make_mock_describe_service_row(dns_name="service.test.e6nv.svc.spcs.internal"),
             ) as mock_describe_service,
-            platform_capabilities.PlatformCapabilities.mock_features(
-                {"FEATURE_MODEL_INFERENCE_AUTOCAPTURE": "DISABLED"}
-            ),
         ):
             res = self.m_ops.show_services(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
@@ -1205,7 +1189,6 @@ class ModelOpsTest(absltest.TestCase):
                 version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
                 statement_params=self.m_statement_params,
             )
-            # No autocapture_enabled included due to parameter disabled
             self.assertListEqual(
                 res,
                 [
@@ -1214,6 +1197,7 @@ class ModelOpsTest(absltest.TestCase):
                         "status": "PENDING",
                         "inference_endpoint": None,
                         "internal_endpoint": None,
+                        "autocapture_enabled": False,
                     },
                 ],
             )

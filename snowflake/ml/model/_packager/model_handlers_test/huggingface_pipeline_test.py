@@ -1096,6 +1096,95 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         self.assertTrue("content" in res["choices"][0]["message"])
         self.assertTrue("role" in res["choices"][0]["message"])
 
+    def test_video_classification_temp_file_handling(self) -> None:
+        """Test that video classification correctly writes bytes to temp files and cleans up."""
+        # Create mock video bytes for multiple videos
+        mock_video_bytes_1 = b"fake_video_data_1"
+        mock_video_bytes_2 = b"fake_video_data_2"
+        video_bytes_list = [mock_video_bytes_1, mock_video_bytes_2]
+
+        # Expected mock output from the video classification pipeline
+        mock_pipeline_output = [
+            [
+                {"label": "ApplyEyeMakeup", "score": 0.62},
+                {"label": "ApplyLipstick", "score": 0.31},
+            ],
+            [
+                {"label": "Archery", "score": 0.75},
+                {"label": "Basketball", "score": 0.20},
+            ],
+        ]
+
+        # Track temp file paths that were created
+        created_temp_file_paths: list[str] = []
+
+        # Mock the pipeline __call__ to capture and verify temp file paths
+        def mock_pipeline_call(file_paths: list[str]) -> list[list[dict[str, object]]]:
+            self.assertEqual(len(file_paths), 2)
+            for i, path in enumerate(file_paths):
+                self.assertIsInstance(path, str)
+                # Verify temp file exists and contains correct video bytes
+                self.assertTrue(os.path.exists(path))
+                with open(path, "rb") as f:
+                    content = f.read()
+                    self.assertEqual(content, video_bytes_list[i])
+                created_temp_file_paths.append(path)
+            return mock_pipeline_output
+
+        # Create a mock pipeline using side_effect for proper call handling
+        mock_pipeline = mock.MagicMock()
+        mock_pipeline.side_effect = mock_pipeline_call
+
+        # Simulate the handler logic (extracted from huggingface.py)
+        input_col = "video"
+        x_df = pd.DataFrame({input_col: video_bytes_list})
+
+        temp_file_paths = []
+        temp_files = []
+        try:
+            for video_bytes in x_df[input_col].to_list():
+                temp_file = tempfile.NamedTemporaryFile(delete=False)
+                temp_file.write(video_bytes)
+                temp_file.flush()
+                temp_file_paths.append(temp_file.name)
+                temp_files.append(temp_file)
+
+            # Call the mock pipeline with temp file paths
+            result = mock_pipeline(temp_file_paths)
+
+            # Verify the result
+            self.assertEqual(len(result), 2)
+            self.assertEqual(result[0][0]["label"], "ApplyEyeMakeup")
+            self.assertEqual(result[1][0]["label"], "Archery")
+        finally:
+            for f in temp_files:
+                f.close()
+                # Clean up temp files manually since we used delete=False
+                if os.path.exists(f.name):
+                    os.unlink(f.name)
+
+        # Verify temp files were cleaned up
+        for path in created_temp_file_paths:
+            self.assertFalse(os.path.exists(path))
+
+    def test_video_classification_signature_infer(self) -> None:
+        """Test that video-classification signature is correctly inferred."""
+        inferred_sig = utils.huggingface_pipeline_signature_auto_infer(
+            task="video-classification",
+            params={},
+        )
+
+        self.assertIsNotNone(inferred_sig)
+        assert inferred_sig is not None
+
+        # Verify input
+        self.assertEqual(len(inferred_sig.inputs), 1)
+        self.assertEqual(inferred_sig.inputs[0].name, "video")
+
+        # Verify output structure
+        self.assertEqual(len(inferred_sig.outputs), 1)
+        self.assertEqual(inferred_sig.outputs[0].name, "labels")
+
 
 if __name__ == "__main__":
     absltest.main()
