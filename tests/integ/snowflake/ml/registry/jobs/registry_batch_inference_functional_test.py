@@ -2,7 +2,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.jobs.manager import delete_job, get_job
-from snowflake.ml.model import custom_model
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -31,36 +31,34 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         model_output = model.predict(input_pandas_df[input_cols])
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
 
         # Create sample input data without INDEX column for model signature
         sp_df = self.session.create_dataframe(input_data, schema=input_cols)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        return model, service_name, output_stage_location, input_spec, expected_predictions, sp_df
+        return model, job_name, output_stage_location, input_df, expected_predictions, sp_df
 
     def test_mljob_api(self) -> None:
-        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+        model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
 
         replicas = 2
 
         job = self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            replicas=replicas,
-            service_name=service_name,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, replicas=replicas),
             blocking=False,
         )
 
-        self.assertEqual(job.id, f"{self._test_db}.{self._test_schema}.{service_name}")
+        self.assertEqual(job.id, f"{self._test_db}.{self._test_schema}.{job_name}")
         self.assertEqual(job.min_instances, 1)
         self.assertEqual(job.target_instances, replicas)
         self.assertIn(job.status, ["PENDING", "RUNNING"])
-        self.assertEqual(job.name, service_name)
+        self.assertEqual(job.name, job_name)
 
         # We just wanted to make sure the log functoin don't throw exceptions
         job.get_logs()
@@ -71,15 +69,14 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         self.assertEqual(job.status, "CANCELLED")
 
     def test_mljob_job_manager(self) -> None:
-        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+        model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
 
         job = self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            service_name=service_name,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name),
             blocking=False,
         )
 
@@ -97,17 +94,15 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
     def test_default_system_compute_pool(
         self,
     ) -> None:
-        model, service_name, output_stage_location, input_spec, _, sp_df = self._prepare_test()
+        model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            service_name=service_name,
-            replicas=2,
-            function_name="predict",
-            service_compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+            X=input_df,
+            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, replicas=2, function_name="predict"),
         )
 
 

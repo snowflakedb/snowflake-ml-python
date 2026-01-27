@@ -1,7 +1,7 @@
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import custom_model
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -30,14 +30,14 @@ class TestCustomModelBatchInferenceInteg(registry_batch_inference_test_base.Regi
         model_output = model.predict(input_pandas_df[input_cols])
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(input_pandas_df, model_output)
 
         # Create sample input data without INDEX column for model signature
         sp_df = self.session.create_dataframe(input_data, schema=input_cols)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        return model, service_name, output_stage_location, input_spec, expected_predictions, sp_df
+        return model, job_name, output_stage_location, input_df, expected_predictions, sp_df
 
     @parameterized.parameters(  # type: ignore[misc]
         {"num_workers": 1, "replicas": 1, "cpu_requests": None},
@@ -49,18 +49,20 @@ class TestCustomModelBatchInferenceInteg(registry_batch_inference_test_base.Regi
         cpu_requests: str,
         num_workers: int,
     ) -> None:
-        model, service_name, output_stage_location, input_spec, expected_predictions, sp_df = self._prepare_test()
+        model, job_name, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sp_df,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 

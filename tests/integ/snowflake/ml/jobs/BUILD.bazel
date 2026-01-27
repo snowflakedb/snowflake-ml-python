@@ -49,17 +49,6 @@ py_test(
 )
 
 py_test(
-    name = "spec_utils_integ_test",
-    srcs = ["spec_utils_integ_test.py"],
-    tags = ["feature:jobs"],
-    deps = [
-        "//snowflake/ml/jobs/_utils:spec_utils",
-        "//tests/integ/snowflake/ml/test_utils:db_manager",
-        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
-    ],
-)
-
-py_test(
     name = "jobs_integ_test",
     timeout = "long",
     srcs = ["jobs_integ_test.py"],

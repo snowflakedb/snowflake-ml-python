@@ -105,6 +105,7 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
         image_repo: Optional[str] = None,
         image_build_compute_pool: Optional[str] = None,
         ingress_enabled: bool = False,
+        min_instances: int = 0,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
@@ -133,6 +134,7 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
             image_build_compute_pool: The name of the compute pool used to build the model inference image. It uses
             the service compute pool if None.
             ingress_enabled: Whether ingress is enabled. Defaults to False.
+            min_instances: Minimum number of instances. Defaults to 0.
             max_instances: Maximum number of instances. Defaults to 1.
             cpu_requests: CPU requests configuration. Defaults to None.
             memory_requests: Memory requests configuration. Defaults to None.
@@ -225,6 +227,7 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
                     service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
                     image_repo_name=image_repo,
                     ingress_enabled=ingress_enabled,
+                    min_instances=min_instances,
                     max_instances=max_instances,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,

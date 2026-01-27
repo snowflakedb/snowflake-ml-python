@@ -58,7 +58,18 @@ py_test(
     name = "registry_custom_model_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_batch_inference_test.py"],
-    shard_count = 3,
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_model_with_params_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_custom_model_with_params_batch_inference_test.py"],
+    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
@@ -257,11 +268,49 @@ py_test(
 )
 
 py_test(
+    name = "registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
+    ],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_multi_modality_hugging_face_pipeline_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_multi_modality_hugging_face_pipeline_batch_inference_test.py"],
-    data = ["//tests/integ/snowflake/ml/test_data:cat.jpeg"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
+    ],
     optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_custom_multi_modality_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_custom_multi_modality_batch_inference_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+        "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
+    ],
+    optional_dependencies = ["llm"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [

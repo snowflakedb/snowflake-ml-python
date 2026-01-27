@@ -3,6 +3,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets
 
+from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline
@@ -39,20 +40,22 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         model_output = regr.predict(iris_X)[[OUTPUT_COLUMNS]]
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 
@@ -82,20 +85,22 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         model_output = regr.predict(iris_X)[[OUTPUT_COLUMNS]]
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 
@@ -125,20 +130,22 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         model_output = regr.predict(iris_X)[[OUTPUT_COLUMNS]]
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=regr,
             sample_input_data=test_features,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 
@@ -220,20 +227,22 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         model_output = pipeline.predict(test_features)
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=pipeline,
             sample_input_data=test_features,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 
@@ -307,19 +316,21 @@ class TestModelingBatchInferenceInteg(registry_batch_inference_test_base.Registr
         model_output = pipeline.transform(test_features)
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(test_features, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=pipeline,
             sample_input_data=test_features,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            num_workers=num_workers,
-            service_name=service_name,
-            replicas=replicas,
-            function_name="transform",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                num_workers=num_workers,
+                replicas=replicas,
+                function_name="transform",
+            ),
             expected_predictions=expected_predictions,
         )
 

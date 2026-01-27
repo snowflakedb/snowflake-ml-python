@@ -1,7 +1,7 @@
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model, model_signature
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -15,7 +15,6 @@ class DemoModelEmptyStruct(custom_model.CustomModel):
         return pd.DataFrame({"output": input["C1"], "empty_struct": [{}] * len(input)})
 
 
-@absltest.skip("Skipping empty struct test for now")
 class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     def test_empty_struct_output(self) -> None:
         model = DemoModelEmptyStruct(custom_model.ModelContext())
@@ -32,7 +31,7 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
         model_output = model.predict(input_pandas_df[input_cols])
 
         # Prepare input data and expected predictions using common function
-        input_spec, _ = self._prepare_batch_inference_data(input_pandas_df, model_output)
+        input_df, _ = self._prepare_batch_inference_data(input_pandas_df, model_output)
 
         # Create fixed signature instead of inferring from sample data
         sig = model_signature.ModelSignature(
@@ -52,18 +51,16 @@ class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.Regi
             ],
         )
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         # Test that batch inference can handle empty struct output without issues
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=None,
             signatures={"predict": sig},
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            service_name=service_name,
-            replicas=1,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, replicas=1, function_name="predict"),
         )
 
 

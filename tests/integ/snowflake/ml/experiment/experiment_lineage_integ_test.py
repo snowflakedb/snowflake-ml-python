@@ -97,7 +97,7 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
         self.assertEqual(source["db"], self._db_name)
         # Confirm target is correct
         target = lineage_edges[0]["T"]
-        self.assertEqual(target["domain"], "MODULE")
+        self.assertEqual(target["domain"], "MODEL")
         self.assertEqual(target["name"], mv.version_name)
         self.assertEqual(target["properties"]["parentName"], model_name)
         self.assertEqual(target["schema"], self._schema_name)

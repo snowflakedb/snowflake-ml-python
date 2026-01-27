@@ -85,6 +85,56 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             ],
         )
 
+    def test_default_target_methods(self) -> None:
+        """Test that DEFAULT_TARGET_METHODS contains expected default methods.
+
+        Per the design doc (Section 3.1), by default enable all the methods.
+        The handler uses singular names (encode_query, encode_document) which are
+        used in sentence-transformers >= 3.0.
+        """
+        self.assertEqual(
+            SentenceTransformerHandler.DEFAULT_TARGET_METHODS,
+            ["encode", "encode_query", "encode_document"],
+        )
+
+    def test_default_target_methods_when_omitted(self) -> None:
+        """Test that default target methods are used when target_methods is omitted.
+
+        Per the design doc (Section 5.2), if target_methods is omitted, we still
+        default to DEFAULT_TARGET_METHODS and preserve all existing behavior.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check which methods are available on this model
+        available_methods = []
+        for method in SentenceTransformerHandler.DEFAULT_TARGET_METHODS:
+            if hasattr(model, method) and callable(getattr(model, method, None)):
+                available_methods.append(method)
+
+        # encode should always be available
+        self.assertIn("encode", available_methods)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save model WITHOUT specifying target_methods - should use defaults
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify that signatures were created for available default methods
+            for method in available_methods:
+                self.assertIn(
+                    method,
+                    pk.meta.signatures,
+                    f"Method '{method}' should have a signature when target_methods is omitted",
+                )
+
     def test_validate_sentence_transformers_signatures_valid(self) -> None:
         """Test valid signatures for all supported methods."""
         # Valid signature with encode only (using realistic shape for embeddings)
@@ -533,16 +583,239 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
                 self.assertIsInstance(result, pd.DataFrame)
                 self.assertEqual(len(result), 1)
 
+    def test_save_model_target_methods_validation_unsupported(self) -> None:
+        """Test that save_model rejects unsupported target_methods with clear error message.
+
+        Per the design doc (Section 4.2), save_model should:
+        - Accept any non-empty subset of ALLOWED_TARGET_METHODS
+        - Reject methods not in ALLOWED_TARGET_METHODS with clear error
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError) as ctx:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=model,
+                    sample_input_data=sentences,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(target_methods=["unsupported_method"]),
+                )
+            # Verify error message mentions the unsupported method
+            self.assertIn("unsupported_method", str(ctx.exception).lower())
+
+    def test_save_model_target_methods_validation_empty(self) -> None:
+        """Test that save_model rejects empty target_methods.
+
+        Per the design doc (Section 4.2), save_model should raise ValueError
+        if target_methods is empty.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError) as ctx:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=model,
+                    sample_input_data=sentences,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(target_methods=[]),
+                )
+            self.assertIn("at least one target method", str(ctx.exception).lower())
+
+    def test_save_model_target_methods_validation_subset(self) -> None:
+        """Test that save_model accepts any valid subset of ALLOWED_TARGET_METHODS.
+
+        Per the design doc (Section 4.2), target_methods must be a subset of
+        ALLOWED_TARGET_METHODS. This test verifies that various valid subsets work.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test with only encode (always available)
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load()
+            assert pk.meta is not None
+            self.assertIn("encode", pk.meta.signatures)
+            self.assertEqual(len(pk.meta.signatures), 1)
+
+    def test_save_model_target_methods_validation_multiple_methods(self) -> None:
+        """Test that save_model accepts multiple valid target_methods.
+
+        Per the design doc (Section 3.1), multiple methods can be specified
+        as long as they are all in ALLOWED_TARGET_METHODS.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check which methods are available on this model
+        has_encode_query = hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None))
+        has_encode_document = hasattr(model, "encode_document") and callable(getattr(model, "encode_document", None))
+
+        if not has_encode_query or not has_encode_document:
+            self.skipTest("Model does not support encode_query/encode_document methods")
+
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test with multiple methods
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(
+                    target_methods=["encode", "encode_query", "encode_document"]
+                ),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # All specified methods should have signatures
+            self.assertIn("encode", pk.meta.signatures)
+            self.assertIn("encode_query", pk.meta.signatures)
+            self.assertIn("encode_document", pk.meta.signatures)
+            self.assertEqual(len(pk.meta.signatures), 3)
+
+    def test_save_model_target_methods_non_callable(self) -> None:
+        """Test that save_model rejects target_methods that don't exist on the model.
+
+        Even if a method is in ALLOWED_TARGET_METHODS, it must be callable on the
+        actual model instance.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        # Try to use encode_queries (plural) which may not exist on newer models
+        if hasattr(model, "encode_queries") and callable(getattr(model, "encode_queries", None)):
+            self.skipTest("Model has encode_queries method, cannot test non-callable scenario")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError) as ctx:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=model,
+                    sample_input_data=sentences,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(target_methods=["encode_queries"]),
+                )
+            self.assertIn("encode_queries", str(ctx.exception))
+
+    def test_backward_compatibility_plural_method_names(self) -> None:
+        """Test backward compatibility with plural method names (encode_queries, encode_documents).
+
+        Per the design doc, both singular (new sentence-transformers >= 3.0) and
+        plural (older versions) naming conventions are supported for backward compatibility.
+        The _ALLOWED_TARGET_METHODS includes both naming conventions.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        # Check if plural methods exist on this model (older sentence-transformers)
+        has_encode_queries = hasattr(model, "encode_queries") and callable(getattr(model, "encode_queries", None))
+        has_encode_documents = hasattr(model, "encode_documents") and callable(getattr(model, "encode_documents", None))
+
+        if not has_encode_queries and not has_encode_documents:
+            self.skipTest("Model does not support plural method names (encode_queries/encode_documents)")
+
+        sentences = pd.DataFrame({"text": ["test sentence"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_methods = ["encode"]
+            if has_encode_queries:
+                target_methods.append("encode_queries")
+            if has_encode_documents:
+                target_methods.append("encode_documents")
+
+            # Save model with plural method names
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=target_methods),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Verify signatures were created for plural methods
+            for method in target_methods:
+                self.assertIn(method, pk.meta.signatures, f"Method '{method}' should have a signature")
+
+            # Verify model can be loaded as custom model and methods work
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            for method in target_methods:
+                predict_method = getattr(pk.model, method, None)
+                self.assertIsNotNone(predict_method, f"Method '{method}' should exist on custom model")
+                assert predict_method is not None  # Type narrowing for mypy
+                self.assertTrue(callable(predict_method), f"Method '{method}' should be callable")
+                result = predict_method(sentences)
+                self.assertIsInstance(result, pd.DataFrame)
+
+    def test_backward_compatibility_encode_only(self) -> None:
+        """Test backward compatibility: existing code using only encode continues to work.
+
+        This test ensures that users who only rely on encode (the original behavior)
+        continue to have their code work without any changes.
+        """
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence 1", "test sentence 2"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Save with explicit encode only (mimics existing user code)
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Only encode should be in signatures
+            self.assertEqual(list(pk.meta.signatures.keys()), ["encode"])
+
+            # Load as custom model and verify encode works
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+            result = encode_method(sentences)
+
+            # Verify output matches direct model.encode()
+            expected = model.encode(sentences["text"].tolist())
+            self.assertEqual(len(result), len(sentences))
+            self.assertEqual(len(result.iloc[0, 0]), len(expected[0]))
+
     def test_sentence_transformers(self) -> None:
         # Sample Data
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )
@@ -552,7 +825,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Test whether an unsupported target method by the model class works
+            # Test whether an unsupported target method in signatures raises ValueError
             with self.assertRaises(ValueError):
                 model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                     name="model1",

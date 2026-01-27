@@ -31,7 +31,7 @@ class StageFileWriter(io.IOBase):
             # Only upload if buffer has content and no exception occurred
             if write_contents and self._buffer.tell() > 0:
                 self._buffer.seek(0)
-                self._session.file.put_stream(self._buffer, self._path)
+                self._session.file.put_stream(self._buffer, self._path, auto_compress=False)
             self._buffer.close()
             self._closed = True
 
@@ -84,15 +84,15 @@ class DtoCodec(Protocol):
 
     @overload
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: Literal[False] = False) -> dto_schema.ResultDTO:
+    def decode(stream: io.IOBase, as_dict: Literal[False] = False) -> dto_schema.PayloadDTO:
         ...
 
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.ResultDTO, dict[str, Any]]:
+    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.PayloadDTO, dict[str, Any]]:
         pass
 
     @staticmethod
-    def encode(dto: dto_schema.ResultDTO) -> bytes:
+    def encode(dto: dto_schema.PayloadDTO) -> bytes:
         pass
 
 
@@ -104,18 +104,18 @@ class JsonDtoCodec(DtoCodec):
 
     @overload
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: Literal[False] = False) -> dto_schema.ResultDTO:
+    def decode(stream: io.IOBase, as_dict: Literal[False] = False) -> dto_schema.PayloadDTO:
         ...
 
     @staticmethod
-    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.ResultDTO, dict[str, Any]]:
+    def decode(stream: io.IOBase, as_dict: bool = False) -> Union[dto_schema.PayloadDTO, dict[str, Any]]:
         data = cast(dict[str, Any], json.load(stream))
         if as_dict:
             return data
-        return dto_schema.ResultDTO.model_validate(data)
+        return dto_schema.ResultDTOAdapter.validate_python(data)
 
     @staticmethod
-    def encode(dto: dto_schema.ResultDTO) -> bytes:
+    def encode(dto: dto_schema.PayloadDTO) -> bytes:
         # Temporarily extract the value to avoid accidentally applying model_dump() on it
         result_value = dto.value
         dto.value = None  # Clear value to avoid serializing it in the model_dump

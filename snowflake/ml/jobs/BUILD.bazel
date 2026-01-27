@@ -36,7 +36,6 @@ py_library(
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
-        "//snowflake/ml/jobs/_utils:spec_utils",
         "//snowflake/ml/jobs/_utils:types",
     ],
 )
@@ -52,15 +51,6 @@ py_library(
 )
 
 py_test(
-    name = "decorators_test",
-    srcs = ["decorators_test.py"],
-    tags = ["feature:jobs"],
-    deps = [
-        ":job_decorators",
-    ],
-)
-
-py_test(
     name = "jobs_test",
     srcs = ["jobs_test.py"],
     tags = ["feature:jobs"],
@@ -69,12 +59,31 @@ py_test(
     ],
 )
 
+py_library(
+    name = "job_definition",
+    srcs = ["job_definition.py"],
+    deps = [
+        "//snowflake/ml/jobs:ml_job",
+        "//snowflake/ml/jobs/_utils:arg_protocol",
+        "//snowflake/ml/jobs/_utils:constants",
+        "//snowflake/ml/jobs/_utils:feature_flags",
+        "//snowflake/ml/jobs/_utils:payload_utils",
+        "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:runtime_env_utils",
+        "//snowflake/ml/jobs/_utils:types",
+    ],
+)
+
 py_test(
     name = "job_definition_test",
     srcs = ["job_definition_test.py"],
     tags = ["feature:jobs"],
     deps = [
-        "//snowflake/ml/jobs",
+        "//snowflake/ml/jobs:job_definition",
+        "//snowflake/ml/jobs/_interop:utils",
+        "//snowflake/ml/jobs/_utils:arg_protocol",
+        "//snowflake/ml/jobs/_utils:feature_flags",
+        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 
@@ -97,14 +106,5 @@ py_library(
         ":job_manager",
         "//snowflake/ml/jobs/_interop:exception_utils",
         "//snowflake/ml/jobs/_utils:types",
-    ],
-)
-
-py_library(
-    name = "job_definition",
-    srcs = ["job_definition.py"],
-    deps = [
-        "//snowflake/ml/_internal/utils:identifier",
-        "//snowflake/ml/jobs/_utils:job_utils",
     ],
 )

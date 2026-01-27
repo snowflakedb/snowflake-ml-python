@@ -12,7 +12,7 @@ import xgboost as xgb
 from absl.testing import absltest, parameterized
 from sklearn import compose, datasets, impute, pipeline, preprocessing
 
-from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model, model_signature
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.registry.model.my_module.utils import column_labeller
 
@@ -54,10 +54,10 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
         model_output_df = pd.DataFrame({"output": model_output})
 
         # Prepare batch inference data with INDEX column
-        input_spec, expected_predictions = self._prepare_batch_inference_data(X, model_output_df)
+        input_df, expected_predictions = self._prepare_batch_inference_data(X, model_output_df)
 
         # Prepare service name and output stage for batch inference
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         class MyModel(custom_model.CustomModel):
             def __init__(self, context: custom_model.ModelContext) -> None:
@@ -111,10 +111,9 @@ class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_b
 
         self._deploy_batch_inference(
             mv,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            service_name=service_name,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, function_name="predict"),
             expected_predictions=expected_predictions,
         )
 

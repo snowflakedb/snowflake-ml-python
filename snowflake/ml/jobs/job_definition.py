@@ -14,11 +14,14 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
 from snowflake.ml.jobs import job as jb
+from snowflake.ml.jobs._interop import utils as interop_utils
 from snowflake.ml.jobs._utils import (
+    arg_protocol,
     constants,
     feature_flags,
     payload_utils,
     query_helper,
+    runtime_env_utils,
     types,
 )
 from snowflake.snowpark import context as sp_context
@@ -40,6 +43,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         compute_pool: str,
         name: str,
         entrypoint_args: list[Any],
+        arg_protocol: Optional[arg_protocol.ArgProtocol] = arg_protocol.ArgProtocol.NONE,
+        default_args: Optional[list[Any]] = None,
         database: Optional[str] = None,
         schema: Optional[str] = None,
         session: Optional[snowpark.Session] = None,
@@ -49,12 +54,22 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         self.spec_options = spec_options
         self.compute_pool = compute_pool
         self.session = session or sp_context.get_active_session()
-        self.database = database or self.session.get_current_database()
-        self.schema = schema or self.session.get_current_schema()
+        resolved_database = database or self.session.get_current_database()
+        resolved_schema = schema or self.session.get_current_schema()
+        if resolved_database is None:
+            raise ValueError("Database must be specified either in the session context or as a parameter.")
+        if resolved_schema is None:
+            raise ValueError("Schema must be specified either in the session context or as a parameter.")
+        self.database = identifier.resolve_identifier(resolved_database)
+        self.schema = identifier.resolve_identifier(resolved_schema)
         self.job_definition_id = identifier.get_schema_level_object_identifier(self.database, self.schema, name)
         self.entrypoint_args = entrypoint_args
+        self.arg_protocol = arg_protocol
+        self.default_args = default_args
 
     def delete(self) -> None:
+        if self.session is None:
+            raise RuntimeError("Session is required to delete job definition")
         if self.stage_name:
             try:
                 self.session.sql(f"REMOVE {self.stage_name}/").collect()
@@ -62,9 +77,27 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             except Exception as e:
                 logger.warning(f"Failed to clean up stage files for job definition {self.stage_name}: {e}")
 
-    def _prepare_arguments(self, *args: _Args.args, **kwargs: _Args.kwargs) -> list[Any]:
-        # TODO: Add ArgProtocol and respective logics
-        return [arg for arg in args]
+    def _prepare_arguments(self, *args: _Args.args, **kwargs: _Args.kwargs) -> Optional[list[Any]]:
+        if self.arg_protocol == arg_protocol.ArgProtocol.NONE:
+            if len(kwargs) > 0:
+                raise ValueError(f"Keyword arguments are not supported with {self.arg_protocol}")
+            return list(args)
+        elif self.arg_protocol == arg_protocol.ArgProtocol.CLI:
+            return _combine_runtime_arguments(self.default_args, *args, **kwargs)
+        elif self.arg_protocol == arg_protocol.ArgProtocol.PICKLE:
+            if not args and not kwargs:
+                return []
+            uid = uuid4().hex[:8]
+            rel_path = f"{uid}/function_args"
+            file_path = f"{self.stage_name}/{constants.APP_STAGE_SUBPATH}/{rel_path}"
+            payload = interop_utils.save_result(
+                (args, kwargs), file_path, session=self.session, max_inline_size=interop_utils._MAX_INLINE_SIZE
+            )
+            if payload is not None:
+                return [f"--function_args={payload.decode('utf-8')}"]
+            return [f"--function_args={rel_path}"]
+        else:
+            raise ValueError(f"Invalid arg_protocol: {self.arg_protocol}")
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def __call__(self, *args: _Args.args, **kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
@@ -98,6 +131,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             json.dumps(job_options_dict),
         ]
         query_template = "CALL SYSTEM$EXECUTE_ML_JOB(%s, %s, %s, %s)"
+        assert self.session is not None, "Session is required to generate MLJob SQL query"
         sql = self.session._conn._cursor._preprocess_pyformat_query(query_template, params)
         return sql
 
@@ -123,6 +157,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         entrypoint: Optional[Union[str, list[str]]] = None,
         target_instances: int = 1,
         generate_suffix: bool = True,
+        arg_protocol: Optional[arg_protocol.ArgProtocol] = arg_protocol.ArgProtocol.NONE,
         **kwargs: Any,
     ) -> "MLJobDefinition[_Args, _ReturnValue]":
         # Use kwargs for less common optional parameters
@@ -142,6 +177,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         )
         overwrite = kwargs.pop("overwrite", False)
         name = kwargs.pop("name", None)
+        default_args = kwargs.pop("default_args", None)
         # Warn if there are unknown kwargs
         if kwargs:
             logger.warning(f"Ignoring unknown kwargs: {kwargs.keys()}")
@@ -149,6 +185,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         # Validate parameters
         if database and not schema:
             raise ValueError("Schema must be specified if database is specified.")
+
+        compute_pool = identifier.resolve_identifier(compute_pool)
+        if query_warehouse is not None:
+            query_warehouse = identifier.resolve_identifier(query_warehouse)
+
         if target_instances < 1:
             raise ValueError("target_instances must be greater than 0.")
         if not (0 < min_instances <= target_instances):
@@ -190,10 +231,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
                 )
             raise
 
-        if runtime_environment is None and feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled(default=True):
+        if runtime_environment is None and feature_flags.FeatureFlags.ENABLE_RUNTIME_VERSIONS.is_enabled():
             # Pass a JSON object for runtime versions so it serializes as nested JSON in options
             runtime_environment = json.dumps({"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"})
 
+        runtime = runtime_env_utils.get_runtime_image(session, compute_pool, runtime_environment)
         combined_env_vars = {**uploaded_payload.env_vars, **(env_vars or {})}
         entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]
         spec_options = types.SpecOptions(
@@ -203,8 +245,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             env_vars=combined_env_vars,
             enable_metrics=enable_metrics,
             spec_overrides=spec_overrides,
-            runtime=runtime_environment if runtime_environment else None,
-            enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(default=True),
+            runtime=runtime,
+            enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
         )
 
         job_options = types.JobOptions(
@@ -222,6 +264,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             compute_pool=compute_pool,
             entrypoint_args=entrypoint_args,
             session=session,
+            arg_protocol=arg_protocol,
+            default_args=default_args,
             database=database,
             schema=schema,
             name=name,
@@ -230,3 +274,51 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
 
 def _generate_suffix() -> str:
     return str(uuid4().hex)[:8]
+
+
+def _combine_runtime_arguments(
+    default_runtime_args: Optional[list[Any]] = None, *args: Any, **kwargs: Any
+) -> list[Any]:
+    """Merge default CLI arguments with runtime overrides into a flat argument list.
+
+    Parses `default_runtime_args` for flags (e.g., `--key value`) and merges them with
+    `kwargs`. Keyword arguments override defaults unless their value is None. Positional
+    arguments from both `default_args` and `*args` are preserved in order.
+
+    Args:
+        default_runtime_args: Optional list of default CLI arguments to parse for flags and positional args.
+        *args: Additional positional arguments to include in the output.
+        **kwargs: Keyword arguments that override default flags. Values of None are ignored.
+
+    Returns:
+        A list of CLI-style arguments: positional args followed by `--key value` pairs.
+    """
+    cli_args = list(args)
+    flags: dict[str, Any] = {}
+    if default_runtime_args:
+        i = 0
+        while i < len(default_runtime_args):
+            arg = default_runtime_args[i]
+            if isinstance(arg, str) and arg.startswith("--"):
+                key = arg[2:]
+                # Check if next arg is a value (not a flag)
+                if i + 1 < len(default_runtime_args):
+                    next_arg = default_runtime_args[i + 1]
+                    if not (isinstance(next_arg, str) and next_arg.startswith("--")):
+                        flags[key] = next_arg
+                        i += 2
+                        continue
+
+                flags[key] = None
+            else:
+                cli_args.append(arg)
+            i += 1
+    # Prioritize kwargs over default_args. Explicit None values in kwargs
+    # serve as overrides and are converted to the string "None" to match
+    # CLI flag conventions (--key=value)
+    # Downstream logic must handle the parsing of these string-based nulls.
+    for k, v in kwargs.items():
+        flags[k] = v
+    for k, v in flags.items():
+        cli_args.extend([f"--{k}", str(v)])
+    return cli_args

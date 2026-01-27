@@ -1,13 +1,12 @@
 import copy
-import functools
 from typing import Any, Callable, Optional, TypeVar
 
 from typing_extensions import ParamSpec
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
-from snowflake.ml.jobs import job as jb, manager as jm
-from snowflake.ml.jobs._utils import payload_utils
+from snowflake.ml.jobs import job_definition as jd
+from snowflake.ml.jobs._utils import arg_protocol, constants
 
 _PROJECT = "MLJob"
 
@@ -25,7 +24,7 @@ def remote(
     external_access_integrations: Optional[list[str]] = None,
     session: Optional[snowpark.Session] = None,
     **kwargs: Any,
-) -> Callable[[Callable[_Args, _ReturnValue]], Callable[_Args, jb.MLJob[_ReturnValue]]]:
+) -> Callable[[Callable[_Args, _ReturnValue]], jd.MLJobDefinition[_Args, _ReturnValue]]:
     """
     Submit a job to the compute pool.
 
@@ -51,29 +50,25 @@ def remote(
         Decorator that dispatches invocations of the decorated function as remote jobs.
     """
 
-    def decorator(func: Callable[_Args, _ReturnValue]) -> Callable[_Args, jb.MLJob[_ReturnValue]]:
+    def decorator(func: Callable[_Args, _ReturnValue]) -> jd.MLJobDefinition[_Args, _ReturnValue]:
         # Copy the function to avoid modifying the original
         # We need to modify the line number of the function to exclude the
         # decorator from the copied source code
         wrapped_func = copy.copy(func)
         wrapped_func.__code__ = wrapped_func.__code__.replace(co_firstlineno=func.__code__.co_firstlineno + 1)
 
-        @functools.wraps(func)
-        def wrapper(*_args: _Args.args, **_kwargs: _Args.kwargs) -> jb.MLJob[_ReturnValue]:
-            payload = payload_utils.create_function_payload(func, *_args, **_kwargs)
-            job = jm._submit_job(
-                source=payload,
-                stage_name=stage_name,
-                compute_pool=compute_pool,
-                target_instances=target_instances,
-                pip_requirements=pip_requirements,
-                external_access_integrations=external_access_integrations,
-                session=payload.session or session,
-                **kwargs,
-            )
-            assert isinstance(job, jb.MLJob), f"Unexpected job type: {type(job)}"
-            return job
-
-        return wrapper
+        setattr(wrapped_func, constants.IS_MLJOB_REMOTE_ATTR, True)
+        return jd.MLJobDefinition.register(
+            source=wrapped_func,
+            compute_pool=compute_pool,
+            stage_name=stage_name,
+            target_instances=target_instances,
+            pip_requirements=pip_requirements,
+            external_access_integrations=external_access_integrations,
+            session=session or snowpark.context.get_active_session(),
+            arg_protocol=arg_protocol.ArgProtocol.PICKLE,
+            generate_suffix=True,
+            **kwargs,
+        )
 
     return decorator

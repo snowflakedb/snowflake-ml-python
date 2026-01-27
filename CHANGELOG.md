@@ -1,5 +1,36 @@
 # Release History
 
+## 1.25.0
+
+### New Features
+
+* ML Job: Added support for creating ML job definitions and launching jobs with different
+  arguments without re-uploading payloads.
+
+* Inference Autocapture (PuPr): The `create_service` API will now accept `autocapture` as a new argument to indicate
+  whether inference data will be captured.
+
+* Model serving: Introduced the `min_instances` field in the `mv.create_service()` and
+  `HuggingFacePipelineModel.log_model_and_create_service()` APIs (defaulting to 0). The service now launches
+  with the `min_instances` and automatically scales between `min_instances` and `max_instances` based on
+  traffic and hardware utilization. When `min_instances` is set to 0, the service will automatically suspend
+  if no traffic is detected for a period of time.
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Inference Autocapture (PuPr): `list_services()` now shows `autocapture_enabled` column to indicate if model
+  service has autocapture enabled.
+
+* Model serving: The `mv.create_service()` and `HuggingFacePipelineModel.log_model_and_create_service()` APIs now
+  include a `min_instances` field (defaulting to 0). When these APIs are called without specifying `min_instances`,
+  the system will now launch the service with 1 instance and enable auto scaling. This replaces the previous behavior,
+  where `min_instances` was automatically set to match `max_instances`, resulting in the immediate launch of the
+  maximum number of instances.
+
+### Deprecations
+
 ## 1.24.0
 
 ### New Features
@@ -103,7 +134,15 @@ x_df = pd.DataFrame.from_records(
     [
         {
             "messages": [
-                {"role": "system", "content": "Complete the sentence."},
+                {
+                  "role": "system",
+                  "content": [
+                        {
+                            "type": "text",
+                            "text": "Complete the sentence."
+                        },
+                  ]
+                },
                 {
                     "role": "user",
                     "content": [

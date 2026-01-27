@@ -1,12 +1,12 @@
 import os
 import random
 import tempfile
-import uuid
 from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
@@ -44,16 +44,15 @@ class TestRegistrySentenceTransformerBatchInferenceInteg(
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
 
@@ -64,20 +63,22 @@ class TestRegistrySentenceTransformerBatchInferenceInteg(
         model_output_df = pd.DataFrame({"output_feature_0": model_output_normalized})
 
         # Prepare input data and expected predictions using common function
-        input_spec, expected_predictions = self._prepare_batch_inference_data(sentences, model_output_df)
+        input_df, expected_predictions = self._prepare_batch_inference_data(sentences, model_output_df)
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sentences,
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            num_workers=1,
-            service_name=f"batch_inference_{name}",
-            replicas=1,
-            gpu_requests=gpu_requests,
-            function_name="encode",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                num_workers=1,
+                replicas=1,
+                gpu_requests=gpu_requests,
+                function_name="encode",
+            ),
             expected_predictions=expected_predictions,
         )
 

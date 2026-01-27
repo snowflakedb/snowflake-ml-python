@@ -33,6 +33,12 @@ _BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
 VLLM_SUPPORTED_TASKS = [
     "text-generation",
     "image-text-to-text",
+    "video-text-to-text",
+    "audio-text-to-text",
+]
+VALID_OPENAI_SIGNATURES = [
+    openai_signatures.OPENAI_CHAT_SIGNATURE,
+    openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
 ]
 
 
@@ -1140,16 +1146,11 @@ class ModelVersion(lineage_node.LineageNode):
             func_name: core.ModelSignature.from_dict(sig_dict) for func_name, sig_dict in signatures_dict.items()
         }
 
-        if deserialized_signatures not in [
-            openai_signatures.OPENAI_CHAT_SIGNATURE,
-            openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
-        ]:
+        if deserialized_signatures not in VALID_OPENAI_SIGNATURES:
             raise ValueError(
-                "Inference engine requires the model to be logged with openai_signatures.OPENAI_CHAT_SIGNATURE or "
-                "openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING. "
+                "Inference engine requires the model to be logged with one of the following signatures: "
+                f"{VALID_OPENAI_SIGNATURES}. Please log the model again with one of these supported signatures."
                 f"Found signatures: {signatures_dict}. "
-                "Please log the model again with: signatures=openai_signatures.OPENAI_CHAT_SIGNATURE or "
-                "signatures=openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING"
             )
 
     @overload
@@ -1161,6 +1162,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_compute_pool: str,
         image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
+        min_instances: int = 0,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
@@ -1187,8 +1189,10 @@ class ModelVersion(lineage_node.LineageNode):
                 will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
-            max_instances: The maximum number of inference service instances to run. The same value it set to
-                MIN_INSTANCES property of the service.
+            min_instances: The minimum number of instances for the inference service. The service will automatically
+                scale between min_instances and max_instances based on traffic and hardware utilization. If set to
+                0 (default), the service will automatically suspend after a period of inactivity.
+            max_instances: The maximum number of instances for the inference service.
             cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
                 None, we attempt to utilize all the vCPU of the node.
             memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
@@ -1224,6 +1228,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_compute_pool: str,
         image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
+        min_instances: int = 0,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
@@ -1250,8 +1255,10 @@ class ModelVersion(lineage_node.LineageNode):
                 will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
-            max_instances: The maximum number of inference service instances to run. The same value it set to
-                MIN_INSTANCES property of the service.
+            min_instances: The minimum number of instances for the inference service. The service will automatically
+                scale between min_instances and max_instances based on traffic and hardware utilization. If set to
+                0 (default), the service will automatically suspend after a period of inactivity.
+            max_instances: The maximum number of instances for the inference service.
             cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
                 None, we attempt to utilize all the vCPU of the node.
             memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
@@ -1301,6 +1308,7 @@ class ModelVersion(lineage_node.LineageNode):
         service_compute_pool: str,
         image_repo: Optional[str] = None,
         ingress_enabled: bool = False,
+        min_instances: int = 0,
         max_instances: int = 1,
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
@@ -1328,8 +1336,10 @@ class ModelVersion(lineage_node.LineageNode):
                 will be used.
             ingress_enabled: If true, creates an service endpoint associated with the service. User must have
                 BIND SERVICE ENDPOINT privilege on the account.
-            max_instances: The maximum number of inference service instances to run. The same value it set to
-                MIN_INSTANCES property of the service.
+            min_instances: The minimum number of instances for the inference service. The service will automatically
+                scale between min_instances and max_instances based on traffic and hardware utilization. If set to
+                0 (default), the service will automatically suspend after a period of inactivity.
+            max_instances: The maximum number of instances for the inference service.
             cpu_requests: The cpu limit for CPU based inference. Can be an integer, fractional or string values. If
                 None, we attempt to utilize all the vCPU of the node.
             memory_requests: The memory limit with for CPU based inference. Can be an integer or a fractional value, but
@@ -1419,6 +1429,7 @@ class ModelVersion(lineage_node.LineageNode):
                     service_compute_pool_name=sql_identifier.SqlIdentifier(service_compute_pool),
                     image_repo_name=image_repo,
                     ingress_enabled=ingress_enabled,
+                    min_instances=min_instances,
                     max_instances=max_instances,
                     cpu_requests=cpu_requests,
                     memory_requests=memory_requests,

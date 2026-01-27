@@ -308,7 +308,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             options={"enable_explainability": True},
         )
         with self.assertWarnsRegex(
-            UserWarning, "Explain function will only be available for model deployed to warehouse"
+            UserWarning, "Explain function will only be available for model deployed to Warehouse"
         ):
             result = reconciler.reconcile()
         assert result.options is not None
@@ -327,7 +327,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             target_platforms=[model_types.TargetPlatform.WAREHOUSE],
             options={"enable_explainability": True},
         )
-        with self.assertRaisesRegex(ValueError, "`enable_explainability` cannot be set to True.*not runnable in WH"):
+        with self.assertRaisesRegex(
+            ValueError, "`enable_explainability` cannot be set to True.*cannot run in Warehouse"
+        ):
             reconciler.reconcile()
 
     def test_embed_local_ml_library_logic(self) -> None:
@@ -525,8 +527,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
 
                     with self.assertRaisesRegex(
                         ValueError,
-                        "`enable_explainability` cannot be set to True when the model is not runnable in WH "
-                        "or the target platforms include SPCS.",
+                        "`enable_explainability` cannot be set to True when the model cannot run in Warehouse.",
                     ):
                         reconciler.reconcile()
 

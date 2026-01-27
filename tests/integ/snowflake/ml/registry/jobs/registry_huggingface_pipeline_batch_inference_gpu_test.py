@@ -6,6 +6,7 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
@@ -28,7 +29,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
     def _test_text_generation(
         self,
         pip_requirements: Optional[list[str]],
-        use_default_repo: bool,
+        use_default_image_repo: bool,
     ) -> None:
         import transformers
 
@@ -58,19 +59,17 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
                 self.assertIsInstance(row, list)
                 self.assertIn("generated_text", row[0])
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        input_spec = self.session.create_dataframe(x_df)
+        input_df = self.session.create_dataframe(x_df)
 
         self._test_registry_batch_inference(
             model=model,
-            service_name=service_name,
-            output_stage_location=output_stage_location,
-            X=input_spec,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, gpu_requests="1"),
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            gpu_requests="1",
             pip_requirements=pip_requirements,
-            use_default_repo=use_default_repo,
             prediction_assert_fn=check_res,
         )
 
@@ -81,7 +80,7 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
-        self._test_text_generation(pip_requirements, use_default_repo=False)
+        self._test_text_generation(pip_requirements, use_default_image_repo=False)
 
 
 if __name__ == "__main__":

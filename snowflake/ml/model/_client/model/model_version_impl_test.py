@@ -972,6 +972,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
+                min_instances=1,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -995,6 +996,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
+                min_instances=1,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1024,6 +1026,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_name="SERVICE",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
+                min_instances=0,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1046,6 +1049,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
+                min_instances=0,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1076,6 +1080,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
+                min_instances=2,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1097,6 +1102,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
+                min_instances=2,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1127,6 +1133,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 image_build_compute_pool="IMAGE_BUILD_COMPUTE_POOL",
                 service_compute_pool="SERVICE_COMPUTE_POOL",
                 image_repo="IMAGE_REPO",
+                min_instances=3,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1149,6 +1156,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
                 image_repo_name="IMAGE_REPO",
                 ingress_enabled=False,
+                min_instances=3,
                 max_instances=3,
                 cpu_requests="CPU",
                 memory_requests="MEMORY",
@@ -1916,9 +1924,58 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 self.m_mv._check_huggingface_vllm_supported_model()
             self.assertIn(
-                "OPENAI_CHAT_SIGNATURE",
+                "Inference engine requires the model to be logged with one of the following signatures",
                 str(cm.exception),
             )
+
+        # Reset the cached model spec
+        self.m_mv._model_spec = None
+
+        # Test successful case - signature with ParamSpec (tests future ParamSpec support)
+        test_signature_with_params = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureGroupSpec(
+                    name="messages",
+                    specs=[
+                        model_signature.FeatureSpec(name="content", dtype=model_signature.DataType.STRING),
+                        model_signature.FeatureSpec(name="role", dtype=model_signature.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            outputs=[
+                model_signature.FeatureSpec(name="response", dtype=model_signature.DataType.STRING),
+            ],
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+                model_signature.ParamSpec(name="max_tokens", dtype=model_signature.DataType.INT64, default_value=100),
+            ],
+        )
+        test_signature_dict = {"__call__": test_signature_with_params}
+        serialized_paramspec_signature = {
+            func_name: sig_obj.to_dict() for func_name, sig_obj in test_signature_dict.items()
+        }
+
+        with mock.patch(
+            "snowflake.ml.model._client.model.model_version_impl.VALID_OPENAI_SIGNATURES",
+            [test_signature_dict],
+        ):
+            with mock.patch.object(
+                self.m_mv._model_ops,
+                "_fetch_model_spec",
+                return_value={
+                    "model_type": "huggingface_pipeline",
+                    "signatures": serialized_paramspec_signature,
+                    "models": {
+                        "model1": {
+                            "model_type": "huggingface_pipeline",
+                            "options": {"task": "text-generation"},
+                        }
+                    },
+                },
+            ):
+                # Should not raise - signature with ParamSpec is valid when in VALID_OPENAI_SIGNATURES
+                self.m_mv._check_huggingface_vllm_supported_model()
 
     def test_run_batch_all_parameters(self) -> None:
         """Test _run_batch with all possible parameters to ensure they're passed correctly."""
