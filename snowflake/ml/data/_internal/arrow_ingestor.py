@@ -73,15 +73,19 @@ class ArrowIngestor(data_ingestor.DataIngestor, mixins.SerializableSessionMixin)
         self._schema: Optional[pa.Schema] = None
 
     @classmethod
-    def from_sources(cls, session: snowpark.Session, sources: Sequence[data_source.DataSource]) -> "ArrowIngestor":
+    def from_sources(
+        cls, session: snowpark.Session, sources: Sequence[data_source.DataSource], **kwargs: Any
+    ) -> "ArrowIngestor":
         if session is None:
             raise ValueError("Session is required")
+        # Skipping kwargs until needed to avoid impact other workflows.
         return cls(session, sources)
 
     @classmethod
     def from_ray_dataset(
         cls,
         ray_ds: "ray.data.Dataset",
+        **kwargs: Any,
     ) -> "ArrowIngestor":
         raise NotImplementedError
 

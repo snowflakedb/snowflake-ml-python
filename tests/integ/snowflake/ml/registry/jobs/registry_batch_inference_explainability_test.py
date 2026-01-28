@@ -5,7 +5,7 @@ import xgboost
 from absl.testing import absltest
 from sklearn import datasets, model_selection
 
-from snowflake.ml.model import model_signature
+from snowflake.ml.model import JobSpec, OutputSpec, model_signature
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -24,14 +24,14 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             columns=["output_feature_0"],
         )
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         cal_X_test = pd.DataFrame(cal_X_test)
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
         # Create DataFrame with string column names to avoid sorting issues with mixed types
         explanation_columns = [f"explanation_{i}" for i in range(expected_explanations.shape[1])]
         expected_explanations_df = pd.DataFrame(expected_explanations, columns=explanation_columns)
-        input_spec, expected_predictions = self._prepare_batch_inference_data(cal_X_test, expected_explanations_df)
+        input_df, expected_predictions = self._prepare_batch_inference_data(cal_X_test, expected_explanations_df)
 
         sig = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
 
@@ -40,10 +40,9 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             sample_input_data=cal_X_test,
             options={"enable_explainability": True},
             signatures=sig,
-            X=input_spec,
-            service_name=service_name,
-            output_stage_location=output_stage_location,
-            function_name="explain",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, function_name="explain"),
         )
 
 

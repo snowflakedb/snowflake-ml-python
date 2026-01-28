@@ -1,6 +1,7 @@
 import argparse
 import copy
 import importlib.util
+import io
 import json
 import logging
 import math
@@ -12,15 +13,22 @@ import sys
 import time
 import traceback
 import zipfile
-from pathlib import Path
-from typing import Any, Optional
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Optional
 
 # Ensure payload directory is in sys.path for module imports before importing other modules
 # This is needed to support relative imports in user scripts and to allow overriding
 # modules using modules in the payload directory
 # TODO: Inject the environment variable names at job submission time
 STAGE_MOUNT_PATH = os.environ.get("MLRS_STAGE_MOUNT_PATH", "/mnt/job_stage")
-JOB_RESULT_PATH = os.environ.get("MLRS_RESULT_PATH", "output/mljob_result.pkl")
+STAGE_RESULT_PATH = os.environ.get("MLRS_STAGE_RESULT_PATH")
+# Updated MLRS_RESULT_PATH to use unique stage mounts for each ML Job.
+# To prevent output collisions between jobs sharing the same definition,
+# the server-side mount now dynamically includes the job_name.
+# Format: @payload_stage/{job_definition_name}/{job_name}/mljob_result
+JOB_RESULT_PATH = os.environ.get("MLRS_RESULT_PATH", "mljob_result")
+if STAGE_RESULT_PATH:
+    JOB_RESULT_PATH = os.path.join(STAGE_RESULT_PATH, JOB_RESULT_PATH)
 PAYLOAD_PATH = os.environ.get("MLRS_PAYLOAD_DIR")
 
 if PAYLOAD_PATH and not os.path.isabs(PAYLOAD_PATH):
@@ -347,24 +355,156 @@ def wait_for_instances(
     )
 
 
-def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = None) -> Any:
+def _load_dto_fallback(function_args: str, path_transform: Callable[[str], str]) -> Any:
+    from snowflake.ml.jobs._interop import data_utils
+    from snowflake.ml.jobs._interop.utils import DEFAULT_CODEC, DEFAULT_PROTOCOL
+    from snowflake.snowpark import exceptions as sp_exceptions
+
+    try:
+        with data_utils.open_stream(function_args, "r") as stream:
+            # Load the DTO as a dict for easy fallback to legacy loading if necessary
+            data = DEFAULT_CODEC.decode(stream, as_dict=True)
+    # the exception could be OSError or BlockingIOError(the file name is too long)
+    except OSError as e:
+        # path_or_data might be inline data
+        try:
+            data = DEFAULT_CODEC.decode(io.StringIO(function_args), as_dict=True)
+        except Exception:
+            raise e
+
+    if data["protocol"] is not None:
+        try:
+            from snowflake.ml.jobs._interop.dto_schema import ProtocolInfo
+
+            protocol_info = ProtocolInfo.model_validate(data["protocol"])
+            logger.debug(f"Loading result value with protocol {protocol_info}")
+            result_value = DEFAULT_PROTOCOL.load(protocol_info, session=None, path_transform=path_transform)
+        except sp_exceptions.SnowparkSQLException:
+            raise
+    else:
+        result_value = None
+
+    return data["value"] or result_value
+
+
+def _unpack_obj_fallback(obj: Any, session: Optional[snowflake.snowpark.Session]) -> Any:
+    SESSION_KEY_PREFIX = "session@"
+
+    if not isinstance(obj, dict):
+        return obj
+    elif len(obj) == 1 and SESSION_KEY_PREFIX in obj:
+        return session
+    else:
+        type = obj.get("type@", None)
+        # If type is None, we are unpacking a dict
+        if type is None:
+            result_dict = {}
+            for k, v in obj.items():
+                if k.startswith(SESSION_KEY_PREFIX):
+                    result_key = k[len(SESSION_KEY_PREFIX) :]
+                    result_dict[result_key] = session
+                else:
+                    result_dict[k] = _unpack_obj_fallback(v, session)
+            return result_dict
+        # If type is not None, we are unpacking a tuple or list
+        else:
+            indexes = []
+            for k, _ in obj.items():
+                if "#" in k:
+                    indexes.append(int(k.split("#")[-1]))
+
+            if not indexes:
+                return tuple() if type is tuple else []
+            result_list: list[Any] = [None] * (max(indexes) + 1)
+
+            for k, v in obj.items():
+                if k == "type@":
+                    continue
+                idx = int(k.split("#")[-1])
+                if k.startswith(SESSION_KEY_PREFIX):
+                    result_list[idx] = session
+                else:
+                    result_list[idx] = _unpack_obj_fallback(v, session)
+            return tuple(result_list) if type is tuple else result_list
+
+
+def _load_function_args(
+    session: snowflake.snowpark.Session,
+    function_args: Optional[str] = None,
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Load and deserialize function arguments.
+
+    Args:
+        function_args: Inline serialized function arguments or path to serialized file.
+        session: Optional Snowpark session for stage access if needed.
+
+    Returns:
+        A tuple of (positional_args, keyword_args)
+
+    """
+    if not function_args:
+        return (), {}
+
+    def path_transform(stage_path: str) -> str:
+        if not PAYLOAD_PATH:
+            return stage_path
+
+        payload_path = PurePosixPath(PAYLOAD_PATH)
+        payload_dir_name = payload_path.name  # e.g., "app"
+
+        # Parse stage path and find the payload directory
+        stage_parts = PurePosixPath(stage_path.lstrip("@")).parts
+
+        try:
+            # Find index of payload directory (e.g., "app") in stage path
+            idx = stage_parts.index(payload_dir_name)
+            # Get relative path after the payload directory
+            relative_parts = stage_parts[idx + 1 :]
+            return str(payload_path.joinpath(*relative_parts))
+        except (ValueError, IndexError):
+            # Fallback to just the filename
+            return str(payload_path / PurePosixPath(stage_path).name)
+
+    try:
+        from snowflake.ml.jobs._interop import utils as interop_utils
+
+        args, kwargs = interop_utils.load(
+            function_args,
+            session=session,
+            path_transform=path_transform,
+        )
+        return args, kwargs
+    except (AttributeError, ImportError):
+        # Backwards compatibility: load may not exist in older SnowML versions
+        packed = _load_dto_fallback(function_args, path_transform)
+        args, kwargs = _unpack_obj_fallback(packed, session)
+        return args, kwargs
+
+
+def run_script(
+    script_path: str,
+    payload_args: Optional[tuple[Any, ...]] = None,
+    payload_kwargs: Optional[dict[str, Any]] = None,
+    main_func: Optional[str] = None,
+) -> Any:
     """
     Execute a Python script and return its result.
 
     Args:
-        script_path: Path to the Python script
-        script_args: Arguments to pass to the script
-        main_func: The name of the function to call in the script (if any)
+        script_path: Path to the Python script.
+        payload_args: Positional arguments to pass to the script or entrypoint.
+        payload_kwargs: Keyword arguments to pass to the script or entrypoint.
+        main_func: The name of the function to call in the script (if any).
 
     Returns:
         Result from script execution, either from the main function or the script's __return__ value
 
     Raises:
         RuntimeError: If the specified main_func is not found or not callable
+        ValueError: If payload_kwargs is provided for runpy execution.
     """
     # Save original sys.argv and modify it for the script (applies to runpy execution only)
     original_argv = sys.argv
-    sys.argv = [script_path, *script_args]
 
     try:
         if main_func:
@@ -381,10 +521,13 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
                 raise RuntimeError(f"Function '{main_func}' not a valid entrypoint for {script_path}")
 
             # Call main function
-            result = func(*script_args)
+            result = func(*(payload_args or ()), **(payload_kwargs or {}))
             return result
         else:
-            # Use runpy for other scripts
+            if payload_kwargs:
+                raise ValueError("payload_kwargs is not supported for runpy execution; use payload_args instead")
+            # Save original sys.argv and modify it for the script.
+            sys.argv = [script_path, *(payload_args or ())]
             globals_dict = runpy.run_path(script_path, run_name="__main__")
             result = globals_dict.get("__return__", None)
             return result
@@ -393,24 +536,28 @@ def run_script(script_path: str, *script_args: Any, main_func: Optional[str] = N
         sys.argv = original_argv
 
 
-def main(entrypoint: str, *script_args: Any, script_main_func: Optional[str] = None) -> Any:
+def main(
+    entrypoint: str,
+    session: snowflake.snowpark.Session,
+    payload_args: Optional[tuple[Any, ...]] = None,
+    payload_kwargs: Optional[dict[str, Any]] = None,
+    script_main_func: Optional[str] = None,
+) -> Any:
     """Executes a Python script and serializes the result to JOB_RESULT_PATH.
 
     Args:
         entrypoint (str): The job payload entrypoint to execute.
-        script_args (Any): Arguments to pass to the script.
+        payload_args (tuple[Any, ...], optional): Positional args to pass to the script or entrypoint.
+        payload_kwargs (dict[str, Any], optional): Keyword args to pass to the script or entrypoint.
         script_main_func (str, optional): The name of the function to call in the script (if any).
+        session (snowflake.snowpark.Session, optional): Snowpark session for stage access if needed.
 
     Returns:
         Any: The result of the script execution.
 
     Raises:
-        Exception: Re-raises any exception caught during script execution.
+        ValueError: If payload_kwargs is provided for runpy execution.
     """
-    try:
-        from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
-    except ImportError:
-        from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 
     # Initialize Ray if available
     try:
@@ -419,12 +566,6 @@ def main(entrypoint: str, *script_args: Any, script_main_func: Optional[str] = N
         ray.init(address="auto")
     except ModuleNotFoundError:
         logger.debug("Ray is not installed, skipping Ray initialization")
-
-    # Create a Snowpark session before starting
-    # Session can be retrieved from using snowflake.snowpark.context.get_active_session()
-    config = SnowflakeLoginOptions()
-    config["client_session_keep_alive"] = "True"
-    session = snowflake.snowpark.Session.builder.configs(config).create()  # noqa: F841
 
     execution_result_is_error = False
     execution_result_value = None
@@ -446,10 +587,21 @@ def main(entrypoint: str, *script_args: Any, script_main_func: Optional[str] = N
 
         if is_python:
             # Run as Python script
-            execution_result_value = run_script(resolved_entrypoint, *script_args, main_func=script_main_func)
+            execution_result_value = run_script(
+                resolved_entrypoint,
+                payload_args=payload_args,
+                payload_kwargs=payload_kwargs,
+                main_func=script_main_func,
+            )
         else:
             # Run as subprocess
-            run_command(resolved_entrypoint, *script_args)
+            if payload_kwargs:
+                raise ValueError("payload_kwargs is not supported for subprocesses")
+
+            run_command(
+                resolved_entrypoint,
+                *(payload_args or ()),
+            )
 
         # Log end marker for user script execution
         print(LOG_END_MSG)  # noqa: T201
@@ -487,11 +639,36 @@ if __name__ == "__main__":
     parser.add_argument(
         "--script_main_func", required=False, help="The name of the main function to call in the script"
     )
+    parser.add_argument(
+        "--function_args",
+        required=False,
+        help="Serialized function arguments or path to serialized function arguments file",
+    )
     args, unknown_args = parser.parse_known_args()
+
+    try:
+        from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
+    except ImportError:
+        from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
+
+    # Create a Snowpark session before starting
+    # Session can be retrieved from using snowflake.snowpark.context.get_active_session()
+    # _load_function_args will use the session to load the function arguments
+    config = SnowflakeLoginOptions()
+    config["client_session_keep_alive"] = "True"
+    session = snowflake.snowpark.Session.builder.configs(config).create()  # noqa: F841
+
+    if args.function_args:
+        if args.script_args or unknown_args:
+            raise ValueError("Only one of function_args and script_args can be provided")
+        payload_args, payload_kwargs = _load_function_args(session, args.function_args)
+    else:
+        payload_args, payload_kwargs = (args.script_args + unknown_args), {}
 
     main(
         args.entrypoint,
-        *args.script_args,
-        *unknown_args,
+        session=session,
+        payload_args=payload_args,
+        payload_kwargs=payload_kwargs,
         script_main_func=args.script_main_func,
     )

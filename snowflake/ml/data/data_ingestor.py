@@ -16,7 +16,7 @@ DataIngestorType = TypeVar("DataIngestorType", bound="DataIngestor")
 class DataIngestor(Protocol):
     @classmethod
     def from_sources(
-        cls: type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource]
+        cls: type[DataIngestorType], session: snowpark.Session, sources: Sequence[data_source.DataSource], **kwargs: Any
     ) -> DataIngestorType:
         raise NotImplementedError
 
@@ -24,6 +24,7 @@ class DataIngestor(Protocol):
     def from_ray_dataset(
         cls: type[DataIngestorType],
         ray_ds: "ray.data.Dataset",
+        **kwargs: Any,
     ) -> DataIngestorType:
         raise NotImplementedError
 

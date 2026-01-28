@@ -37,6 +37,7 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     BASE_GPU_IMAGE_PATH = os.getenv("BASE_GPU_IMAGE_PATH", None)
     BASE_BATCH_CPU_IMAGE_PATH = os.getenv("BASE_BATCH_CPU_IMAGE_PATH", None)
     BASE_BATCH_GPU_IMAGE_PATH = os.getenv("BASE_BATCH_GPU_IMAGE_PATH", None)
+    RAY_ORCHESTRATOR_PATH = os.getenv("RAY_ORCHESTRATOR_PATH", None)
     PROXY_IMAGE_PATH = os.getenv("PROXY_IMAGE_PATH", None)
     MODEL_LOGGER_PATH = os.getenv("MODEL_LOGGER_PATH", None)
     VLLM_IMAGE_PATH = os.getenv("VLLM_IMAGE_PATH", None)

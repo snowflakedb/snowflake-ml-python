@@ -193,12 +193,11 @@ class ModelParameterReconciler:
         if enable_explainability:
             if only_spcs or not is_warehouse_runnable:
                 raise ValueError(
-                    "`enable_explainability` cannot be set to True when the model is not runnable in WH "
-                    "or the target platforms include SPCS."
+                    "`enable_explainability` cannot be set to True when the model cannot run in Warehouse."
                 )
             elif has_both_platforms:
                 warnings.warn(
-                    ("Explain function will only be available for model deployed to warehouse."),
+                    ("Explain function will only be available for model deployed to Warehouse."),
                     category=UserWarning,
                     stacklevel=2,
                 )

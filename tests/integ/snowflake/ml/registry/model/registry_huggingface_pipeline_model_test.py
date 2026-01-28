@@ -602,7 +602,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     check_res,
                 ),
             },
-            additional_dependencies=["pillow"],
+            additional_dependencies=["pillow==12.0"],
         )
 
     def test_automatic_speech_recognition_pipeline(self) -> None:

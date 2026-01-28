@@ -1,4 +1,3 @@
-import uuid
 from importlib import metadata as importlib_metadata
 
 import mlflow
@@ -6,6 +5,7 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
+from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._signatures import numpy_handler, snowpark_handler
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
@@ -72,21 +72,22 @@ class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryB
             x_df_sp = x_df_sp.withColumnRenamed(old_name, new_name)
         predictions_df.columns = [f"output_feature_{col}" for col in predictions_df.columns]
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        input_spec, expected_predictions = self._prepare_batch_inference_data(x_df_sp.to_pandas(), predictions_df)
+        input_df, expected_predictions = self._prepare_batch_inference_data(x_df_sp.to_pandas(), predictions_df)
 
         self._test_registry_batch_inference(
             model=mlflow.pyfunc.load_model(f"runs:/{run_id}/model"),
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=cpu_requests,
-            memory_requests=memory_requests,
-            num_workers=1,
-            service_name=f"batch_inference_{name}",
-            replicas=2,
-            function_name="predict",
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                cpu_requests=cpu_requests,
+                memory_requests=memory_requests,
+                num_workers=1,
+                replicas=2,
+                function_name="predict",
+            ),
             expected_predictions=expected_predictions,
         )
 

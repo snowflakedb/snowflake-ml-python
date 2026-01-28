@@ -3,7 +3,7 @@ import functools
 import types
 from typing import Callable, Optional
 
-from snowflake.ml import model
+from snowflake.ml.model._client.model import model_version_impl
 from snowflake.ml.registry._manager import model_manager
 
 
@@ -23,7 +23,7 @@ class ExperimentInfoPatcher:
     """
 
     # Store original method at class definition time to avoid recursive patching
-    _original_log_model: Callable[..., model.ModelVersion] = model_manager.ModelManager.log_model
+    _original_log_model: Callable[..., model_version_impl.ModelVersion] = model_manager.ModelManager.log_model
 
     # Stack of active experiment_info contexts for nested experiment support
     _experiment_info_stack: list[ExperimentInfo] = []
@@ -36,7 +36,7 @@ class ExperimentInfoPatcher:
         if not ExperimentInfoPatcher._experiment_info_stack:
 
             @functools.wraps(ExperimentInfoPatcher._original_log_model)
-            def patched(*args, **kwargs) -> model.ModelVersion:  # type: ignore[no-untyped-def]
+            def patched(*args, **kwargs) -> model_version_impl.ModelVersion:  # type: ignore[no-untyped-def]
                 # Use the most recent (top of stack) experiment_info for nested contexts
                 current_experiment_info = ExperimentInfoPatcher._experiment_info_stack[-1]
                 return ExperimentInfoPatcher._original_log_model(

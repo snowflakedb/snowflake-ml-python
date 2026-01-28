@@ -27,7 +27,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
                 ingress_enabled=True,
-                max_instances=1,
+                min_instances=1,
+                max_instances=5,
             )
 
             assert mds.workspace_path
@@ -47,7 +48,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
                             "ingress_enabled": True,
-                            "max_instances": 1,
+                            "min_instances": 1,
+                            "max_instances": 5,
                         },
                     },
                 )
@@ -68,7 +70,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             service_name=sql_identifier.SqlIdentifier("service"),
             inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
             ingress_enabled=True,
-            max_instances=1,
+            min_instances=1,
+            max_instances=5,
         )
         yaml_str = mds.save()
 
@@ -87,7 +90,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     "name": "DB.SCHEMA.SERVICE",
                     "compute_pool": "SERVICE_COMPUTE_POOL",
                     "ingress_enabled": True,
-                    "max_instances": 1,
+                    "min_instances": 1,
+                    "max_instances": 5,
                 },
             },
         )
@@ -111,7 +115,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service", case_sensitive=True),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool", case_sensitive=True),
                 ingress_enabled=True,
-                max_instances=1,
+                min_instances=1,
+                max_instances=6,
             )
             file_path_str = mds.save()
 
@@ -132,7 +137,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": '"db"."schema"."service"',
                             "compute_pool": '"service_compute_pool"',
                             "ingress_enabled": True,
-                            "max_instances": 1,
+                            "min_instances": 1,
+                            "max_instances": 6,
                         },
                     },
                 )
@@ -172,6 +178,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
                 ingress_enabled=ingress_enabled,
+                min_instances=0,
                 max_instances=10,
                 cpu="1",
                 memory="1GiB",
@@ -199,6 +206,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "SERVICE_DB.SERVICE_SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
                             "ingress_enabled": ingress_enabled,
+                            "min_instances": 0,
                             "max_instances": 10,
                             "cpu": "1",
                             "memory": "1GiB",
@@ -227,7 +235,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
                 ingress_enabled=True,
-                max_instances=1,
+                min_instances=1,
+                max_instances=7,
             )
             file_path_str = mds.save()
 
@@ -249,7 +258,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
                             "ingress_enabled": True,
-                            "max_instances": 1,
+                            "min_instances": 1,
+                            "max_instances": 7,
                         },
                     },
                 )
@@ -343,7 +353,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
                 ingress_enabled=True,
-                max_instances=1,
+                min_instances=1,
+                max_instances=8,
             )
             mds.add_hf_logger_spec(
                 hf_model_name="hf_model",
@@ -378,7 +389,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
                             "ingress_enabled": True,
-                            "max_instances": 1,
+                            "min_instances": 1,
+                            "max_instances": 8,
                         },
                         "model_loggings": [
                             {
@@ -471,6 +483,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "POOL",
                             "ingress_enabled": True,
+                            "min_instances": 0,
                             "max_instances": 1,
                         },
                     },
@@ -576,7 +589,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 service_name=sql_identifier.SqlIdentifier("service"),
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
                 ingress_enabled=True,
-                max_instances=1,
+                min_instances=1,
+                max_instances=9,
             )
             file_path_str = mds.save()
 
@@ -592,7 +606,8 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "SERVICE_COMPUTE_POOL",
                             "ingress_enabled": True,
-                            "max_instances": 1,
+                            "min_instances": 1,
+                            "max_instances": 9,
                         },
                     },
                 )
@@ -640,6 +655,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "POOL",
                             "ingress_enabled": True,
+                            "min_instances": 0,
                             "max_instances": 1,
                             "inference_engine_spec": {
                                 "inference_engine_name": "vllm",
@@ -697,6 +713,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "POOL",
                             "ingress_enabled": True,
+                            "min_instances": 0,
                             "max_instances": 1,
                             "inference_engine_spec": {
                                 "inference_engine_name": "vllm",
@@ -738,6 +755,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "name": "DB.SCHEMA.SERVICE",
                             "compute_pool": "POOL",
                             "ingress_enabled": True,
+                            "min_instances": 0,
                             "max_instances": 1,
                             "inference_engine_spec": {
                                 "inference_engine_name": "vllm",

@@ -20,16 +20,16 @@ from packaging import version
 
 from snowflake import snowpark
 from snowflake.ml import jobs
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, mixins
 from snowflake.ml.jobs import job as jd
 from snowflake.ml.jobs._interop import results as interop_result
 from snowflake.ml.jobs._utils import (
+    arg_protocol,
     constants,
     feature_flags,
     payload_utils,
     query_helper,
     runtime_env_utils,
-    spec_utils,
     types,
 )
 from snowflake.snowpark import exceptions as sp_exceptions, functions as F
@@ -167,6 +167,18 @@ class JobManagerTest(JobTestBase):
                 self.assertRegex(str(cm.exception), "does not exist")
                 self.assertEqual(cm.exception.sql_error_code, 2003)
 
+    def test_delete_job(self) -> None:
+        original_schema = self.session.get_current_schema()
+        temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
+        try:
+            job = self._submit_func_as_file(dummy_function)
+            self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
+            jobs.delete_job(job.id, session=self.session)
+            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
+        finally:
+            self.dbm.drop_schema(temp_schema, if_exists=True)
+            self.session.use_schema(original_schema)
+
     def test_delete_job_negative(self) -> None:
         nonexistent_job_ids = [
             f"{self.db}.non_existent_schema.nonexistent_job_id",
@@ -288,23 +300,22 @@ class JobManagerTest(JobTestBase):
             self.assertIsNone(loaded_job.result())
 
     def test_job_execution_system_compute_pool(self) -> None:
-        with mock.patch.dict(os.environ, {feature_flags.FeatureFlags.USE_SUBMIT_JOB_V2.value: "true"}):
-            payload = TestAsset("src/main.py")
+        payload = TestAsset("src/main.py")
 
-            # Create a job
-            job = jobs.submit_file(
-                payload.path,
-                "SYSTEM_COMPUTE_POOL_CPU",
-                stage_name="payload_stage",
-                args=["foo", "--delay", "1"],
-                session=self.session,
-            )
+        # Create a job
+        job = jobs.submit_file(
+            payload.path,
+            "SYSTEM_COMPUTE_POOL_CPU",
+            stage_name="payload_stage",
+            args=["foo", "--delay", "1"],
+            session=self.session,
+        )
 
-            # Wait for job to finish
-            self.assertEqual(job.wait(), "DONE", job.get_logs())
-            self.assertEqual(job.status, "DONE")
-            self.assertIn("Job complete", job.get_logs())
-            self.assertIsNone(job.result())
+        # Wait for job to finish
+        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.status, "DONE")
+        self.assertIn("Job complete", job.get_logs())
+        self.assertIsNone(job.result())
 
     def test_job_execution_metrics(self) -> None:
         payload = TestAsset("src/main.py")
@@ -389,7 +400,7 @@ class JobManagerTest(JobTestBase):
             session=self.session,
         )
 
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
         # Get initial state for comparison
         original_id = job.id
@@ -423,7 +434,7 @@ class JobManagerTest(JobTestBase):
 
         # Test that we can pickle jobs into remote functions
         job_status_remote = check_job_status(job)
-        self.assertEqual(job.wait(), job_status_remote.result(), job_status_remote.get_logs())
+        self.assertEqual(job.wait(), job_status_remote.result(), job_status_remote.get_logs(verbose=True))
 
         # Verify cached properties work correctly
         _ = unpickled_job.min_instances  # Should not raise an error
@@ -440,7 +451,8 @@ class JobManagerTest(JobTestBase):
         # Test session validation - should fail with different session context
         with mock.patch("snowflake.snowpark.session._get_active_sessions", return_value=set()):
             with self.assertRaisesRegex(RuntimeError, "No active Snowpark session available"):
-                cp.loads(pickled_data)
+                unpickled_job = cp.loads(pickled_data)
+                unpickled_job._session
 
     def test_job_result_v2(self) -> None:
         """Test that v2 job results can be saved and loaded correctly."""
@@ -601,7 +613,7 @@ class JobManagerTest(JobTestBase):
         # Check job completions
         for param, job in zip(params, job_list):
             with self.subTest(param):
-                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
                 self.assertIn("Job complete", job_logs)
 
                 args, kwargs = param
@@ -611,32 +623,35 @@ class JobManagerTest(JobTestBase):
                     self.assertIn(str(v), job_logs, f"key={k}")
 
                 job_result = cast(dict[str, Any], job.result())
-                self.assertIsInstance(job.result(), dict)
+                self.assertIsInstance(job_result, dict)
                 self.assertEqual(job_result.get("result"), 100)
 
                 loaded_job = jobs.get_job(job.id, session=self.session)
-                self.assertEqual(loaded_job.status, "DONE")
-                self.assertDictEqual(loaded_job.result(), job_result)
+                self.assertEqual(loaded_job.status, "DONE", loaded_job.get_logs(verbose=True))
+                self.assertDictEqual(loaded_job.result(), job_result, loaded_job.get_logs(verbose=True))
 
     @parameterized.parameters(  # type: ignore[misc]
         "owner",
         "caller",
     )
     def test_job_execution_in_stored_procedure(self, sproc_rights: str) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage")
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def job_fn() -> None:
             print("Hello from remote function!")
 
         @F.sproc(
             session=self.session,
             packages=["snowflake-snowpark-python", "snowflake-ml-python"],
-            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+            imports=[
+                (os.path.dirname(jobs.__file__), "snowflake.ml.jobs"),
+                (os.path.dirname(mixins.__file__), "snowflake.ml._internal.utils"),
+            ],
             execute_as=sproc_rights,
         )
-        def job_sproc(session: snowpark.Session) -> None:
+        def job_sproc(session: snowpark.Session) -> str:
             job = job_fn()
             if job.wait() != "DONE":
-                raise RuntimeError(f"Job {job.id} failed. Logs:\n{job.get_logs()}")
+                raise RuntimeError(f"Job {job.id} failed. Logs:\n{job.get_logs(verbose=True)}")
             return job.get_logs()
 
         result = job_sproc(self.session)
@@ -705,7 +720,7 @@ class JobManagerTest(JobTestBase):
             print("Runtime API test success")
 
         job = self._submit_func_as_file(runtime_func)
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn("Runtime API test success", job_logs)
 
     def test_job_data_connector(self) -> None:
@@ -727,7 +742,7 @@ class JobManagerTest(JobTestBase):
         self.assertIsInstance(dc._ingestor, arrow_ingestor.ArrowIngestor)
 
         job = runtime_func(dc)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         dc_unpickled = job.result()
         self.assertIsInstance(dc_unpickled, data_connector.DataConnector)
         self.assertIsInstance(dc_unpickled._ingestor, arrow_ingestor.ArrowIngestor)
@@ -879,8 +894,8 @@ class JobManagerTest(JobTestBase):
 
         # Wait for job to finish
         job.wait()
-        self.assertEqual(job.status, "DONE", job.get_logs())
-        self.assertIn(expected_string, job.get_logs())
+        self.assertEqual(job.status, "DONE", job.get_logs(verbose=True))
+        self.assertIn(expected_string, job.get_logs(verbose=True))
 
     def test_submit_job_fully_qualified_name(self) -> None:
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
@@ -967,9 +982,9 @@ class JobManagerTest(JobTestBase):
         for test_case, func, hasSession in test_cases:
             with self.subTest(f"func={test_case}"):
                 job = func
-                self.assertEqual(job.wait(), "DONE", job.get_logs())
+                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
                 if hasSession:
-                    self.assertIn(self.session.get_current_database(), job.get_logs())
+                    self.assertIn(self.session.get_current_database(), job.get_logs(verbose=True))
 
     @parameterized.parameters(  # type: ignore[misc]
         (f"TMP_{uuid4().hex.upper()}", True, "SNOWFLAKE_FULL"),
@@ -1012,22 +1027,17 @@ class JobManagerTest(JobTestBase):
                     session=self.session,
                 )
 
-                self.assertEqual(job.wait(), expected_status, job.get_logs())
+                self.assertEqual(job.wait(), expected_status, job.get_logs(verbose=True))
 
-    @parameterized.parameters(
-        [
-            {"method": "job_object"},
-            {"method": "job_id"},
-        ]
-    )
-    def test_delete_job_stage_cleanup(self, method: str) -> None:
-        """Test that deleting a job cleans up the stage files."""
+    def test_delete_job_definition_stage_cleanup(self) -> None:
+        """Test that deleting a job definition cleans up the stage files."""
         original_schema = self.session.get_current_schema()
         temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
         try:
-            job = self._submit_func_as_file(dummy_function)
+            job_definition = self._register_definition()
+            job_definition()
             self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
-            stage_path = job._stage_path
+            stage_path = job_definition.stage_name
             stage_files = self.session.sql(f"LIST '{stage_path}'").collect()
             self.assertGreater(len(stage_files), 0, "Stage should contain uploaded job files")
 
@@ -1037,10 +1047,9 @@ class JobManagerTest(JobTestBase):
             for expected_file in expected_files:
                 self.assertIn(expected_file, file_names, f"Expected file {expected_file} not found in stage")
 
-            jobs.delete_job(job.id if method == "job_id" else job, session=self.session)
+            job_definition.delete()
             remaining_files = self.session.sql(f"LIST '{stage_path}'").collect()
             self.assertEqual(len(remaining_files), 0, "Stage files should be cleaned up after job deletion")
-            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
         finally:
             self.dbm.drop_schema(temp_schema, if_exists=True)
             self.session.use_schema(original_schema)
@@ -1054,7 +1063,7 @@ class JobManagerTest(JobTestBase):
             return real_run_query(session, query_str, *args, **kwargs)
 
         job = self._submit_func_as_file(dummy_function)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
         # Wait for logs to be ingested into event table
         max_wait = 300
@@ -1253,11 +1262,9 @@ class JobManagerTest(JobTestBase):
         if not rows or rows[0]["value"] == "false":
             self.skipTest("ENABLE_NOTEBOOK_CONTAINER_RUNTIME_SELECTION is not enabled")
         target_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        resources = spec_utils._get_node_resources(self.session, self.compute_pool)
-        hardware = "GPU" if resources.gpu > 0 else "CPU"
         try:
-            expected_runtime_image = runtime_env_utils._get_runtime_image(
-                self.session, hardware, f"{sys.version_info.major}.{sys.version_info.minor}"
+            expected_runtime_image = runtime_env_utils.get_runtime_image(
+                self.session, self.compute_pool, f"{sys.version_info.major}.{sys.version_info.minor}"
             )
         except Exception:
             expected_runtime_image = None
@@ -1419,7 +1426,7 @@ class JobManagerTest(JobTestBase):
 
         job = test_function()
 
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         self.assertEqual(job.result(), "hello world")
 
     def test_job_with_runtime_image_tag_notebook(self) -> None:
@@ -1454,8 +1461,113 @@ class JobManagerTest(JobTestBase):
         finally:
             job_def.delete()
 
+    def test_decorator_with_runtime_args(self) -> None:
+        self.session.sql("ALTER SESSION SET ENABLE_ML_JOB_DEFINITIONS = true").collect()
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def job_fn(arg1: str, arg2: int = 1) -> str:
+            return f"Hello from remote function! {arg1} {arg2}"
+
+        test_cases: list[tuple[tuple[Any, ...], dict[str, Any], str]] = [
+            (("foo",), {"arg2": None}, "foo None"),
+            (("bar",), {"arg2": 2}, "bar 2"),
+            (("baz",), {}, "baz 1"),
+        ]
+        for args, kwargs, expected_val in test_cases:
+            with self.subTest(args=args, kwargs=kwargs):
+                job = job_fn(*args, **kwargs)
+                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+                self.assertIn(job.name.lower(), job._result_path.lower())
+                self.assertEqual(
+                    job.result(), f"Hello from remote function! {expected_val}", job.get_logs(verbose=True)
+                )
+
+    def test_decorator_with_runtime_args_stage_payload(self) -> None:
+        self.session.sql("ALTER SESSION SET ENABLE_ML_JOB_DEFINITIONS = true").collect()
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def job_fn(arg1: str, arg2: int = 1) -> str:
+            return f"Hello from remote function! {arg1} {arg2}"
+
+        test_cases: list[tuple[tuple[Any, ...], dict[str, Any], str]] = [
+            (("foo",), {"arg2": None}, "foo None"),
+            (("baz",), {}, "baz 1"),
+        ]
+        with mock.patch("snowflake.ml.jobs._interop.utils._MAX_INLINE_SIZE", 0):
+            for args, kwargs, expected_val in test_cases:
+                with self.subTest(args=args, kwargs=kwargs):
+                    job = job_fn(*args, **kwargs)
+                    self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+                    self.assertIn(job.name.lower(), job._result_path.lower())
+                    self.assertEqual(
+                        job.result(), f"Hello from remote function! {expected_val}", job.get_logs(verbose=True)
+                    )
+
+    def test_decorator_with_default_runtime_args_negative(self) -> None:
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def job_fn(arg1: str, arg2: int) -> str:
+            return f"Hello from remote function! {arg1} {arg2}"
+
+        job = job_fn("foo")
+        self.assertEqual(job.wait(), "FAILED", job.get_logs(verbose=True))
+        self.assertIn("missing 1 required positional argument", job.get_logs(verbose=True))
+
+    def test_arg_protocol_cli(self) -> None:
+        job_def = self._register_definition(
+            default_args=["--delay", "1", "--flag", "NotNoneValue"], arg_protocol=arg_protocol.ArgProtocol.CLI
+        )
+        test_cases: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
+            (("foo",), {"delay": 3, "flag": None}),
+            (("hello world",), {"delay": 2}),
+        ]
+        for args, kwargs in test_cases:
+            with self.subTest(args=args, kwargs=kwargs):
+                job = job_def(*args, **kwargs)
+                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+                self.assertIn(
+                    f"arg1: {args[0]}, delay: {float(kwargs.get('delay', 1) or 1)}", job.get_logs(verbose=True)
+                )
+                if "flag" in kwargs and kwargs["flag"] is None:
+                    self.assertIn("flag is None", job.get_logs(verbose=True))
+                else:
+                    self.assertNotIn("flag is None", job.get_logs(verbose=True))
+
+    @parameterized.parameters(  # type: ignore[misc]
+        (True,),
+        (False,),
+    )
+    def test_job_arguments_load_complex_object_compatibility(self, import_utils: bool) -> None:
+        class CustomData:
+            def __init__(self, name: str, values: list) -> None:
+                self.name = name
+                self.values = values
+
+            def summary(self) -> str:
+                return f"{self.name}: {sum(self.values)}"
+
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")] if import_utils else [],
+        )
+        def job_fn(data: CustomData, arr: np.ndarray, multiplier: int = 2) -> str:
+            result = data.summary()
+            arr_sum = arr.sum() * multiplier
+            return f"{result}, array_sum={arr_sum}"
+
+        custom_obj = CustomData("test_data", [1, 2, 3, 4, 5])
+        numpy_arr = np.array([10, 20, 30])
+
+        job = job_fn(custom_obj, numpy_arr, multiplier=3)
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+        # CustomData sum = 15, numpy sum = 60 * 3 = 180
+        self.assertIn("test_data: 15, array_sum=180", job.result(), job.get_logs(verbose=True))
+
     def test_job_definition_concurrent_invocations(self) -> None:
         job_def = self._register_definition()
+        self.assertIsNotNone(job_def.spec_options.runtime)
+        self.assertNotEqual(job_def.spec_options.runtime, "")
         try:
             with futures.ThreadPoolExecutor(max_workers=2) as executor:
                 futures_list = [executor.submit(job_def, "foo", "--delay", "1") for _ in range(2)]
@@ -1511,6 +1623,16 @@ class JobManagerTest(JobTestBase):
             self.assertEqual(status, "SUCCEEDED")
         finally:
             task_ref.drop(if_exists=True)
+
+    def test_job_definition_runtime_image_negative(self) -> None:
+        with self.assertRaises(ValueError):
+            jobs.MLJobDefinition.register(
+                TestAsset("src/main.py").path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+                runtime_environment="@test",
+            )
 
 
 if __name__ == "__main__":

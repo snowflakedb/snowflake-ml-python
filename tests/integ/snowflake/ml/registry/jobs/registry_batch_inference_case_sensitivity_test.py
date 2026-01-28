@@ -1,9 +1,7 @@
-import uuid
-
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import custom_model
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -37,7 +35,7 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         )
 
         # Actual input data
-        input_spec = self.session.create_dataframe(
+        input_df = self.session.create_dataframe(
             [[1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14]],
             schema=[
                 '"FEATURE1"',
@@ -50,18 +48,14 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
             ],
         )
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            num_workers=1,
-            service_name=f"case_sensitivity_1_{name}",
-            replicas=1,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, num_workers=1, replicas=1),
             options={"method_options": {"predict": {"case_sensitive": True}}},
         )
 
@@ -75,23 +69,19 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         )
 
         # Actual input data
-        input_spec = self.session.create_dataframe(
+        input_df = self.session.create_dataframe(
             [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]],
             schema=['"feature1"', '"Feature2"', '"FEATURE3"', '"feature 4"', '"feature_5"', '"feature-6"'],
         )
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            num_workers=1,
-            service_name=f"case_sensitivity_2_{name}",
-            replicas=1,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, num_workers=1, replicas=1),
             options={"method_options": {"predict": {"case_sensitive": True}}},
         )
 
@@ -105,23 +95,19 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         )
 
         # Actual input data
-        input_spec = self.session.create_dataframe(
+        input_df = self.session.create_dataframe(
             [[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]],
             schema=['"feature1"', '"Feature2"', "FEATURE3", '"feature_4"'],
         )
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            num_workers=1,
-            service_name=f"case_sensitivity_3_{name}",
-            replicas=1,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, num_workers=1, replicas=1),
             options={"method_options": {"predict": {"case_sensitive": False}}},
         )
 
@@ -133,20 +119,16 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         sample_input_data = self.session.create_dataframe([[1, 2], [3, 4]], schema=['"FEATURE1"', '"FEATURE2"'])
 
         # Actual input data has columns in different order and case: FEATURE2, FEATURE1 (uppercase, reversed)
-        input_spec = self.session.create_dataframe([[2, 1], [4, 3], [6, 5]], schema=['"feature2"', '"FEATURE1"'])
+        input_df = self.session.create_dataframe([[2, 1], [4, 3], [6, 5]], schema=['"feature2"', '"FEATURE1"'])
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            num_workers=1,
-            service_name=f"reorder_{name}",
-            replicas=1,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, num_workers=1, replicas=1),
             options={"method_options": {"predict": {"case_sensitive": False}}},
         )
 
@@ -158,23 +140,19 @@ class RegistryBatchInferenceCaseSensitivityTest(registry_batch_inference_test_ba
         sample_input_data = self.session.create_dataframe([[1, 2], [3, 4]], schema=['"feature1"', '"feature2"'])
 
         # Actual input data has extra columns and different case
-        input_spec = self.session.create_dataframe(
+        input_df = self.session.create_dataframe(
             [[1, 2, "extra1", 10], [3, 4, "extra2", 11]],
             schema=['"FEATURE1"', '"FEATURE2"', '"EXTRA_COL1"', '"EXTRA_COL2"'],
         )
 
-        name = f"{str(uuid.uuid4()).replace('-', '_').upper()}"
-        output_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/{name}/output/"
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=model,
             sample_input_data=sample_input_data,
-            X=input_spec,
-            output_stage_location=output_stage_location,
-            cpu_requests=None,
-            num_workers=1,
-            service_name=f"extra_cols_{name}",
-            replicas=1,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, num_workers=1, replicas=1),
             options={"method_options": {"predict": {"case_sensitive": True}}},
         )
 

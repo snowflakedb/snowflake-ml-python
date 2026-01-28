@@ -7,6 +7,7 @@
 //tests/integ/snowflake/ml/registry/services:registry_sklearn_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_model_deployment_test
 //tests/integ/snowflake/ml/registry/jobs:registry_catboost_batch_inference_test
+//tests/integ/snowflake/ml/registry/jobs:registry_custom_model_with_params_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_huggingface_pipeline_batch_inference_gpu_test
 //tests/integ/snowflake/ml/registry/jobs:registry_huggingface_pipeline_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_keras_batch_inference_test
@@ -14,6 +15,8 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_mlflow_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_modeling_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_hugging_face_pipeline_batch_inference_test
+//tests/integ/snowflake/ml/registry/jobs:registry_custom_multi_modality_batch_inference_test
+//tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_pytorch_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_sentence_transformers_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_sklearn_batch_inference_test

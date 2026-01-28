@@ -94,7 +94,7 @@ class DataConnector:
         **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
-        ray_ingestor = ingestor_class.from_ray_dataset(ray_ds=ray_ds)
+        ray_ingestor = ingestor_class.from_ray_dataset(ray_ds=ray_ds, **kwargs)
         return cls(ray_ingestor, **kwargs)
 
     @classmethod
@@ -111,7 +111,7 @@ class DataConnector:
         **kwargs: Any,
     ) -> DataConnectorType:
         ingestor_class = ingestor_class or cls.DEFAULT_INGESTOR_CLASS
-        ingestor = ingestor_class.from_sources(session, sources)
+        ingestor = ingestor_class.from_sources(session, sources, **kwargs)
         return cls(ingestor, **kwargs)
 
     @property

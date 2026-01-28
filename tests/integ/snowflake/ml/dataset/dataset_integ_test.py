@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import time
 import unittest
 from typing import Any, Dict, Generator
 from uuid import uuid4
@@ -325,6 +326,38 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
         with self.assertRaises(dataset_errors.DatasetNotExistError):
             dataset.Dataset.load(self.session, dataset_name)
 
+    def resilient_dataset_read_to_pandas(self, ds: dataset.Dataset) -> pd.DataFrame:
+        """Read dataset to pandas with retry logic for Parquet file race conditions.
+
+        Retries up to 5 times with exponential backoff if encountering ArrowInvalid errors
+        indicating incomplete Parquet files.
+        """
+        max_retries = 5
+        retry_delays = [2, 4, 8, 10, 10]  # Exponential backoff with cap at 10s
+
+        for attempt in range(max_retries):
+            try:
+                return ds.read.to_pandas()
+            except Exception as e:
+                error_msg = str(e).lower()
+                # Check if this is a Parquet file corruption error
+                is_parquet_incomplete = (
+                    "parquet magic bytes" in error_msg
+                    or "not a parquet file" in error_msg
+                    or "arrowinvalid" in error_msg
+                )
+
+                if is_parquet_incomplete and attempt < max_retries - 1:
+                    wait_time = retry_delays[attempt]
+                    logging.warning(
+                        f"Parquet file incomplete (attempt {attempt + 1}/{max_retries}), "
+                        f"retrying after {wait_time}s: {e}"
+                    )
+                    time.sleep(wait_time)
+                else:
+                    # Not a retryable error or exhausted retries
+                    raise
+
     # Don't run in sprocs to speed up tests
     def test_restore_nonexistent_dataset(self) -> None:
         """Test load of non-existent dataset"""
@@ -376,7 +409,7 @@ class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
             input_dataframe=self.session.table(self.test_table).limit(row_count),
         )
 
-        self.assertEqual(row_count, len(ds.read.to_pandas()))
+        self.assertEqual(row_count, len(self.resilient_dataset_read_to_pandas(ds)))
 
     @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])
     def test_file_access(self) -> None:

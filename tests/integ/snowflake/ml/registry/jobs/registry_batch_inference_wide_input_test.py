@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import custom_model
+from snowflake.ml.model import JobSpec, OutputSpec, custom_model
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -41,16 +41,16 @@ class TestBatchInferenceWideInputInteg(registry_batch_inference_test_base.Regist
 
         model_output = wide_model.predict(train_df)
 
-        input_spec, expected_predictions = self._prepare_batch_inference_data(train_df, model_output)
+        input_df, expected_predictions = self._prepare_batch_inference_data(train_df, model_output)
 
-        service_name, output_stage_location, _ = self._prepare_service_name_and_stage_for_batch_inference()
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
         self._test_registry_batch_inference(
             model=wide_model,
             sample_input_data=train_df,
-            service_name=service_name,
-            output_stage_location=output_stage_location,
-            X=input_spec,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name),
             expected_predictions=expected_predictions,
         )
 

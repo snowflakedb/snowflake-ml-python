@@ -175,6 +175,7 @@ class ServiceOperator:
         service_compute_pool_name: sql_identifier.SqlIdentifier,
         image_repo_name: Optional[str],
         ingress_enabled: bool,
+        min_instances: int,
         max_instances: int,
         cpu_requests: Optional[str],
         memory_requests: Optional[str],
@@ -241,6 +242,7 @@ class ServiceOperator:
             service_name=service_name,
             inference_compute_pool_name=service_compute_pool_name,
             ingress_enabled=ingress_enabled,
+            min_instances=min_instances,
             max_instances=max_instances,
             cpu=cpu_requests,
             memory=memory_requests,
@@ -829,15 +831,13 @@ class ServiceOperator:
         service_seen_before = False
 
         while True:
-            # Check if async job has failed (but don't return on success - we need specific service status)
+            # Check if async job has completed
             if async_job.is_done():
                 try:
                     async_job.result()
-                    # Async job completed successfully, but we're waiting for a specific service status
-                    # This might mean the service completed and was cleaned up
-                    module_logger.debug(
-                        f"Async job completed but we're still waiting for {service_name} to reach {target_status.value}"
-                    )
+                    # Async job completed successfully - deployment is done
+                    module_logger.debug(f"Async job completed successfully, returning from wait for {service_name}")
+                    return
                 except Exception as e:
                     raise RuntimeError(f"Service deployment failed: {e}")
 

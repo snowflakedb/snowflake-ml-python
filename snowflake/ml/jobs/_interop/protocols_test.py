@@ -1,11 +1,13 @@
 import tempfile
 from typing import Any, Callable, Optional
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 from absl.testing import absltest, parameterized
 
+from snowflake import snowpark
 from snowflake.ml.jobs._interop import protocols as p
 from snowflake.ml.jobs._interop.dto_schema import ProtocolInfo
 
@@ -246,6 +248,45 @@ class TestAutoProtocol(parameterized.TestCase):
         with self.assertLogs("snowflake.ml.jobs._interop.protocols", level="WARNING"):
             self.sut.try_register_protocol(FailingProtocol)
         self.assertEqual(len(self.sut._protocols), initial_count)
+
+
+class TestCloudPickleProtocol(parameterized.TestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.protocol = p.CloudPickleProtocol()
+        self.mock_session = MagicMock(spec=snowpark.Session)
+
+    def test_pack_unpack_arguments_roundtrip(self) -> None:
+        """Test roundtrip for _pack_arguments and _unpack_arguments with mixed sessions."""
+        original_args = (self.mock_session, 42, {"nested": self.mock_session})
+        original_kwargs = {"flag": True, "session_kw": self.mock_session, "deep": [self.mock_session]}
+
+        packed = self.protocol._pack_obj((original_args, original_kwargs))
+        args, kwargs = self.protocol._unpack_obj(packed, session=self.mock_session)
+
+        self.assertEqual(args, original_args)
+        self.assertEqual(kwargs, original_kwargs)
+
+    def test_pack_unpack_obj_complex(self) -> None:
+        """Test _pack_obj and _unpack_obj with complex nested structures and mixed types."""
+        obj = {
+            "a": [1, 2, {"b": (self.mock_session, 3)}],
+            "c": {"d": [self.mock_session, None], "e": "f"},
+            "empty": ([], {}, ()),
+        }
+
+        packed = self.protocol._pack_obj(obj)
+        unpacked = self.protocol._unpack_obj(packed, session=self.mock_session)
+
+        self.assertEqual(unpacked, obj)
+
+    def test_pack_unpack_only_session(self) -> None:
+        """Test packing and unpacking when the object is just a session."""
+        packed = self.protocol._pack_obj(self.mock_session)
+        self.assertEqual(packed, {p.SESSION_KEY_PREFIX: None})
+
+        unpacked = self.protocol._unpack_obj(packed, session=self.mock_session)
+        self.assertEqual(unpacked, self.mock_session)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, model_validator
-from typing_extensions import NotRequired, TypedDict
+from pydantic import BaseModel, Discriminator, Tag, TypeAdapter, model_validator
+from typing_extensions import Annotated, NotRequired, TypedDict
 
 
 class BinaryManifest(TypedDict):
@@ -67,22 +67,47 @@ class ExceptionMetadata(ResultMetadata):
     traceback: str
 
 
-class ResultDTO(BaseModel):
+class PayloadDTO(BaseModel):
+    """
+    Base class for serializable payloads.
+
+    Args:
+        kind: Discriminator field for DTO type dispatch.
+        value: The payload value (if JSON-serializable).
+        protocol: The protocol used to serialize the payload (if not JSON-serializable).
+    """
+
+    kind: Literal["base"] = "base"
+    value: Optional[Any] = None
+    protocol: Optional[ProtocolInfo] = None
+    serialize_error: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_fields(cls, data: Any) -> Any:
+        """Ensure at least one of value or protocol keys is specified."""
+        if cls is PayloadDTO and isinstance(data, dict):
+            required_fields = {"value", "protocol"}
+            if not any(field in data for field in required_fields):
+                raise ValueError("At least one of 'value' or 'protocol' must be specified")
+        return data
+
+
+class ResultDTO(PayloadDTO):
     """
     A JSON representation of an execution result.
 
     Args:
+        kind: Discriminator field for DTO type dispatch.
         success: Whether the execution was successful.
         value: The value of the execution or the exception if the execution failed.
         protocol: The protocol used to serialize the result.
         metadata: The metadata of the result.
     """
 
+    kind: Literal["result"] = "result"  # type: ignore[assignment]
     success: bool
-    value: Optional[Any] = None
-    protocol: Optional[ProtocolInfo] = None
     metadata: Optional[Union[ResultMetadata, ExceptionMetadata]] = None
-    serialize_error: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -93,3 +118,23 @@ class ResultDTO(BaseModel):
             if not any(field in data for field in required_fields):
                 raise ValueError("At least one of 'value', 'protocol', or 'metadata' must be specified")
         return data
+
+
+def _get_dto_kind(data: Any) -> str:
+    """Extract the 'kind' discriminator from input, defaulting to 'result' for backward compatibility."""
+    if isinstance(data, dict):
+        kind = data.get("kind", "result")
+    else:
+        kind = getattr(data, "kind", "result")
+    return str(kind)
+
+
+AnyResultDTO = Annotated[
+    Union[
+        Annotated[ResultDTO, Tag("result")],
+        Annotated[PayloadDTO, Tag("base")],
+    ],
+    Discriminator(_get_dto_kind),
+]
+
+ResultDTOAdapter: TypeAdapter[AnyResultDTO] = TypeAdapter(AnyResultDTO)

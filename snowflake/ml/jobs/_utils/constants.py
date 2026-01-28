@@ -5,6 +5,7 @@ from snowflake.ml.jobs._utils.types import ComputeResources
 DEFAULT_CONTAINER_NAME = "main"
 MEMORY_VOLUME_NAME = "dshm"
 STAGE_VOLUME_NAME = "stage-volume"
+RESULT_VOLUME_NAME = "result-volume"
 DEFAULT_PYTHON_VERSION = "3.10"
 
 # Environment variables
@@ -109,3 +110,6 @@ CLOUD_INSTANCE_FAMILIES = {
     SnowflakeCloudType.AZURE: AZURE_INSTANCE_FAMILIES,
     SnowflakeCloudType.GCP: GCP_INSTANCE_FAMILIES,
 }
+
+# Magic attributes
+IS_MLJOB_REMOTE_ATTR = "_is_mljob_remote_callable"

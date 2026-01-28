@@ -194,9 +194,11 @@ class TestInteropUtils(parameterized.TestCase):
         u.save_result(result, temp_file_path, session=self.mock_session)
 
         self.assertEqual(self.mock_session.file.put_stream.call_count, expected_files)
-        self.mock_session.file.put_stream.assert_any_call(mock.ANY, temp_file_path)
+        self.mock_session.file.put_stream.assert_any_call(mock.ANY, temp_file_path, auto_compress=False)
         if expected_files > 1:
-            self.mock_session.file.put_stream.assert_any_call(mock.ANY, f"@dummy_stage/{expected_path}")
+            self.mock_session.file.put_stream.assert_any_call(
+                mock.ANY, f"@dummy_stage/{expected_path}", auto_compress=False
+            )
 
     @parameterized.named_parameters(  # type: ignore[misc]
         dict(
@@ -518,7 +520,7 @@ class TestInteropUtils(parameterized.TestCase):
             expected_error=DummyNonserializableException("legacy error"),
         ),
     )
-    def test_load_result(
+    def test_load(
         self,
         data: dict[str, Any],
         secondary_data: Optional[bytes] = None,
@@ -543,7 +545,7 @@ class TestInteropUtils(parameterized.TestCase):
 
         self.mock_session.file.get_stream.side_effect = mock_get_stream
 
-        result = u.load_result(result_path, session=self.mock_session)
+        result = u.load(result_path, session=self.mock_session)
         self.assertIsInstance(result, ExecutionResult)
 
         if expected_error is not None:
@@ -596,7 +598,7 @@ class TestInteropUtils(parameterized.TestCase):
             expected_error=ValueError("Invalid result schema"),
         ),
     )
-    def test_load_result_negative(
+    def test_load_negative(
         self,
         data: Union[dict[str, Any], str],
         expected_error: Exception,
@@ -619,7 +621,7 @@ class TestInteropUtils(parameterized.TestCase):
         self.mock_session.file.get_stream.side_effect = mock_get_stream
 
         with self.assertRaisesRegex(type(expected_error), re.escape(str(expected_error))):
-            _ = u.load_result(result_path, session=self.mock_session)
+            _ = u.load(result_path, session=self.mock_session)
 
     @parameterized.parameters(  # type: ignore[misc]
         (None, "builtins.NoneType"),

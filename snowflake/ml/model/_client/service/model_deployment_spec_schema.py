@@ -26,6 +26,7 @@ class Service(BaseModel):
     name: str
     compute_pool: str
     ingress_enabled: bool
+    min_instances: int
     max_instances: int
     cpu: Optional[str] = None
     memory: Optional[str] = None

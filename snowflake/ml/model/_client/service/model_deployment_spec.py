@@ -140,6 +140,7 @@ class ModelDeploymentSpec:
         service_database_name: Optional[sql_identifier.SqlIdentifier] = None,
         service_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
         ingress_enabled: bool = True,
+        min_instances: int = 0,
         max_instances: int = 1,
         cpu: Optional[str] = None,
         memory: Optional[str] = None,
@@ -156,6 +157,7 @@ class ModelDeploymentSpec:
             service_database_name: Database name for the service.
             service_schema_name: Schema name for the service.
             ingress_enabled: Whether ingress is enabled.
+            min_instances: Minimum number of service instances.
             max_instances: Maximum number of service instances.
             cpu: CPU requirement.
             memory: Memory requirement.
@@ -187,6 +189,7 @@ class ModelDeploymentSpec:
             name=fq_service_name,
             compute_pool=inference_compute_pool_name.identifier(),
             ingress_enabled=ingress_enabled,
+            min_instances=min_instances,
             max_instances=max_instances,
             autocapture=autocapture,
             **self._inference_spec,
