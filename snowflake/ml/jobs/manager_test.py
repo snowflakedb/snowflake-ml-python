@@ -39,9 +39,6 @@ class ManagerTest(parameterized.TestCase):
         with patch(
             "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
             return_value=MagicMock(upload=MagicMock(return_value=uploaded_payload)),
-        ), patch(
-            "snowflake.ml.jobs.job_definition.runtime_env_utils.get_runtime_image",
-            return_value="/snowflake/image/image_repo/test_image:2.1.4",
         ):
             definition: job_definition.MLJobDefinition[Any, Any] = job_definition.MLJobDefinition.register(
                 source="entry.py",
