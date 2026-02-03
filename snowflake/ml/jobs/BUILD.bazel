@@ -36,6 +36,7 @@ py_library(
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:spec_utils",
         "//snowflake/ml/jobs/_utils:types",
     ],
 )
@@ -47,6 +48,15 @@ py_library(
         ":job_manager",
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/jobs/_utils:payload_utils",
+    ],
+)
+
+py_test(
+    name = "decorators_test",
+    srcs = ["decorators_test.py"],
+    tags = ["feature:jobs"],
+    deps = [
+        ":job_decorators",
     ],
 )
 
@@ -64,13 +74,8 @@ py_library(
     srcs = ["job_definition.py"],
     deps = [
         "//snowflake/ml/jobs:ml_job",
-        "//snowflake/ml/jobs/_utils:arg_protocol",
-        "//snowflake/ml/jobs/_utils:constants",
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
-        "//snowflake/ml/jobs/_utils:query_helper",
-        "//snowflake/ml/jobs/_utils:runtime_env_utils",
-        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 
@@ -80,10 +85,6 @@ py_test(
     tags = ["feature:jobs"],
     deps = [
         "//snowflake/ml/jobs:job_definition",
-        "//snowflake/ml/jobs/_interop:utils",
-        "//snowflake/ml/jobs/_utils:arg_protocol",
-        "//snowflake/ml/jobs/_utils:feature_flags",
-        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 

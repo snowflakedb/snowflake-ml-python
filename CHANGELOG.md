@@ -1,5 +1,11 @@
 # Release History
 
+## 1.25.1
+
+### Bug Fixes
+
+* ML Job: Reverted changes related to the introduction of ML Job Definitions.
+
 ## 1.25.0
 
 ### New Features

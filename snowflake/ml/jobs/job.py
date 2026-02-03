@@ -123,41 +123,26 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
         return self._transform_path(result_path_str)
 
-    # After introducing ML Job definitions, we have additional stage mount for result path
-    # the result path is like @payload_stage/{job_definition_name}/{job_name}/mljob_result
-    @property
-    def _result_stage_path(self) -> Optional[str]:
-        volumes = self._service_spec["spec"]["volumes"]
-        stage_volume = next((v for v in volumes if v["name"] == constants.RESULT_VOLUME_NAME), None)
-        if stage_volume is None:
-            return self._stage_path
-        elif "stageConfig" in stage_volume:
-            return cast(str, stage_volume["stageConfig"]["name"])
-        else:
-            return cast(str, stage_volume["source"])
-
-    def _transform_path(
-        self,
-        path_str: str,
-    ) -> str:
+    def _transform_path(self, path_str: str) -> str:
         """Transform a local path within the container to a stage path."""
         path = stage_utils.resolve_path(path_str)
         if isinstance(path, stage_utils.StagePath):
+            # Stage paths need no transformation
             return path.as_posix()
         if not path.is_absolute():
-            return f"{self._result_stage_path}/{path.as_posix()}"
+            # Assume relative paths are relative to stage mount path
+            return f"{self._stage_path}/{path.as_posix()}"
 
+        # If result path is absolute, rebase it onto the stage mount path
+        # TODO: Rather than matching by name, use the longest mount path which matches
         volume_mounts = self._container_spec["volumeMounts"]
-        stage_volume = next((v for v in volume_mounts if v["name"] == constants.RESULT_VOLUME_NAME), None)
-        if stage_volume is None:
-            stage_volume = next(v for v in volume_mounts if v["name"] == constants.STAGE_VOLUME_NAME)
-        stage_mount_str = stage_volume["mountPath"]
+        stage_mount_str = next(v for v in volume_mounts if v.get("name") == constants.STAGE_VOLUME_NAME)["mountPath"]
         stage_mount = Path(stage_mount_str)
         try:
             relative_path = path.relative_to(stage_mount)
-            return f"{self._result_stage_path}/{relative_path.as_posix()}"
+            return f"{self._stage_path}/{relative_path.as_posix()}"
         except ValueError:
-            raise ValueError(f"Result Path {path} is absolute, but should be relative to stage mount {stage_mount}")
+            raise ValueError(f"Result path {path} is absolute, but should be relative to stage mount {stage_mount}")
 
     @overload
     def get_logs(
@@ -294,7 +279,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         if self._result is None:
             self.wait(timeout)
             try:
-                self._result = interop_utils.load(
+                self._result = interop_utils.load_result(
                     self._result_path, session=self._session, path_transform=self._transform_path
                 )
             except Exception as e:

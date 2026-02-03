@@ -17,8 +17,6 @@ Condition = Union[type, tuple[type, ...], Callable[[Any], bool], None]
 
 logger = logging.getLogger(__name__)
 
-SESSION_KEY_PREFIX = "session@"
-
 
 class SerializationError(TypeError):
     """Exception raised when a serialization protocol fails."""
@@ -138,10 +136,9 @@ class CloudPickleProtocol(SerializationProtocol):
 
     def save(self, obj: Any, dest_dir: str, session: Optional[snowpark.Session] = None) -> ProtocolInfo:
         """Save the object to the destination directory."""
-        replaced_obj = self._pack_obj(obj)
         result_path = posixpath.join(dest_dir, self.DEFAULT_PATH)
         with data_utils.open_stream(result_path, "wb", session=session) as f:
-            self._backend.dump(replaced_obj, f)
+            self._backend.dump(obj, f)
         manifest: BinaryManifest = {"path": result_path}
         return self.protocol_info.with_manifest(manifest)
 
@@ -160,15 +157,12 @@ class CloudPickleProtocol(SerializationProtocol):
         payload_manifest = cast(BinaryManifest, payload_info.manifest)
         try:
             if payload_bytes := payload_manifest.get("bytes"):
-                result = self._backend.loads(payload_bytes)
-            elif payload_b64 := payload_manifest.get("base64"):
-                result = self._backend.loads(base64.b64decode(payload_b64))
-            else:
-                result_path = path_transform(payload_manifest["path"]) if path_transform else payload_manifest["path"]
-                with data_utils.open_stream(result_path, "rb", session=session) as f:
-                    result = self._backend.load(f)
-
-            return self._unpack_obj(result, session=session)
+                return self._backend.loads(payload_bytes)
+            if payload_b64 := payload_manifest.get("base64"):
+                return self._backend.loads(base64.b64decode(payload_b64))
+            result_path = path_transform(payload_manifest["path"]) if path_transform else payload_manifest["path"]
+            with data_utils.open_stream(result_path, "rb", session=session) as f:
+                return self._backend.load(f)
         except (
             pickle.UnpicklingError,
             TypeError,
@@ -178,117 +172,6 @@ class CloudPickleProtocol(SerializationProtocol):
             if error := self._get_compatibility_error(payload_info):
                 raise error from pickle_error
             raise
-
-    def _pack_obj(self, obj: Any) -> Any:
-        """Pack objects into JSON-safe dicts using reserved marker keys.
-
-        Markers:
-        - "type@": container type for list/tuple (list or tuple)
-        - "#<i>": positional element for list/tuple at index i
-        - "session@": placeholder for snowpark.Session values
-          - "session@#<i>" for list/tuple entries
-          - "session@<key>" for dict entries
-          - {"session@": None} for a bare Session object
-
-        Example:
-            obj = {"x": [1, session], "s": session}
-            packed = {
-                "x": {"type@": list, "#0": 1, "session@#1": None},
-                "session@s": None,
-            }
-            _unpack_obj(packed, session) == obj
-
-        Args:
-            obj: Object to pack into JSON-safe marker dictionaries.
-
-        Returns:
-            Packed representation with markers for session references.
-        """
-        arguments: dict[str, Any] = {}
-        if isinstance(obj, tuple) or isinstance(obj, list):
-            arguments = {"type@": type(obj)}
-            for i, arg in enumerate(obj):
-                if isinstance(arg, snowpark.Session):
-                    arguments[f"{SESSION_KEY_PREFIX}#{i}"] = None
-                else:
-                    arguments[f"#{i}"] = self._pack_obj(arg)
-            return arguments
-        elif isinstance(obj, dict):
-            for k, v in obj.items():
-                if isinstance(v, snowpark.Session):
-                    arguments[f"{SESSION_KEY_PREFIX}{k}"] = None
-                else:
-                    arguments[k] = self._pack_obj(v)
-            return arguments
-        elif isinstance(obj, snowpark.Session):
-            # Box session into a dict marker so we can distinguish it from other plain objects.
-            arguments[f"{SESSION_KEY_PREFIX}"] = None
-            return arguments
-        else:
-            return obj
-
-    def _unpack_obj(self, obj: Any, session: Optional[snowpark.Session] = None) -> Any:
-        """Unpack dict markers back into containers and Session references.
-
-        Markers:
-        - "type@": container type for list/tuple (list or tuple)
-        - "#<i>": positional element for list/tuple at index i
-        - "session@": placeholder for snowpark.Session values
-          - "session@#<i>" for list/tuple entries
-          - "session@<key>" for dict entries
-          - {"session@": None} for a bare Session object
-
-        Example:
-            packed = {
-                "x": {"type@": list, "#0": 1, "session@#1": None},
-                "session@s": None,
-            }
-            obj = _unpack_obj(packed, session)
-            # obj == {"x": [1, session], "s": session}
-
-        Args:
-            obj: Packed object with marker dictionaries.
-            session: Session to inject for session markers.
-
-        Returns:
-            Unpacked object with session references restored.
-        """
-        if not isinstance(obj, dict):
-            return obj
-        elif len(obj) == 1 and SESSION_KEY_PREFIX in obj:
-            return session
-        else:
-            type = obj.get("type@", None)
-            # If type is None, we are unpacking a dict
-            if type is None:
-                result_dict = {}
-                for k, v in obj.items():
-                    if k.startswith(SESSION_KEY_PREFIX):
-                        result_key = k[len(SESSION_KEY_PREFIX) :]
-                        result_dict[result_key] = session
-                    else:
-                        result_dict[k] = self._unpack_obj(v, session)
-                return result_dict
-            # If type is not None, we are unpacking a tuple or list
-            else:
-                indexes = []
-                for k, _ in obj.items():
-                    if "#" in k:
-                        indexes.append(int(k.split("#")[-1]))
-
-                if not indexes:
-                    return tuple() if type is tuple else []
-                result_list: list[Any] = [None] * (max(indexes) + 1)
-
-                for k, v in obj.items():
-                    if k == "type@":
-                        continue
-                    idx = int(k.split("#")[-1])
-                    if k.startswith(SESSION_KEY_PREFIX):
-                        result_list[idx] = session
-                    else:
-                        result_list[idx] = self._unpack_obj(v, session)
-                return tuple(result_list) if type is tuple else result_list
 
 
 class ArrowTableProtocol(SerializationProtocol):
