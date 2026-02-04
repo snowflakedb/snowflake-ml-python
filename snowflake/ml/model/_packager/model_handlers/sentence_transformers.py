@@ -1,7 +1,7 @@
 import inspect
 import logging
 import os
-from typing import TYPE_CHECKING, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Callable, Optional, Sequence, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -16,7 +16,6 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta as model_meta_api,
     model_meta_schema,
 )
-from snowflake.ml.model._signatures import utils as model_signature_utils
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
@@ -25,9 +24,70 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Allowlist of supported target methods for SentenceTransformer models.
-# Note: sentence-transformers >= 3.0 uses singular names (encode_query, encode_document)
-# while older versions may use plural names (encode_queries, encode_documents).
+# Note: Not all methods are available in all sentence-transformers versions.
 _ALLOWED_TARGET_METHODS = ["encode", "encode_query", "encode_document", "encode_queries", "encode_documents"]
+
+# All potential default methods to check for availability on the model
+_POTENTIAL_DEFAULT_METHODS = [
+    "encode",  # Always check encode first (always available)
+    "encode_query",  # Singular (newer versions)
+    "encode_document",  # Singular (newer versions)
+    "encode_queries",  # Plural (older versions)
+    "encode_documents",  # Plural (older versions)
+]
+
+
+def _get_available_default_methods(model: "sentence_transformers.SentenceTransformer") -> Sequence[str]:
+    """Get default target methods that are actually available on the model.
+
+    This function checks which methods actually exist and are callable on the model
+    instance, rather than relying on version number checks.
+
+    Args:
+        model: The SentenceTransformer model instance.
+
+    Returns:
+        List of method names that are available on the model.
+    """
+    available_methods = []
+    for method_name in _POTENTIAL_DEFAULT_METHODS:
+        method = getattr(model, method_name, None)
+        if method is not None and callable(method):
+            available_methods.append(method_name)
+    return available_methods
+
+
+def _auto_infer_signature(
+    target_method: str,
+    embedding_dim: int,
+) -> Optional[model_signature.ModelSignature]:
+    """Auto-infer signature for SentenceTransformer models.
+
+    SentenceTransformer models have a simple signature: they take a string input
+    and return an embedding vector (array of floats).
+
+    Args:
+        target_method: The target method name (e.g., "encode", "encode_query").
+        embedding_dim: The dimension of the embedding vector output by the model.
+
+    Returns:
+        A ModelSignature for the target method, or None if the method is not supported.
+    """
+    if target_method not in _ALLOWED_TARGET_METHODS:
+        return None
+
+    return model_signature.ModelSignature(
+        inputs=[
+            model_signature.FeatureSpec(name="sentence", dtype=model_signature.DataType.STRING),
+        ],
+        outputs=[
+            model_signature.FeatureSpec(
+                name="output",
+                dtype=model_signature.DataType.DOUBLE,
+                shape=(embedding_dim,),
+            ),
+        ],
+    )
 
 
 def _validate_sentence_transformers_signatures(
@@ -87,8 +147,6 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_BLOB_FILE_OR_DIR = "model"
-    # Default to singular names which are used in sentence-transformers >= 3.0
-    DEFAULT_TARGET_METHODS = ["encode", "encode_query", "encode_document"]
     IS_AUTO_SIGNATURE = True
 
     @classmethod
@@ -131,91 +189,13 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
 
         # Validate target methods and signature (if possible)
         if not is_sub_model:
-            target_methods = handlers_utils.get_target_methods(
+            model_meta = cls._validate_and_set_signatures(
                 model=model,
+                model_meta=model_meta,
+                sample_input_data=sample_input_data,
+                batch_size=batch_size,
                 target_methods=kwargs.pop("target_methods", None),
-                default_target_methods=cls.DEFAULT_TARGET_METHODS,
             )
-
-            # Validate target_methods
-            if not target_methods:
-                raise ValueError("At least one target method must be specified.")
-
-            if not set(target_methods).issubset(_ALLOWED_TARGET_METHODS):
-                raise ValueError(f"target_methods {target_methods} must be a subset of {_ALLOWED_TARGET_METHODS}.")
-
-            def get_prediction(
-                target_method_name: str,
-                sample_input_data: model_types.SupportedLocalDataType,
-            ) -> model_types.SupportedLocalDataType:
-                if not isinstance(sample_input_data, pd.DataFrame):
-                    sample_input_data = model_signature._convert_local_data_to_df(data=sample_input_data)
-
-                if sample_input_data.shape[1] != 1:
-                    raise ValueError(
-                        "SentenceTransformer can only accept 1 input column when converted to pd.DataFrame"
-                    )
-                X_list = sample_input_data.iloc[:, 0].tolist()
-
-                # Call the appropriate method based on target_method_name
-                method_to_call = getattr(model, target_method_name, None)
-                if not callable(method_to_call):
-                    raise ValueError(
-                        f"SentenceTransformer model does not have a callable method '{target_method_name}'."
-                    )
-                return pd.DataFrame({0: method_to_call(X_list, batch_size=batch_size).tolist()})
-
-            if model_meta.signatures:
-                handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
-                model_meta = handlers_utils.validate_signature(
-                    model=model,
-                    model_meta=model_meta,
-                    target_methods=target_methods,
-                    sample_input_data=sample_input_data,
-                    get_prediction_fn=get_prediction,
-                )
-            else:
-                handlers_utils.validate_target_methods(model, target_methods)  # DEFAULT_TARGET_METHODS only
-                if sample_input_data is not None:
-                    model_meta = handlers_utils.validate_signature(
-                        model=model,
-                        model_meta=model_meta,
-                        target_methods=target_methods,
-                        sample_input_data=sample_input_data,
-                        get_prediction_fn=get_prediction,
-                    )
-                else:
-                    # Auto-infer signature from model when no sample_input_data is provided
-                    # Get the embedding dimension from the model
-                    embedding_dim = model.get_sentence_embedding_dimension()
-                    if embedding_dim is None:
-                        raise ValueError(
-                            "Unable to auto-infer signature: model.get_sentence_embedding_dimension() returned None. "
-                            "Please provide sample_input_data or signatures explicitly."
-                        )
-
-                    for target_method in target_methods:
-                        # target_methods are already validated as callable by get_target_methods()
-                        inferred_sig = model_signature_utils.sentence_transformers_signature_auto_infer(
-                            target_method=target_method,
-                            embedding_dim=embedding_dim,
-                        )
-                        if inferred_sig is None:
-                            raise ValueError(
-                                f"Unable to auto-infer signature for method '{target_method}'. "
-                                "Please provide sample_input_data or signatures explicitly."
-                            )
-                        model_meta.signatures[target_method] = inferred_sig
-
-                    # Ensure at least one method was successfully inferred
-                    if not model_meta.signatures:
-                        raise ValueError(
-                            "No valid target methods found on the model. "
-                            "Please provide sample_input_data or signatures explicitly, "
-                            "or specify target_methods that exist on your model."
-                        )
-
-            _validate_sentence_transformers_signatures(model_meta.signatures)
 
         # save model
         model_blob_path = os.path.join(model_blobs_dir_path, name)
@@ -249,6 +229,129 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             check_local_version=True,
         )
         model_meta.env.cuda_version = kwargs.get("cuda_version", handlers_utils.get_default_cuda_version())
+
+    @classmethod
+    def _validate_and_set_signatures(
+        cls,
+        model: "sentence_transformers.SentenceTransformer",
+        model_meta: model_meta_api.ModelMetadata,
+        sample_input_data: Optional[model_types.SupportedDataType],
+        batch_size: int,
+        target_methods: Optional[Sequence[str]],
+    ) -> model_meta_api.ModelMetadata:
+        """Validate target methods and set signatures on model_meta.
+
+        This method handles three cases:
+        1. User provided explicit signatures - validate them
+        2. User provided sample_input_data - infer signatures from data
+        3. Neither provided - auto-infer signatures from model embedding dimension
+
+        Args:
+            model: The SentenceTransformer model.
+            model_meta: Model metadata to update with signatures.
+            sample_input_data: Optional sample input data for signature inference.
+            batch_size: Batch size for model inference.
+            target_methods: Optional list of target methods to use.
+
+        Returns:
+            Updated model metadata with validated signatures.
+
+        Raises:
+            ValueError: If no target methods are specified, if target methods are not in the
+                allowed list, if a target method is not callable on the model, or if
+                auto-inference fails.
+        """
+        # Get available default methods by checking which methods exist on the model
+        available_default_methods = _get_available_default_methods(model)
+
+        # get_target_methods will filter to only callable methods
+        resolved_target_methods = handlers_utils.get_target_methods(
+            model=model,
+            target_methods=target_methods,
+            default_target_methods=available_default_methods,
+        )
+
+        if not resolved_target_methods:
+            raise ValueError("At least one target method must be specified.")
+
+        if not set(resolved_target_methods).issubset(_ALLOWED_TARGET_METHODS):
+            unsupported = set(resolved_target_methods) - set(_ALLOWED_TARGET_METHODS)
+            raise ValueError(
+                f"Unsupported model methods: {sorted(unsupported)}. "
+                f"SentenceTransformer model methods must be one of: {_ALLOWED_TARGET_METHODS}."
+            )
+
+        def get_prediction(
+            target_method_name: str,
+            input_data: model_types.SupportedLocalDataType,
+        ) -> model_types.SupportedLocalDataType:
+            if not isinstance(input_data, pd.DataFrame):
+                input_data = model_signature._convert_local_data_to_df(data=input_data)
+
+            if input_data.shape[1] != 1:
+                raise ValueError("SentenceTransformer can only accept 1 input column when converted to pd.DataFrame")
+            X_list = input_data.iloc[:, 0].tolist()
+
+            method_to_call = getattr(model, target_method_name, None)
+            if not callable(method_to_call):
+                raise ValueError(f"SentenceTransformer model does not have a callable method '{target_method_name}'.")
+            return pd.DataFrame({0: method_to_call(X_list, batch_size=batch_size).tolist()})
+
+        # Case 1: User provided explicit signatures
+        if model_meta.signatures:
+            handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
+            model_meta = handlers_utils.validate_signature(
+                model=model,
+                model_meta=model_meta,
+                target_methods=resolved_target_methods,
+                sample_input_data=sample_input_data,
+                get_prediction_fn=get_prediction,
+            )
+            _validate_sentence_transformers_signatures(model_meta.signatures)
+            return model_meta
+
+        # Case 2: User provided sample_input_data - infer from data
+        handlers_utils.validate_target_methods(model, resolved_target_methods)
+        if sample_input_data is not None:
+            model_meta = handlers_utils.validate_signature(
+                model=model,
+                model_meta=model_meta,
+                target_methods=resolved_target_methods,
+                sample_input_data=sample_input_data,
+                get_prediction_fn=get_prediction,
+            )
+            _validate_sentence_transformers_signatures(model_meta.signatures)
+            return model_meta
+
+        # Case 3: Auto-infer signature from model embedding dimension
+        embedding_dim = model.get_sentence_embedding_dimension()
+        if embedding_dim is None:
+            raise ValueError(
+                "Unable to determine the model's embedding dimension. "
+                "Please provide sample_input_data or signatures explicitly."
+            )
+
+        for target_method in resolved_target_methods:
+            inferred_sig = _auto_infer_signature(
+                target_method=target_method,
+                embedding_dim=embedding_dim,
+            )
+            if inferred_sig is None:
+                raise ValueError(
+                    f"Unable to auto-infer signature for method '{target_method}'. "
+                    "Please provide sample_input_data or signatures explicitly."
+                )
+            model_meta.signatures[target_method] = inferred_sig
+
+        if not model_meta.signatures:
+            raise ValueError(
+                "No valid target methods found on the model. "
+                "Please provide sample_input_data or signatures explicitly, "
+                "or specify target_methods that exist on your model."
+            )
+
+        _validate_sentence_transformers_signatures(model_meta.signatures)
+        return model_meta
 
     @staticmethod
     def _get_device_config(

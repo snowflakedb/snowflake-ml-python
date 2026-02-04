@@ -88,6 +88,49 @@ class StoreType(Enum):
     OFFLINE = "offline"
 
 
+class StorageFormat(Enum):
+    """Storage format for managed Feature Views."""
+
+    SNOWFLAKE = "snowflake"  # Native Snowflake storage (Dynamic Table)
+    ICEBERG = "iceberg"  # Apache Iceberg format (Dynamic Iceberg Table)
+
+
+@dataclass(frozen=True)
+class StorageConfig:
+    """
+    Configuration for Feature View storage format.
+
+    Args:
+        format: Storage format. Defaults to SNOWFLAKE.
+        external_volume: External volume for Iceberg storage. Required when
+            format=ICEBERG unless a default is set on the FeatureStore.
+        base_location: Path within external volume. Auto-generated if not provided.
+    """
+
+    format: StorageFormat = StorageFormat.SNOWFLAKE
+    external_volume: Optional[str] = None
+    base_location: Optional[str] = None
+
+    def to_json(self) -> str:
+        """Serialize StorageConfig to JSON string."""
+
+        def dict_factory(items: list[tuple[str, Any]]) -> dict[str, Any]:
+            return {k: (v.value if isinstance(v, Enum) else v) for k, v in items if v is not None}
+
+        return json.dumps(asdict(self, dict_factory=dict_factory))
+
+    @classmethod
+    def from_json(cls, json_str: str) -> StorageConfig:
+        """Deserialize StorageConfig from JSON string."""
+        data = json.loads(json_str)
+        format_value = data.get("format", "snowflake")
+        return cls(
+            format=StorageFormat(format_value),
+            external_volume=data.get("external_volume"),
+            base_location=data.get("base_location"),
+        )
+
+
 @dataclass(frozen=True)
 class _FeatureViewMetadata:
     """Represent metadata tracked on top of FV backend object"""
@@ -95,6 +138,7 @@ class _FeatureViewMetadata:
     entities: list[str]
     timestamp_col: str
     is_tiled: bool = False  # Whether FV uses tile-based aggregations
+    is_iceberg: bool = False  # Whether FV uses Iceberg storage format
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -105,6 +149,9 @@ class _FeatureViewMetadata:
         # Backward compatibility: old FVs don't have is_tiled
         if "is_tiled" not in state_dict:
             state_dict["is_tiled"] = False
+        # Backward compatibility: old FVs don't have is_iceberg
+        if "is_iceberg" not in state_dict:
+            state_dict["is_iceberg"] = False
         return cls(**state_dict)
 
 
@@ -186,6 +233,41 @@ class FeatureViewSlice:
         json_dict["feature_view_ref"] = FeatureView.from_json(json_dict["feature_view_ref"], session)
         return cls(**json_dict)
 
+    def with_name(self, name: str) -> FeatureViewSlice:
+        """
+        Use this Feature View Slice with a namespace for dataset generation.
+
+        Returns a copy of this Feature View Slice with a custom namespace that will
+        be used to prefix all feature columns during dataset generation. This
+        is useful for avoiding column name collisions or using the same Feature
+        View multiple times with different contexts.
+
+        The name is NOT persisted to the Feature Store and only affects column
+        naming in retrieve_feature_values(), generate_dataset(), and
+        generate_training_set().
+
+        Args:
+            name: Namespace for feature columns. Will be formatted as '{name}_'
+                before each column name.
+
+        Returns:
+            A new FeatureViewSlice instance with the namespace attached to the
+            underlying FeatureView.
+
+        Note:
+            Similar to Tecton's with_name() method. This setting takes
+            precedence over the auto_prefix parameter.
+        """
+        return FeatureViewSlice(
+            feature_view_ref=self.feature_view_ref.with_name(name),
+            names=self.names,
+        )
+
+    @property
+    def column_alias(self) -> Optional[str]:
+        """Returns the column namespace if set via with_name(), else None."""
+        return self.feature_view_ref.column_alias
+
     def _get_compact_repr(self) -> _CompactRepresentation:
         return _CompactRepresentation(
             db=self.feature_view_ref.database.identifier(),  # type: ignore[union-attr]
@@ -221,6 +303,7 @@ class FeatureView(lineage_node.LineageNode):
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         features: Optional[list[Feature]] = None,
+        storage_config: Optional[StorageConfig] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -271,6 +354,9 @@ class FeatureView(lineage_node.LineageNode):
             features: List of aggregation feature definitions using the ``Feature`` class.
                 Required when ``feature_granularity`` is specified. Defines the aggregations
                 to compute (e.g., SUM, COUNT, LAST_N) with their windows.
+            storage_config: Configuration for storage format using ``StorageConfig``.
+                Supports Snowflake native format (default) or Iceberg format.
+                When using Iceberg, specify ``external_volume`` and optionally ``base_location``.
             _kwargs: Reserved kwargs for system generated args.
 
                 .. caution::
@@ -312,6 +398,20 @@ class FeatureView(lineage_node.LineageNode):
             >>> registered_online_fv = fs.register_feature_view(online_fv, "v1")
             >>> print(registered_online_fv.online)
             True
+            <BLANKLINE>
+            >>> # Example with Iceberg storage configuration
+            >>> storage = StorageConfig(
+            ...     format=StorageFormat.ICEBERG,
+            ...     external_volume='MY_EXTERNAL_VOLUME',
+            ...     base_location='feature_store/my_fv'  # optional
+            ... )
+            >>> iceberg_fv = FeatureView(
+            ...     name="my_iceberg_fv",
+            ...     entities=[e1, e2],
+            ...     feature_df=feature_df,
+            ...     refresh_freq='1d',
+            ...     storage_config=storage  # optional, configures Iceberg storage
+            ... )
 
         # noqa: DAR401
         """
@@ -356,6 +456,10 @@ class FeatureView(lineage_node.LineageNode):
             self._feature_desc = OrderedDict(
                 (SqlIdentifier(spec.get_sql_column_name()), "") for spec in self._aggregation_specs
             )
+        self._storage_config: Optional[StorageConfig] = storage_config
+
+        # Column aliasing for dataset generation (ephemeral, in-memory only)
+        self._column_alias: Optional[str] = None
 
         # Validate kwargs
         if _kwargs:
@@ -411,6 +515,70 @@ class FeatureView(lineage_node.LineageNode):
                 raise ValueError(f"Feature name {name} not found in FeatureView {self.name}.")
             res.append(name)
         return FeatureViewSlice(self, res)
+
+    def with_name(self, name: str) -> FeatureView:
+        """
+        Use this Feature View with a namespace for dataset generation.
+
+        Returns a copy of this Feature View with a custom namespace that will
+        be used to prefix all feature columns during dataset generation. This
+        is useful for avoiding column name collisions or using the same Feature
+        View multiple times with different contexts.
+
+        The name is NOT persisted to the Feature Store and only affects column
+        naming in retrieve_feature_values(), generate_dataset(), and
+        generate_training_set().
+
+        Args:
+            name: Namespace for feature columns. Will be formatted as '{name}_'
+                before each column name.
+                - "sender" -> sender_count, sender_total
+                - "c" -> c_count, c_total
+                - "" (empty) -> no prefix (useful to override auto_prefix)
+
+        Returns:
+            A new FeatureView instance with the namespace attached.
+
+        Examples::
+
+            >>> # Avoid collisions
+            >>> fs.generate_training_set(
+            ...     features=[
+            ...         cart_fv.with_name("cart"),
+            ...         page_fv.with_name("page"),
+            ...     ]
+            ... )
+            >>> # Same FV twice (sender/recipient pattern)
+            >>> user_fv = fs.get_feature_view("user_features", "v1")
+            >>> fs.generate_training_set(
+            ...     features=[
+            ...         user_fv.with_name("sender"),
+            ...         user_fv.with_name("recipient"),
+            ...     ]
+            ... )
+            >>> # Override auto_prefix
+            >>> fs.generate_training_set(
+            ...     features=[
+            ...         important_fv.with_name(""),  # No prefix
+            ...         other_fv,  # Gets auto prefix
+            ...     ],
+            ...     auto_prefix=True
+            ... )
+
+        Note:
+            Similar to Tecton's with_name() method. This setting takes
+            precedence over the auto_prefix parameter.
+        """
+        import copy
+
+        new_fv = copy.copy(self)
+        new_fv._column_alias = name
+        return new_fv
+
+    @property
+    def column_alias(self) -> Optional[str]:
+        """Returns the column namespace if set via with_name(), else None."""
+        return getattr(self, "_column_alias", None)
 
     def fully_qualified_name(self) -> str:
         """
@@ -606,6 +774,16 @@ class FeatureView(lineage_node.LineageNode):
         """Get the aggregation specifications (internal use)."""
         return self._aggregation_specs
 
+    @property
+    def storage_config(self) -> Optional[StorageConfig]:
+        """Get the storage configuration for this feature view.
+
+        Returns:
+            StorageConfig object if set, None otherwise.
+            When None, the feature view uses the default Snowflake-native storage (Dynamic Table).
+        """
+        return self._storage_config
+
     def fully_qualified_online_table_name(self) -> str:
         """Get the fully qualified name for the online feature table.
 
@@ -791,7 +969,8 @@ class FeatureView(lineage_node.LineageNode):
     def _metadata(self) -> _FeatureViewMetadata:
         entity_names = [e.name.identifier() for e in self.entities]
         ts_col = self.timestamp_col.identifier() if self.timestamp_col is not None else _TIMESTAMP_COL_PLACEHOLDER
-        return _FeatureViewMetadata(entity_names, ts_col, is_tiled=self.is_tiled)
+        is_iceberg = self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG
+        return _FeatureViewMetadata(entity_names, ts_col, is_tiled=self.is_tiled, is_iceberg=is_iceberg)
 
     def _get_query(self) -> str:
         if len(self._feature_df.queries["queries"]) != 1:
@@ -869,6 +1048,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             self._validate_window_offset_alignment()
             # Validate feature aliases are unique
             self._validate_unique_feature_aliases()
+
+        # Validate Iceberg storage configuration
+        if self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG:
+            if self.online:
+                raise ValueError("Online storage is not supported with Iceberg.")
+            if self._refresh_freq is None:
+                raise ValueError("Iceberg storage requires refresh_freq.")
 
     def _validate_window_offset_alignment(self) -> None:
         """Validate that window and offset are multiples of feature_granularity.
@@ -1000,6 +1186,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             fv_dict["_feature_desc"] = feature_desc_dict
 
         fv_dict["_online_config"] = self._online_config.to_json() if self._online_config is not None else None
+        fv_dict["_storage_config"] = self._storage_config.to_json() if self._storage_config is not None else None
 
         # Aggregation fields
         fv_dict["_feature_granularity"] = self._feature_granularity
@@ -1105,6 +1292,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             else None,
             feature_granularity=json_dict.get("_feature_granularity"),
             aggregation_specs=aggregation_specs,
+            storage_config=StorageConfig.from_json(json_dict["_storage_config"])
+            if json_dict.get("_storage_config")
+            else None,
         )
 
     def _get_compact_repr(self) -> _CompactRepresentation:
@@ -1180,6 +1370,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         aggregation_specs: Optional[list[AggregationSpec]] = None,
+        storage_config: Optional[StorageConfig] = None,
     ) -> FeatureView:
         fv = FeatureView(
             name=name,
@@ -1193,6 +1384,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             online_config=online_config,
             feature_granularity=feature_granularity,
             _aggregation_specs=aggregation_specs,
+            storage_config=storage_config,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status

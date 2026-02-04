@@ -58,12 +58,6 @@ class CustomTranscriber(custom_model.CustomModel):
 class TestRegistryCustomMultiModalityBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
-    def setUp(self) -> None:
-        super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest("Skipping multi modality tests: image override environment variables not set.")
-
     @classmethod
     def setUpClass(cls) -> None:
         cls.cache_dir = tempfile.TemporaryDirectory()

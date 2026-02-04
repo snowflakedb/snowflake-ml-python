@@ -1,5 +1,6 @@
 import functools
 import inspect
+import json
 import os
 import sys
 
@@ -8,6 +9,25 @@ import pandas as pd
 from _snowflake import vectorized
 
 from snowflake.ml.model._packager import model_packager
+
+
+def _check_param_equality(series):
+    """Check if all values in a series are equal, handling unhashable types."""
+    try:
+        # Fast path: use nunique directly for hashable types
+        return series.nunique(dropna=False) <= 1
+    except TypeError:
+        # Slow path: serialize to JSON for unhashable types (lists, dicts)
+        return series.apply(lambda val: json.dumps(val, sort_keys=True)).nunique() <= 1
+
+
+def _is_null_param_value(val):
+    """Check if a param value should use the default (None or NA scalar)."""
+    if val is None:
+        return True
+    if isinstance(val, (list, np.ndarray)):
+        return False  # Arrays are never considered "null", even if empty
+    return pd.isna(val)
 
 
 # User-defined parameters
@@ -57,10 +77,13 @@ class infer:
         input_df = df[input_cols].astype(dtype=dtype_map)
 
         # Extract runtime param values, using defaults if None
+        # Validate that all param values are equal (including nulls)
         method_params = {}
         for col in param_cols:
+            if not _check_param_equality(df[col]):
+                raise ValueError(f"All values for parameter '{col}' must be equal. Please provide a constant value.")
             val = df[col].iloc[0]
-            if val is None or pd.isna(val):
+            if _is_null_param_value(val):
                 method_params[col] = param_defaults[col]
             else:
                 method_params[col] = val

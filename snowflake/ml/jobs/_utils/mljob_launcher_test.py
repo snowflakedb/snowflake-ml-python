@@ -22,6 +22,7 @@ class MLJobLauncherTests(parameterized.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.result_path = os.path.join(self.temp_dir.name, "mljob_result.pkl")
         self.result_json_path = os.path.join(self.temp_dir.name, "mljob_result.json")
+        self.session = mock.MagicMock()
 
         # Override launcher's result path
         mljob_launcher.JOB_RESULT_PATH = self.result_path
@@ -44,13 +45,13 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_run_script_simple(self) -> None:
         # Test running a simple script
         with self.assertNoLogs(level="WARNING"):
-            result = mljob_launcher.main(self.simple_script)
+            result = mljob_launcher.main(self.simple_script, session=self.session)
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["value"], 42)
 
     def test_run_script_with_function(self) -> None:
         # Test running a script with a specified main function
-        result = mljob_launcher.main(self.function_script, script_main_func="main_function")
+        result = mljob_launcher.main(self.function_script, script_main_func="main_function", session=self.session)
         self.assertEqual(result["status"], "success from function")
         self.assertEqual(result["value"], 100)
 
@@ -62,23 +63,39 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_run_script_with_function_and_args(self, arg_value: Optional[int], expected: dict[str, Any]) -> None:
         # Test running a script with a function that takes arguments
         args = [] if arg_value is None else [arg_value]
-        result = mljob_launcher.main(self.function_script, *args, script_main_func="another_function")
+        result = mljob_launcher.main(
+            self.function_script,
+            session=self.session,
+            script_main_func="another_function",
+            payload_args=args,
+        )
         self.assertEqual(result, expected)
 
     def test_run_script_invalid_function(self) -> None:
         # Test error when function doesn't exist
         with self.assertRaises(RuntimeError):
-            mljob_launcher.main(self.function_script, script_main_func="nonexistent_function")
+            mljob_launcher.main(
+                self.function_script,
+                session=self.session,
+                script_main_func="nonexistent_function",
+            )
 
     def test_run_script_with_args(self) -> None:
         # Test running a script with arguments
-        result = mljob_launcher.main(self.argument_script, "arg1", "arg2", "--named_arg=value")
+        result = mljob_launcher.main(
+            self.argument_script,
+            session=self.session,
+            payload_args=("arg1", "arg2", "--named_arg=value"),
+        )
         self.assertListEqual(result["args"], ["arg1", "arg2", "--named_arg=value"])
 
     def test_main_success(self) -> None:
         # Test the main function with successful execution
         try:
-            result = mljob_launcher.main(self.simple_script)
+            result = mljob_launcher.main(
+                self.simple_script,
+                session=self.session,
+            )
             self.assertEqual(result["value"], 42)
         except Exception as e:
             self.fail(f"main() raised exception unexpectedly: {e}")
@@ -101,7 +118,7 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_main_error(self) -> None:
         # Test the main function with script that raises an error
         with self.assertRaises(RuntimeError):
-            mljob_launcher.main(self.error_script)
+            mljob_launcher.main(self.error_script, session=self.session)
 
         # Check serialized error results
         pickled_result = _load_result_dict(self.result_path)
@@ -129,7 +146,7 @@ class MLJobLauncherTests(parameterized.TestCase):
     def test_function_error(self) -> None:
         # Test error in a function
         with self.assertRaises(ValueError):
-            mljob_launcher.main(self.error_script, script_main_func="error_function")
+            mljob_launcher.main(self.error_script, script_main_func="error_function", session=self.session)
 
         # Check serialized error results
         pickled_result = _load_result_dict(self.result_path)
@@ -145,7 +162,7 @@ class MLJobLauncherTests(parameterized.TestCase):
 
         # Test handling of complex, non-JSON-serializable results
         try:
-            _ = mljob_launcher.main(self.complex_script)
+            _ = mljob_launcher.main(self.complex_script, session=self.session)
         except Exception as e:
             self.fail(f"main() raised exception unexpectedly: {e}")
 
@@ -170,11 +187,11 @@ class MLJobLauncherTests(parameterized.TestCase):
         # Test with non-existent script path
         nonexistent_path = os.path.join(self.test_dir, "nonexistent_script.py")
         with self.assertRaises(FileNotFoundError):
-            mljob_launcher.main(nonexistent_path)
+            mljob_launcher.main(nonexistent_path, session=self.session)
 
     def test_result_pickling_error(self) -> None:
         with self.assertLogs(level="WARNING"):
-            result = mljob_launcher.main(self.nonserializable_script)
+            result = mljob_launcher.main(self.nonserializable_script, session=self.session)
         # Even with pickling error, main() should still return the result directly
         self.assertEqual(str(result), "100")
 

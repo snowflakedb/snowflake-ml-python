@@ -262,9 +262,9 @@ class FeatureTest(absltest.TestCase):
         self.assertEqual(spec.window, "24h")
         self.assertEqual(spec.output_column, "PRICE_MAX_24H")
 
-    def test_std(self) -> None:
-        """Test Feature.std factory method."""
-        feature = Feature.std("price", "24h")
+    def test_stddev(self) -> None:
+        """Test Feature.stddev factory method."""
+        feature = Feature.stddev("price", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.STD)
         self.assertEqual(spec.source_column, "price")
@@ -347,7 +347,7 @@ class FeatureTest(absltest.TestCase):
         self.assertEqual(Feature.sum("a", "1h", offset="1h").to_spec().offset, "1h")
         self.assertEqual(Feature.count("a", "1h", offset="2h").to_spec().offset, "2h")
         self.assertEqual(Feature.avg("a", "1h", offset="1d").to_spec().offset, "1d")
-        self.assertEqual(Feature.std("a", "1h", offset="1h").to_spec().offset, "1h")
+        self.assertEqual(Feature.stddev("a", "1h", offset="1h").to_spec().offset, "1h")
         self.assertEqual(Feature.var("a", "1h", offset="1h").to_spec().offset, "1h")
 
         # List aggregations
@@ -474,15 +474,15 @@ class LifetimeWindowTest(absltest.TestCase):
         self.assertTrue(min_spec.is_lifetime())
         self.assertTrue(max_spec.is_lifetime())
 
-    def test_lifetime_feature_std_var(self) -> None:
-        """Test creating lifetime STD and VAR features."""
-        std_feature = Feature.std("amount", "lifetime").alias("std_amount")
+    def test_lifetime_feature_stddev_var(self) -> None:
+        """Test creating lifetime STDDEV and VAR features."""
+        stddev_feature = Feature.stddev("amount", "lifetime").alias("stddev_amount")
         var_feature = Feature.var("amount", "lifetime").alias("var_amount")
 
-        std_spec = std_feature.to_spec()
+        stddev_spec = stddev_feature.to_spec()
         var_spec = var_feature.to_spec()
 
-        self.assertTrue(std_spec.is_lifetime())
+        self.assertTrue(stddev_spec.is_lifetime())
         self.assertTrue(var_spec.is_lifetime())
 
     def test_lifetime_feature_approx_count_distinct_not_supported(self) -> None:

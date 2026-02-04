@@ -162,3 +162,30 @@ py_test(
         ":registry_model_deployment_test_base",
     ],
 )
+
+py_test(
+    name = "registry_dataframe_protocols_test",
+    timeout = "eternal",
+    srcs = ["registry_dataframe_protocols_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/_internal/utils:identifier",
+        "//snowflake/ml/_internal/utils:jwt_generator",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/utils:authentication",
+    ],
+)
+
+py_test(
+    name = "registry_inference_params_test",
+    timeout = "eternal",
+    srcs = ["registry_inference_params_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)

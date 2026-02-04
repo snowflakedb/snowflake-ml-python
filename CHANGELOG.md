@@ -1,10 +1,123 @@
 # Release History
 
-## 1.25.1
+## 1.26.0
+
+### New Features
+
+* ML Job: Added support for creating `MLJobDefinition` (PrPr) and launching jobs with different
+  arguments without re-uploading payloads.
+
+```python
+# /path/to/repo/my_script.py
+
+def main(*args):
+    print("Hello world", *args)
+
+if __name__ == '__main__':
+    import sys
+    main(*sys.argv[1:])
+
+from snowflake.ml.jobs.job_definition import MLJobDefinition
+job_def = MLJobDefinition.register(
+  "/path/to/repo/my_script.py",
+  # If you register a source directory, provide the entrypoint file:
+  # entrypoint="/path/to/repo/my_script.py",
+  compute_pool= "test_comput_pool",
+  stage_name="payload_stage",
+)
+
+job1 = job_def()
+job2 = job_def(arg1="ML Job")
+
+
+from snowflake.ml import jobs
+@jobs.remote(compute_pool = "test_compute_pool", stage_name = "payload_stage")
+def test_job(arg1: str = "world") -> None:
+  print(f"hello {arg1}")
+
+# this is a job definition handle
+job_def_remote = test_job
+
+job1 = job_def_remote()
+job2 = job_def_remote(arg1="ML Job")
+
+
+```
+
+* Job-based Batch Inference (PuPr): `ModelVersion.run_batch` for job-based batch inference in Snowpark Container
+Services is now in public preview.
+
+```python
+from snowflake.ml.registry import Registry
+from snowflake.ml.model import OutputSpec
+
+registry = Registry(session)
+mv = registry.log_model( ... )
+
+job = mv.run_batch(
+    compute_pool = "SYSTEM_COMPUTE_POOL_GPU",
+    X=input_df,
+    output_spec=OutputSpec(stage_location="@my_db.my_schema.my_stage/output/"),
+)
+```
+
+* Registry: Added support for inference parameters via `ParamSpec` in model signatures. This allows you to define
+  constant parameters that can be passed at inference time without being part of the input data.
+
+```python
+import pandas as pd
+from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.registry import Registry
+
+# Define a custom model with inference parameters
+class MyModelWithParams(custom_model.CustomModel):
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        temperature: float = 1.0,  # keyword-only param with default
+    ) -> pd.DataFrame:
+        return pd.DataFrame({"output": input_df["feature"] * temperature})
+
+# Create sample data
+model = MyModelWithParams(custom_model.ModelContext())
+sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+sample_output = model.predict(sample_input, temperature=1.0)
+
+# Define ParamSpec for the inference parameter
+params = [
+    model_signature.ParamSpec(
+        name="temperature",
+        dtype=model_signature.DataType.FLOAT,
+        default_value=1.0,
+    ),
+]
+
+# Infer signature with params
+sig = model_signature.infer_signature(
+    input_data=sample_input,
+    output_data=sample_output,
+    params=params,
+)
+
+# Log model with the signature
+registry = Registry(session)
+mv = registry.log_model(
+    model=model,
+    model_name="my_model_with_params",
+    version_name="v1",
+    signatures={"predict": sig},
+)
+
+# Run inference with custom parameter value
+result = mv.run(sample_input, function_name="predict", params={"temperature": 2.0})
 
 ### Bug Fixes
 
-* ML Job: Reverted changes related to the introduction of ML Job Definitions.
+### Behavior Changes
+
+### Deprecations
 
 ## 1.25.0
 
@@ -21,6 +134,15 @@
   with the `min_instances` and automatically scales between `min_instances` and `max_instances` based on
   traffic and hardware utilization. When `min_instances` is set to 0, the service will automatically suspend
   if no traffic is detected for a period of time.
+
+* Feature Store: Added `auto_prefix` parameter and `with_name()` method to avoid column name collisions when
+  joining multiple feature views in dataset generation.
+
+* Feature Store: Added support for Dynamic Iceberg Tables as the backing storage for Feature Views.
+  Use `StorageConfig` with `StorageFormat.ICEBERG` to create Iceberg-backed Feature Views that store
+  data in open Apache Iceberg format on external cloud storage. A new `default_iceberg_external_volume`
+  parameter is available in `FeatureStore` to set a default external volume for Iceberg Feature Views.
+
 
 ### Bug Fixes
 

@@ -7,6 +7,7 @@ from typing_extensions import NotRequired
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import model_signature, type_hints
+from snowflake.ml.model._client.ops import param_utils
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import (
     constants,
@@ -145,6 +146,20 @@ class ModelMethod:
         return result
 
     @staticmethod
+    def _format_param_default_value(default_value: object) -> str:
+        """Format a parameter default value for the MANIFEST file.
+
+        The default value must be a valid SQL expression that Snowflake can parse.
+
+        Args:
+            default_value: The default value to format.
+
+        Returns:
+            A string representation suitable for the MANIFEST file as a SQL expression.
+        """
+        return param_utils.format_param_value_for_sql(default_value)
+
+    @staticmethod
     def _get_method_arg_from_param(
         param_spec: model_signature.ParamSpec,
         case_sensitive: bool = False,
@@ -156,11 +171,10 @@ class ModelMethod:
                 f"Your parameter {param_spec.name} cannot be resolved as valid SQL identifier. "
                 "Try specifying `case_sensitive` as True."
             ) from e
-        # Convert None to "NULL" string so MANIFEST parser can interpret it as SQL NULL
-        default_value = "NULL" if param_spec.default_value is None else str(param_spec.default_value)
+        default_value = ModelMethod._format_param_default_value(param_spec.default_value)
         return model_manifest_schema.ModelMethodSignatureFieldWithNameAndDefault(
             name=param_name.resolved(),
-            type=type_utils.convert_sp_to_sf_type(param_spec.dtype.as_snowpark_type()),
+            type=type_utils.convert_sp_to_sf_type(param_spec.as_snowpark_type()),
             default=default_value,
         )
 

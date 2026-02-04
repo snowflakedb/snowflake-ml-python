@@ -1,4 +1,4 @@
-import textwrap
+import datetime
 import warnings
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -11,6 +11,7 @@ from typing import (
     Union,
     final,
     get_args,
+    get_origin,
 )
 
 import numpy as np
@@ -41,6 +42,8 @@ PandasExtensionTypes = Union[
     pd.BooleanDtype,
     pd.StringDtype,
 ]
+
+_INDENT = "    "
 
 
 class DataType(Enum):
@@ -196,22 +199,44 @@ class DataType(Enum):
         """Translate Python built-in type to DataType for signature definition.
 
         Args:
-            python_type: A Python built-in type (int, float, str, bool).
+            python_type: A Python built-in type (int, float, str, bool, bytes, datetime.datetime),
+                or a list type (e.g., list[str], list[list[int]]).
 
         Raises:
+            SnowflakeMLException: ValueError: Raised when bare list type is provided without element type.
             SnowflakeMLException: NotImplementedError: Raised when the given Python type is not supported.
 
         Returns:
-            Corresponding DataType.
+            Corresponding DataType. For list types, returns the DataType of the innermost element.
         """
         python_to_snowml_type_mapping: dict[type, "DataType"] = {
             int: DataType.INT64,
             float: DataType.DOUBLE,
             str: DataType.STRING,
             bool: DataType.BOOL,
+            bytes: DataType.BYTES,
+            datetime.datetime: DataType.TIMESTAMP_NTZ,
         }
         if python_type in python_to_snowml_type_mapping:
             return python_to_snowml_type_mapping[python_type]
+
+        # Handle bare list without type args
+        if python_type is list:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_DATA,
+                original_exception=ValueError(
+                    "Bare 'list' type is not supported. Please specify the element type, e.g., list[str]."
+                ),
+            )
+
+        # Handle generic list types (e.g., list[str], list[list[int]])
+        origin = get_origin(python_type)
+        if origin is list:
+            args = get_args(python_type)
+            if args:
+                # Recursively get the innermost element type
+                return cls.from_python_type(args[0])
+
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.NOT_IMPLEMENTED,
             original_exception=NotImplementedError(
@@ -219,6 +244,42 @@ class DataType(Enum):
                 f"Supported types are: {list(python_to_snowml_type_mapping.keys())}."
             ),
         )
+
+    @classmethod
+    def shape_from_python_type(cls, python_type: type) -> Optional[tuple[int, ...]]:
+        """Get the shape for a Python type annotation.
+
+        Args:
+            python_type: A Python type annotation.
+
+        Returns:
+            None for scalar types, (-1,) for 1D list, (-1, -1) for 2D list, etc.
+            -1 indicates variable length dimensions.
+        """
+        # Scalar types have no shape
+        if python_type in {int, float, str, bool, bytes, datetime.datetime}:
+            return None
+
+        # Handle generic list types
+        origin = get_origin(python_type)
+        if origin is list:
+            args = get_args(python_type)
+            if args:
+                inner_shape = cls.shape_from_python_type(args[0])
+                if inner_shape is None:
+                    # Inner type is scalar, so this is a 1D list
+                    return (-1,)
+                else:
+                    # Inner type is also a list, prepend a dimension
+                    return (-1,) + inner_shape
+            # list without type args - treat as 1D
+            return (-1,)
+
+        # Bare list without origin
+        if python_type is list:
+            return (-1,)
+
+        return None
 
 
 class BaseFeatureSpec(ABC):
@@ -305,6 +366,8 @@ class FeatureSpec(BaseFeatureSpec):
         if not self._shape:
             return result_type
         for _ in range(len(self._shape)):
+            # Add ArrayType for each dimension using recursion
+            # e.g. (2,) -> ArrayType(ArrayType(LongType))
             result_type = spt.ArrayType(result_type)
         return result_type
 
@@ -345,11 +408,11 @@ class FeatureSpec(BaseFeatureSpec):
             return False
 
     def __repr__(self) -> str:
-        shape_str = f", shape={repr(self._shape)}" if self._shape else ""
-        return (
-            f"FeatureSpec(dtype={repr(self._dtype)}, "
-            f"name={repr(self._name)}{shape_str}, nullable={repr(self._nullable)})"
-        )
+        return self._format_repr(num_indents=0)
+
+    def _format_repr(self, num_indents: int = 0) -> str:
+        shape_str = f", shape={self._shape!r}" if self._shape else ""
+        return f"FeatureSpec(dtype={self._dtype!r}, name={self._name!r}{shape_str}, nullable={self._nullable!r})"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the feature group into a dict.
@@ -464,16 +527,22 @@ class FeatureGroupSpec(BaseFeatureSpec):
             return False
 
     def __repr__(self) -> str:
-        spec_strs = ",\n\t\t".join(repr(spec) for spec in self._specs)
-        shape_str = f", shape={repr(self._shape)}" if self._shape else ""
-        return textwrap.dedent(
-            f"""FeatureGroupSpec(
-                name={repr(self._name)},
-                specs=[
-                    {spec_strs}
-                ]{shape_str}
-            )
-            """
+        return self._format_repr(num_indents=0)
+
+    def _format_repr(self, num_indents: int = 0) -> str:
+        base_indent = _INDENT * num_indents
+        child_indent = _INDENT * (num_indents + 1)
+        spec_indent = _INDENT * (num_indents + 2)
+        spec_strs = ",\n".join(
+            spec_indent + (spec._format_repr(num_indents + 2) if hasattr(spec, "_format_repr") else repr(spec))
+            for spec in self._specs
+        )
+        shape_str = f", shape={self._shape!r}" if self._shape else ""
+        return (
+            f"FeatureGroupSpec(\n"
+            f"{child_indent}name={self._name!r},\n"
+            f"{child_indent}specs=[\n{spec_strs}\n{child_indent}]{shape_str}\n"
+            f"{base_indent})"
         )
 
     def as_dtype(self, force_numpy_dtype: bool = False) -> Union[npt.DTypeLike, str, PandasExtensionTypes]:
@@ -632,6 +701,21 @@ class ParamSpec(BaseParamSpec):
         """Default value of the parameter."""
         return self._default_value
 
+    def as_snowpark_type(self) -> spt.DataType:
+        """Convert to corresponding Snowpark Type, accounting for shape.
+
+        Returns:
+            A Snowpark type. If shape is specified, wraps the base type in ArrayType.
+        """
+        result_type = self._dtype.as_snowpark_type()
+        if not self._shape:
+            return result_type
+        for _ in range(len(self._shape)):
+            # Add ArrayType for each dimension using recursion
+            # e.g. (2,) -> ArrayType(ArrayType(LongType))
+            result_type = spt.ArrayType(result_type)
+        return result_type
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the parameter specification into a dict.
 
@@ -679,10 +763,12 @@ class ParamSpec(BaseParamSpec):
             return False
 
     def __repr__(self) -> str:
-        shape_str = f", shape={repr(self._shape)}" if self._shape else ""
+        return self._format_repr(num_indents=0)
+
+    def _format_repr(self, num_indents: int = 0) -> str:
+        shape_str = f", shape={self._shape!r}" if self._shape else ""
         return (
-            f"ParamSpec(name={repr(self._name)}, dtype={repr(self._dtype)}, "
-            f"default_value={repr(self._default_value)}{shape_str})"
+            f"ParamSpec(name={self._name!r}, dtype={self._dtype!r}, default_value={self._default_value!r}{shape_str})"
         )
 
     @classmethod
@@ -732,16 +818,22 @@ class ParamGroupSpec(BaseParamSpec):
         return False
 
     def __repr__(self) -> str:
-        spec_strs = ",\n\t\t".join(repr(spec) for spec in self._specs)
-        shape_str = f",\nshape={repr(self._shape)}" if self._shape else ""
-        return textwrap.dedent(
-            f"""ParamGroupSpec(
-                name={repr(self._name)},
-                specs=[
-                    {spec_strs}
-                ]{shape_str}
-            )
-            """
+        return self._format_repr(num_indents=0)
+
+    def _format_repr(self, num_indents: int = 0) -> str:
+        base_indent = _INDENT * num_indents
+        child_indent = _INDENT * (num_indents + 1)
+        spec_indent = _INDENT * (num_indents + 2)
+        spec_strs = ",\n".join(
+            spec_indent + (spec._format_repr(num_indents + 2) if hasattr(spec, "_format_repr") else repr(spec))
+            for spec in self._specs
+        )
+        shape_str = f", shape={self._shape!r}" if self._shape else ""
+        return (
+            f"ParamGroupSpec(\n"
+            f"{child_indent}name={self._name!r},\n"
+            f"{child_indent}specs=[\n{spec_strs}\n{child_indent}]{shape_str}\n"
+            f"{base_indent})"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -872,21 +964,30 @@ class ModelSignature:
         )
 
     def __repr__(self) -> str:
-        inputs_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._inputs)
-        outputs_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._outputs)
-        params_spec_strs = ",\n\t\t".join(repr(spec) for spec in self._params)
-        return textwrap.dedent(
-            f"""ModelSignature(
-                    inputs=[
-                        {inputs_spec_strs}
-                    ],
-                    outputs=[
-                        {outputs_spec_strs}
-                    ],
-                    params=[
-                        {params_spec_strs}
-                    ]
-                )"""
+        def format_spec_list(specs: Sequence[BaseFeatureSpec | BaseParamSpec], num_indents: int = 2) -> str:
+            if not specs:
+                return ""
+            return ",\n".join(
+                _INDENT * num_indents
+                + (spec._format_repr(num_indents) if hasattr(spec, "_format_repr") else repr(spec))
+                for spec in specs
+            )
+
+        inputs_spec_strs = format_spec_list(list(self._inputs))
+        outputs_spec_strs = format_spec_list(list(self._outputs))
+        params_spec_strs = format_spec_list(list(self._params))
+
+        def format_array(name: str, content: str) -> str:
+            if not content:
+                return f"{_INDENT}{name}=[]"
+            return f"{_INDENT}{name}=[\n{content}\n{_INDENT}]"
+
+        return (
+            f"ModelSignature(\n"
+            f"{format_array('inputs', inputs_spec_strs)},\n"
+            f"{format_array('outputs', outputs_spec_strs)},\n"
+            f"{format_array('params', params_spec_strs)}\n"
+            f")"
         )
 
     def _repr_html_(self) -> str:
@@ -900,7 +1001,7 @@ class ModelSignature:
         # Create collapsible sections for inputs and outputs
         inputs_content = html_utils.create_features_html(self.inputs, "Input")
         outputs_content = html_utils.create_features_html(self.outputs, "Output")
-        params_content = html_utils.create_parameters_html(self.params, "Parameter")
+        params_content = html_utils.create_parameters_html(self.params)
         inputs_section = html_utils.create_collapsible_section("Inputs", inputs_content, open_by_default=True)
         outputs_section = html_utils.create_collapsible_section("Outputs", outputs_content, open_by_default=True)
         params_section = html_utils.create_collapsible_section("Parameters", params_content, open_by_default=True)

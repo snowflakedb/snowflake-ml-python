@@ -909,6 +909,53 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         ).collect()
         self.assertEqual(len(online_tables), 1)
 
+    def test_overwrite_online_enabled_fv_with_online_disabled_fv(self) -> None:
+        """Test that overwriting an online-enabled FV with an online-disabled FV deletes the dangling OFT."""
+        fv_name = "test_overwrite_online_to_offline"
+
+        # Create initial feature view with online enabled
+        fv_online = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount"),
+            refresh_freq="1h",
+            desc="Online-enabled feature view",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="10s"),
+        )
+
+        self.fs.register_feature_view(fv_online, "v1")
+        retrieved_fv_online = self.fs.get_feature_view(fv_name, "v1")
+
+        # Verify online table was created
+        self.assertTrue(retrieved_fv_online.online)
+        online_tables_before = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '%{fv_name.upper()}%' IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(online_tables_before), 1, "Online feature table should exist after initial registration")
+
+        # Overwrite with online-disabled feature view
+        fv_offline = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount"),
+            refresh_freq="2h",
+            desc="Online-disabled feature view",
+            online_config=feature_view.OnlineConfig(enable=False),
+        )
+
+        self.fs.register_feature_view(fv_offline, "v1", overwrite=True)
+        retrieved_fv_offline = self.fs.get_feature_view(fv_name, "v1")
+
+        # Verify the feature view is now offline
+        self.assertFalse(retrieved_fv_offline.online)
+        self.assertEqual(retrieved_fv_offline.desc, "Online-disabled feature view")
+
+        # Verify the online table has been deleted (no dangling OFT)
+        online_tables_after = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '%{fv_name.upper()}%' IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(online_tables_after), 0, "Online feature table should be deleted after overwrite")
+
 
 if __name__ == "__main__":
     absltest.main()

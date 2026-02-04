@@ -9,6 +9,7 @@ from snowflake.ml._internal.utils import (
     query_result_checker,
     sql_identifier,
 )
+from snowflake.ml.model._client.ops import param_utils
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.model._model_composer.model_method import constants
 from snowflake.snowpark import dataframe, functions as F, row, types as spt
@@ -20,14 +21,6 @@ def _normalize_url_for_sql(url: str) -> str:
         url = url[1:-1]
     url = url.replace("'", "\\'")
     return f"'{url}'"
-
-
-def _format_param_value(value: Any) -> str:
-    if isinstance(value, str):
-        return f"'{snowpark_utils.escape_single_quotes(value)}'"  # type: ignore[no-untyped-call]
-    elif value is None:
-        return "NULL"
-    return str(value)
 
 
 class ModelVersionSQLClient(_base._BaseSQLClient):
@@ -402,7 +395,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         args_sql = ", ".join(args_sql_list)
 
         if params:
-            param_sql = ", ".join(_format_param_value(val) for _, val in params)
+            param_sql = ", ".join(param_utils.format_param_value_for_sql(val) for _, val in params)
             args_sql = f"{args_sql}, {param_sql}" if args_sql else param_sql
 
         total_args = len(input_args) + (len(params) if params else 0)
@@ -410,7 +403,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         if wide_input:
             parts = [f"'{arg}', {arg.identifier()}" for arg in input_args]
             if params:
-                parts.extend(f"'{name}', {_format_param_value(val)}" for name, val in params)
+                parts.extend(f"'{name}', {param_utils.format_param_value_for_sql(val)}" for name, val in params)
             args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
         sql = textwrap.dedent(
@@ -495,7 +488,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         args_sql = ", ".join(args_sql_list)
 
         if params:
-            param_sql = ", ".join(_format_param_value(val) for _, val in params)
+            param_sql = ", ".join(param_utils.format_param_value_for_sql(val) for _, val in params)
             args_sql = f"{args_sql}, {param_sql}" if args_sql else param_sql
 
         total_args = len(input_args) + (len(params) if params else 0)
@@ -503,7 +496,7 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         if wide_input:
             parts = [f"'{arg}', {arg.identifier()}" for arg in input_args]
             if params:
-                parts.extend(f"'{name}', {_format_param_value(val)}" for name, val in params)
+                parts.extend(f"'{name}', {param_utils.format_param_value_for_sql(val)}" for name, val in params)
             args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
         sql = textwrap.dedent(

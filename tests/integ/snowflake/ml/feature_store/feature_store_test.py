@@ -16,6 +16,7 @@ from common_utils import (
 )
 from fs_integ_test_base import FeatureStoreIntegTestBase
 
+import snowflake.ml.feature_store.feature_view as fv_mod
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
@@ -28,6 +29,8 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewSlice,
     FeatureViewStatus,
+    StorageConfig,
+    StorageFormat,
 )
 from snowflake.ml.utils import connection_params
 from snowflake.ml.version import VERSION
@@ -36,6 +39,34 @@ from snowflake.snowpark.functions import call_udf, col, udf
 
 
 class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    # Iceberg storage configurations for different cloud providers
+    # Each config contains: (volume_prefix, storage_location_sql)
+    _ICEBERG_STORAGE_CONFIGS = {
+        "AWS": (
+            "MLPLATFORMTEST_ICEBERG_AWS_S3",
+            """
+                (
+                    NAME                 = 'prod-iceberg-s3'
+                    STORAGE_PROVIDER     = 'S3'
+                    STORAGE_BASE_URL     = 's3://mlplatform-iceberg-test/ml-platform/'
+                    STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::736112632310:role/MLPlatformTestIcebergRole'
+                    STORAGE_AWS_EXTERNAL_ID = 'MLPLATFORMTEST_SFCRole=MLPlatformExternalVolume='
+                )
+            """,
+        ),
+        "AZURE": (
+            "MLPLATFORMTEST_ICEBERG_AZURE_BLOB",
+            """
+                (
+                    NAME = 'prod-iceberg-azure'
+                    STORAGE_PROVIDER = 'AZURE'
+                    STORAGE_BASE_URL = 'azure://mlplatformtesticeberg.blob.core.windows.net/iceberg-data/'
+                    AZURE_TENANT_ID = '075f576f-6f9a-4955-8d99-4086736225c9'
+                )
+            """,
+        ),
+    }
+
     def setUp(self) -> None:
         super().setUp()
         # Preserve access to connection options for tests that spawn sessions explicitly
@@ -53,6 +84,63 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self.tearDown()
             raise Exception(f"Test setup failed: {e}")
 
+    def _create_iceberg_external_volume(self, provider: str = "AWS") -> str:
+        """Create a unique external volume for the specified cloud provider.
+
+        Each test gets its own external volume with a unique name to avoid
+        permission conflicts when different roles run tests. The volume is
+        cleaned up in tearDown().
+
+        Args:
+            provider: Cloud provider (e.g. "AWS" or "AZURE")
+
+        Returns:
+            The name of the created external volume.
+        """
+        volume_prefix, storage_location_sql = self._ICEBERG_STORAGE_CONFIGS[provider]
+        volume_name = f"{volume_prefix}_{uuid4().hex[:8].upper()}"
+
+        self._evm.create_external_volume(volume_name, storage_location_sql)
+
+        # Track for cleanup
+        if not hasattr(self, "_iceberg_external_volumes"):
+            self._iceberg_external_volumes = []
+        self._iceberg_external_volumes.append(volume_name)
+
+        return volume_name
+
+    def _create_iceberg_storage_config(self, provider: str) -> StorageConfig:
+        """Create a StorageConfig for Iceberg with a unique base_location per test.
+
+        Each test gets its own isolated storage path to prevent conflicts when tests
+        run in parallel. The base_location uses a UUID to ensure uniqueness.
+
+        Args:
+            provider: Cloud provider - "AWS" or "AZURE"
+
+        Returns:
+            StorageConfig configured for Iceberg format with a unique base_location.
+        """
+        volume_name = self._create_iceberg_external_volume(provider)
+        unique_path = f"test_{uuid4().hex}/"
+
+        # Track for cloud storage cleanup
+        if not hasattr(self, "_iceberg_storage_paths"):
+            self._iceberg_storage_paths = []
+        self._iceberg_storage_paths.append((provider, unique_path))
+
+        return StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume=volume_name,
+            base_location=unique_path,
+        )
+
+    # Cloud storage config constants for cleanup
+    _S3_BUCKET = "mlplatform-iceberg-test"
+    _S3_PREFIX = "ml-platform/"
+    _AZURE_ACCOUNT_URL = "https://mlplatformtesticeberg.blob.core.windows.net"
+    _AZURE_CONTAINER = "iceberg-data"
+
     def tearDown(self) -> None:
         for fs in self._active_feature_store:
             try:
@@ -63,6 +151,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
 
         self._session.sql(f"DROP TABLE IF EXISTS {self._mock_table}").collect()
+
+        # Clean up external volumes created by this specific test instance
+        if hasattr(self, "_iceberg_external_volumes"):
+            for volume in self._iceberg_external_volumes:
+                self._evm.drop_external_volume(volume, if_exists=True)
+
+        # Also clean up stale/orphaned volumes (older than 1 day) to handle crashed tests
+        self._evm.cleanup_external_volumes("MLPLATFORMTEST_ICEBERG_", expire_days=1)
+
         super().tearDown()
 
     def _create_mock_table(self, name: str) -> str:
@@ -81,7 +178,11 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         ).collect()
         return table_full_path
 
-    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+    def _create_feature_store(
+        self,
+        name: Optional[str] = None,
+        default_iceberg_external_volume: Optional[str] = None,
+    ) -> FeatureStore:
         current_schema = create_random_schema(self._session, "FS_TEST", database=self.test_db) if name is None else name
         fs = FeatureStore(
             self._session,
@@ -89,6 +190,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             current_schema,
             default_warehouse=self._test_warehouse_name,
             creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+            default_iceberg_external_volume=default_iceberg_external_volume,
         )
         self._active_feature_store.append(fs)
         # Intentionally point session to a different database to make sure feature store code is resilient to
@@ -511,6 +613,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "SCHEDULING_STATE": [None, None],
                 "WAREHOUSE": [None, None],
                 "CLUSTER_BY": [None, None],
+                "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG"],
@@ -670,6 +773,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["SUSPENDED", "ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID"]', '["AID", "UID", "TS"]', '["AID", "UID"]'],
+                "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
@@ -695,6 +799,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL"],
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID", "TS"]', '["AID", "UID"]'],
+                "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
@@ -814,20 +919,46 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         fs._session = original_session
 
-    @parameterized.parameters("1d", "0 0 * * * America/Los_Angeles")  # type: ignore[misc]
-    def test_refresh_feature_view(self, refresh_freq: str) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        ("1d", None),  # Regular DT with duration
+        ("0 0 * * * America/Los_Angeles", None),  # Regular DT with cron
+        ("1d", "AWS"),  # Iceberg DT with auto base_location
+    )
+    def test_refresh_feature_view(self, refresh_freq: str, iceberg_provider: Optional[str]) -> None:
         fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
+
+        # Configure storage for Iceberg if provider specified
+        storage_config = None
+        if iceberg_provider:
+            volume_name = self._create_iceberg_external_volume(iceberg_provider)
+            base_location = f"{uuid4().hex[:8]}"
+            # Track for cloud storage cleanup
+            if not hasattr(self, "_iceberg_storage_paths"):
+                self._iceberg_storage_paths = []
+            self._iceberg_storage_paths.append((iceberg_provider, base_location))
+            storage_config = StorageConfig(
+                format=StorageFormat.ICEBERG,
+                external_volume=volume_name,
+                base_location=base_location,
+            )
 
         my_fv = FeatureView(
             name="my_fv",
             entities=[e],
             feature_df=self._session.table(self._mock_table),
             refresh_freq=refresh_freq,
+            storage_config=storage_config,
         )
         my_fv = fs.register_feature_view(feature_view=my_fv, version="v1", block=True)
+
+        # Verify Iceberg storage config if applicable
+        if iceberg_provider:
+            self.assertEqual(StorageFormat.ICEBERG, my_fv.storage_config.format)
+            self.assertIsNotNone(my_fv.storage_config.external_volume)
+            self.assertIsNotNone(my_fv.storage_config.base_location)
         res_1 = fs.get_refresh_history(my_fv).collect()
         self.assertEqual(len(res_1), 1)
 
@@ -985,6 +1116,49 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.delete_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"new_refresh_freq": "1 minute", "expected_refresh_freq": "1 minute"},
+        {"new_refresh_freq": "DOWNSTREAM", "expected_refresh_freq": "DOWNSTREAM"},
+    )
+    def test_overwrite_cron_fv_cleans_up_task(self, new_refresh_freq: str, expected_refresh_freq: str) -> None:
+        """Test that overwriting a CRON-based FV with a non-CRON FV cleans up the task."""
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+
+        # First, register a CRON-based feature view (creates a task)
+        cron_fv = FeatureView(
+            name="cron_overwrite_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="* * * * * America/Los_Angeles",
+        )
+        cron_fv = fs.register_feature_view(feature_view=cron_fv, version="v1")
+
+        task_name = FeatureView._get_physical_name(cron_fv.name, cron_fv.version).resolved()  # type: ignore[arg-type]
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 1, "Task should exist after registering CRON-based FV")
+
+        # Now overwrite with a non-CRON FV (should clean up the task)
+        new_fv = FeatureView(
+            name="cron_overwrite_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq=new_refresh_freq,
+        )
+        new_fv = fs.register_feature_view(feature_view=new_fv, version="v1", overwrite=True)
+
+        # Verify the task has been cleaned up
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 0, f"Task should be cleaned up after overwriting with {new_refresh_freq} FV")
+
+        # Verify the DT still exists and has the correct refresh_freq
+        retrieved_fv = fs.get_feature_view("cron_overwrite_fv", "v1")
+        self.assertEqual(retrieved_fv.refresh_freq, expected_refresh_freq)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"join_method": "cte"},
@@ -1172,6 +1346,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "WAREHOUSE": [],
                 "CLUSTER_BY": [],
                 "ONLINE_CONFIG": [],
+                "STORAGE_CONFIG": [],
             },
             sort_cols=["NAME"],
         )
@@ -1206,40 +1381,53 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             desc="foobar",
         )
         fs.register_feature_view(feature_view=fv3, version="v1")
+
+        # Add an Iceberg-backed feature view
+        iceberg_storage_config = self._create_iceberg_storage_config("AWS")
+        fv4 = FeatureView(
+            name="fv4",
+            entities=[e1],
+            feature_df=self._session.sql(sql2),
+            refresh_freq="1d",
+            desc="iceberg fv",
+            storage_config=iceberg_storage_config,
+        )
+        fs.register_feature_view(feature_view=fv4, version="v1")
+
         compare_dataframe(
             actual_df=fs.list_feature_views().to_pandas(),
             target_data={
-                "NAME": ["FV1", "FV2", "FV3"],
-                "VERSION": ["v1", "v1", "v1"],
-                "DATABASE_NAME": [fs._config.database] * 3,
-                "SCHEMA_NAME": [fs._config.schema] * 3,
-                "DESC": ["", "foobar", "foobar"],
-                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "BAR"\n]', '[\n  "FOO",\n  "BAR"\n]'],
-                "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "DOWNSTREAM"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
-                "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE"],
-                "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]'],
+                "NAME": ["FV1", "FV2", "FV3", "FV4"],
+                "VERSION": ["v1", "v1", "v1", "v1"],
+                "DATABASE_NAME": [fs._config.database] * 4,
+                "SCHEMA_NAME": [fs._config.schema] * 4,
+                "DESC": ["", "foobar", "foobar", "iceberg fv"],
+                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "BAR"\n]', '[\n  "FOO",\n  "BAR"\n]', '[\n  "FOO"\n]'],
+                "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "DOWNSTREAM", "1 day"],
+                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
+                "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
         )
 
         compare_dataframe(
             actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
             target_data={
-                "NAME": ["FV1", "FV3"],
-                "VERSION": ["v1", "v1"],
-                "DATABASE_NAME": [fs._config.database, fs._config.database],
-                "SCHEMA_NAME": [fs._config.schema, fs._config.schema],
-                "DESC": ["", "foobar"],
-                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "FOO",\n  "BAR"\n]'],
-                "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM"],
-                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL"],
-                "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
-                "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]'],
+                "NAME": ["FV1", "FV3", "FV4"],
+                "VERSION": ["v1", "v1", "v1"],
+                "DATABASE_NAME": [fs._config.database] * 3,
+                "SCHEMA_NAME": [fs._config.schema] * 3,
+                "DESC": ["", "foobar", "iceberg fv"],
+                "ENTITIES": ['[\n  "FOO"\n]', '[\n  "FOO",\n  "BAR"\n]', '[\n  "FOO"\n]'],
+                "REFRESH_FREQ": ["DOWNSTREAM", "DOWNSTREAM", "1 day"],
+                "REFRESH_MODE": ["INCREMENTAL", "INCREMENTAL", "INCREMENTAL"],
+                "SCHEDULING_STATE": ["ACTIVE", "ACTIVE", "ACTIVE"],
+                "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1257,7 +1445,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1275,7 +1463,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
         )
 
         compare_dataframe(
@@ -1293,8 +1481,31 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
         )
+
+        # Verify STORAGE_CONFIG column shows correct format for all feature views
+        fv_list_df = fs.list_feature_views().to_pandas().sort_values("NAME").reset_index(drop=True)
+        self.assertIn("STORAGE_CONFIG", fv_list_df.columns)
+
+        # FV1, FV2, FV3 should have snowflake format; FV4 should have iceberg format
+        for _, row in fv_list_df.iterrows():
+            storage_config_json = _json.loads(row["STORAGE_CONFIG"])
+            if row["NAME"] == "FV4":
+                self.assertEqual(storage_config_json["format"], "iceberg")
+                self.assertIn("external_volume", storage_config_json)
+                self.assertIn("base_location", storage_config_json)
+            else:
+                self.assertEqual(storage_config_json["format"], "snowflake")
+
+        # Test filtering by Iceberg feature view name
+        fv4_df = fs.list_feature_views(feature_view_name="FV4").to_pandas()
+        self.assertEqual(len(fv4_df), 1)
+        self.assertEqual(fv4_df.iloc[0]["NAME"], "FV4")
+        fv4_storage_config = _json.loads(fv4_df.iloc[0]["STORAGE_CONFIG"])
+        self.assertEqual(fv4_storage_config["format"], "iceberg")
+        self.assertIn("external_volume", fv4_storage_config)
+        self.assertIn("base_location", fv4_storage_config)
 
         compare_dataframe(
             actual_df=fs.list_feature_views(entity_name="BAR", feature_view_name="BAZ").to_pandas(),
@@ -1313,6 +1524,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "WAREHOUSE": [],
                 "CLUSTER_BY": [],
                 "ONLINE_CONFIG": [],
+                "STORAGE_CONFIG": [],
             },
             sort_cols=["NAME"],
         )
@@ -2020,8 +2232,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         updated_fv = fs.update_feature_view(fv, desc="")
         self.assertEqual(updated_fv.desc, "")
+        # Static feature views should have no storage_config
+        self.assertIsNone(updated_fv.storage_config)
 
-    def test_update_managed_feature_view(self) -> None:
+    @parameterized.parameters(  # type: ignore[misc]
+        (None,),  # Regular managed FV
+        ("AWS",),  # Iceberg FV
+    )
+    def test_update_managed_feature_view(self, iceberg_provider: Optional[str]) -> None:
+        """Test update_feature_view for both regular and Iceberg managed FVs."""
         fs = self._create_feature_store()
 
         e = Entity("FOO", ["id"])
@@ -2030,15 +2249,33 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         sql = f"SELECT id, name, title FROM {self._mock_table}"
         alternative_wh = self._alt_warehouse_name
         old_desc = "this is old desc"
+
+        # Configure storage for Iceberg if provider specified
+        storage_config = None
+        initial_refresh_freq = "DOWNSTREAM"
+        if iceberg_provider:
+            storage_config = self._create_iceberg_storage_config(iceberg_provider)
+            initial_refresh_freq = "1d"  # Iceberg requires explicit refresh_freq
+
         fv = FeatureView(
             name="fv1",
             entities=[e],
             feature_df=self._session.sql(sql),
-            refresh_freq="DOWNSTREAM",
+            refresh_freq=initial_refresh_freq,
             desc=old_desc,
+            storage_config=storage_config,
         )
 
         fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Capture original storage_config for Iceberg FVs
+        original_external_volume = None
+        original_base_location = None
+        if iceberg_provider:
+            self.assertIsNotNone(fv.storage_config)
+            self.assertEqual(StorageFormat.ICEBERG, fv.storage_config.format)
+            original_external_volume = fv.storage_config.external_volume
+            original_base_location = fv.storage_config.base_location
 
         def check_fv_properties(
             name: str,
@@ -2051,8 +2288,17 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self.assertEqual(expected_refresh_freq, local_fv.refresh_freq)
             self.assertEqual(SqlIdentifier(expected_warehouse), local_fv.warehouse)
             self.assertEqual(expected_desc, local_fv.desc)
+            # Verify storage_config based on FV type
+            if iceberg_provider:
+                self.assertIsNotNone(local_fv.storage_config)
+                self.assertEqual(StorageFormat.ICEBERG, local_fv.storage_config.format)
+                self.assertEqual(original_external_volume, local_fv.storage_config.external_volume)
+                self.assertEqual(original_base_location, local_fv.storage_config.base_location)
+            else:
+                self.assertIsNone(local_fv.storage_config)
 
-        check_fv_properties("fv1", "v1", "DOWNSTREAM", self._session.get_current_warehouse(), old_desc)
+        initial_freq_expected = "1 day" if iceberg_provider else "DOWNSTREAM"
+        check_fv_properties("fv1", "v1", initial_freq_expected, self._session.get_current_warehouse(), old_desc)
 
         fs.update_feature_view("fv1", "v1", refresh_freq="1 minute", warehouse=alternative_wh)
         check_fv_properties("fv1", "v1", "1 minute", alternative_wh, old_desc)
@@ -2139,6 +2385,67 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             refresh_freq="1m",
         )
         fs.register_feature_view(feature_view=non_existing_fv, version="v1", overwrite=True)
+
+    # TODO: Add target_type = "view" test when feature view supports it.
+    @parameterized.parameters(  # type: ignore[misc]
+        {"target_type": "duration"},
+    )
+    def test_replace_cron_fv_cleans_up_task(self, target_type: Literal["duration", "view"]) -> None:
+        """Test that replacing a CRON-based FV properly cleans up the associated task.
+
+        When overwriting a CRON-based Feature View (which uses a task for scheduling)
+        with a duration-based FV or a view-based FV, the orphaned task should be dropped.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name FROM {self._mock_table}"
+
+        # Create a CRON-based feature view (creates DT with DOWNSTREAM + task)
+        cron_fv = FeatureView(
+            name="cron_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="* * * * * America/Los_Angeles",
+        )
+        cron_fv = fs.register_feature_view(feature_view=cron_fv, version="v1")
+
+        # Verify task was created
+        task_name = FeatureView._get_physical_name(cron_fv.name, cron_fv.version).resolved()
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 1, "Task should exist for CRON-based FV")
+        self.assertEqual(res[0]["state"], "started")
+
+        # Replace with target type
+        if target_type == "duration":
+            replacement_fv = FeatureView(
+                name="cron_fv",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                refresh_freq="1 hour",
+            )
+        else:  # view
+            replacement_fv = FeatureView(
+                name="cron_fv",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                refresh_freq=None,  # External/view-based FV
+            )
+
+        fs.register_feature_view(feature_view=replacement_fv, version="v1", overwrite=True)
+
+        # Verify task was cleaned up
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 0, f"Task should be dropped when replacing CRON FV with {target_type} FV")
+
+        # Verify the new FV works correctly
+        retrieved_fv = fs.get_feature_view("cron_fv", "v1")
+        if target_type == "duration":
+            self.assertEqual(retrieved_fv.refresh_freq, "1 hour")
+        else:
+            self.assertIsNone(retrieved_fv.refresh_freq)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"join_method": "cte"},
@@ -2584,10 +2891,18 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             fs.read_feature_view(123, "v1")  # type: ignore[call-overload]
 
     def test_large_feature_metadata(self) -> None:
+        """Test large feature metadata with both regular and Iceberg Dynamic Tables.
+
+        Tests that feature views with large feature sets (2000 features each) work correctly
+        for both regular dynamic tables and dynamic iceberg tables, including the batch
+        SHOW ICEBERG TABLES optimization for listing feature views.
+        """
         fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
+
+        iceberg_storage_config = self._create_iceberg_storage_config("AWS")
 
         def gen_random_sql() -> str:
             def rand_name() -> str:
@@ -2600,6 +2915,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             sql += f"FROM {self._mock_table}"
             return sql
 
+        # Regular dynamic table FVs
         fv1 = FeatureView(
             name="fv1",
             entities=[e],
@@ -2622,6 +2938,33 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fv3 = fs.register_feature_view(feature_view=fv3, version="v1")
         # select features with even pos in reversed order
         fv3_slice = fv3.slice(fv3.feature_names[::-2])  # type: ignore[arg-type]
+
+        # Dynamic Iceberg Table FV
+        fv4 = FeatureView(
+            name="fv4",
+            entities=[e],
+            feature_df=self._session.sql(gen_random_sql()),
+            storage_config=iceberg_storage_config,
+            refresh_freq="1d",
+        )
+        fv4 = fs.register_feature_view(feature_view=fv4, version="v1")
+
+        # Verify iceberg storage config is preserved
+        self.assertEqual(StorageFormat.ICEBERG, fv4.storage_config.format)
+
+        # Verify list_feature_views returns correct storage configs for mixed FV types
+        fv_list = fs.list_feature_views().collect()
+        self.assertEqual(4, len(fv_list))
+        iceberg_count = 0
+        snowflake_count = 0
+        for row in fv_list:
+            storage_config_json = row["STORAGE_CONFIG"].lower()
+            if '"format": "iceberg"' in storage_config_json:
+                iceberg_count += 1
+            elif '"format": "snowflake"' in storage_config_json:
+                snowflake_count += 1
+        self.assertEqual(1, iceberg_count)
+        self.assertEqual(3, snowflake_count)
 
         spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
         # Do not test CTE join method here as 2000 features make the test super slow on CTE
@@ -3498,6 +3841,409 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             # Verify columns exist (values may be NULL if ASOF JOIN doesn't match, but that's OK)
             self.assertIn("PLAN_TYPE", cte_df.columns, "PLAN_TYPE column should exist")
             self.assertIn("USAGE", cte_df.columns, "USAGE column should exist")
+
+    # ==================== Iceberg Storage Tests ====================
+    # Tests for Dynamic Iceberg Table support in Feature Store
+
+    def test_iceberg_external_volume_resolution(self) -> None:
+        """Test external_volume resolution for Iceberg Feature Views.
+
+        Tests three scenarios:
+        1. Error when no external_volume is available (neither in StorageConfig nor default)
+        2. Default external_volume is used when StorageConfig doesn't specify one
+        3. Explicit StorageConfig external_volume takes precedence over default
+        """
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+
+        # Scenario 1: No external_volume available - should error
+        fs1 = self._create_feature_store()
+        e1 = Entity("foo", ["id"])
+        fs1.register_entity(e1)
+
+        fv1 = FeatureView(
+            name="iceberg_fv_no_volume",
+            entities=[e1],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume=None),
+        )
+        with self.assertRaises(Exception) as cm:
+            fs1.register_feature_view(feature_view=fv1, version="v1")
+        self.assertIn("external_volume", str(cm.exception).lower())
+
+        # Scenario 2: Default external_volume is used
+        default_volume = self._create_iceberg_external_volume("AWS")
+        fs2 = self._create_feature_store(default_iceberg_external_volume=default_volume)
+        e2 = Entity("foo", ["id"])
+        fs2.register_entity(e2)
+
+        fv2 = FeatureView(
+            name="iceberg_fv_default_volume",
+            entities=[e2],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume=None),
+        )
+        registered_fv2 = fs2.register_feature_view(feature_view=fv2, version="v1")
+        self.assertEqual(StorageFormat.ICEBERG, registered_fv2.storage_config.format)
+        self.assertEqual(default_volume, registered_fv2.storage_config.external_volume)
+
+        # Scenario 3: Explicit external_volume overrides default
+        explicit_volume = self._create_iceberg_external_volume("AWS")
+        fv3 = FeatureView(
+            name="iceberg_fv_explicit_volume",
+            entities=[e2],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+            storage_config=StorageConfig(format=StorageFormat.ICEBERG, external_volume=explicit_volume),
+        )
+        registered_fv3 = fs2.register_feature_view(feature_view=fv3, version="v1")
+        self.assertEqual(explicit_volume, registered_fv3.storage_config.external_volume)
+
+    @parameterized.parameters("AWS", "AZURE")
+    def test_iceberg_feature_view_read_data(self, provider: str) -> None:
+        """Test reading and deleting an Iceberg-backed Feature View.
+
+        This test verifies that data can be read from a Feature View backed by
+        a Dynamic Iceberg Table using fs.read_feature_view(), and that the
+        Feature View can be deleted afterwards.
+        """
+
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config(provider)
+
+        fv = FeatureView(
+            name="iceberg_fv_read",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+            storage_config=iceberg_storage_config,
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Read data from the iceberg-backed feature view
+        result_df = fs.read_feature_view(registered_fv).to_pandas()
+
+        compare_dataframe(
+            actual_df=result_df,
+            target_data={
+                "NAME": ["jonh", "porter"],
+                "ID": [1, 2],
+                "TITLE": ["boss", "manager"],
+                "AGE": [20, 30],
+                "TS": [100, 200],
+            },
+            sort_cols=["ID"],
+        )
+
+        # Insert new data into source table
+        self._session.sql(
+            f"INSERT INTO {self._mock_table} VALUES ('alice', 3, 'engineer', 25, 'product', 300)"
+        ).collect()
+
+        # Refresh the feature view to pick up new data
+        fs.refresh_feature_view(registered_fv)
+
+        retrieved_fv = fs.get_feature_view("iceberg_fv_read", "v1")
+        # Read again and verify new data appears
+        result_df_after_refresh = fs.read_feature_view(retrieved_fv).to_pandas()
+        compare_dataframe(
+            actual_df=result_df_after_refresh,
+            target_data={
+                "NAME": ["jonh", "porter", "alice"],
+                "ID": [1, 2, 3],
+                "TITLE": ["boss", "manager", "engineer"],
+                "AGE": [20, 30, 25],
+                "TS": [100, 200, 300],
+            },
+            sort_cols=["ID"],
+        )
+
+        # Verify storage config in list_feature_views
+        fv_list_df = fs.list_feature_views().to_pandas()
+        iceberg_row = fv_list_df[fv_list_df["NAME"] == "ICEBERG_FV_READ"]
+        storage_config = _json.loads(iceberg_row["STORAGE_CONFIG"].iloc[0])
+        self.assertEqual(storage_config["format"], "iceberg")
+        self.assertIsNotNone(storage_config.get("external_volume"))
+        self.assertIsNotNone(storage_config.get("base_location"))
+        # Verify base_location is populated (uses custom path from _create_iceberg_storage_config)
+        self.assertIn("test_", storage_config["base_location"])
+
+        # Delete the feature view and verify deletion
+        fs.delete_feature_view(registered_fv)
+        self.assertEqual(fs.list_feature_views().count(), 0)
+
+    @parameterized.parameters("AWS", "AZURE")
+    def test_iceberg_feature_view_generate_dataset(self, provider: str) -> None:
+        """Test generating a dataset from an Iceberg-backed Feature View.
+
+        This test verifies that datasets can be generated from Feature Views
+        backed by Dynamic Iceberg Tables, ensuring full API compatibility.
+        """
+
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config(provider)
+
+        fv = FeatureView(
+            name="iceberg_fv_dataset",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            storage_config=iceberg_storage_config,
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Generate a dataset using the iceberg-backed feature view
+        spine_df = self._session.create_dataframe([(1, 101)], schema=["id", "ts"])
+        ds = fs.generate_dataset(
+            spine_df=spine_df,
+            features=[registered_fv],
+            spine_timestamp_col="ts",
+            name="test_iceberg_ds",
+            output_type="dataset",
+        )
+
+        # Verify the dataset contains expected data
+        result_df = ds.read.to_pandas()
+        self.assertEqual(len(result_df), 1)
+        self.assertEqual(result_df["ID"].iloc[0], 1)
+
+        # Verify load_feature_views_from_dataset works with Iceberg FVs
+        loaded_fvs = fs.load_feature_views_from_dataset(ds)
+        self.assertEqual(len(loaded_fvs), 1)
+        self.assertEqual(loaded_fvs[0].name, registered_fv.name)
+        self.assertEqual(loaded_fvs[0].version, registered_fv.version)
+        # Verify storage_config is correctly loaded
+        self.assertIsNotNone(loaded_fvs[0].storage_config)
+        self.assertEqual(StorageFormat.ICEBERG, loaded_fvs[0].storage_config.format)
+        self.assertIsNotNone(loaded_fvs[0].storage_config.external_volume)
+        self.assertIsNotNone(loaded_fvs[0].storage_config.base_location)
+
+    @parameterized.parameters("AWS", "AZURE")
+    def test_iceberg_storage_requires_refresh_freq(self, provider: str) -> None:
+        """Test that Iceberg storage requires refresh_freq."""
+        e = Entity("foo", ["id"])
+
+        sql = f"SELECT name, id, title, age FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config(provider)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Iceberg storage requires refresh_freq",
+        ):
+            FeatureView(
+                name="iceberg_fv_no_refresh",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                # refresh_freq is intentionally not set
+                storage_config=iceberg_storage_config,
+            )
+
+    @parameterized.parameters(
+        ("custom",),  # Custom base_location
+        ("auto",),  # Auto-generated base_location
+    )
+    def test_get_feature_view_preserves_storage_config(self, location_type: str) -> None:
+        """Test that get_feature_view correctly reconstructs storage_config.
+
+        This test verifies that when retrieving a Feature View with get_feature_view(),
+        the storage_config property is correctly reconstructed from metadata.
+        Tests both custom and auto-generated base_location.
+        """
+
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age FROM {self._mock_table}"
+        provider = "AWS"
+        volume_name = self._create_iceberg_external_volume(provider)
+
+        if location_type == "custom":
+            base_location: Optional[str] = f"test_path_{uuid4().hex}/"
+            # Track for cloud storage cleanup
+            if not hasattr(self, "_iceberg_storage_paths"):
+                self._iceberg_storage_paths = []
+            self._iceberg_storage_paths.append((provider, base_location))
+        else:
+            base_location = None  # Will be auto-generated
+
+        iceberg_storage_config = StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume=volume_name,
+            base_location=base_location,
+        )
+
+        fv = FeatureView(
+            name=f"iceberg_fv_get_{location_type}",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+            storage_config=iceberg_storage_config,
+        )
+
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Track auto-generated path immediately after registration for cleanup
+        # (before any assertions that could fail and leave orphaned cloud storage)
+        if location_type == "auto":
+            retrieved_fv_for_cleanup = fs.get_feature_view(f"iceberg_fv_get_{location_type}", "v1")
+            if not hasattr(self, "_iceberg_storage_paths"):
+                self._iceberg_storage_paths = []
+            self._iceberg_storage_paths.append((provider, retrieved_fv_for_cleanup.storage_config.base_location))
+
+        # Retrieve the feature view
+        retrieved_fv = fs.get_feature_view(f"iceberg_fv_get_{location_type}", "v1")
+
+        # Verify storage_config is preserved
+        self.assertIsNotNone(retrieved_fv.storage_config)
+        self.assertEqual(retrieved_fv.storage_config.format, StorageFormat.ICEBERG)
+        self.assertEqual(retrieved_fv.storage_config.external_volume, volume_name)
+        self.assertIsNotNone(retrieved_fv.storage_config.base_location)
+
+        # Verify base_location based on type
+        # Note: Snowflake may append a random suffix to base_location for uniqueness
+        if location_type == "custom":
+            self.assertTrue(
+                retrieved_fv.storage_config.base_location.startswith(base_location.rstrip("/")),
+                f"base_location should start with '{base_location}', got: {retrieved_fv.storage_config.base_location}",
+            )
+        else:
+            # Auto-generated should follow the pattern
+            auto_location = retrieved_fv.storage_config.base_location
+            self.assertTrue(
+                auto_location.startswith("snowflake/feature_store/iceberg/"),
+                f"Auto-generated base_location should start with \
+                    'snowflake/feature_store/iceberg/', got: {auto_location}",
+            )
+
+    @parameterized.parameters("AWS", "AZURE")
+    def test_iceberg_storage_rejects_online_config(self, provider: str) -> None:
+        """Test that Iceberg storage does not allow online feature tables.
+
+        Online Feature Tables with Iceberg storage is not currently supported and
+        requires a dedicated investigation into compatibility.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config(provider)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Online storage is not supported with Iceberg",
+        ):
+            FeatureView(
+                name="iceberg_fv_online",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                refresh_freq="1d",
+                storage_config=iceberg_storage_config,
+                online_config=fv_mod.OnlineConfig(enable=True),
+            )
+
+    def test_iceberg_feature_view_suspend_and_resume(self) -> None:
+        """Test that suspend and resume operations work for Iceberg-backed Feature Views.
+
+        Dynamic Iceberg tables support ALTER DYNAMIC TABLE for suspend/resume operations,
+        so these operations should work the same as regular Dynamic Tables.
+        """
+
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config("AZURE")
+
+        fv = FeatureView(
+            name="iceberg_fv_suspend",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="DOWNSTREAM",
+            storage_config=iceberg_storage_config,
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertTrue(
+            registered_fv.status == FeatureViewStatus.ACTIVE or registered_fv.status == FeatureViewStatus.RUNNING
+        )
+
+        # Test suspend
+        suspended_fv = fs.suspend_feature_view(registered_fv)
+        self.assertEqual(suspended_fv.status, FeatureViewStatus.SUSPENDED)
+
+        # Test resume
+        resumed_fv = fs.resume_feature_view(suspended_fv)
+        self.assertEqual(resumed_fv.status, FeatureViewStatus.ACTIVE)
+
+    def test_iceberg_feature_view_with_cron_refresh(self) -> None:
+        """Test that CRON-based refresh schedules work for Iceberg-backed Feature Views.
+
+        Dynamic Iceberg tables support ALTER DYNAMIC TABLE for refresh operations,
+        so CRON-based refresh via Snowflake Tasks should work the same as regular Dynamic Tables.
+        """
+
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age FROM {self._mock_table}"
+        iceberg_storage_config = self._create_iceberg_storage_config("AWS")
+
+        # CRON expression for hourly refresh
+        fv = FeatureView(
+            name="iceberg_fv_cron",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="0 * * * * America/Los_Angeles",  # Every hour
+            storage_config=iceberg_storage_config,
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        self.assertEqual(registered_fv.version, "v1")
+        # CRON-based refresh uses TARGET_LAG = 'DOWNSTREAM' with a Task
+        self.assertEqual(registered_fv.refresh_freq, "DOWNSTREAM")
+
+        # Verify the task was created
+        task_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version).resolved()
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["state"], "started")
+
+        # Test suspend/resume of CRON-based Iceberg FV
+        suspended_fv = fs.suspend_feature_view(registered_fv)
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(res[0]["state"], "suspended")
+
+        resumed_fv = fs.resume_feature_view(suspended_fv)
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(res[0]["state"], "started")
+
+        # Cleanup
+        fs.delete_feature_view(resumed_fv)
+        res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(len(res), 0)
 
 
 if __name__ == "__main__":

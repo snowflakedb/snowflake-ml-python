@@ -1,3 +1,5 @@
+import datetime
+
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
@@ -43,18 +45,65 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.DOUBLE, core.DataType.from_python_type(float))
         self.assertEqual(core.DataType.STRING, core.DataType.from_python_type(str))
         self.assertEqual(core.DataType.BOOL, core.DataType.from_python_type(bool))
+        self.assertEqual(core.DataType.BYTES, core.DataType.from_python_type(bytes))
+        self.assertEqual(core.DataType.TIMESTAMP_NTZ, core.DataType.from_python_type(datetime.datetime))
+
+    def test_python_type_list(self) -> None:
+        """Test conversion from list types to DataType returns innermost element type."""
+        self.assertEqual(core.DataType.STRING, core.DataType.from_python_type(list[str]))
+        self.assertEqual(core.DataType.INT64, core.DataType.from_python_type(list[int]))
+        self.assertEqual(core.DataType.DOUBLE, core.DataType.from_python_type(list[float]))
+        self.assertEqual(core.DataType.BOOL, core.DataType.from_python_type(list[bool]))
+        # Nested lists return the innermost element type
+        self.assertEqual(core.DataType.INT64, core.DataType.from_python_type(list[list[int]]))
+        self.assertEqual(core.DataType.STRING, core.DataType.from_python_type(list[list[list[str]]]))
+
+    def test_python_type_bare_list_raises(self) -> None:
+        """Test that bare list type raises ValueError."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="Bare 'list' type is not supported"
+        ):
+            core.DataType.from_python_type(list)
 
     def test_python_type_unsupported(self) -> None:
         """Test that unsupported Python types raise NotImplementedError."""
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=NotImplementedError, expected_regex="not supported as a DataType"
         ):
-            core.DataType.from_python_type(list)
+            core.DataType.from_python_type(dict)
 
         with exception_utils.assert_snowml_exceptions(
             self, expected_original_error_type=NotImplementedError, expected_regex="not supported as a DataType"
         ):
-            core.DataType.from_python_type(dict)
+            core.DataType.from_python_type(tuple)
+
+    def test_shape_from_python_type_scalars(self) -> None:
+        """Test that scalar types return None shape."""
+        self.assertIsNone(core.DataType.shape_from_python_type(int))
+        self.assertIsNone(core.DataType.shape_from_python_type(float))
+        self.assertIsNone(core.DataType.shape_from_python_type(str))
+        self.assertIsNone(core.DataType.shape_from_python_type(bool))
+        self.assertIsNone(core.DataType.shape_from_python_type(bytes))
+        self.assertIsNone(core.DataType.shape_from_python_type(datetime.datetime))
+
+    def test_shape_from_python_type_1d_list(self) -> None:
+        """Test that 1D list types return (-1,) shape."""
+        self.assertEqual((-1,), core.DataType.shape_from_python_type(list[str]))
+        self.assertEqual((-1,), core.DataType.shape_from_python_type(list[int]))
+        self.assertEqual((-1,), core.DataType.shape_from_python_type(list[float]))
+
+    def test_shape_from_python_type_2d_list(self) -> None:
+        """Test that 2D list types return (-1, -1) shape."""
+        self.assertEqual((-1, -1), core.DataType.shape_from_python_type(list[list[int]]))
+        self.assertEqual((-1, -1), core.DataType.shape_from_python_type(list[list[str]]))
+
+    def test_shape_from_python_type_3d_list(self) -> None:
+        """Test that 3D list types return (-1, -1, -1) shape."""
+        self.assertEqual((-1, -1, -1), core.DataType.shape_from_python_type(list[list[list[float]]]))
+
+    def test_shape_from_python_type_bare_list(self) -> None:
+        """Test that bare list returns (-1,) shape."""
+        self.assertEqual((-1,), core.DataType.shape_from_python_type(list))
 
 
 class FeatureSpecTest(absltest.TestCase):
@@ -196,6 +245,31 @@ class ParamSpecTest(absltest.TestCase):
         # None default value is allowed (means no default)
         param_with_none = core.ParamSpec(name="optional", dtype=core.DataType.INT64, default_value=None)
         self.assertIsNone(param_with_none.default_value)
+
+    def test_param_spec_as_snowpark_type(self) -> None:
+        """Test ParamSpec.as_snowpark_type() handles scalar and array types correctly."""
+        # Scalar param (no shape) - should return base type
+        param_scalar = core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=1.0)
+        self.assertEqual(param_scalar.as_snowpark_type(), spt.DoubleType())
+
+        param_int = core.ParamSpec(name="max_tokens", dtype=core.DataType.INT64, default_value=100)
+        self.assertEqual(param_int.as_snowpark_type(), spt.LongType())
+
+        param_str = core.ParamSpec(name="model_name", dtype=core.DataType.STRING, default_value="default")
+        self.assertEqual(param_str.as_snowpark_type(), spt.StringType())
+
+        # Array param with shape=(-1,) - should return ArrayType
+        param_array = core.ParamSpec(name="stop", dtype=core.DataType.STRING, default_value=[], shape=(-1,))
+        self.assertEqual(param_array.as_snowpark_type(), spt.ArrayType(spt.StringType()))
+
+        param_int_array = core.ParamSpec(name="ids", dtype=core.DataType.INT64, default_value=[1, 2], shape=(-1,))
+        self.assertEqual(param_int_array.as_snowpark_type(), spt.ArrayType(spt.LongType()))
+
+        # Fixed-size array - should also return ArrayType
+        param_fixed_array = core.ParamSpec(
+            name="weights", dtype=core.DataType.FLOAT, default_value=[1.0, 2.0, 3.0], shape=(3,)
+        )
+        self.assertEqual(param_fixed_array.as_snowpark_type(), spt.ArrayType(spt.FloatType()))
 
 
 class ParamGroupSpecTest(absltest.TestCase):
@@ -367,6 +441,68 @@ class ModelSignatureTest(absltest.TestCase):
 
         # Test repr/eval round-trip
         self.assertEqual(s, eval(repr(s), core.__dict__))
+
+    def test_repr_formatting(self) -> None:
+        """Test that __repr__ output is properly formatted with correct indentation and structure."""
+        # Create a signature with various spec types to test formatting
+        s = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(dtype=core.DataType.FLOAT, name="simple_input"),
+                core.FeatureSpec(dtype=core.DataType.INT64, name="shaped_input", shape=(3,)),
+                core.FeatureGroupSpec(
+                    name="grouped_input",
+                    specs=[
+                        core.FeatureSpec(dtype=core.DataType.STRING, name="nested_str"),
+                        core.FeatureSpec(dtype=core.DataType.DOUBLE, name="nested_double", nullable=False),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            outputs=[
+                core.FeatureSpec(dtype=core.DataType.FLOAT, name="prediction"),
+            ],
+            params=[
+                core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=1.0),
+                core.ParamGroupSpec(
+                    name="options",
+                    specs=[
+                        core.ParamSpec(name="max_tokens", dtype=core.DataType.INT64, default_value=100),
+                    ],
+                ),
+            ],
+        )
+
+        repr_output = repr(s)
+
+        expected_output = """\
+ModelSignature(
+    inputs=[
+        FeatureSpec(dtype=DataType.FLOAT, name='simple_input', nullable=True),
+        FeatureSpec(dtype=DataType.INT64, name='shaped_input', shape=(3,), nullable=True),
+        FeatureGroupSpec(
+            name='grouped_input',
+            specs=[
+                FeatureSpec(dtype=DataType.STRING, name='nested_str', nullable=True),
+                FeatureSpec(dtype=DataType.DOUBLE, name='nested_double', nullable=False)
+            ], shape=(-1,)
+        )
+    ],
+    outputs=[
+        FeatureSpec(dtype=DataType.FLOAT, name='prediction', nullable=True)
+    ],
+    params=[
+        ParamSpec(name='temperature', dtype=DataType.DOUBLE, default_value=1.0),
+        ParamGroupSpec(
+            name='options',
+            specs=[
+                ParamSpec(name='max_tokens', dtype=DataType.INT64, default_value=100)
+            ]
+        )
+    ]
+)\
+"""
+
+        self.assertEqual(repr_output, expected_output)
 
     def test_repr_html_happy_path(self) -> None:
         """Test _repr_html_ method for ModelSignature with various feature types."""

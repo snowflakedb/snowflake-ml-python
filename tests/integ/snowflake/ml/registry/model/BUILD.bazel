@@ -144,6 +144,21 @@ py_test(
 )
 
 py_test(
+    name = "registry_custom_model_with_params_test",
+    timeout = "long",
+    srcs = ["registry_custom_model_with_params_test.py"],
+    tags = ["feature:model_registry"],
+    deps = [
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:common_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
     name = "registry_pytorch_model_test",
     timeout = "long",
     srcs = ["registry_pytorch_model_test.py"],

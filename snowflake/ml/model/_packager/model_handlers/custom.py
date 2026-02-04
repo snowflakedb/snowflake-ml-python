@@ -226,10 +226,12 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
             param_specs = []
             for param_name, param_type, param_default in method_params:
                 dtype = model_signature.DataType.from_python_type(param_type)
+                shape = model_signature.DataType.shape_from_python_type(param_type)
                 param_spec = model_signature.ParamSpec(
                     name=param_name,
                     dtype=dtype,
                     default_value=param_default,
+                    shape=shape,
                 )
                 param_specs.append(param_spec)
 

@@ -463,6 +463,121 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP IMAGE REPOSITORY{if_exists_sql} {full_qual_image_repo_name}").collect()
 
+    # External Volume management for Iceberg tables
+    def show_external_volumes(self, volume_name_pattern: str) -> snowpark.DataFrame:
+        """Show external volumes matching the given pattern.
+
+        Args:
+            volume_name_pattern: Pattern to match volume names (e.g., 'MLPLATFORMTEST_%').
+
+        Returns:
+            DataFrame with external volume information.
+        """
+        return self._session.sql(f"SHOW EXTERNAL VOLUMES LIKE '{volume_name_pattern}'")
+
+    def create_external_volume(
+        self,
+        volume_name: str,
+        storage_locations_sql: str,
+    ) -> str:
+        """Create an external volume with the given storage locations.
+
+        Args:
+            volume_name: Name for the external volume.
+            storage_locations_sql: SQL fragment for STORAGE_LOCATIONS clause.
+
+        Returns:
+            The created volume name.
+        """
+        self._session.sql(
+            f"""
+            CREATE EXTERNAL VOLUME {volume_name}
+            STORAGE_LOCATIONS = ({storage_locations_sql})
+            """
+        ).collect()
+        return volume_name
+
+    def drop_external_volume(self, volume_name: str, if_exists: bool = True) -> None:
+        """Drop an external volume.
+
+        Args:
+            volume_name: Name of the external volume to drop.
+            if_exists: If True, don't error if volume doesn't exist.
+        """
+        if_exists_sql = " IF EXISTS" if if_exists else ""
+        self._session.sql(f"DROP EXTERNAL VOLUME{if_exists_sql} {volume_name}").collect()
+
+    def cleanup_external_volumes(
+        self,
+        prefix: str,
+        expire_days: int = 1,
+    ) -> None:
+        """Clean up stale external volumes matching the prefix.
+
+        Args:
+            prefix: Prefix pattern to match (e.g., 'MLPLATFORMTEST_ICEBERG_').
+            expire_days: Only delete volumes older than this many days.
+        """
+        try:
+            volumes_df = self.show_external_volumes(f"{prefix}%")
+            stale_volumes = volumes_df.filter(
+                f"\"created_on\" < dateadd('day', {-expire_days}, current_timestamp())"
+            ).collect()
+            for row in stale_volumes:
+                self.drop_external_volume(row["name"], if_exists=True)
+        except Exception:
+            pass  # Best effort cleanup
+
+    def cleanup_s3_storage(self, bucket: str, prefix: str) -> None:
+        """Clean up S3 objects under the given prefix.
+
+        Args:
+            bucket: S3 bucket name.
+            prefix: Prefix path to delete objects from.
+        """
+        try:
+            import boto3
+        except ImportError:
+            return  # Skip if boto3 not available
+
+        try:
+            s3 = boto3.client("s3")
+            paginator = s3.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+                if "Contents" in page:
+                    objects = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                    if objects:
+                        s3.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+        except Exception:
+            pass  # Best effort cleanup
+
+    def cleanup_azure_storage(self, account_url: str, container_name: str, prefix: str) -> None:
+        """Clean up Azure Blob objects under the given prefix.
+
+        Args:
+            account_url: Azure storage account URL.
+            container_name: Container name.
+            prefix: Prefix path to delete blobs from.
+        """
+        try:
+            from azure.identity import DefaultAzureCredential
+            from azure.storage.blob import ContainerClient
+        except ImportError:
+            return  # Skip if Azure SDK not available
+
+        try:
+            credential = DefaultAzureCredential()
+            container_client = ContainerClient(
+                account_url=account_url,
+                container_name=container_name,
+                credential=credential,
+            )
+            blobs = container_client.list_blobs(name_starts_with=prefix)
+            for blob in blobs:
+                container_client.delete_blob(blob.name)
+        except Exception:
+            pass  # Best effort cleanup
+
 
 class TestObjectNameGenerator:
     @staticmethod

@@ -7,7 +7,7 @@ snowflake.ml.model
 
 .. currentmodule:: snowflake.ml.model
 
-.. rubric:: Classes
+.. rubric:: Core Classes
 
 .. autosummary::
     :toctree: api/model
@@ -16,6 +16,28 @@ snowflake.ml.model
     ModelVersion
     HuggingFacePipelineModel
     TransformersPipeline
+
+.. rubric:: Batch Inference
+
+.. autosummary::
+    :toctree: api/model
+
+    InputSpec
+    OutputSpec
+    JobSpec
+    SaveMode
+    InputFormat
+    FileEncoding
+    ColumnHandlingOptions
+
+.. rubric:: Model Logging Options
+
+.. autosummary::
+    :toctree: api/model
+
+    CodePath
+    ExportMode
+    Volatility
 
 snowflake.ml.model.custom_model
 ---------------------------------
@@ -32,6 +54,14 @@ snowflake.ml.model.custom_model
     ModelContext
     CustomModel
 
+.. rubric:: Decorators
+
+.. autosummary::
+    :toctree: api/model
+
+    inference_api
+    partitioned_api
+
 snowflake.ml.model.model_signature
 ----------------------------------
 
@@ -45,6 +75,9 @@ snowflake.ml.model.model_signature
     DataType
     BaseFeatureSpec
     FeatureSpec
+    FeatureGroupSpec
+    ParamSpec
+    ParamGroupSpec
     ModelSignature
 
 .. rubric:: Methods
@@ -65,3 +98,6 @@ snowflake.ml.model.openai_signatures
     :toctree: api/model
 
     OPENAI_CHAT_SIGNATURE
+    OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING
+    OPENAI_CHAT_WITH_PARAMS_SIGNATURE
+    OPENAI_CHAT_WITH_PARAMS_SIGNATURE_WITH_CONTENT_FORMAT_STRING

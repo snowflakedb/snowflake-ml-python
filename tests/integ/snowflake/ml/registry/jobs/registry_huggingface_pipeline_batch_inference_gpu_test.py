@@ -26,10 +26,12 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
             os.environ["TRANSFORMERS_CACHE"] = self._original_cache_dir
         self.cache_dir.cleanup()
 
-    def _test_text_generation(
+    @parameterized.product(  # type: ignore[misc]
+        pip_requirements=[None, ["transformers"]],
+    )
+    def test_text_generation(
         self,
         pip_requirements: Optional[list[str]],
-        use_default_image_repo: bool,
     ) -> None:
         import transformers
 
@@ -72,15 +74,6 @@ class TestRegistryHuggingFacePipelineBatchInferenceGpuModelInteg(
             pip_requirements=pip_requirements,
             prediction_assert_fn=check_res,
         )
-
-    @parameterized.product(  # type: ignore[misc]
-        pip_requirements=[None, ["transformers"]],
-    )
-    def test_text_generation(
-        self,
-        pip_requirements: Optional[list[str]],
-    ) -> None:
-        self._test_text_generation(pip_requirements, use_default_image_repo=False)
 
 
 if __name__ == "__main__":

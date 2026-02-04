@@ -1,9 +1,10 @@
 import inspect
 import json
 import uuid
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
+from absl.testing import absltest
 
 from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier
@@ -19,6 +20,68 @@ from snowflake.ml.model import (
 from snowflake.ml.model._client.ops.service_ops import ServiceOperator
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
+
+
+def create_openai_chat_completion_output_validator(
+    expected_phrases: list[str],
+    test_case: absltest.TestCase,
+) -> Callable[[pd.DataFrame], None]:
+    """Create a validator function that checks if OpenAI chat completion output contains expected phrases.
+
+    Args:
+        expected_phrases: List of phrases that should appear in the output (case-insensitive).
+        test_case: The test case instance for assertions.
+
+    Returns:
+        A validation function that takes a DataFrame and asserts expected phrases are present.
+    """
+
+    def validator(output_df: pd.DataFrame) -> None:
+        # Extract content from the 'id' column which contains the choices array
+        # Structure: id -> list of choices -> message -> content
+        all_content = []
+
+        # Look for 'id' or 'ID' column which contains the actual choices
+        id_col = None
+        for col in output_df.columns:
+            if col.lower() == "id":
+                id_col = col
+                break
+
+        if id_col is not None:
+            for val in output_df[id_col]:
+                if val is None:
+                    continue
+
+                # Parse JSON string if needed
+                test_case.assertIsInstance(val, str)
+                val = json.loads(val)
+
+                # val should be a list of choice objects
+                test_case.assertIsInstance(val, list)
+                for choice in val:
+                    test_case.assertIsInstance(choice, dict)
+                    message = choice.get("message", {})
+                    test_case.assertIsInstance(message, dict)
+                    content = message.get("content", "")
+                    test_case.assertIsInstance(content, str)
+                    if content:
+                        all_content.append(str(content))
+
+        output_text = " ".join(all_content).lower()
+
+        # If no content found, show helpful debug info
+        if not output_text.strip():
+            test_case.fail(f"No content found. Columns: {list(output_df.columns)}. DataFrame:\n{output_df.to_string()}")
+
+        for phrase in expected_phrases:
+            test_case.assertIn(
+                phrase.lower(),
+                output_text,
+                f"Expected phrase '{phrase}' not found in output. Output text: {output_text[:1000]}...",
+            )
+
+    return validator
 
 
 class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBase):

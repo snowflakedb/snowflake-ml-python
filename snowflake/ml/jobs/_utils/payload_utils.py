@@ -17,20 +17,12 @@ import cloudpickle as cp
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml.jobs._utils import (
-    constants,
-    function_payload_utils,
-    query_helper,
-    stage_utils,
-    types,
-)
+from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, types
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 from snowflake.snowpark._internal.utils import zip_file_or_directory_to_stream
 
 logger = logging.getLogger(__name__)
-
-cp.register_pickle_by_value(function_payload_utils)
 ImportType = Union[str, Path, ModuleType]
 
 _SUPPORTED_ARG_TYPES = {str, int, float}
@@ -561,7 +553,6 @@ class JobPayload:
         env_vars = {
             constants.STAGE_MOUNT_PATH_ENV_VAR: constants.STAGE_VOLUME_MOUNT_PATH,
             constants.PAYLOAD_DIR_ENV_VAR: constants.APP_STAGE_SUBPATH,
-            constants.RESULT_PATH_ENV_VAR: constants.RESULT_PATH_DEFAULT_VALUE,
         }
 
         return types.UploadedPayload(
@@ -691,13 +682,8 @@ def _generate_param_handler_code(signature: inspect.Signature, output_name: str 
     return param_code
 
 
-def generate_python_code(payload: Callable[..., Any], source_code_display: bool = False) -> str:
+def generate_python_code(function: Callable[..., Any], source_code_display: bool = False) -> str:
     """Generate an entrypoint script from a Python function."""
-
-    if isinstance(payload, function_payload_utils.FunctionPayload):
-        function = payload.function
-    else:
-        function = payload
 
     signature = inspect.signature(function)
     if any(
@@ -711,7 +697,7 @@ def generate_python_code(payload: Callable[..., Any], source_code_display: bool 
     source_code_comment = _generate_source_code_comment(function) if source_code_display else ""
 
     arg_dict_name = "kwargs"
-    if isinstance(payload, function_payload_utils.FunctionPayload):
+    if getattr(function, constants.IS_MLJOB_REMOTE_ATTR, None):
         param_code = f"{arg_dict_name} = {{}}"
     else:
         param_code = _generate_param_handler_code(signature, arg_dict_name)
@@ -721,7 +707,7 @@ import pickle
 
 try:
     {textwrap.indent(source_code_comment, '    ')}
-    {_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(payload).hex()}'))
+    {_ENTRYPOINT_FUNC_NAME} = pickle.loads(bytes.fromhex('{_serialize_callable(function).hex()}'))
 except (TypeError, pickle.PickleError):
     if sys.version_info.major != {sys.version_info.major} or sys.version_info.minor != {sys.version_info.minor}:
         raise RuntimeError(
@@ -747,26 +733,6 @@ if __name__ == '__main__':
 """
 
 
-def create_function_payload(
-    func: Callable[..., Any], *args: Any, **kwargs: Any
-) -> function_payload_utils.FunctionPayload:
-    signature = inspect.signature(func)
-    bound = signature.bind(*args, **kwargs)
-    bound.apply_defaults()
-    session_argument = ""
-    session = None
-    for name, val in list(bound.arguments.items()):
-        if isinstance(val, snowpark.Session):
-            if session:
-                raise TypeError(f"Expected only one Session-type argument, but got both {session_argument} and {name}.")
-            session = val
-            session_argument = name
-            del bound.arguments[name]
-    payload = function_payload_utils.FunctionPayload(func, session, session_argument, *bound.args, **bound.kwargs)
-
-    return payload
-
-
 def get_payload_name(source: Union[str, Callable[..., Any]], entrypoint: Optional[Union[str, list[str]]] = None) -> str:
 
     if entrypoint and isinstance(entrypoint, (list, tuple)):
@@ -775,7 +741,7 @@ def get_payload_name(source: Union[str, Callable[..., Any]], entrypoint: Optiona
         return f"{PurePath(entrypoint).stem}"
     elif source and not callable(source):
         return f"{PurePath(source).stem}"
-    elif isinstance(source, function_payload_utils.FunctionPayload):
-        return f"{source.function.__name__}"
+    elif callable(source):
+        return f"{source.__name__}"
     else:
         return f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"

@@ -257,6 +257,18 @@ py_test(
 )
 
 py_test(
+    name = "registry_huggingface_pipeline_vllm_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_huggingface_pipeline_vllm_batch_inference_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_empty_struct_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_empty_struct_test.py"],

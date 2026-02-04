@@ -1,9 +1,64 @@
+import datetime
+
 from absl.testing import absltest
 
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model._client.ops import param_utils
 from snowflake.ml.model._signatures import core
+
+
+class FormatParamValueForSqlTest(absltest.TestCase):
+    """Tests for format_param_value_for_sql function."""
+
+    def test_format_none_value(self) -> None:
+        """Test that None is formatted as 'NULL' for SQL compatibility."""
+        self.assertEqual(param_utils.format_param_value_for_sql(None), "NULL")
+
+    def test_format_boolean_values(self) -> None:
+        """Test that boolean values are formatted as lowercase SQL booleans."""
+        self.assertEqual(param_utils.format_param_value_for_sql(True), "true")
+        self.assertEqual(param_utils.format_param_value_for_sql(False), "false")
+
+    def test_format_string_values(self) -> None:
+        """Test that string values are formatted as single-quoted SQL literals."""
+        self.assertEqual(param_utils.format_param_value_for_sql("hello"), "'hello'")
+        self.assertEqual(param_utils.format_param_value_for_sql("default"), "'default'")
+        # Test escaping single quotes
+        self.assertEqual(param_utils.format_param_value_for_sql("it's"), "'it\\'s'")
+
+    def test_format_bytes_values(self) -> None:
+        """Test that bytes values are formatted as SQL hex literals."""
+        self.assertEqual(param_utils.format_param_value_for_sql(b"hello"), "X'68656c6c6f'")
+        self.assertEqual(param_utils.format_param_value_for_sql(b""), "X''")
+
+    def test_format_datetime_values(self) -> None:
+        """Test that datetime values are formatted as SQL timestamp literals."""
+        dt = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        self.assertEqual(param_utils.format_param_value_for_sql(dt), "'2024-01-01 12:00:00'::TIMESTAMP_NTZ")
+
+    def test_format_date_values(self) -> None:
+        """Test that date values are formatted as SQL date literals."""
+        d = datetime.date(2024, 1, 1)
+        self.assertEqual(param_utils.format_param_value_for_sql(d), "'2024-01-01'::DATE")
+
+    def test_format_list_values(self) -> None:
+        """Test that list values are formatted using Python's str() representation.
+
+        This uses single quotes for strings, which SQL interprets as string literals.
+        (JSON's double quotes would be interpreted as SQL identifiers.)
+        """
+        self.assertEqual(param_utils.format_param_value_for_sql([]), "[]")
+        self.assertEqual(param_utils.format_param_value_for_sql([1, 2, 3]), "[1, 2, 3]")
+        self.assertEqual(param_utils.format_param_value_for_sql(["a", "b"]), "['a', 'b']")
+        self.assertEqual(param_utils.format_param_value_for_sql([1.5, 2.5]), "[1.5, 2.5]")
+
+    def test_format_numeric_values(self) -> None:
+        """Test that numeric values are formatted via str()."""
+        self.assertEqual(param_utils.format_param_value_for_sql(0.5), "0.5")
+        self.assertEqual(param_utils.format_param_value_for_sql(100), "100")
+        self.assertEqual(param_utils.format_param_value_for_sql(-42), "-42")
+        self.assertEqual(param_utils.format_param_value_for_sql(3.14159), "3.14159")
 
 
 class ValidateParamsTest(absltest.TestCase):

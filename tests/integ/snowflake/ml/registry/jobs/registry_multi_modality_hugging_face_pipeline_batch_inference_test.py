@@ -8,7 +8,6 @@ from absl.testing import absltest
 from snowflake.ml.model import InputSpec, JobSpec, OutputSpec, custom_model
 from snowflake.ml.model._client.model import batch_inference_specs
 from snowflake.ml.model.model_signature import core
-from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 Messages = list[dict[str, Any]]
@@ -177,12 +176,6 @@ class CustomVisualModel(custom_model.CustomModel):
 class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
-    def setUp(self) -> None:
-        super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest("Skipping multi modality tests: image override environment variables not set.")
-
     @classmethod
     def setUpClass(cls) -> None:
         cls.cache_dir = tempfile.TemporaryDirectory()
@@ -245,9 +238,9 @@ class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_automatic_speech_recognition(self) -> None:
-        model = huggingface.TransformersPipeline(
-            model="openai/whisper-small", task="automatic-speech-recognition", compute_pool_for_log=None
-        )
+        from transformers import pipeline
+
+        model = pipeline(task="automatic-speech-recognition", model="openai/whisper-small")
 
         (
             job_name,
@@ -281,11 +274,9 @@ class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_video_classification(self) -> None:
-        model = huggingface.TransformersPipeline(
-            model="nateraw/videomae-base-finetuned-ucf101-subset",
-            task="video-classification",
-            compute_pool_for_log=None,
-        )
+        from transformers import pipeline
+
+        model = pipeline(task="video-classification", model="nateraw/videomae-base-finetuned-ucf101-subset")
 
         (
             job_name,

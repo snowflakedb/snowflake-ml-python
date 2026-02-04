@@ -39,6 +39,8 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewSlice,
     FeatureViewStatus,
     FeatureViewVersion,
+    StorageConfig,
+    StorageFormat,
     _FeatureViewMetadata,
 )
 from snowflake.ml.feature_store.metadata_manager import (
@@ -91,7 +93,7 @@ class _FeatureStoreObjInfo:
 
 class _FeatureStoreObjTypes(Enum):
     UNKNOWN = "UNKNOWN"  # for forward compatibility
-    MANAGED_FEATURE_VIEW = "MANAGED_FEATURE_VIEW"
+    MANAGED_FEATURE_VIEW = "MANAGED_FEATURE_VIEW"  # Snowflake manages the refresh for the user
     EXTERNAL_FEATURE_VIEW = "EXTERNAL_FEATURE_VIEW"
     FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
     TRAINING_DATA = "TRAINING_DATA"
@@ -108,7 +110,7 @@ class _FeatureStoreObjTypes(Enum):
 
 _PROJECT = "FeatureStore"
 _DT_OR_VIEW_QUERY_PATTERN = re.compile(
-    r"""CREATE\ (OR\ REPLACE\ )?(?P<obj_type>(DYNAMIC\ TABLE|VIEW))\ .*
+    r"""CREATE\ (OR\ REPLACE\ )?(?P<obj_type>(DYNAMIC\ ICEBERG\ TABLE|DYNAMIC\ TABLE|VIEW))\ .*
         COMMENT\ =\ '(?P<comment>.*)'\s*
         TAG.*?{fv_metadata_tag}\ =\ '(?P<fv_metadata>.*?)',?.*?
         AS\ (?P<query>.*)
@@ -126,6 +128,7 @@ _DT_INITIALIZE_PATTERN = re.compile(
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
 
+# _LIST_FEATURE_VIEW_SCHEMA acts as a metadata blueprint for columns in the DataFrame.
 _LIST_FEATURE_VIEW_SCHEMA = StructType(
     [
         StructField("name", StringType()),
@@ -142,9 +145,13 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("warehouse", StringType()),
         StructField("cluster_by", StringType()),
         StructField("online_config", StringType()),
+        StructField("storage_config", StringType()),
     ]
 )
 
+# Default storage config JSON strings for list_feature_views output
+_DEFAULT_STORAGE_CONFIG_JSON = StorageConfig().to_json()  # {"format": "snowflake"}
+_DEFAULT_ICEBERG_STORAGE_CONFIG_JSON = StorageConfig(format=StorageFormat.ICEBERG).to_json()  # {"format": "iceberg"}
 
 CreationMode = sql_client.CreationOption
 CreationMode.__module__ = __name__
@@ -213,6 +220,7 @@ class FeatureStore:
         default_warehouse: str,
         *,
         creation_mode: CreationMode = CreationMode.FAIL_IF_NOT_EXIST,
+        default_iceberg_external_volume: Optional[str] = None,
     ) -> None:
         """
         Creates a FeatureStore instance.
@@ -225,6 +233,8 @@ class FeatureStore:
             creation_mode: If FAIL_IF_NOT_EXIST, feature store throws when required resources not already exist; If
                 CREATE_IF_NOT_EXIST, feature store will create required resources if they not already exist. Required
                 resources include schema and tags. Note database must already exist in either mode.
+            default_iceberg_external_volume: Default external volume for Iceberg-backed Feature Views. If set,
+                Feature Views using StorageFormat.ICEBERG can omit external_volume in their StorageConfig.
 
         Raises:
             SnowflakeMLException: [ValueError] default_warehouse does not exist.
@@ -291,6 +301,7 @@ class FeatureStore:
         }
 
         self.update_default_warehouse(default_warehouse)
+        self._default_iceberg_external_volume = default_iceberg_external_volume
 
         self._check_database_exists_or_throw()
         if creation_mode == CreationMode.FAIL_IF_NOT_EXIST:
@@ -579,6 +590,8 @@ class FeatureStore:
             else:
                 obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, snowml_version.VERSION)
 
+            self._resolve_storage_config(feature_view, fully_qualified_name)
+
             tagging_clause = [
                 f"{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{obj_info.to_json()}'",
                 f"{self._get_fully_qualified_name(_FEATURE_VIEW_METADATA_TAG)} = '"
@@ -627,6 +640,13 @@ class FeatureStore:
                 )
                 created_resources.append(
                     (_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, self._get_fully_qualified_name(online_table_name))
+                )
+            elif overwrite:
+                # Delete dangling online feature table when overwriting online-enabled FV with online-disabled FV
+                online_table_name = FeatureView._get_online_table_name(feature_view_name)
+                fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
+                    statement_params=self._telemetry_stmp
                 )
 
             # Step 3: Save aggregation metadata for tiled feature views (atomically)
@@ -953,9 +973,13 @@ class FeatureStore:
             entity_name = SqlIdentifier(entity_name)
             return self._optimized_find_feature_views(entity_name, feature_view_name)
         else:
+            fv_rows = self._get_fv_backend_representations(feature_view_name, prefix_match=True)
+
             output_values: list[list[Any]] = []
-            for row, _ in self._get_fv_backend_representations(feature_view_name, prefix_match=True):
-                self._extract_feature_view_info(row, output_values)
+            iceberg_config_cache: dict[str, StorageConfig] = {}
+            for row, _ in fv_rows:
+                self._extract_feature_view_info(row, output_values, iceberg_config_cache)
+
             return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
     @dispatch_decorator()
@@ -1448,6 +1472,7 @@ class FeatureStore:
                 statement_params=self._telemetry_stmp
             )
         else:
+            # Both regular Dynamic Tables and Dynamic Iceberg Tables use DROP DYNAMIC TABLE
             self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
                 statement_params=self._telemetry_stmp
             )
@@ -1636,6 +1661,7 @@ class FeatureStore:
         spine_timestamp_col: Optional[str] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
@@ -1650,6 +1676,9 @@ class FeatureStore:
             exclude_columns: Column names to exclude from the result dataframe.
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+            auto_prefix: If True, automatically prefix all feature columns with
+                '{feature_view_name}_{version}_' to avoid name collisions.
+                Default False. Use FeatureView.with_name() for custom prefixes.
             join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
                 "cte" for CTE method. (Internal use only - subject to change)
 
@@ -1689,6 +1718,7 @@ class FeatureStore:
             cast(list[Union[FeatureView, FeatureViewSlice]], features),
             spine_timestamp_col,
             include_feature_view_timestamp_col,
+            auto_prefix,
             join_method,
         )
 
@@ -1708,6 +1738,7 @@ class FeatureStore:
         spine_label_cols: Optional[list[str]] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
@@ -1726,6 +1757,9 @@ class FeatureStore:
             exclude_columns: Name of column(s) to exclude from the resulting training set.
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+            auto_prefix: If True, automatically prefix all feature columns with
+                '{feature_view_name}_{version}_'. Default False.
+                Use FeatureView.with_name() for custom prefixes.
             join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
                 "cte" for CTE method. (Internal use only - subject to change)
 
@@ -1761,7 +1795,12 @@ class FeatureStore:
             spine_label_cols = to_sql_identifiers(spine_label_cols)  # type: ignore[assignment]
 
         result_df, join_keys = self._join_features(
-            spine_df, features, spine_timestamp_col, include_feature_view_timestamp_col, join_method
+            spine_df,
+            features,
+            spine_timestamp_col,
+            include_feature_view_timestamp_col,
+            auto_prefix,
+            join_method,
         )
 
         if exclude_columns is not None:
@@ -1807,6 +1846,7 @@ class FeatureStore:
         spine_label_cols: Optional[list[str]] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
         desc: str = "",
         output_type: Literal["dataset"] = "dataset",
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -1826,6 +1866,7 @@ class FeatureStore:
         spine_label_cols: Optional[list[str]] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
         desc: str = "",
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
@@ -1843,6 +1884,7 @@ class FeatureStore:
         spine_label_cols: Optional[list[str]] = None,
         exclude_columns: Optional[list[str]] = None,
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
         desc: str = "",
         output_type: Literal["dataset", "table"] = "dataset",
         join_method: Literal["sequential", "cte"] = "sequential",
@@ -1864,6 +1906,9 @@ class FeatureStore:
             exclude_columns: Name of column(s) to exclude from the resulting training set.
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+            auto_prefix: If True, automatically prefix all feature columns with
+                '{feature_view_name}_{version}_'. Default False.
+                Use FeatureView.with_name() for custom prefixes.
             desc: A description about this dataset.
             output_type: (Deprecated) The type of Snowflake storage to use for the generated training data.
             join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
@@ -1930,6 +1975,7 @@ class FeatureStore:
             spine_label_cols=spine_label_cols,
             exclude_columns=exclude_columns,
             include_feature_view_timestamp_col=include_feature_view_timestamp_col,
+            auto_prefix=auto_prefix,
             save_as=table_name,
             join_method=join_method,
         )
@@ -2110,6 +2156,7 @@ class FeatureStore:
             session=self._session,
             cluster_by=cluster_by_str,
             online_config=online_config,
+            storage_config=base_fv.storage_config,
         )
 
     def _build_offline_update_queries(
@@ -2622,72 +2669,31 @@ class FeatureStore:
         query = ""
         try:
             override_clause = " OR REPLACE" if override else ""
-
-            # Use tiling query for tiled feature views
-            if feature_view.is_tiled:
-                source_query = feature_view._get_tile_query()
-            else:
-                source_query = feature_view.query
-
-            # Include column definitions only if provided (skip for tiled feature views)
-            column_clause = f" ({column_descs})" if column_descs else ""
-
-            query = f"""CREATE{override_clause} DYNAMIC TABLE {fully_qualified_name}{column_clause}
-                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
-                TAG (
-                    {tagging_clause}
-                )
-                WAREHOUSE = {warehouse}
-                REFRESH_MODE = {feature_view.refresh_mode}
-                INITIALIZE = {feature_view.initialize}
-            """
-            if feature_view.cluster_by:
-                # For tiled FVs, replace timestamp column with TILE_START in cluster_by
-                if feature_view.is_tiled and feature_view.timestamp_col:
-                    ts_col_upper = feature_view.timestamp_col.upper()
-                    cluster_by_cols = [
-                        "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
-                    ]
-                else:
-                    cluster_by_cols = [str(col) for col in feature_view.cluster_by]
-                cluster_by_clause = f"CLUSTER BY ({', '.join(cluster_by_cols)})"
-                query += f"{cluster_by_clause}"
-
-            query += f"""
-                AS {source_query}
-            """
+            query = self._create_dynamic_table_query(
+                override_clause,
+                fully_qualified_name,
+                column_descs,
+                schedule_task,
+                feature_view,
+                tagging_clause,
+                warehouse,
+            )
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
 
             if schedule_task:
-                task_obj_info = _FeatureStoreObjInfo(
-                    _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION
+                self._create_dynamic_table_with_scheduled_tasks(
+                    override_clause,
+                    feature_view,
+                    fully_qualified_name,
+                    warehouse,
                 )
-                try:
-                    self._session.sql(
-                        f"""CREATE{override_clause} TASK {fully_qualified_name}
-                            WAREHOUSE = {warehouse}
-                            SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
-                            AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
-                        """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(
-                        f"""
-                        ALTER TASK {fully_qualified_name}
-                        SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}='{task_obj_info.to_json()}'
-                    """
-                    ).collect(statement_params=self._telemetry_stmp)
-                    self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-                except Exception:
-                    self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-                    self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-                    raise
+            elif override:
+                # Clean up any existing task when overwriting with a non-CRON feature view.
+                # This handles the following scenarios:
+                # Duration DT → DOWNSTREAM DT: old task is orphaned
+                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
         except Exception as e:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
@@ -2746,6 +2752,12 @@ class FeatureStore:
                 """
                 self._session.sql(query).collect(statement_params=self._telemetry_stmp)
                 created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
+                if overwrite:
+                    # Clean up any existing task from a previous CRON-based DT registration.
+                    # This handles the case: CRON DT → View
+                    self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
                 return created
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
@@ -2754,6 +2766,18 @@ class FeatureStore:
                 ) from e
 
         # Managed feature view via Dynamic Table (and optional Task)
+        #
+        # Refresh behavior based on refresh_freq input type:
+        # ┌────────────────────┬───────────────┬─────────────────┬──────────────────────────────────────────┐
+        # │ Input Type         │ schedule_task │ TARGET_LAG      │ Who triggers the refresh?                │
+        # ├────────────────────┼───────────────┼─────────────────┼──────────────────────────────────────────┤
+        # │ Duration ('5m')    │ False         │ '5 minutes'     │ The Dynamic Table's internal scheduler.  │
+        # │ CRON ('* * * UTC') │ True          │ 'DOWNSTREAM'    │ An external Snowflake Task.              │
+        # │ DOWNSTREAM         │ False         │ 'DOWNSTREAM'    │ Only a consumer (or manual refresh).     │
+        # └────────────────────┴───────────────┴─────────────────┴──────────────────────────────────────────┘
+        #
+        # Note: Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
+        # so CRON-based refresh works the same way as regular dynamic tables.
         schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
         self._create_dynamic_table(
             feature_view_name,
@@ -2791,6 +2815,41 @@ class FeatureStore:
         found_rows = self._find_object("TAGS", full_entity_tag_name)
         return len(found_rows) == 1
 
+    def _get_feature_prefix(
+        self,
+        feature_view: Union[FeatureView, FeatureViewSlice],
+        auto_prefix: bool,
+    ) -> Optional[str]:
+        """Get the prefix to apply for this feature view.
+
+        Priority:
+        1. Explicit name from with_name() - highest priority
+        2. Auto prefix if auto_prefix=True
+        3. No prefix (default)
+
+        Args:
+            feature_view: The feature view instance.
+            auto_prefix: Whether to auto-generate prefix.
+
+        Returns:
+            Prefix string with trailing underscore, or None.
+        """
+        # Priority 1: Explicit name
+        if hasattr(feature_view, "column_alias") and feature_view.column_alias is not None:
+            if feature_view.column_alias == "":
+                return None  # Explicit no-prefix
+            return f"{feature_view.column_alias}_"
+
+        # Priority 2: Auto prefix
+        if auto_prefix:
+            # For FeatureViewSlice, access name and version through feature_view_ref
+            if isinstance(feature_view, FeatureViewSlice):
+                return f"{feature_view.feature_view_ref.name}_{feature_view.feature_view_ref.version}_"
+            return f"{feature_view.name}_{feature_view.version}_"
+
+        # Priority 3: No prefix
+        return None
+
     def _build_cte_query(
         self,
         feature_views: list[FeatureView],
@@ -2798,6 +2857,7 @@ class FeatureStore:
         spine_ref: str,
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
     ) -> str:
         """
         Build a CTE query with the spine query and the feature views.
@@ -2817,6 +2877,7 @@ class FeatureStore:
             spine_timestamp_col: The timestamp column from spine. Can be None if spine has no timestamp column.
             include_feature_view_timestamp_col: Whether to include the timestamp column of
                 the feature view in the result. Default to false.
+            auto_prefix: Whether to automatically prefix feature columns.
 
         Returns:
             A SQL query string with CTE structure for joining feature views.
@@ -2941,16 +3002,26 @@ class FeatureStore:
 
             # Select features from the CTE
             # For tiled FVs, get output columns from aggregation specs
+            prefix = self._get_feature_prefix(feature_view, auto_prefix)
             if feature_view.is_tiled and feature_view.aggregation_specs:
-                feature_cols_from_cte = [
-                    f"{cte_name}.{spec.get_sql_column_name()}" for spec in feature_view.aggregation_specs
-                ]
+                feature_cols_from_cte = []
+                for spec in feature_view.aggregation_specs:
+                    col_name = spec.get_sql_column_name()
+                    if prefix:
+                        alias = identifier.concat_names([prefix, col_name])
+                        feature_cols_from_cte.append(f"{cte_name}.{col_name} AS {alias}")
+                    else:
+                        feature_cols_from_cte.append(f"{cte_name}.{col_name}")
             else:
                 # feature_columns[i] is already a comma-separated string of column names
                 feature_cols_from_cte = []
                 for col in feature_columns[i].split(", "):
                     col_clean = col.strip()
-                    feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
+                    if prefix:
+                        alias = identifier.concat_names([prefix, col_clean])
+                        feature_cols_from_cte.append(f"{cte_name}.{col_clean} AS {alias}")
+                    else:
+                        feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
             select_columns.extend(feature_cols_from_cte)
 
             # Create join condition using only this feature view's join keys
@@ -2976,6 +3047,7 @@ FROM SPINE{' '.join(join_clauses)}
         features: list[Union[FeatureView, FeatureViewSlice]],
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool,
+        auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> tuple[DataFrame, list[SqlIdentifier]]:
         # Validate join_method parameter
@@ -3046,6 +3118,7 @@ FROM SPINE{' '.join(join_clauses)}
                 spine_df.queries["queries"][-1],
                 spine_timestamp_col,
                 include_feature_view_timestamp_col,
+                auto_prefix,
             )
         else:
             # Use sequential joins layer by layer
@@ -3072,11 +3145,24 @@ FROM SPINE{' '.join(join_clauses)}
                             f_ts_col_str = f"r_{layer}.{feature.timestamp_col} AS {f_ts_col_alias},"
                         else:
                             f_ts_col_str = ""
+
+                        # Build feature column selection with optional prefix
+                        prefix = self._get_feature_prefix(feature, auto_prefix)
+                        if prefix:
+                            feature_cols_list = []
+                            for col in cols:
+                                col_name = col.resolved()
+                                alias = identifier.concat_names([prefix, col_name])
+                                feature_cols_list.append(f"r_{layer}.{col_name} AS {alias}")
+                            feature_cols_str = ", ".join(feature_cols_list)
+                        else:
+                            feature_cols_str = f"r_{layer}.* EXCLUDE ({join_keys_str}, {feature.timestamp_col})"
+
                         query = f"""
                             SELECT
                                 l_{layer}.*,
                                 {f_ts_col_str}
-                                r_{layer}.* EXCLUDE ({join_keys_str}, {feature.timestamp_col})
+                                {feature_cols_str}
                             FROM ({query}) l_{layer}
                             ASOF JOIN (
                                 SELECT {join_keys_str}, {feature.timestamp_col},
@@ -3097,10 +3183,22 @@ FROM SPINE{' '.join(join_clauses)}
                             join_keys=join_keys,
                         )
                 else:
+                    # Build feature column selection with optional prefix
+                    prefix = self._get_feature_prefix(feature, auto_prefix)
+                    if prefix:
+                        feature_cols_list = []
+                        for col in cols:
+                            col_name = col.resolved()
+                            alias = identifier.concat_names([prefix, col_name])
+                            feature_cols_list.append(f"r_{layer}.{col_name} AS {alias}")
+                        feature_cols_str = ", ".join(feature_cols_list)
+                    else:
+                        feature_cols_str = f"r_{layer}.* EXCLUDE ({join_keys_str})"
+
                     query = f"""
                         SELECT
                             l_{layer}.*,
-                            r_{layer}.* EXCLUDE ({join_keys_str})
+                            {feature_cols_str}
                         FROM ({query}) l_{layer}
                         LEFT JOIN (
                             SELECT {join_keys_str}, {', '.join(col.resolved() for col in cols)}
@@ -3292,6 +3390,118 @@ FROM SPINE{' '.join(join_clauses)}
             object_name,
         )
 
+    def _resolve_storage_config(self, feature_view: FeatureView, fully_qualified_name: str) -> None:
+        """Resolve storage_config with defaults for Iceberg tables.
+
+        For Iceberg feature views:
+        - If no external_volume is provided, use the default_iceberg_external_volume from FeatureStore.
+        - If no base_location is provided, auto-generate one from the fully qualified name.
+
+        Args:
+            feature_view: The feature view whose storage config should be resolved.
+            fully_qualified_name: The fully qualified name (DB.SCHEMA.TABLE) for path generation.
+
+        Raises:
+            SnowflakeMLException: If Iceberg storage is requested but no external_volume is available
+                (neither in StorageConfig nor as FeatureStore default).
+        """
+        if feature_view.storage_config is not None and feature_view.storage_config.format == StorageFormat.ICEBERG:
+            external_volume = feature_view.storage_config.external_volume
+            base_location = feature_view.storage_config.base_location
+
+            # Apply default external_volume if not set
+            if external_volume is None:
+                if self._default_iceberg_external_volume is not None:
+                    external_volume = self._default_iceberg_external_volume
+                else:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INVALID_ARGUMENT,
+                        original_exception=ValueError(
+                            "Iceberg storage requires an external_volume. Either provide external_volume in "
+                            "StorageConfig or set default_iceberg_external_volume when creating FeatureStore."
+                        ),
+                    )
+
+            # Auto-generate base_location if not set
+            if base_location is None:
+                base_location = f"snowflake/feature_store/iceberg/{fully_qualified_name.replace('.', '/')}"
+
+            feature_view._storage_config = StorageConfig(
+                format=feature_view.storage_config.format,
+                external_volume=external_volume,
+                base_location=base_location,
+            )
+
+    def _get_all_iceberg_storage_configs(self) -> dict[str, StorageConfig]:
+        """Get storage configs for all Iceberg tables in the feature store schema.
+
+        Executes a single SHOW ICEBERG TABLES IN SCHEMA query and returns a dictionary
+        mapping table names to their StorageConfig. This is more efficient than calling
+        _get_iceberg_storage_config for each table individually.
+
+        Returns:
+            Dictionary mapping table name (resolved, i.e. actual stored name) to StorageConfig.
+
+        Raises:
+            SnowflakeMLException: If the SHOW ICEBERG TABLES query fails.
+        """
+        query = f"SHOW ICEBERG TABLES IN SCHEMA {self._config.full_schema_path}"
+        try:
+            rows = self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+            return {
+                row["name"]: StorageConfig(
+                    format=StorageFormat.ICEBERG,
+                    external_volume=row["external_volume_name"],
+                    base_location=row["base_location"],
+                )
+                for row in rows
+            }
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                original_exception=RuntimeError(
+                    f"Failed to retrieve Iceberg storage configs from schema {self._config.full_schema_path}: {e}"
+                ),
+            ) from e
+
+    def _get_iceberg_storage_config(self, table_name: SqlIdentifier) -> Optional[StorageConfig]:
+        """Get storage config for an Iceberg table using SHOW ICEBERG TABLES.
+
+        Args:
+            table_name: The table name to look up.
+
+        Returns:
+            StorageConfig with Iceberg format if found, None if not an Iceberg table.
+
+        Raises:
+            SnowflakeMLException: If the SHOW ICEBERG TABLES query fails.
+        """
+        # Use resolved() to get the actual stored name (without SQL quoting/escaping)
+        raw_name = table_name.resolved()
+        # Escape single quotes for SQL string literal safety.
+        # The table name goes inside single quotes as a LIKE pattern (string literal),
+        # so single quotes must be escaped as '' (e.g., "foo'bar" -> "foo''bar").
+        # The schema path is a SQL identifier (not a string literal), and is already
+        # properly formatted by full_schema_path using SqlIdentifier utilities.
+        escaped_name = raw_name.replace("'", "''")
+        query = f"SHOW ICEBERG TABLES LIKE '{escaped_name}' IN SCHEMA {self._config.full_schema_path}"
+
+        try:
+            iceberg_tables = self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+            if iceberg_tables:
+                row = iceberg_tables[0]
+                return StorageConfig(
+                    format=StorageFormat.ICEBERG,
+                    external_volume=row["external_volume_name"],
+                    base_location=row["base_location"],
+                )
+            return None
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                original_exception=RuntimeError(f"Failed to retrieve Iceberg storage config for {raw_name}: {e}"),
+            ) from e
+
     # TODO: SHOW DYNAMIC TABLES is very slow while other show objects are fast, investigate with DT in SNOW-902804.
     def _get_fv_backend_representations(
         self, object_name: Optional[SqlIdentifier], prefix_match: bool = False
@@ -3324,6 +3534,8 @@ FROM SPINE{' '.join(join_clauses)}
 
         # Handle offline feature view (default for suspend/resume, or when explicitly requested)
         if store_type is None or store_type == fv_mod.StoreType.OFFLINE:
+            # Note: Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword)
+            # just like regular dynamic tables, so the same commands work.
             try:
                 self._session.sql(f"ALTER DYNAMIC TABLE {fully_qualified_name} {operation}").collect(
                     statement_params=self._telemetry_stmp
@@ -3386,13 +3598,28 @@ FROM SPINE{' '.join(join_clauses)}
         res = self._lookup_tagged_objects(self._get_entity_name(entity_name), filters)
 
         output_values: list[list[Any]] = []
+        iceberg_config_cache: dict[str, StorageConfig] = {}
         for r in res:
             row = fv_maps[SqlIdentifier(r["entityName"], case_sensitive=True)]
-            self._extract_feature_view_info(row, output_values)
+            self._extract_feature_view_info(row, output_values, iceberg_config_cache)
 
         return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
-    def _extract_feature_view_info(self, row: Row, output_values: list[list[Any]]) -> None:
+    def _extract_feature_view_info(
+        self,
+        row: Row,
+        output_values: list[list[Any]],
+        iceberg_config_cache: dict[str, StorageConfig],
+    ) -> None:
+        """Extract feature view information from a backend row.
+
+        Args:
+            row: Row from SHOW DYNAMIC TABLES or SHOW VIEWS.
+            output_values: List to append extracted values to.
+            iceberg_config_cache: Mutable dictionary mapping table names to StorageConfig.
+                Populated lazily on first Iceberg FV encountered. Caller should pass the same
+                dictionary instance across calls to avoid repeated SHOW ICEBERG TABLES queries.
+        """
         name, version = row["name"].split(_FEATURE_VIEW_NAME_DELIMITER)
         fv_metadata, _ = self._lookup_feature_view_metadata(row, FeatureView._get_physical_name(name, version))
 
@@ -3413,6 +3640,27 @@ FROM SPINE{' '.join(join_clauses)}
 
         online_config_json = self._determine_online_config_from_oft(name, version, include_runtime_metadata=True)
         values.append(online_config_json)
+
+        # Use fv_metadata.is_iceberg to skip iceberg lookup for non-Iceberg FVs
+        if fv_metadata.is_iceberg:
+            fv_name = FeatureView._get_physical_name(name, version)
+            # Fetch iceberg configs lazily on first Iceberg FV encountered
+            if not iceberg_config_cache:
+                iceberg_config_cache.update(self._get_all_iceberg_storage_configs())
+            storage_config = iceberg_config_cache.get(fv_name.resolved())
+
+            if storage_config:
+                storage_config_json = storage_config.to_json()
+            else:
+                # FV is marked as Iceberg but we couldn't retrieve its config - log warning
+                logger.warning(
+                    f"Feature view {name}/{version} is marked as Iceberg but SHOW ICEBERG TABLES "
+                    "returned no results. Storage config details may be incomplete."
+                )
+                storage_config_json = _DEFAULT_ICEBERG_STORAGE_CONFIG_JSON
+        else:
+            storage_config_json = _DEFAULT_STORAGE_CONFIG_JSON
+        values.append(storage_config_json)
 
         output_values.append(values)
 
@@ -3515,6 +3763,126 @@ FROM SPINE{' '.join(join_clauses)}
 
             return (fv_metadata, query)
 
+    def _create_dynamic_table_query(
+        self,
+        override_clause: str,
+        table_name: str,
+        column_descs: str,
+        schedule_task: bool,
+        feature_view: FeatureView,
+        tagging_clause: str,
+        warehouse: str,
+    ) -> str:
+        # Use tiling query for tiled feature views
+        if feature_view.is_tiled:
+            source_query = feature_view._get_tile_query()
+        else:
+            source_query = feature_view.query
+
+        # Include column definitions only if provided (skip for tiled feature views)
+        column_clause = f" ({column_descs})" if column_descs else ""
+
+        storage_config = feature_view.storage_config
+        if storage_config is not None and storage_config.format == StorageFormat.ICEBERG:
+            # These should be validated by FeatureView constructor and _resolve_storage_config
+            assert storage_config.external_volume is not None, "external_volume is required for ICEBERG format"
+            assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
+            query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {tagging_clause}
+                )
+                WAREHOUSE = {warehouse}
+                REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
+                CATALOG = 'SNOWFLAKE'
+                EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}
+                BASE_LOCATION = '{storage_config.base_location.replace("'", "''")}'
+            """
+        else:
+            query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {tagging_clause}
+                )
+                WAREHOUSE = {warehouse}
+                REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
+            """
+        if feature_view.cluster_by:
+            # For tiled FVs, replace timestamp column with TILE_START in cluster_by
+            if feature_view.is_tiled and feature_view.timestamp_col:
+                ts_col_upper = feature_view.timestamp_col.upper()
+                cluster_by_cols = [
+                    "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
+                ]
+            else:
+                cluster_by_cols = [str(col) for col in feature_view.cluster_by]
+            cluster_by_clause = f"CLUSTER BY ({', '.join(cluster_by_cols)})"
+            query += f"{cluster_by_clause}"
+
+        query += f"""
+            AS {source_query}
+        """
+        return query
+
+    def _create_dynamic_table_with_scheduled_tasks(
+        self,
+        override_clause: str,
+        feature_view: FeatureView,
+        fully_qualified_name: str,
+        warehouse: SqlIdentifier,
+    ) -> None:
+        """Create a Snowflake Task to refresh a Dynamic Table on a CRON schedule.
+
+        This function creates a scheduled task that executes ALTER DYNAMIC TABLE ... REFRESH
+        to trigger periodic refreshes based on a CRON expression.
+
+        Note:
+            Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
+            so this approach works the same way for both regular Dynamic Tables and
+            Dynamic Iceberg Tables.
+
+        Args:
+            override_clause: SQL clause for CREATE OR REPLACE behavior.
+            feature_view: The FeatureView containing refresh configuration.
+            fully_qualified_name: Fully qualified name for the task (same as the DT).
+            warehouse: Warehouse to use for task execution.
+
+        Raises:
+            Exception: Re-raises any exception after cleanup (dropping DT and task).
+        """
+        task_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION)
+        try:
+            # ALTER DYNAMIC TABLE works for both regular Dynamic Tables and Dynamic Iceberg Tables.
+            # The ICEBERG keyword is only used in CREATE, not in ALTER/SHOW/DROP.
+            self._session.sql(
+                f"""CREATE{override_clause} TASK {fully_qualified_name}
+                    WAREHOUSE = {warehouse}
+                    SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
+                    AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(
+                f"""
+                ALTER TASK {fully_qualified_name}
+                SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}='{task_obj_info.to_json()}'
+            """
+            ).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
+                statement_params=self._telemetry_stmp
+            )
+        except Exception:
+            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            raise
+
     def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: list[Row]) -> FeatureView:
         def find_and_compose_entity(name: str) -> Entity:
             name = SqlIdentifier(name).resolved()
@@ -3537,6 +3905,19 @@ FROM SPINE{' '.join(join_clauses)}
 
         online_config_json = self._determine_online_config_from_oft(name.identifier(), version)
         online_config = fv_mod.OnlineConfig.from_json(online_config_json)
+
+        # Get storage_config from SHOW ICEBERG TABLES if marked as Iceberg in metadata
+        storage_config: Optional[StorageConfig] = None
+        if fv_metadata.is_iceberg:
+            storage_config = self._get_iceberg_storage_config(fv_name)
+            if storage_config is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(
+                        f"Failed to retrieve Iceberg storage config for {fv_name.resolved()}. "
+                        "The feature view is marked as Iceberg but SHOW ICEBERG TABLES returned no results."
+                    ),
+                )
 
         # Load feature metadata if present (for tiled feature views)
         agg_metadata = self._metadata_manager.get_feature_specs(name.identifier(), version)
@@ -3587,6 +3968,7 @@ FROM SPINE{' '.join(join_clauses)}
                 session=self._session,
                 cluster_by=self._extract_cluster_by_columns(row["cluster_by"]),
                 online_config=online_config,
+                storage_config=storage_config,
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
             )
@@ -3619,6 +4001,7 @@ FROM SPINE{' '.join(join_clauses)}
                 online_config=online_config,
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
+                storage_config=storage_config,
             )
             return fv
 

@@ -189,6 +189,10 @@ def SnowflakeLoginOptions(connection_name: str = "", login_file: Optional[str] =
         conn_prop["token"] = token
         if "authenticator" not in conn_prop or conn_prop["authenticator"]:
             conn_prop["authenticator"] = "oauth"
+        # When using OAuth token, remove user and password as the token determines the user.
+        # Passing a user that differs from the token's user causes authentication failure.
+        conn_prop.pop("user", None)
+        conn_prop.pop("password", None)
     elif "private_key_path" in conn_prop and "private_key" not in conn_prop:
         conn_prop["private_key"] = _load_pem_to_der(str(conn_prop["private_key_path"]))
 

@@ -193,20 +193,23 @@ class Feature:
         return cls(AggregationType.MAX, column, window, offset)
 
     @classmethod
-    def std(cls, column: str, window: str, offset: str = "0") -> Feature:
-        """Create a STD (standard deviation) aggregation feature.
+    def stddev(cls, column: str, window: str, offset: str = "0") -> Feature:
+        """Create a STDDEV (standard deviation) aggregation feature.
+
+        Computes the population standard deviation of values within the specified window.
 
         Args:
             column: The column to compute standard deviation for.
-            window: The lookback window.
+            window: The lookback window (e.g., "24h", "7d").
             offset: Offset to shift window into past. Default is "0" (no offset).
 
         Returns:
-            A Feature configured for STD aggregation.
+            A Feature configured for STDDEV aggregation.
 
         Example::
 
-            >>> price_std = Feature.std("price", "24h")
+            >>> price_stddev = Feature.stddev("price", "24h")
+            >>> prev_week_stddev = Feature.stddev("price", "7d", offset="7d")
         """
         return cls(AggregationType.STD, column, window, offset)
 
