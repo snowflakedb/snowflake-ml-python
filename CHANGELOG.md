@@ -112,12 +112,27 @@ mv = registry.log_model(
 
 # Run inference with custom parameter value
 result = mv.run(sample_input, function_name="predict", params={"temperature": 2.0})
+```
+
+* Feature Store: Added `auto_prefix` parameter and `with_name()` method to avoid column name collisions when
+  joining multiple feature views in dataset generation.
+
+* Feature Store: Added support for Dynamic Iceberg Tables as the backing storage for Feature Views.
+  Use `StorageConfig` with `StorageFormat.ICEBERG` to create Iceberg-backed Feature Views that store
+  data in open Apache Iceberg format on external cloud storage. A new `default_iceberg_external_volume`
+  parameter is available in `FeatureStore` to set a default external volume for Iceberg Feature Views.
 
 ### Bug Fixes
 
 ### Behavior Changes
 
 ### Deprecations
+
+## 1.25.1
+
+### Bug Fixes
+
+* ML Job: Reverted changes related to the introduction of ML Job Definitions.
 
 ## 1.25.0
 
@@ -134,15 +149,6 @@ result = mv.run(sample_input, function_name="predict", params={"temperature": 2.
   with the `min_instances` and automatically scales between `min_instances` and `max_instances` based on
   traffic and hardware utilization. When `min_instances` is set to 0, the service will automatically suspend
   if no traffic is detected for a period of time.
-
-* Feature Store: Added `auto_prefix` parameter and `with_name()` method to avoid column name collisions when
-  joining multiple feature views in dataset generation.
-
-* Feature Store: Added support for Dynamic Iceberg Tables as the backing storage for Feature Views.
-  Use `StorageConfig` with `StorageFormat.ICEBERG` to create Iceberg-backed Feature Views that store
-  data in open Apache Iceberg format on external cloud storage. A new `default_iceberg_external_volume`
-  parameter is available in `FeatureStore` to set a default external volume for Iceberg Feature Views.
-
 
 ### Bug Fixes
 
