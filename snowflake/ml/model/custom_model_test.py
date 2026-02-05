@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 
 import numpy as np
 import pandas as pd
@@ -247,6 +248,223 @@ class ModelTest(absltest.TestCase):
             self.assertTrue(np.allclose(p1, p2["output"]))
 
         asyncio.get_event_loop().run_until_complete(_test(self))
+
+
+class IsSupportedAnnotationTest(absltest.TestCase):
+    """Test cases for _is_supported_annotation function."""
+
+    def test_supported_scalar_types(self) -> None:
+        """Test that all supported scalar types are accepted."""
+        supported_scalars = [int, float, str, bool, bytes, datetime.datetime]
+        for scalar_type in supported_scalars:
+            with self.subTest(scalar_type=scalar_type):
+                self.assertTrue(custom_model._is_supported_annotation(scalar_type))
+
+    def test_bare_list_type_rejected(self) -> None:
+        """Test that bare list type is rejected (element type required for serialization)."""
+        self.assertFalse(custom_model._is_supported_annotation(list))
+
+    def test_list_of_scalars(self) -> None:
+        """Test that list of supported scalar types are accepted."""
+        self.assertTrue(custom_model._is_supported_annotation(list[int]))
+        self.assertTrue(custom_model._is_supported_annotation(list[float]))
+        self.assertTrue(custom_model._is_supported_annotation(list[str]))
+        self.assertTrue(custom_model._is_supported_annotation(list[bool]))
+        self.assertTrue(custom_model._is_supported_annotation(list[bytes]))
+        self.assertTrue(custom_model._is_supported_annotation(list[datetime.datetime]))
+
+    def test_nested_lists(self) -> None:
+        """Test that nested lists are accepted."""
+        self.assertTrue(custom_model._is_supported_annotation(list[list[int]]))
+        self.assertTrue(custom_model._is_supported_annotation(list[list[str]]))
+        self.assertTrue(custom_model._is_supported_annotation(list[list[list[float]]]))
+
+    def test_deeply_nested_lists(self) -> None:
+        """Test that deeply nested lists are accepted."""
+        self.assertTrue(custom_model._is_supported_annotation(list[list[list[list[int]]]]))
+
+    def test_unsupported_scalar_types(self) -> None:
+        """Test that unsupported scalar types are rejected."""
+
+        class CustomClass:
+            pass
+
+        self.assertFalse(custom_model._is_supported_annotation(CustomClass))
+        self.assertFalse(custom_model._is_supported_annotation(type(None)))
+
+    def test_unsupported_container_types(self) -> None:
+        """Test that unsupported container types are rejected."""
+        self.assertFalse(custom_model._is_supported_annotation(dict))
+        self.assertFalse(custom_model._is_supported_annotation(dict[str, int]))
+        self.assertFalse(custom_model._is_supported_annotation(tuple))
+        self.assertFalse(custom_model._is_supported_annotation(tuple[int, str]))
+        self.assertFalse(custom_model._is_supported_annotation(set))
+        self.assertFalse(custom_model._is_supported_annotation(set[int]))
+
+    def test_list_of_unsupported_inner_type(self) -> None:
+        """Test that list of unsupported inner types are rejected."""
+
+        class CustomClass:
+            pass
+
+        self.assertFalse(custom_model._is_supported_annotation(list[CustomClass]))
+        self.assertFalse(custom_model._is_supported_annotation(list[dict]))  # type: ignore[type-arg]
+        self.assertFalse(custom_model._is_supported_annotation(list[dict[str, int]]))
+
+    def test_nested_list_with_unsupported_innermost_type(self) -> None:
+        """Test that nested lists with unsupported innermost types are rejected."""
+
+        class CustomClass:
+            pass
+
+        self.assertFalse(custom_model._is_supported_annotation(list[list[CustomClass]]))
+        self.assertFalse(custom_model._is_supported_annotation(list[list[list[dict]]]))  # type: ignore[type-arg]
+
+
+class ValidateParameterListTypesTest(absltest.TestCase):
+    """Test cases for _validate_parameter with list types."""
+
+    def test_custom_model_with_list_parameter(self) -> None:
+        """Test that list parameters are allowed in custom models."""
+
+        class ModelWithListParam(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(
+                self, input: pd.DataFrame, *, stop_words: list[str] = ["stop", "words"]  # noqa: B006
+            ) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        # Should not raise
+        model = ModelWithListParam(custom_model.ModelContext())
+        self.assertIsNotNone(model)
+
+    def test_custom_model_with_nested_list_parameter(self) -> None:
+        """Test that nested list parameters are allowed."""
+
+        class ModelWithNestedListParam(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(
+                self, input: pd.DataFrame, *, matrix: list[list[int]] = [[1, 2], [3, 4]]  # noqa: B006
+            ) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        # Should not raise
+        model = ModelWithNestedListParam(custom_model.ModelContext())
+        self.assertIsNotNone(model)
+
+    def test_custom_model_with_deeply_nested_list_parameter(self) -> None:
+        """Test that deeply nested list parameters are allowed."""
+
+        class ModelWithDeeplyNestedListParam(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(
+                self, input: pd.DataFrame, *, tensor: list[list[list[float]]] = [[[1.0]]]  # noqa: B006
+            ) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        # Should not raise
+        model = ModelWithDeeplyNestedListParam(custom_model.ModelContext())
+        self.assertIsNotNone(model)
+
+    def test_custom_model_with_unsupported_list_inner_type_raises(self) -> None:
+        """Test that list with unsupported inner type raises TypeError."""
+
+        with self.assertRaises(TypeError) as cm:
+
+            class ModelWithBadListParam(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(
+                    self,
+                    input: pd.DataFrame,
+                    *,
+                    bad_param: list[dict] = [{}],  # type: ignore[type-arg]  # noqa: B006
+                ) -> pd.DataFrame:
+                    return pd.DataFrame(input)
+
+            _ = ModelWithBadListParam(custom_model.ModelContext())
+
+        self.assertIn("unsupported type annotation", str(cm.exception))
+
+    def test_custom_model_with_dict_parameter_raises(self) -> None:
+        """Test that dict parameters raise TypeError."""
+
+        with self.assertRaises(TypeError) as cm:
+
+            class ModelWithDictParam(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(self, input: pd.DataFrame, *, config: dict[str, int] = {}) -> pd.DataFrame:  # noqa: B006
+                    return pd.DataFrame(input)
+
+            _ = ModelWithDictParam(custom_model.ModelContext())
+
+        self.assertIn("unsupported type annotation", str(cm.exception))
+
+    def test_custom_model_with_bare_list_parameter_raises(self) -> None:
+        """Test that bare list parameter raises TypeError early with clear message."""
+
+        with self.assertRaises(TypeError) as cm:
+
+            class ModelWithBareListParam(custom_model.CustomModel):
+                def __init__(self, context: custom_model.ModelContext) -> None:
+                    super().__init__(context)
+
+                @custom_model.inference_api
+                def predict(
+                    self,
+                    input: pd.DataFrame,
+                    *,
+                    items: list = [],  # type: ignore[type-arg]  # noqa: B006
+                ) -> pd.DataFrame:
+                    return pd.DataFrame(input)
+
+            _ = ModelWithBareListParam(custom_model.ModelContext())
+
+        self.assertIn("unsupported type annotation", str(cm.exception))
+        self.assertIn("bare 'list' without element type is not supported", str(cm.exception))
+
+    def test_get_method_parameters_with_list_type(self) -> None:
+        """Test that get_method_parameters works with list types."""
+
+        class ModelWithListParams(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(
+                self,
+                input: pd.DataFrame,
+                *,
+                tokens: list[str] = ["a", "b"],  # noqa: B006
+                weights: list[float] = [0.5, 0.5],  # noqa: B006
+            ) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        model = ModelWithListParams(custom_model.ModelContext())
+
+        for method in model._get_infer_methods():
+            params = custom_model.get_method_parameters(method)
+            self.assertEqual(len(params), 2)
+            self.assertEqual(params[0][0], "tokens")
+            self.assertEqual(params[0][1], list[str])
+            self.assertEqual(params[0][2], ["a", "b"])
+            self.assertEqual(params[1][0], "weights")
+            self.assertEqual(params[1][1], list[float])
+            self.assertEqual(params[1][2], [0.5, 0.5])
 
 
 if __name__ == "__main__":

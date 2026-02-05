@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import inference_engine, openai_signatures
+from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.models import huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
@@ -39,33 +39,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         if self._original_hf_endpoint:
             os.environ["HF_ENDPOINT"] = self._original_hf_endpoint
 
-    def _get_inference_engine_options_for_inference_engine(
-        self,
-        inference_engine_type: str,
-        base_inference_engine_options: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
-        """Helper method to generate inference_engine_options based on inference engine type.
-
-        Args:
-            inference_engine_type: Inference engine type - either "Default" (Python) or "vLLM"
-            base_inference_engine_options: Base inference engine options to merge with inference engine-specific options
-
-        Returns:
-            Dictionary of inference engine options or None for Default backend
-        """
-        inference_engine_options = base_inference_engine_options.copy() if base_inference_engine_options else {}
-
-        if inference_engine_type == "vLLM":
-            inference_engine_options["engine"] = inference_engine.InferenceEngine.VLLM
-        elif inference_engine_type != "Default":
-            raise ValueError(f"Unknown inference engine type: {inference_engine_type}. Must be 'Default' or 'vLLM'")
-
-        # Return None for Default backend if no other options are set
-        if inference_engine_type == "Default" and not inference_engine_options:
-            return None
-
-        return inference_engine_options if inference_engine_options else None
-
     def _test_with_model_logging(
         self,
         model_name: str,
@@ -88,11 +61,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         # Skip test if token is required but not available
         if requires_token and not self.hf_token:
             self.skipTest(f"Skipping test for gated model {model_name} - HF_TOKEN not available")
-
-        # TODO: Remove this once the proxy image that can handle content parts protocol
-        # is available in system repository.
-        if not self._has_image_override():
-            self.skipTest("Skipping test: image override environment variables not set.")
 
         model = huggingface_pipeline.HuggingFacePipelineModel(
             task=task,
@@ -232,7 +200,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         check_batch_res(res_service)
 
         res_api = self._inference_using_rest_api(
-            x_df_batch,
+            self._to_external_data_format(x_df_batch),
             endpoint=endpoint,
             jwt_token_generator=jwt_token_generator,
             target_method="__call__",

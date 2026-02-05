@@ -522,6 +522,100 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertIn("TXN_COUNT", columns)
         self.assertNotIn("AVG_AMOUNT", columns)
 
+    def test_retrieve_feature_values_multiple_tiled_fvs(self) -> None:
+        """Test retrieve_feature_values with multiple tiled FVs sharing same entity.
+
+        This test reproduces a customer-reported bug where multiple tiled FVs
+        with the same source column (e.g., both COUNT on user_id) cause
+        duplicate column names like '_PARTIAL_COUNT_USER_ID' in the output.
+
+        IMPORTANT: Uses get_feature_view() to simulate real customer usage pattern
+        where FVs are retrieved from the store, not freshly registered.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # FV 1: Cart events with aggregations on user_id
+        cart_features = [
+            Feature.count("user_id", "2h").alias("cart_count"),
+            Feature.sum("amount", "2h").alias("cart_total"),
+        ]
+        cart_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        cart_fv = FeatureView(
+            name="user_cart_events",
+            entities=[e],
+            feature_df=self._session.sql(cart_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=cart_features,
+        )
+        fs.register_feature_view(feature_view=cart_fv, version="v1")
+
+        # FV 2: Page view events with aggregations on user_id (SAME source column!)
+        page_features = [
+            Feature.count("user_id", "2h").alias("page_count"),  # Same source column as FV1
+        ]
+        page_sql = f"SELECT user_id, event_ts, page_id FROM {self._events_table}"
+        page_fv = FeatureView(
+            name="user_page_events",
+            entities=[e],
+            feature_df=self._session.sql(page_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=page_features,
+        )
+        fs.register_feature_view(feature_view=page_fv, version="v1")
+
+        # CRITICAL: Retrieve FVs from the store (simulates customer usage pattern)
+        # This is where metadata lookup occurs, which could fail and cause is_tiled=False
+        retrieved_cart_fv = fs.get_feature_view("user_cart_events", "v1")
+        retrieved_page_fv = fs.get_feature_view("user_page_events", "v1")
+
+        # Verify both FVs are correctly identified as tiled
+        self.assertTrue(
+            retrieved_cart_fv.is_tiled,
+            f"cart_fv should be tiled. aggregation_specs={retrieved_cart_fv.aggregation_specs}",
+        )
+        self.assertTrue(
+            retrieved_page_fv.is_tiled,
+            f"page_fv should be tiled. aggregation_specs={retrieved_page_fv.aggregation_specs}",
+        )
+
+        # Create spine with timestamps
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 4, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Retrieve feature values with BOTH tiled FVs (retrieved from store)
+        result_df = fs.retrieve_feature_values(
+            spine_df=spine_df,
+            features=[retrieved_cart_fv, retrieved_page_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+
+        # Check columns - should have output columns, not _PARTIAL_* columns
+        columns = [c.upper() for c in result_df.columns]
+
+        # Should have entity + spine timestamp + feature output columns
+        self.assertIn("USER_ID", columns)
+        self.assertIn("QUERY_TS", columns)
+        self.assertIn("CART_COUNT", columns)
+        self.assertIn("CART_TOTAL", columns)
+        self.assertIn("PAGE_COUNT", columns)
+
+        # Should NOT have tile internal columns
+        self.assertNotIn("TILE_START", columns)
+        self.assertFalse(
+            any("_PARTIAL_" in c for c in columns),
+            f"Found _PARTIAL_ columns in output: {[c for c in columns if '_PARTIAL_' in c]}",
+        )
+
     def test_mixed_tiled_and_non_tiled_fvs(self) -> None:
         """Test that tiled and non-tiled FVs can coexist in same feature store."""
         fs = self._create_feature_store()
@@ -752,7 +846,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         ("avg", Feature.avg("amount", "2h"), "AMOUNT_AVG_2H"),
         ("min", Feature.min("amount", "2h"), "AMOUNT_MIN_2H"),
         ("max", Feature.max("amount", "2h"), "AMOUNT_MAX_2H"),
-        ("std", Feature.std("amount", "2h"), "AMOUNT_STD_2H"),
+        ("stddev", Feature.stddev("amount", "2h"), "AMOUNT_STD_2H"),
         ("var", Feature.var("amount", "2h"), "AMOUNT_VAR_2H"),
     )
     def test_simple_aggregation_types(self, agg_type: str, feature: Feature, expected_col: str) -> None:
@@ -1214,7 +1308,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         e = Entity("user", ["user_id"])
         fs.register_entity(e)
 
-        features = [Feature.std("amount", "2h").alias("amount_std_2h")]
+        features = [Feature.stddev("amount", "2h").alias("amount_std_2h")]
 
         sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
         fv = FeatureView(
@@ -1314,7 +1408,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
 
         try:
             features = [
-                Feature.std("amount", "24h").alias("amount_std"),
+                Feature.stddev("amount", "24h").alias("amount_std"),
                 Feature.var("amount", "24h").alias("amount_var"),
             ]
 
@@ -1600,7 +1694,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             Feature.sum("amount", "2h").alias("amount_sum"),
             Feature.count("amount", "2h").alias("txn_count"),
             Feature.avg("amount", "2h").alias("amount_avg"),
-            Feature.std("amount", "2h").alias("amount_std"),
+            Feature.stddev("amount", "2h").alias("amount_std"),
             Feature.var("amount", "2h").alias("amount_var"),
             Feature.last_n("page_id", "2h", n=5).alias("recent_pages"),
             Feature.first_n("page_id", "2h", n=3).alias("first_pages"),
@@ -1884,6 +1978,351 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertIsNotNone(result_pd["AMOUNT_SUM"].iloc[0])
         self.assertIsNotNone(result_pd["TXN_COUNT"].iloc[0])
 
+    def test_generate_training_set_multiple_tiled_fvs_no_partial_cols(self) -> None:
+        """Test that _PARTIAL_* columns are excluded from generate_training_set output.
+
+        This test verifies that when generating training sets with multiple tiled FVs,
+        the internal _PARTIAL_* columns used for aggregation are NOT included in the
+        output DataFrame. These are internal implementation details.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # FV 1: Cart events with COUNT on user_id
+        cart_features = [
+            Feature.count("user_id", "2h").alias("cart_count"),
+            Feature.sum("amount", "2h").alias("cart_total"),
+        ]
+        cart_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        cart_fv = FeatureView(
+            name="cart_fv",
+            entities=[e],
+            feature_df=self._session.sql(cart_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=cart_features,
+        )
+        fs.register_feature_view(feature_view=cart_fv, version="v1")
+
+        # FV 2: Page events with COUNT on user_id (same source col as FV1!)
+        page_features = [
+            Feature.count("user_id", "2h").alias("page_count"),  # Same COUNT(user_id) as FV1
+            Feature.sum("amount", "2h").alias("page_total"),
+        ]
+        page_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        page_fv = FeatureView(
+            name="page_fv",
+            entities=[e],
+            feature_df=self._session.sql(page_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=page_features,
+        )
+        fs.register_feature_view(feature_view=page_fv, version="v1")
+
+        # Get FVs from store (as customer would)
+        cart_fv_retrieved = fs.get_feature_view("cart_fv", "v1")
+        page_fv_retrieved = fs.get_feature_view("page_fv", "v1")
+
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Generate training set with save_as=None (as customer does)
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[cart_fv_retrieved, page_fv_retrieved],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+            save_as=None,
+        )
+
+        columns = [c.upper() for c in result_df.columns]
+
+        # Should have expected output columns
+        self.assertIn("CART_COUNT", columns)
+        self.assertIn("CART_TOTAL", columns)
+        self.assertIn("PAGE_COUNT", columns)
+        self.assertIn("PAGE_TOTAL", columns)
+
+        # Should NOT have internal tile columns
+        self.assertFalse(any("_PARTIAL_" in c for c in columns))
+        self.assertNotIn("TILE_START", columns)
+        self.assertNotIn("TILE_BOUNDARY", columns)
+
+    def test_auto_prefix_avoids_collision(self) -> None:
+        """Test that auto_prefix=True avoids column name collisions.
+
+        When multiple tiled FVs have features with the same output column name
+        (e.g., both have 'COUNT_2H'), using auto_prefix=True should
+        prefix each column with '{FV_NAME}_{VERSION}_' to make them unique.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # FV 1: Cart events with COUNT on user_id, output column 'COUNT_2H'
+        cart_features = [
+            Feature.count("user_id", "2h").alias("COUNT_2H"),  # Same name as FV2!
+        ]
+        cart_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        cart_fv = FeatureView(
+            name="cart_fv",
+            entities=[e],
+            feature_df=self._session.sql(cart_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=cart_features,
+        )
+        fs.register_feature_view(feature_view=cart_fv, version="v1")
+
+        # FV 2: Page events with COUNT on user_id, output column 'COUNT_2H'
+        page_features = [
+            Feature.count("user_id", "2h").alias("COUNT_2H"),  # Same name as FV1!
+        ]
+        page_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        page_fv = FeatureView(
+            name="page_fv",
+            entities=[e],
+            feature_df=self._session.sql(page_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=page_features,
+        )
+        fs.register_feature_view(feature_view=page_fv, version="v1")
+
+        # Get FVs from store
+        cart_fv_retrieved = fs.get_feature_view("cart_fv", "v1")
+        page_fv_retrieved = fs.get_feature_view("page_fv", "v1")
+
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Generate training set WITH auto_prefix=True
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[cart_fv_retrieved, page_fv_retrieved],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+            auto_prefix=True,
+        )
+
+        columns = [c.upper().strip('"') for c in result_df.columns]
+
+        # Should have prefixed columns (format: {FV_NAME}_{VERSION}_{COLUMN})
+        self.assertIn("CART_FV_V1_COUNT_2H", columns)
+        self.assertIn("PAGE_FV_V1_COUNT_2H", columns)
+
+        # Should NOT have unprefixed 'COUNT_2H' (would be ambiguous)
+        # Note: there should be exactly 2 columns with COUNT_2H in name
+        count_2h_cols = [c for c in columns if "COUNT_2H" in c]
+        self.assertEqual(len(count_2h_cols), 2)
+
+        # Verify we can materialize without duplicate column error
+        table_name = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.PREFIX_TEST_OUTPUT"
+        result_df.write.save_as_table(table_name, mode="overwrite")
+
+        # Read back and verify columns
+        saved_df = self._session.table(table_name)
+        saved_columns = [c.upper().strip('"') for c in saved_df.columns]
+        self.assertIn("CART_FV_V1_COUNT_2H", saved_columns)
+        self.assertIn("PAGE_FV_V1_COUNT_2H", saved_columns)
+
+    def test_no_prefix_preserves_original_names(self) -> None:
+        """Test that auto_prefix=False (default) preserves original column names."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("user_id", "2h").alias("user_count"),
+            Feature.sum("amount", "2h").alias("total_amount"),
+        ]
+        sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="test_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        retrieved_fv = fs.get_feature_view("test_fv", "v1")
+
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Default: auto_prefix=False
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[retrieved_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+
+        columns = [c.upper() for c in result_df.columns]
+
+        # Should have original column names (no prefix)
+        self.assertIn("USER_COUNT", columns)
+        self.assertIn("TOTAL_AMOUNT", columns)
+
+        # Should NOT have prefixed names
+        self.assertNotIn("TEST_FV_V1_USER_COUNT", columns)
+        self.assertNotIn("TEST_FV_V1_TOTAL_AMOUNT", columns)
+
+    def test_with_name_custom_prefix(self) -> None:
+        """Test that with_name() allows custom prefixes per FV."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # FV 1: Cart events
+        cart_features = [
+            Feature.count("user_id", "2h").alias("COUNT_2H"),
+        ]
+        cart_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        cart_fv = FeatureView(
+            name="cart_fv",
+            entities=[e],
+            feature_df=self._session.sql(cart_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=cart_features,
+        )
+        fs.register_feature_view(feature_view=cart_fv, version="v1")
+
+        # FV 2: Page events
+        page_features = [
+            Feature.count("user_id", "2h").alias("COUNT_2H"),
+        ]
+        page_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        page_fv = FeatureView(
+            name="page_fv",
+            entities=[e],
+            feature_df=self._session.sql(page_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=page_features,
+        )
+        fs.register_feature_view(feature_view=page_fv, version="v1")
+
+        # Get FVs from store
+        cart_fv_retrieved = fs.get_feature_view("cart_fv", "v1")
+        page_fv_retrieved = fs.get_feature_view("page_fv", "v1")
+
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Generate training set with custom prefixes using with_name()
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[
+                cart_fv_retrieved.with_name("c"),
+                page_fv_retrieved.with_name("p"),
+            ],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+
+        columns = [c.upper().strip('"') for c in result_df.columns]
+
+        # Should have custom prefixed columns
+        self.assertIn("C_COUNT_2H", columns)
+        self.assertIn("P_COUNT_2H", columns)
+
+        # Verify we can materialize without duplicate column error
+        table_name = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.CUSTOM_PREFIX_TEST"
+        result_df.write.save_as_table(table_name, mode="overwrite")
+
+    def test_with_name_partial_prefix(self) -> None:
+        """Test that with_name() can be used selectively on some FVs."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # FV 1: Cart events
+        cart_features = [
+            Feature.count("user_id", "2h").alias("cart_count"),
+        ]
+        cart_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        cart_fv = FeatureView(
+            name="cart_fv",
+            entities=[e],
+            feature_df=self._session.sql(cart_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=cart_features,
+        )
+        fs.register_feature_view(feature_view=cart_fv, version="v1")
+
+        # FV 2: Page events
+        page_features = [
+            Feature.count("user_id", "2h").alias("page_count"),
+        ]
+        page_sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        page_fv = FeatureView(
+            name="page_fv",
+            entities=[e],
+            feature_df=self._session.sql(page_sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=page_features,
+        )
+        fs.register_feature_view(feature_view=page_fv, version="v1")
+
+        # Get FVs from store
+        cart_fv_retrieved = fs.get_feature_view("cart_fv", "v1")
+        page_fv_retrieved = fs.get_feature_view("page_fv", "v1")
+
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        # Generate training set with prefix only for cart_fv using with_name()
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[
+                cart_fv_retrieved.with_name("c"),  # Only cart_fv gets custom prefix
+                page_fv_retrieved,  # No prefix
+            ],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+
+        columns = [c.upper().strip('"') for c in result_df.columns]
+
+        # cart_fv columns should be prefixed
+        self.assertIn("C_CART_COUNT", columns)
+
+        # page_fv columns should NOT be prefixed
+        self.assertIn("PAGE_COUNT", columns)
+        self.assertNotIn("P_PAGE_COUNT", columns)
+
     def test_generate_training_set_with_save_as(self) -> None:
         """Test generate_training_set with save_as produces correct results.
 
@@ -2006,7 +2445,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         fs.register_entity(e)
 
         features = [
-            Feature.std("amount", "2h").alias("amount_std"),
+            Feature.stddev("amount", "2h").alias("amount_std"),
             Feature.var("amount", "2h").alias("amount_var"),
         ]
 
@@ -2694,7 +3133,7 @@ class LifetimeAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase)
         fs.register_entity(e)
 
         features = [
-            Feature.std("amount", "lifetime").alias("std_amount"),
+            Feature.stddev("amount", "lifetime").alias("std_amount"),
             Feature.var("amount", "lifetime").alias("var_amount"),
         ]
 

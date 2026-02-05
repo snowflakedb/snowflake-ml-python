@@ -104,7 +104,7 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         self._db_manager.create_stage(self._test_stage)
 
     def tearDown(self) -> None:
-        # self._db_manager.drop_database(self._test_db)
+        self._db_manager.drop_database(self._test_db)
         super().tearDown()
 
     def _add_common_model_deployment_spec_options(

@@ -530,6 +530,111 @@ class ModelMethodTest(parameterized.TestCase):
             self.assertIn("params", method_dict)
             self.assertEqual(method_dict["params"][0]["name"], "myParam")
 
+    def test_model_method_with_array_parameter(self) -> None:
+        """Test that array parameters are correctly typed as ARRAY and default is JSON formatted."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        sig_with_array_param = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+                params=[
+                    model_signature.ParamSpec(
+                        name="stop", dtype=model_signature.DataType.STRING, default_value=[], shape=(-1,)
+                    ),
+                    model_signature.ParamSpec(
+                        name="ids", dtype=model_signature.DataType.INT64, default_value=[1, 2, 3], shape=(-1,)
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig_with_array_param
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            # Verify array params are correctly typed and formatted
+            self.assertIn("params", method_dict)
+            self.assertEqual(len(method_dict["params"]), 2)
+
+            # First param: stop (empty array)
+            self.assertEqual(method_dict["params"][0]["name"], "STOP")
+            self.assertEqual(method_dict["params"][0]["type"], "ARRAY")
+            self.assertEqual(method_dict["params"][0]["default"], "[]")
+
+            # Second param: ids (array with values)
+            self.assertEqual(method_dict["params"][1]["name"], "IDS")
+            self.assertEqual(method_dict["params"][1]["type"], "ARRAY")
+            self.assertEqual(method_dict["params"][1]["default"], "[1, 2, 3]")
+
+
+class FormatParamDefaultValueTest(absltest.TestCase):
+    """Tests for ModelMethod._format_param_default_value() helper."""
+
+    def test_format_none_value(self) -> None:
+        """Test that None is formatted as 'NULL' for SQL compatibility."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(None), "NULL")
+
+    def test_format_empty_list(self) -> None:
+        """Test that empty list is formatted as JSON '[]'."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value([]), "[]")
+
+    def test_format_list_with_values(self) -> None:
+        """Test that list with values is formatted using Python's str() representation.
+
+        This uses single quotes for strings, which SQL interprets as string literals.
+        """
+        self.assertEqual(model_method.ModelMethod._format_param_default_value([1, 2, 3]), "[1, 2, 3]")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(["a", "b"]), "['a', 'b']")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value([1.5, 2.5]), "[1.5, 2.5]")
+
+    def test_format_scalar_values(self) -> None:
+        """Test that numeric values are formatted via str()."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(0.5), "0.5")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(100), "100")
+
+    def test_format_boolean_values(self) -> None:
+        """Test that boolean values are formatted as lowercase SQL booleans."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(True), "true")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(False), "false")
+
+    def test_format_string_value(self) -> None:
+        """Test that string values are formatted as single-quoted SQL literals."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value("hello"), "'hello'")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value("default"), "'default'")
+        # Test escaping single quotes (uses backslash escaping)
+        self.assertEqual(model_method.ModelMethod._format_param_default_value("it's"), "'it\\'s'")
+
+    def test_format_bytes_value(self) -> None:
+        """Test that bytes values are formatted as SQL hex literals."""
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(b"hello"), "X'68656c6c6f'")
+        self.assertEqual(model_method.ModelMethod._format_param_default_value(b""), "X''")
+
+    def test_format_datetime_value(self) -> None:
+        """Test that datetime values are formatted as SQL timestamp literals."""
+        import datetime
+
+        dt = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        self.assertEqual(
+            model_method.ModelMethod._format_param_default_value(dt), "'2024-01-01 12:00:00'::TIMESTAMP_NTZ"
+        )
+
 
 class ModelMethodOptionsTest(absltest.TestCase):
     def test_get_model_method_options(self) -> None:

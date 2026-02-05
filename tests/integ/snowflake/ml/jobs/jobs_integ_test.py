@@ -6,7 +6,6 @@ import re
 import sys
 import textwrap
 import time
-from concurrent import futures
 from types import ModuleType
 from typing import Any, Callable, Optional, cast
 from unittest import mock
@@ -20,7 +19,7 @@ from packaging import version
 
 from snowflake import snowpark
 from snowflake.ml import jobs
-from snowflake.ml._internal.utils import identifier
+from snowflake.ml._internal.utils import identifier, mixins
 from snowflake.ml.jobs import job as jd
 from snowflake.ml.jobs._interop import results as interop_result
 from snowflake.ml.jobs._utils import (
@@ -166,6 +165,18 @@ class JobManagerTest(JobTestBase):
                     jobs.get_job(id, session=self.session)
                 self.assertRegex(str(cm.exception), "does not exist")
                 self.assertEqual(cm.exception.sql_error_code, 2003)
+
+    def test_delete_job(self) -> None:
+        original_schema = self.session.get_current_schema()
+        temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
+        try:
+            job = self._submit_func_as_file(dummy_function)
+            self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
+            jobs.delete_job(job.id, session=self.session)
+            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
+        finally:
+            self.dbm.drop_schema(temp_schema, if_exists=True)
+            self.session.use_schema(original_schema)
 
     def test_delete_job_negative(self) -> None:
         nonexistent_job_ids = [
@@ -388,7 +399,7 @@ class JobManagerTest(JobTestBase):
             session=self.session,
         )
 
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
         # Get initial state for comparison
         original_id = job.id
@@ -422,7 +433,7 @@ class JobManagerTest(JobTestBase):
 
         # Test that we can pickle jobs into remote functions
         job_status_remote = check_job_status(job)
-        self.assertEqual(job.wait(), job_status_remote.result(), job_status_remote.get_logs())
+        self.assertEqual(job.wait(), job_status_remote.result(), job_status_remote.get_logs(verbose=True))
 
         # Verify cached properties work correctly
         _ = unpickled_job.min_instances  # Should not raise an error
@@ -439,7 +450,8 @@ class JobManagerTest(JobTestBase):
         # Test session validation - should fail with different session context
         with mock.patch("snowflake.snowpark.session._get_active_sessions", return_value=set()):
             with self.assertRaisesRegex(RuntimeError, "No active Snowpark session available"):
-                cp.loads(pickled_data)
+                unpickled_job = cp.loads(pickled_data)
+                unpickled_job._session
 
     def test_job_result_v2(self) -> None:
         """Test that v2 job results can be saved and loaded correctly."""
@@ -600,7 +612,7 @@ class JobManagerTest(JobTestBase):
         # Check job completions
         for param, job in zip(params, job_list):
             with self.subTest(param):
-                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
                 self.assertIn("Job complete", job_logs)
 
                 args, kwargs = param
@@ -614,28 +626,31 @@ class JobManagerTest(JobTestBase):
                 self.assertEqual(job_result.get("result"), 100)
 
                 loaded_job = jobs.get_job(job.id, session=self.session)
-                self.assertEqual(loaded_job.status, "DONE")
-                self.assertDictEqual(loaded_job.result(), job_result)
+                self.assertEqual(loaded_job.status, "DONE", loaded_job.get_logs(verbose=True))
+                self.assertDictEqual(loaded_job.result(), job_result, loaded_job.get_logs(verbose=True))
 
     @parameterized.parameters(  # type: ignore[misc]
         "owner",
         "caller",
     )
     def test_job_execution_in_stored_procedure(self, sproc_rights: str) -> None:
-        @jobs.remote(self.compute_pool, stage_name="payload_stage")
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def job_fn() -> None:
             print("Hello from remote function!")
 
         @F.sproc(
             session=self.session,
             packages=["snowflake-snowpark-python", "snowflake-ml-python"],
-            imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")],
+            imports=[
+                (os.path.dirname(jobs.__file__), "snowflake.ml.jobs"),
+                (os.path.dirname(mixins.__file__), "snowflake.ml._internal.utils"),
+            ],
             execute_as=sproc_rights,
         )
-        def job_sproc(session: snowpark.Session) -> None:
+        def job_sproc(session: snowpark.Session) -> str:
             job = job_fn()
             if job.wait() != "DONE":
-                raise RuntimeError(f"Job {job.id} failed. Logs:\n{job.get_logs()}")
+                raise RuntimeError(f"Job {job.id} failed. Logs:\n{job.get_logs(verbose=True)}")
             return job.get_logs()
 
         result = job_sproc(self.session)
@@ -704,7 +719,7 @@ class JobManagerTest(JobTestBase):
             print("Runtime API test success")
 
         job = self._submit_func_as_file(runtime_func)
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
         self.assertIn("Runtime API test success", job_logs)
 
     def test_job_data_connector(self) -> None:
@@ -726,7 +741,7 @@ class JobManagerTest(JobTestBase):
         self.assertIsInstance(dc._ingestor, arrow_ingestor.ArrowIngestor)
 
         job = runtime_func(dc)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         dc_unpickled = job.result()
         self.assertIsInstance(dc_unpickled, data_connector.DataConnector)
         self.assertIsInstance(dc_unpickled._ingestor, arrow_ingestor.ArrowIngestor)
@@ -878,8 +893,8 @@ class JobManagerTest(JobTestBase):
 
         # Wait for job to finish
         job.wait()
-        self.assertEqual(job.status, "DONE", job.get_logs())
-        self.assertIn(expected_string, job.get_logs())
+        self.assertEqual(job.status, "DONE", job.get_logs(verbose=True))
+        self.assertIn(expected_string, job.get_logs(verbose=True))
 
     def test_submit_job_fully_qualified_name(self) -> None:
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
@@ -966,9 +981,9 @@ class JobManagerTest(JobTestBase):
         for test_case, func, hasSession in test_cases:
             with self.subTest(f"func={test_case}"):
                 job = func
-                self.assertEqual(job.wait(), "DONE", job.get_logs())
+                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
                 if hasSession:
-                    self.assertIn(self.session.get_current_database(), job.get_logs())
+                    self.assertIn(self.session.get_current_database(), job.get_logs(verbose=True))
 
     @parameterized.parameters(  # type: ignore[misc]
         (f"TMP_{uuid4().hex.upper()}", True, "SNOWFLAKE_FULL"),
@@ -1011,38 +1026,7 @@ class JobManagerTest(JobTestBase):
                     session=self.session,
                 )
 
-                self.assertEqual(job.wait(), expected_status, job.get_logs())
-
-    @parameterized.parameters(
-        [
-            {"method": "job_object"},
-            {"method": "job_id"},
-        ]
-    )
-    def test_delete_job_stage_cleanup(self, method: str) -> None:
-        """Test that deleting a job cleans up the stage files."""
-        original_schema = self.session.get_current_schema()
-        temp_schema = self.dbm.create_random_schema(prefix=test_constants._TEST_SCHEMA)
-        try:
-            job = self._submit_func_as_file(dummy_function)
-            self.assertEqual(1, len(jobs.list_jobs(session=self.session)))
-            stage_path = job._stage_path
-            stage_files = self.session.sql(f"LIST '{stage_path}'").collect()
-            self.assertGreater(len(stage_files), 0, "Stage should contain uploaded job files")
-
-            # Verify we can find expected files (startup.sh, requirements.txt, etc.)
-            file_names = {row["name"].split("/")[-1] for row in stage_files}
-            expected_files = {"startup.sh", "mljob_launcher.py"}
-            for expected_file in expected_files:
-                self.assertIn(expected_file, file_names, f"Expected file {expected_file} not found in stage")
-
-            jobs.delete_job(job.id if method == "job_id" else job, session=self.session)
-            remaining_files = self.session.sql(f"LIST '{stage_path}'").collect()
-            self.assertEqual(len(remaining_files), 0, "Stage files should be cleaned up after job deletion")
-            self.assertEqual(0, len(jobs.list_jobs(session=self.session)))
-        finally:
-            self.dbm.drop_schema(temp_schema, if_exists=True)
-            self.session.use_schema(original_schema)
+                self.assertEqual(job.wait(), expected_status, job.get_logs(verbose=True))
 
     def test_get_logs_fallback(self) -> None:
         real_run_query = query_helper.run_query
@@ -1053,7 +1037,7 @@ class JobManagerTest(JobTestBase):
             return real_run_query(session, query_str, *args, **kwargs)
 
         job = self._submit_func_as_file(dummy_function)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
         # Wait for logs to be ingested into event table
         max_wait = 300
@@ -1255,7 +1239,7 @@ class JobManagerTest(JobTestBase):
         resources = spec_utils._get_node_resources(self.session, self.compute_pool)
         hardware = "GPU" if resources.gpu > 0 else "CPU"
         try:
-            expected_runtime_image = runtime_env_utils._get_runtime_image(
+            expected_runtime_image = runtime_env_utils.find_runtime_image(
                 self.session, hardware, f"{sys.version_info.major}.{sys.version_info.minor}"
             )
         except Exception:
@@ -1418,7 +1402,7 @@ class JobManagerTest(JobTestBase):
 
         job = test_function()
 
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
         self.assertEqual(job.result(), "hello world")
 
     def test_job_with_runtime_image_tag_notebook(self) -> None:
@@ -1426,90 +1410,6 @@ class JobManagerTest(JobTestBase):
             job = self._submit_func_as_file(dummy_function)
             self.assertEqual(job.wait(), "DONE", job.get_logs())
             self.assertIn("1.8.0", job._container_spec["image"])
-
-    def _register_definition(self, **overrides: Any) -> jobs.MLJobDefinition:
-        payload = TestAsset("src/main.py")
-        return jobs.MLJobDefinition.register(
-            payload.path,
-            compute_pool=self.compute_pool,
-            stage_name="payload_stage",
-            session=self.session,
-            **overrides,
-        )
-
-    def test_job_definition_multiple_invocations(self) -> None:
-        job_def = self._register_definition(overwrite=False)
-        try:
-            first_job = job_def("foo", "--delay", "1")
-            second_job = job_def("foo", "--delay", "1")
-            self.assertEqual(first_job.wait(), "DONE", first_job.get_logs(verbose=True))
-            self.assertEqual(second_job.wait(), "DONE", second_job.get_logs(verbose=True))
-
-            jobs_df = jobs.list_jobs(session=self.session)
-            _, _, definition_name = identifier.parse_schema_level_object_identifier(job_def.job_definition_id)
-            self.assertGreaterEqual(
-                len(jobs_df[jobs_df["name"].str.lower().str.startswith(definition_name.lower() + "_")]), 2
-            )
-        finally:
-            job_def.delete()
-
-    def test_job_definition_concurrent_invocations(self) -> None:
-        job_def = self._register_definition()
-        try:
-            with futures.ThreadPoolExecutor(max_workers=2) as executor:
-                futures_list = [executor.submit(job_def, "foo", "--delay", "1") for _ in range(2)]
-            jobs_submitted = [future.result() for future in futures_list]
-
-            for job in jobs_submitted:
-                self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
-        finally:
-            job_def.delete()
-
-    def test_job_definition_synchronous(self) -> None:
-        job_def: jobs.MLJobDefinition = jobs.MLJobDefinition.register(
-            TestAsset("src/subdir5/main.py").path,
-            self.compute_pool,
-            stage_name="payload_stage",
-            session=self.session,
-        )
-        sql = job_def.to_sql()
-        job_id = self.session.sql(sql).collect()[0][0]
-        job = jobs.get_job(job_id, session=self.session)
-        is_async_job = self.session.sql(f"describe service {job_id}").collect()[0]["is_async_job"]
-        self.assertTrue(
-            job.wait() == "DONE" or not is_async_job,
-            job.get_logs(verbose=True),
-        )
-
-    def test_job_with_task_execution(self) -> None:
-        from snowflake.core import Root
-        from snowflake.core.task import Task
-
-        job_def = self._register_definition()
-        sql = job_def.to_sql(job_args=["foo", "--delay", "1"], use_async=False)
-        task_name = "TEST_TASK"
-
-        root = Root(self.session)
-        root.databases[self.db].schemas[self.schema].tasks.create(Task(name=task_name, definition=sql))
-        task_ref = root.databases[self.db].schemas[self.schema].tasks[task_name]
-        task_ref.execute()
-        max_retries = 60
-        status = None
-        try:
-            for _ in range(max_retries):
-                time.sleep(5)
-                history = self.session.sql(
-                    f"SELECT state FROM TABLE(information_schema.task_history(task_name=>'{task_name}')) "
-                    "ORDER BY scheduled_time DESC LIMIT 1"
-                ).collect()
-
-                if history:
-                    status = history[0][0]
-                    if status in ["SUCCEEDED", "FAILED", "CANCELLED"]:
-                        break
-            self.assertEqual(status, "SUCCEEDED")
-        finally:
-            task_ref.drop(if_exists=True)
 
 
 if __name__ == "__main__":

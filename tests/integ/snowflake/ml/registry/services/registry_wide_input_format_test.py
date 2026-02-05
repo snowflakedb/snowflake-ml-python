@@ -276,7 +276,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
             logger.info("📊 Testing flat format with parameter optimization...")
             try:
                 flat_result = self._inference_using_rest_api(
-                    self.train_data[self.feature_cols].head(2),
+                    self._to_external_data_format(self.train_data[self.feature_cols].head(2)),
                     endpoint=endpoint,
                     jwt_token_generator=jwt_token_generator,
                     target_method="predict",
@@ -357,7 +357,7 @@ class TestRegistryQuotedIdentifiersInteg(registry_model_deployment_test_base.Reg
             # Use robust base class method for flat format testing
             logger.info("   📊 Testing flat format using base class method...")
             flat_result = self._inference_using_rest_api(
-                self.train_data[self.feature_cols].head(2),  # Test with multiple rows
+                self._to_external_data_format(self.train_data[self.feature_cols].head(2)),  # Test with multiple rows
                 endpoint=endpoint,
                 jwt_token_generator=jwt_token_generator,
                 target_method="predict",

@@ -568,7 +568,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
                     feature_granularity=TILED_FEATURE_GRANULARITY,
                     features=[
                         Feature.sum("feature_0", "7d").alias(f"subscriber_fv{i}_sum_7d"),
-                        Feature.std("feature_0", "14d").alias(f"subscriber_fv{i}_std_14d"),
+                        Feature.stddev("feature_0", "14d").alias(f"subscriber_fv{i}_std_14d"),
                     ],
                 )
             else:

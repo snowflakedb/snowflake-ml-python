@@ -6,7 +6,11 @@ from absl.testing import absltest
 
 from snowflake.ml.feature_store import FeatureStore  # type: ignore[attr-defined]
 from snowflake.ml.utils import sql_client
-from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
+from tests.integ.snowflake.ml.test_utils import (
+    db_manager,
+    external_volume_manager,
+    test_env_utils,
+)
 
 
 class FeatureStoreIntegTestBase(absltest.TestCase):
@@ -21,6 +25,7 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = test_env_utils.get_available_session()
         self._dbm = db_manager.DBManager(self._session)
+        self._evm = external_volume_manager.ExternalVolumeManager(self._session)
 
         # Clean up stale resources from previous failed runs
         self._dbm.cleanup_databases(expire_hours=6)

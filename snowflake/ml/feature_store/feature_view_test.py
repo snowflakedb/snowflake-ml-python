@@ -5,7 +5,12 @@ from unittest.mock import MagicMock
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
-from snowflake.ml.feature_store.feature_view import FeatureView, OnlineConfig
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    OnlineConfig,
+    StorageConfig,
+    StorageFormat,
+)
 
 
 class FeatureViewValidationTest(parameterized.TestCase):
@@ -126,6 +131,37 @@ class OnlineConfigTest(parameterized.TestCase):
 
         error_msg = str(cm.exception)
         self.assertIn("non-empty string", error_msg)
+
+
+class StorageConfigTest(parameterized.TestCase):
+    """Unit tests for StorageConfig class."""
+
+    def test_storage_config_to_json_iceberg(self) -> None:
+        """Test StorageConfig serialization for Iceberg format."""
+        config = StorageConfig(
+            format=StorageFormat.ICEBERG,
+            external_volume="MY_VOLUME",
+            base_location="path/to/data",
+        )
+        json_str = config.to_json()
+        self.assertIn('"format": "iceberg"', json_str)
+        self.assertIn('"external_volume": "MY_VOLUME"', json_str)
+        self.assertIn('"base_location": "path/to/data"', json_str)
+
+    def test_storage_config_from_json_iceberg(self) -> None:
+        """Test StorageConfig deserialization for Iceberg format."""
+        json_str = '{"format": "iceberg", "external_volume": "VOL", "base_location": "loc"}'
+        config = StorageConfig.from_json(json_str)
+        self.assertEqual(config.format, StorageFormat.ICEBERG)
+        self.assertEqual(config.external_volume, "VOL")
+        self.assertEqual(config.base_location, "loc")
+
+    def test_storage_config_default_snowflake(self) -> None:
+        """Test StorageConfig defaults to Snowflake format."""
+        config = StorageConfig()
+        self.assertEqual(config.format, StorageFormat.SNOWFLAKE)
+        self.assertIsNone(config.external_volume)
+        self.assertIsNone(config.base_location)
 
 
 if __name__ == "__main__":

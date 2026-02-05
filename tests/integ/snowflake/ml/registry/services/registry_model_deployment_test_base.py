@@ -12,7 +12,12 @@ import requests
 import retrying
 
 from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
-from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
+from snowflake.ml.model import (
+    ModelVersion,
+    inference_engine,
+    model_signature,
+    type_hints as model_types,
+)
 from snowflake.ml.model._client.model import inference_engine_utils
 from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model.models import huggingface_pipeline
@@ -72,6 +77,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
         use_model_logging: bool = False,
+        params: Optional[dict[str, Any]] = None,
+        skip_rest_api_test: bool = False,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -120,6 +127,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             experimental_options=experimental_options,
             pip_requirements=pip_requirements,
             conda_dependencies=conda_dependencies,
+            params=params,
+            skip_rest_api_test=skip_rest_api_test,
         )
 
     def _deploy_model_with_image_override(
@@ -130,7 +139,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         service_compute_pool: str,
         gpu_requests: Optional[str] = None,
         num_workers: Optional[int] = None,
-        min_instances: int = 1,
+        min_instances: int = 0,
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
         force_rebuild: bool = True,
@@ -229,7 +238,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         gpu_requests: Optional[str] = None,
         service_compute_pool: Optional[str] = None,
         num_workers: Optional[int] = None,
-        min_instances: int = 1,
+        min_instances: int = 0,
         max_instances: int = 1,
         max_batch_rows: Optional[int] = None,
         cpu_requests: Optional[str] = None,
@@ -240,6 +249,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         pip_requirements: Optional[list[str]] = None,
         conda_dependencies: Optional[list[str]] = None,
+        params: Optional[dict[str, Any]] = None,
+        skip_rest_api_test: bool = False,
     ) -> ModelVersion:
         with_image_override = self._has_image_override()
 
@@ -344,7 +355,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
 
             for attempt in range(max_retries):
                 try:
-                    res = mv.run(test_input, function_name=target_method, service_name=service_name)
+                    res = mv.run(test_input, function_name=target_method, service_name=service_name, params=params)
                     check_func(res)
                     break
                 except Exception as e:
@@ -366,16 +377,57 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                         # Not a connection error, raise immediately
                         raise
 
+        if skip_rest_api_test:
+            return mv
+
         endpoint = RegistryModelDeploymentTestBase._ensure_ingress_url(mv)
         jwt_token_generator = self._get_jwt_token_generator()
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
+            # For REST API, params need to be included as columns in the DataFrame
+            rest_api_input = test_input.copy()
+            if params:
+                for param_name, param_value in params.items():
+                    rest_api_input[param_name] = [param_value] * len(rest_api_input)
             res_df = self._inference_using_rest_api(
-                test_input, endpoint=endpoint, jwt_token_generator=jwt_token_generator, target_method=target_method
+                self._to_external_data_format(rest_api_input),
+                endpoint=endpoint,
+                jwt_token_generator=jwt_token_generator,
+                target_method=target_method,
             )
             check_func(res_df)
 
         return mv
+
+    def _get_inference_engine_options_for_inference_engine(
+        self,
+        inference_engine_type: str,
+        base_inference_engine_options: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Helper method to generate inference_engine_options based on inference engine type.
+
+        Args:
+            inference_engine_type: Inference engine type - either "Default" (Python) or "vLLM"
+            base_inference_engine_options: Base inference engine options to merge with inference engine-specific options
+
+        Returns:
+            Dictionary of inference engine options or None for Default backend
+
+        Raises:
+            ValueError: If an unknown inference engine type is provided. Must be 'Default' or 'vLLM'.
+        """
+        inference_engine_options = base_inference_engine_options.copy() if base_inference_engine_options else {}
+
+        if inference_engine_type == "vLLM":
+            inference_engine_options["engine"] = inference_engine.InferenceEngine.VLLM
+        elif inference_engine_type != "Default":
+            raise ValueError(f"Unknown inference engine type: {inference_engine_type}. Must be 'Default' or 'vLLM'")
+
+        # Return None for Default backend if no other options are set
+        if inference_engine_type == "Default" and not inference_engine_options:
+            return None
+
+        return inference_engine_options if inference_engine_options else None
 
     @staticmethod
     def retry_if_result_status_retriable(result: requests.Response) -> bool:
@@ -429,17 +481,19 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         else:
             raise ValueError("No authentication credentials available for inference requests")
 
+    def _to_external_data_format(self, test_input: pd.DataFrame) -> dict[str, Any]:
+        test_input_arr = model_signature._convert_local_data_to_df(test_input).values
+        test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
+        return {"data": test_input_arr.tolist()}
+
     def _inference_using_rest_api(
         self,
-        test_input: pd.DataFrame,
+        request_payload: dict[str, Any],
         *,
         endpoint: str,
         jwt_token_generator: Optional[jwt_generator.JWTGenerator] = None,
         target_method: str,
     ) -> pd.DataFrame:
-        test_input_arr = model_signature._convert_local_data_to_df(test_input).values
-        test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
-
         # Use automatic auth selection (jwt_token_generator kept for backward compatibility but ignored)
         auth_handler = self._get_auth_for_inference(endpoint)
 
@@ -449,7 +503,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             retry_on_result=RegistryModelDeploymentTestBase.retry_if_result_status_retriable,
         )(requests.post)(
             f"https://{endpoint}/{target_method.replace('_', '-')}",
-            json={"data": test_input_arr.tolist()},
+            json=request_payload,
             auth=auth_handler,
         )
         res.raise_for_status()

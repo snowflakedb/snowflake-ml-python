@@ -1020,6 +1020,61 @@ class TelemetryTest(parameterized.TestCase):
         # Verify get_execution_context was not called
         mock_get_execution_context.assert_not_called()
 
+    @mock.patch("snowflake.snowpark.session._get_active_sessions")
+    def test_func_params_with_wrapped_function(self, mock_get_active_sessions: mock.MagicMock) -> None:
+        """Test that func_params_to_log works correctly with wrapped/decorated functions.
+
+        This test verifies that inspect.signature() correctly follows __wrapped__ attributes
+        to extract function parameters even when decorators are stacked.
+        """
+        import functools
+
+        mock_get_active_sessions.return_value = {self.mock_session}
+
+        # A decorator that wraps a function (similar to @private_preview)
+        def dummy_wrapper(func: Callable[..., Any]) -> Callable[..., Any]:
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                return func(*args, **kwargs)
+
+            return wrapper
+
+        class DummyObject:
+            # Telemetry decorator is on the outside (applied second)
+            # This tests that inspect.signature follows __wrapped__
+            @utils_telemetry.send_api_usage_telemetry(
+                project=_PROJECT,
+                subproject=_SUBPROJECT,
+                func_params_to_log=["kwonly_arg", "kwonly_with_default", "optional_arg"],
+            )
+            @dummy_wrapper
+            def foo(
+                self,
+                positional_arg: str,
+                *,
+                kwonly_arg: str,
+                kwonly_with_default: Optional[dict[str, Any]] = None,
+                optional_arg: str = "default_value",
+            ) -> None:
+                pass
+
+        test_obj = DummyObject()
+        test_obj.foo(
+            positional_arg="pos_val",
+            kwonly_arg="kwonly_val",
+            kwonly_with_default={"key": "value"},
+        )
+
+        self.mock_telemetry.try_add_log_to_batch.assert_called()
+        message = self.mock_telemetry.try_add_log_to_batch.call_args.args[0].to_dict()["message"]
+        data = message["data"]
+
+        # Verify function parameters were correctly extracted
+        func_params = data[utils_telemetry.TelemetryField.KEY_FUNC_PARAMS.value]
+        self.assertEqual(func_params["kwonly_arg"], "'kwonly_val'")
+        self.assertEqual(func_params["kwonly_with_default"], "{'key': 'value'}")
+        self.assertEqual(func_params["optional_arg"], "'default_value'")
+
 
 if __name__ == "__main__":
     absltest.main()

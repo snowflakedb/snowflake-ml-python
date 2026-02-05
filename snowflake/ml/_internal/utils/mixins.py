@@ -9,6 +9,7 @@ _SESSION_ACCOUNT_KEY = "session$account"
 _SESSION_ROLE_KEY = "session$role"
 _SESSION_DATABASE_KEY = "session$database"
 _SESSION_SCHEMA_KEY = "session$schema"
+_SESSION_STATE_ATTR = "_session_state"
 
 
 def _identifiers_match(saved: Optional[str], current: Optional[str]) -> bool:
@@ -61,7 +62,7 @@ class SerializableSessionMixin:
         else:
             self.__dict__.update(state)
 
-        self._set_session(session_state)
+        setattr(self, _SESSION_STATE_ATTR, session_state)
 
     def _set_session(self, session_state: _SessionState) -> None:
 
@@ -86,3 +87,27 @@ class SerializableSessionMixin:
                     ),
                 ),
             )
+
+    @property
+    def session(self) -> Optional[snowpark_session.Session]:
+        if _SESSION_KEY not in self.__dict__:
+            session_state = getattr(self, _SESSION_STATE_ATTR, None)
+            if session_state is not None:
+                self._set_session(session_state)
+        return self.__dict__.get(_SESSION_KEY)
+
+    @session.setter
+    def session(self, value: Optional[snowpark_session.Session]) -> None:
+        self.__dict__[_SESSION_KEY] = value
+
+    # _getattr__ is only called when an attribute is NOT found through normal lookup.
+    # 1. Data descriptors (like @property with setter) from the class hierarchy
+    # 2. Instance __dict__ (e.g., self.x = 10)
+    # 3. Non-data descriptors (methods, `@property without setter) from the class hierarchy
+    # __getattr__ — only called if steps 1-3 all fail
+    def __getattr__(self, name: str) -> Any:
+        if name == _SESSION_KEY:
+            return self.session
+        if hasattr(super(), "__getattr__"):
+            return super().__getattr__(name)  # type: ignore[misc]
+        raise AttributeError(f"{type(self).__name__!s} object has no attribute {name!r}")

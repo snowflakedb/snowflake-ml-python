@@ -504,6 +504,63 @@ Function docstrings must contain "Args" section with input value descriptions, "
 in the docstring and is sensitive to whitespace (e.g. args should be indented the correct number of spaces). Refer
 to the list of [darglint error codes](https://github.com/terrencepreilly/darglint#error-codes) for guidance.
 
+## API Reference Documentation
+
+The API reference documentation is generated from Python docstrings using Sphinx. The RST (reStructuredText) files
+in `docs/source/` define which classes, functions, and modules are included in the generated documentation.
+
+### When to Update RST Files
+
+Update the RST files when you:
+
++ Add a new public class, function, or module to `__all__`
++ Add a new submodule with public interfaces
++ Deprecate or remove a public interface
+
+### RST File Structure
+
+Each module has a corresponding RST file (e.g., `model.rst`, `registry.rst`). These files use Sphinx's
+`autosummary` directive to automatically generate documentation from docstrings.
+
+Example structure:
+
+```rst
+snowflake.ml.model.custom_model
+---------------------------------
+
+.. currentmodule:: snowflake.ml.model.custom_model
+
+.. rubric:: Classes
+
+.. autosummary::
+    :toctree: api/model
+
+    CustomModel
+    ModelContext
+
+.. rubric:: Decorators
+
+.. autosummary::
+    :toctree: api/model
+
+    inference_api
+    partitioned_api
+```
+
+### Adding a New Public Interface
+
+1. Ensure the class/function has a proper docstring following Google style.
+2. Add it to the module's `__all__` list if not already exported.
+3. Add the class/function name to the appropriate RST file under the correct `.. autosummary::` section.
+4. Order entries with more important/commonly-used items first, and supporting types (enums, TypedDicts) last.
+
+### Guidelines
+
++ Only document public interfaces (those in `__all__` or explicitly exported).
++ Do not document internal classes (those starting with `_`), TypeVars, or implementation details.
++ Group related items together (e.g., all batch inference specs together).
++ Ensure every public interface has a docstring; otherwise, the generated docs will be empty.
+
 ## Editors
 
 ### VSCode

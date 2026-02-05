@@ -78,6 +78,22 @@ py_test(
 )
 
 py_test(
+    name = "job_definitions_integ_test",
+    timeout = "long",
+    srcs = ["job_definitions_integ_test.py"],
+    shard_count = 8,
+    tags = ["feature:jobs"],
+    deps = [
+        ":job_test_base",
+        ":test_constants",
+        ":test_file_helper",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
     name = "multi_node_jobs_integ_test",
     timeout = "long",
     srcs = ["multi_node_jobs_integ_test.py"],

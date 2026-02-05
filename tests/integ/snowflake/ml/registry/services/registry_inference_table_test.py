@@ -176,7 +176,9 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         test_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
 
         # Send request and verify response works
-        response = self._inference_using_rest_api(test_input, endpoint=endpoint, target_method="predict")
+        response = self._inference_using_rest_api(
+            self._to_external_data_format(test_input), endpoint=endpoint, target_method="predict"
+        )
         self.assertIsNotNone(response)
         self.assertEqual(len(response), len(test_input), "Response should match input size")
 
@@ -228,7 +230,9 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         test_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
 
         # Send request and verify response works
-        response = self._inference_using_rest_api(test_input, endpoint=endpoint, target_method="predict")
+        response = self._inference_using_rest_api(
+            self._to_external_data_format(test_input), endpoint=endpoint, target_method="predict"
+        )
         self.assertIsNotNone(response, f"Response should not be None when {test_description}")
         self.assertEqual(len(response), len(test_input), f"Response should match input size when {test_description}")
 

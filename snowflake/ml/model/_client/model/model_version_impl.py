@@ -7,7 +7,6 @@ from typing import Any, Callable, Optional, Union, overload
 
 import pandas as pd
 
-from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
@@ -39,6 +38,8 @@ VLLM_SUPPORTED_TASKS = [
 VALID_OPENAI_SIGNATURES = [
     openai_signatures.OPENAI_CHAT_SIGNATURE,
     openai_signatures.OPENAI_CHAT_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
+    openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE,
+    openai_signatures.OPENAI_CHAT_WITH_PARAMS_SIGNATURE_WITH_CONTENT_FORMAT_STRING,
 ]
 
 
@@ -660,11 +661,12 @@ class ModelVersion(lineage_node.LineageNode):
         subproject=_TELEMETRY_SUBPROJECT,
         func_params_to_log=[
             "compute_pool",
+            "input_spec",
             "output_spec",
             "job_spec",
+            "inference_engine_options",
         ],
     )
-    @snowpark._internal.utils.private_preview(version="1.18.0")
     def run_batch(
         self,
         X: dataframe.DataFrame,
@@ -717,6 +719,10 @@ class ModelVersion(lineage_node.LineageNode):
             ...     "@my_stage/input_data/"
             ... ).select("id", "feature_1", "feature_2")
             >>>
+            >>> # Prepare input data - Example 4: From image files in a stage
+            >>> from snowflake.ml.utils.stage_file import list_stage_files
+            >>> input_df = list_stage_files(session, "@my_stage/path", pattern=".*\\.jpg")
+            >>>
             >>> # Configure output location
             >>> output_spec = OutputSpec(
             ...     stage_location='@My_DB.PUBLIC.MY_STAGE/someth/path/',
@@ -751,6 +757,22 @@ class ModelVersion(lineage_node.LineageNode):
             ...     output_spec=output_spec,
             ...     input_spec=input_spec,
             ...     job_spec=job_spec
+            ... )
+            >>>
+            >>> # Run batch inference on image files using list_stage_files
+            >>> from snowflake.ml.utils.stage_file import list_stage_files
+            >>> from snowflake.ml.model import InputSpec, InputFormat, FileEncoding
+            >>> input_df = list_stage_files(session, "@my_stage/images", pattern=".*\\.jpg", column_name="IMAGES")
+            >>> input_spec = InputSpec(
+            ...     column_handling={
+            ...         "IMAGES": {"input_format": InputFormat.FULL_STAGE_PATH, "convert_to": FileEncoding.RAW_BYTES}
+            ...     }
+            ... )
+            >>> job = model_version.run_batch(
+            ...     compute_pool="my_compute_pool",
+            ...     X=input_df,
+            ...     output_spec=output_spec,
+            ...     input_spec=input_spec,
             ... )
 
         Note:

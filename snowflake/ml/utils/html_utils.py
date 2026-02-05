@@ -263,20 +263,19 @@ def create_features_html(features: Sequence[Any], title: str) -> str:
     return html
 
 
-def create_parameters_html(parameters: Sequence[Any], title: str) -> str:
+def create_parameters_html(parameters: Sequence[Any]) -> str:
     """Create HTML representation for a collection of parameters.
 
     Args:
         parameters: The sequence of parameter specifications.
-        title: The title for the parameter collection.
 
     Returns:
         HTML string for the parameters collection.
     """
     if not parameters:
-        return f"""
+        return """
             <div style="margin: 5px 0; padding: 5px;">
-                <em>No {title.lower()} parameters defined</em>
+                <em>No parameters defined</em>
             </div>
         """
 

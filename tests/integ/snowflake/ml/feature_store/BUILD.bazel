@@ -25,6 +25,7 @@ py_library(
     deps = [
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

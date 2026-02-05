@@ -692,9 +692,10 @@ def _get_func_params(
     """
     params = {}
     if func_params_to_log:
-        spec = inspect.getfullargspec(func)
+        # Use inspect.signature which automatically follows __wrapped__ attributes
+        sig = inspect.signature(func)
         for field in func_params_to_log:
-            found, extracted_value = _extract_arg_value(field, spec, args, kwargs)
+            found, extracted_value = _extract_arg_value(field, sig, args, kwargs)
             if not found:
                 pass
             else:
@@ -702,13 +703,13 @@ def _get_func_params(
     return params
 
 
-def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kwargs: Any) -> tuple[bool, Any]:
+def _extract_arg_value(field: str, sig: inspect.Signature, args: Any, kwargs: Any) -> tuple[bool, Any]:
     """
     Function to extract a specified argument value.
 
     Args:
         field: Target function argument name to extract.
-        func_spec: Full argument spec for the function.
+        sig: Function signature (from inspect.signature).
         args: `args` for the invoked function.
         kwargs: `kwargs` for the invoked function.
 
@@ -716,26 +717,27 @@ def _extract_arg_value(field: str, func_spec: inspect.FullArgSpec, args: Any, kw
         Tuple: First value indicates if `field` exists.
         Second value is the extracted value if existed.
     """
-    if field in func_spec.args:
-        idx = func_spec.args.index(field)
+    if field not in sig.parameters:
+        return False, None
+
+    param = sig.parameters[field]
+    param_names = list(sig.parameters.keys())
+    idx = param_names.index(field)
+
+    # Check if value was passed as positional argument
+    if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
         if idx < len(args):
             return True, args[idx]
-        elif field in kwargs:
-            return True, kwargs[field]
-        else:
-            if func_spec.defaults:
-                required_len = len(func_spec.args) - len(func_spec.defaults)
-                return True, func_spec.defaults[idx - required_len]
-            return False, None
-    elif func_spec.kwonlydefaults and field in func_spec.kwonlyargs:
-        if field in kwargs:
-            return True, kwargs[field]
-        elif field in func_spec.kwonlydefaults:
-            return True, func_spec.kwonlydefaults[field]
-        else:
-            return False, None
-    else:
-        return False, None
+
+    # Check if value was passed as keyword argument
+    if field in kwargs:
+        return True, kwargs[field]
+
+    # Fall back to default value if available
+    if param.default is not inspect.Parameter.empty:
+        return True, param.default
+
+    return False, None
 
 
 class _SourceTelemetryClient:

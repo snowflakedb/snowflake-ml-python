@@ -59,6 +59,22 @@ py_library(
     deps = [],
 )
 
+py_library(
+    name = "stage_file",
+    srcs = ["stage_file.py"],
+    deps = [],
+)
+
+py_test(
+    name = "stage_file_test",
+    srcs = ["stage_file_test.py"],
+    tags = ["feature:model_registry"],
+    deps = [
+        ":stage_file",
+        "//snowflake/ml/test_utils:mock_session",
+    ],
+)
+
 py_package(
     name = "utils_pkg",
     packages = ["snowflake.ml"],
@@ -68,6 +84,7 @@ py_package(
         ":html_utils",
         ":sparse",
         ":sql_client",
+        ":stage_file",
         "//snowflake/ml/_internal/utils:snowflake_env",  # Mitigate BuildSnowML failure
     ],
 )

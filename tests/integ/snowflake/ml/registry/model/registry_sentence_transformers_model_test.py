@@ -67,7 +67,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         in a single model log operation to reduce test time.
 
         The auto-inferred signature expects:
-        - Input: a column named "text" with STRING type
+        - Input: a column named "sentence" with STRING type
         - Output: a column named "output" with DOUBLE type and shape (embedding_dim,)
         """
         import sentence_transformers
@@ -76,10 +76,10 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
 
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
 
-        # Test data must match the auto-inferred signature input column name ("text")
+        # Test data must match the auto-inferred signature input column name ("sentence")
         test_sentences = pd.DataFrame(
             {
-                "text": [
+                "sentence": [
                     "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
@@ -92,7 +92,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         target_methods = []
 
         # encode is always available
-        expected_encode = model.encode(test_sentences["text"].tolist())
+        expected_encode = model.encode(test_sentences["sentence"].tolist())
 
         def check_encode(res: pd.DataFrame) -> bool:
             if "output" not in res.columns:
@@ -105,7 +105,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
 
         # Check for encode_query (sentence-transformers >= 3.0)
         if hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None)):
-            expected_query = model.encode_query(test_sentences["text"].tolist())
+            expected_query = model.encode_query(test_sentences["sentence"].tolist())
 
             def check_query(res: pd.DataFrame) -> bool:
                 if "output" not in res.columns:
@@ -118,7 +118,7 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
 
         # Check for encode_document (sentence-transformers >= 3.0)
         if hasattr(model, "encode_document") and callable(getattr(model, "encode_document", None)):
-            expected_doc = model.encode_document(test_sentences["text"].tolist())
+            expected_doc = model.encode_document(test_sentences["sentence"].tolist())
 
             def check_doc(res: pd.DataFrame) -> bool:
                 if "output" not in res.columns:

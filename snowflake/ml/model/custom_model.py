@@ -1,6 +1,16 @@
+import datetime
 import functools
 import inspect
-from typing import Any, Callable, Coroutine, Generator, Optional, Union
+from typing import (
+    Any,
+    Callable,
+    Coroutine,
+    Generator,
+    Optional,
+    Union,
+    get_args,
+    get_origin,
+)
 
 import anyio
 import pandas as pd
@@ -286,6 +296,47 @@ def _validate_predict_function(func: Callable[..., pd.DataFrame]) -> None:
         _validate_parameter(func_signature_param)
 
 
+# Supported scalar types for parameters
+_SUPPORTED_SCALAR_TYPES = {int, float, str, bool, bytes, datetime.datetime}
+
+
+def _is_supported_annotation(annotation: Any) -> bool:
+    """Recursively validate that an annotation is a supported type.
+
+    Supports:
+        - Scalar types: int, float, str, bool, bytes, datetime.datetime
+        - list[T] where T is a supported type (recursively)
+
+    Note: Bare 'list' without element type is NOT supported because we cannot
+    determine the data type for serialization.
+
+    Args:
+        annotation: The type annotation to validate.
+
+    Returns:
+        True if the annotation is supported, False otherwise.
+    """
+    # Check if it's a supported scalar type
+    if annotation in _SUPPORTED_SCALAR_TYPES:
+        return True
+
+    # Reject bare list without type args - we need the element type for serialization
+    if annotation is list:
+        return False
+
+    # Check if it's a generic type (e.g., list[str], list[list[int]])
+    origin = get_origin(annotation)
+    if origin is list:
+        args = get_args(annotation)
+        if not args:
+            # list without type args - reject it
+            return False
+        # Recursively validate the inner type
+        return _is_supported_annotation(args[0])
+
+    return False
+
+
 def _validate_parameter(param: inspect.Parameter) -> None:
     """Validate a parameter."""
     if param.kind != inspect.Parameter.KEYWORD_ONLY:
@@ -295,12 +346,13 @@ def _validate_parameter(param: inspect.Parameter) -> None:
     if param.annotation == inspect.Parameter.empty:
         raise TypeError(f"Parameter '{param.name}' must have a type annotation.")
 
-    # Validate annotation is a supported type
-    supported_types = {int, float, str, bool}
-    if param.annotation not in supported_types:
+    # Validate annotation is a supported type (scalars or list with valid inner types)
+    if not _is_supported_annotation(param.annotation):
         raise TypeError(
             f"Parameter '{param.name}' has unsupported type annotation '{param.annotation}'. "
-            f"Supported types are: int, float, str, bool"
+            f"Supported types are: int, float, str, bool, bytes, datetime.datetime, "
+            f"and list with element type (e.g., list[str], list[list[int]]). "
+            f"Note: bare 'list' without element type is not supported."
         )
 
 
@@ -321,6 +373,37 @@ def get_method_parameters(func: Callable[..., Any]) -> list[tuple[str, Any, Any]
 def inference_api(
     func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
 ) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:
+    """Decorator to mark a method as an inference API in a CustomModel.
+
+    Methods decorated with ``@inference_api`` are exposed as callable inference
+    endpoints when the model is logged to the registry and deployed.
+
+    The decorated method must accept a pandas DataFrame as its first argument
+    (after self) and return a pandas DataFrame. It may also accept additional
+    keyword-only parameters that can be passed at inference time.
+
+    Args:
+        func: The method to decorate.
+
+    Returns:
+        The decorated function with inference API metadata.
+
+    Example::
+
+        class MyModel(CustomModel):
+            @inference_api
+            def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+                return pd.DataFrame({"output": input_df["feature"] * 2})
+
+            @inference_api
+            def predict_with_params(
+                self,
+                input_df: pd.DataFrame,
+                *,
+                temperature: float = 1.0,
+            ) -> pd.DataFrame:
+                return pd.DataFrame({"output": input_df["feature"] * temperature})
+    """
     func.__dict__["_is_inference_api"] = True
     return func
 
@@ -328,6 +411,30 @@ def inference_api(
 def partitioned_api(
     func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
 ) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:
+    """Decorator to mark a method as a partitioned inference API in a CustomModel.
+
+    Methods decorated with ``@partitioned_api`` are exposed as partitioned inference
+    endpoints, enabling efficient batch processing where the model processes data
+    partitions independently. This is useful for models that can benefit from
+    parallel execution across data partitions.
+
+    The decorated method must accept a pandas DataFrame as its first argument
+    (after self) and return a pandas DataFrame.
+
+    Args:
+        func: The method to decorate.
+
+    Returns:
+        The decorated function with partitioned API metadata.
+
+    Example::
+
+        class MyPartitionedModel(CustomModel):
+            @partitioned_api
+            def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+                # Process each partition independently
+                return pd.DataFrame({"output": input_df["feature"] * 2})
+    """
     func.__dict__["_is_inference_api"] = True
     func.__dict__["_is_partitioned_api"] = True
     return func

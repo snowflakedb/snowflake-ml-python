@@ -78,7 +78,6 @@ py_library(
     ],
     deps = [
         ":constants",
-        ":function_payload_utils",
         ":payload_scripts",
         ":query_helper",
         ":stage_utils",
@@ -105,11 +104,6 @@ py_library(
 )
 
 py_library(
-    name = "function_payload_utils",
-    srcs = ["function_payload_utils.py"],
-)
-
-py_library(
     name = "runtime_env_utils",
     srcs = ["runtime_env_utils.py"],
     deps = [
@@ -124,6 +118,11 @@ py_library(
     deps = [
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
+)
+
+py_library(
+    name = "arg_protocol",
+    srcs = ["arg_protocol.py"],
 )
 
 py_test(
@@ -160,6 +159,7 @@ py_library(
         "__init__.py",
     ],
     deps = [
+        ":arg_protocol",
         ":payload_utils",
         ":query_helper",
         ":runtime_env_utils",

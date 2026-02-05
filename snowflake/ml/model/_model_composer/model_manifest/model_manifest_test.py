@@ -992,6 +992,79 @@ class ModelManifestTest(parameterized.TestCase):
             # None default_value is converted to "NULL" string for SQL parser compatibility
             self.assertEqual(method["params"][0]["default"], "NULL")
 
+    def test_model_manifest_with_array_parameter(self) -> None:
+        """Test that ModelManifest.save() correctly handles array parameters with shape.
+
+        Array parameters should:
+        1. Have type "ARRAY" in the manifest
+        2. Have default value as JSON array string (e.g., "[]" or "[1, 2, 3]")
+
+        This tests both variable-length arrays (shape=(-1,)) and fixed-size arrays (shape=(2,)).
+        """
+        sig_with_array_params = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[
+                    model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT),
+                ],
+                params=[
+                    # Variable-length array (shape=(-1,))
+                    model_signature.ParamSpec(
+                        name="stop", dtype=model_signature.DataType.STRING, default_value=[], shape=(-1,)
+                    ),
+                    # Variable-length array with values
+                    model_signature.ParamSpec(
+                        name="weights", dtype=model_signature.DataType.DOUBLE, default_value=[0.1, 0.2], shape=(-1,)
+                    ),
+                    # Fixed-size array (shape=(3,))
+                    model_signature.ParamSpec(
+                        name="rgb", dtype=model_signature.DataType.INT64, default_value=[255, 128, 0], shape=(3,)
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            mm = model_manifest.ModelManifest(pathlib.Path(workspace))
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=sig_with_array_params,
+                python_version="3.8",
+                embed_local_ml_library=True,
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            options = type_hints.BaseModelSaveOption(relax_version=False)
+
+            mm.save(
+                meta,
+                pathlib.PurePosixPath("model"),
+                options=options,
+            )
+
+            # Load and verify the manifest
+            with open(pathlib.Path(workspace, "MANIFEST.yml"), encoding="utf-8") as f:
+                manifest_content = yaml.safe_load(f)
+
+            method = manifest_content["methods"][0]
+            self.assertIn("params", method)
+
+            # Assert the whole params structure at once
+            expected_params = [
+                {"name": "STOP", "type": "ARRAY", "default": "[]"},
+                {"name": "WEIGHTS", "type": "ARRAY", "default": "[0.1, 0.2]"},
+                {"name": "RGB", "type": "ARRAY", "default": "[255, 128, 0]"},
+            ]
+            self.assertEqual(method["params"], expected_params)
+
 
 if __name__ == "__main__":
     absltest.main()

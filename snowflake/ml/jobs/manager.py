@@ -224,6 +224,9 @@ def submit_file(
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
+            runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
+                e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
+                it should contain image repository, image name and image tag.
 
     Returns:
         An object representing the submitted job.
@@ -283,6 +286,10 @@ def submit_directory(
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
             spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
+            runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
+                e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
+                it should contain image repository, image name and image tag.
+
 
     Returns:
         An object representing the submitted job.
@@ -465,16 +472,13 @@ def _submit_job(
             imports = kwargs.pop("additional_payloads", None)
             kwargs.update({"imports": imports})
 
-    if "runtime_environment" in kwargs:
-        logger.warning("'runtime_environment' is in private preview since 1.15.0, do not use it in production.")
-
-    job_definition = MLJobDefinition.register(
+    job_definition = MLJobDefinition._create(
         source,
         compute_pool,
         stage_name,
         session or get_active_session(),
-        entrypoint,
-        target_instances,
+        entrypoint=entrypoint,
+        target_instances=target_instances,
         generate_suffix=True,
         **kwargs,
     )

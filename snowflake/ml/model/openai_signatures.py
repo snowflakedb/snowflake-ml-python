@@ -169,7 +169,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC = core.ModelSignature(
     params=[
         core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=1.0),
         core.ParamSpec(name="max_completion_tokens", dtype=core.DataType.INT64, default_value=250),
-        core.ParamSpec(name="stop", dtype=core.DataType.STRING, default_value=""),
+        core.ParamSpec(name="stop", dtype=core.DataType.STRING, default_value=[], shape=(-1,)),
         core.ParamSpec(name="n", dtype=core.DataType.INT32, default_value=1),
         core.ParamSpec(name="stream", dtype=core.DataType.BOOL, default_value=False),
         core.ParamSpec(name="top_p", dtype=core.DataType.DOUBLE, default_value=1.0),
@@ -279,7 +279,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING = core.ModelS
     params=[
         core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=1.0),
         core.ParamSpec(name="max_completion_tokens", dtype=core.DataType.INT64, default_value=250),
-        core.ParamSpec(name="stop", dtype=core.DataType.STRING, default_value=""),
+        core.ParamSpec(name="stop", dtype=core.DataType.STRING, default_value=[], shape=(-1,)),
         core.ParamSpec(name="n", dtype=core.DataType.INT32, default_value=1),
         core.ParamSpec(name="stream", dtype=core.DataType.BOOL, default_value=False),
         core.ParamSpec(name="top_p", dtype=core.DataType.DOUBLE, default_value=1.0),

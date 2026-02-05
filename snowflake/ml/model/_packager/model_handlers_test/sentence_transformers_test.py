@@ -13,6 +13,8 @@ from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     _ALLOWED_TARGET_METHODS,
     SentenceTransformerHandler,
+    _auto_infer_signature,
+    _get_available_default_methods,
     _validate_sentence_transformers_signatures,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
@@ -85,55 +87,49 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             ],
         )
 
-    def test_default_target_methods(self) -> None:
-        """Test that DEFAULT_TARGET_METHODS contains expected default methods.
-
-        Per the design doc (Section 3.1), by default enable all the methods.
-        The handler uses singular names (encode_query, encode_document) which are
-        used in sentence-transformers >= 3.0.
-        """
-        self.assertEqual(
-            SentenceTransformerHandler.DEFAULT_TARGET_METHODS,
-            ["encode", "encode_query", "encode_document"],
-        )
-
-    def test_default_target_methods_when_omitted(self) -> None:
-        """Test that default target methods are used when target_methods is omitted.
-
-        Per the design doc (Section 5.2), if target_methods is omitted, we still
-        default to DEFAULT_TARGET_METHODS and preserve all existing behavior.
-        """
+    def test_get_available_default_methods(self) -> None:
+        """Test that _get_available_default_methods returns only methods that exist on the model."""
         model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        available_methods = _get_available_default_methods(model)
 
-        # Check which methods are available on this model
-        available_methods = []
-        for method in SentenceTransformerHandler.DEFAULT_TARGET_METHODS:
-            if hasattr(model, method) and callable(getattr(model, method, None)):
-                available_methods.append(method)
-
-        # encode should always be available
+        # 'encode' should always be available
         self.assertIn("encode", available_methods)
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Save model WITHOUT specifying target_methods - should use defaults
-            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
-                name="model",
-                model=model,
-                metadata={"author": "test", "version": "1"},
-                options=model_types.SentenceTransformersSaveOptions(),
-            )
+        # All returned methods should be callable on the model
+        for method_name in available_methods:
+            method = getattr(model, method_name, None)
+            self.assertIsNotNone(method, f"Method {method_name} should exist on model")
+            self.assertTrue(callable(method), f"Method {method_name} should be callable")
 
-            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
-            pk.load()
-            assert pk.meta is not None
+        # All returned methods should be in _ALLOWED_TARGET_METHODS
+        for method_name in available_methods:
+            self.assertIn(method_name, _ALLOWED_TARGET_METHODS)
 
-            # Verify that signatures were created for available default methods
-            for method in available_methods:
-                self.assertIn(
-                    method,
-                    pk.meta.signatures,
-                    f"Method '{method}' should have a signature when target_methods is omitted",
-                )
+    def test_auto_infer_signature(self) -> None:
+        """Test that _auto_infer_signature creates correct signatures."""
+        embedding_dim = 384
+
+        # Test encode method
+        sig = _auto_infer_signature("encode", embedding_dim)
+        assert sig is not None  # Type narrowing for mypy
+        self.assertEqual(len(sig.inputs), 1)
+        self.assertEqual(sig.inputs[0].name, "sentence")
+        assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
+        self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
+        self.assertEqual(len(sig.outputs), 1)
+        self.assertEqual(sig.outputs[0].name, "output")
+        assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+        self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
+        self.assertEqual(sig.outputs[0]._shape, (embedding_dim,))
+
+        # Test all allowed methods
+        for method in _ALLOWED_TARGET_METHODS:
+            method_sig = _auto_infer_signature(method, embedding_dim)
+            self.assertIsNotNone(method_sig, f"Should infer signature for {method}")
+
+        # Test unsupported method returns None
+        unsupported_sig = _auto_infer_signature("unsupported_method", embedding_dim)
+        self.assertIsNone(unsupported_sig)
 
     def test_validate_sentence_transformers_signatures_valid(self) -> None:
         """Test valid signatures for all supported methods."""
@@ -325,7 +321,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             self.assertEqual(len(sig.outputs), 1)
 
             # Verify input is STRING type
-            self.assertEqual(sig.inputs[0].name, "text")
+            self.assertEqual(sig.inputs[0].name, "sentence")
             assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
             self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
 
@@ -341,7 +337,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             # Test that the model works correctly with auto-inferred signature
             pk.load(as_custom_model=True)
             assert pk.model is not None
-            test_sentences = pd.DataFrame({"text": ["Hello world", "Test sentence"]})
+            test_sentences = pd.DataFrame({"sentence": ["Hello world", "Test sentence"]})
             predict_method = getattr(pk.model, "encode", None)
             assert callable(predict_method)
             result = predict_method(test_sentences)
@@ -410,9 +406,9 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             self.assertIn("encode_query", pk.meta.signatures)
             sig = pk.meta.signatures["encode_query"]
 
-            # Input should be STRING type with name "text"
+            # Input should be STRING type with name "sentence"
             self.assertEqual(len(sig.inputs), 1)
-            self.assertEqual(sig.inputs[0].name, "text")
+            self.assertEqual(sig.inputs[0].name, "sentence")
             assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
             self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
 
@@ -429,7 +425,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             pk.load(as_custom_model=True)
             assert pk.model is not None
 
-            test_queries = pd.DataFrame({"text": ["What is machine learning?", "How does AI work?"]})
+            test_queries = pd.DataFrame({"sentence": ["What is machine learning?", "How does AI work?"]})
             predict_method = getattr(pk.model, "encode_query", None)
             assert callable(predict_method)
             result = predict_method(test_queries)
@@ -479,9 +475,8 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             self.assertIn("encode_document", pk.meta.signatures)
             sig = pk.meta.signatures["encode_document"]
 
-            # Input should be STRING type with name "text"
             self.assertEqual(len(sig.inputs), 1)
-            self.assertEqual(sig.inputs[0].name, "text")
+            self.assertEqual(sig.inputs[0].name, "sentence")
             assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
             self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
 
@@ -500,7 +495,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
 
             test_docs = pd.DataFrame(
                 {
-                    "text": [
+                    "sentence": [
                         "Machine learning is a subset of artificial intelligence.",
                         "Neural networks are inspired by biological neurons.",
                     ]
@@ -558,7 +553,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
 
                 # All methods should have same signature structure
                 self.assertEqual(len(sig.inputs), 1)
-                self.assertEqual(sig.inputs[0].name, "text")
+                self.assertEqual(sig.inputs[0].name, "sentence")
                 assert isinstance(sig.inputs[0], model_signature.FeatureSpec)
                 self.assertEqual(sig.inputs[0]._dtype, model_signature.DataType.STRING)
 
@@ -572,7 +567,7 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             pk.load(as_custom_model=True)
             assert pk.model is not None
 
-            test_data = pd.DataFrame({"text": ["Test sentence"]})
+            test_data = pd.DataFrame({"sentence": ["Test sentence"]})
 
             # All methods should work
             for method_name in ["encode", "encode_query", "encode_document"]:
