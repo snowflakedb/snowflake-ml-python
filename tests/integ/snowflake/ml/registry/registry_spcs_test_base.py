@@ -5,7 +5,7 @@ import os
 import pathlib
 import tempfile
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 import pytest
 import yaml
@@ -41,6 +41,7 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     PROXY_IMAGE_PATH = os.getenv("PROXY_IMAGE_PATH", None)
     MODEL_LOGGER_PATH = os.getenv("MODEL_LOGGER_PATH", None)
     VLLM_IMAGE_PATH = os.getenv("VLLM_IMAGE_PATH", None)
+    INFERENCE_IMAGE_BUILDER_PATH = os.getenv("INFERENCE_IMAGE_BUILDER_PATH", None)
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -158,6 +159,7 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         inference_image: str,
         is_batch_inference: bool,
         override_vllm_image: bool = False,
+        builder_image_path: Optional[str] = None,
     ) -> tuple[str, Any]:
 
         deploy_spec = mv._service_ops._model_deployment_spec.save()
@@ -168,7 +170,9 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         else:
             deploy_spec_dict = yaml.safe_load(deploy_spec)
 
-        deploy_spec_dict["image_build"]["builder_image"] = self.BUILDER_IMAGE_PATH
+        # Use provided builder_image_path or fall back to BUILDER_IMAGE_PATH (kaniko)
+        effective_builder_image = builder_image_path or self.BUILDER_IMAGE_PATH
+        deploy_spec_dict["image_build"]["builder_image"] = effective_builder_image
         deploy_spec_dict["image_build"]["base_image"] = inference_image
         if not is_batch_inference:
             deploy_spec_dict["service"]["proxy_image"] = self.PROXY_IMAGE_PATH

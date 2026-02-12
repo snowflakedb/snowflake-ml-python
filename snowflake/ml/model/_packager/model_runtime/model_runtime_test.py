@@ -1,5 +1,6 @@
 import os
 import pathlib
+import platform
 import tempfile
 
 import yaml
@@ -330,8 +331,10 @@ class ModelRuntimeTest(absltest.TestCase):
             with open(os.path.join(workspace, "runtimes/gpu/env/conda.yml"), encoding="utf-8") as f:
                 dependencies = yaml.safe_load(f)
 
+            # Use the current runtime Python version (major.minor)
+            py_version = ".".join(platform.python_version().split(".")[:2])
             self.assertContainsSubset(
-                ["python==3.10.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
+                [f"python=={py_version}.*", "pytorch", "snowflake-ml-python==1.0.0", "nvidia::cuda==11.7.*"],
                 dependencies["dependencies"],
             )
 

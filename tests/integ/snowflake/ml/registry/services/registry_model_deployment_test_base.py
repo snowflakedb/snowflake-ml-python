@@ -26,8 +26,29 @@ from snowflake.snowpark import row
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
+# Builder type constants for parameterized tests
+KANIKO_BUILDER = "kaniko"
+INFERENCE_IMAGE_BUILDER = "inference_image_builder"
+
 
 class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
+    # Session parameter used to override the model logger image.
+    _MODEL_LOGGER_SESSION_PARAM = "SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL"
+
+    def setUp(self) -> None:
+        super().setUp()
+        # When running with image override, set the model logger session parameter once
+        # so all deployment paths use the locally built image instead of the production one.
+        if self._has_image_override():
+            self.session.sql(
+                f"ALTER SESSION SET {self._MODEL_LOGGER_SESSION_PARAM} = '{self.MODEL_LOGGER_PATH}'"
+            ).collect()
+
+    def tearDown(self) -> None:
+        if self._has_image_override():
+            self.session.sql(f"ALTER SESSION UNSET {self._MODEL_LOGGER_SESSION_PARAM}").collect()
+        super().tearDown()
+
     def _has_image_override(self) -> bool:
         """Check if image override environment variables are set.
 
@@ -79,6 +100,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         use_model_logging: bool = False,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
+        use_inference_image_builder: bool = False,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -129,6 +151,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             conda_dependencies=conda_dependencies,
             params=params,
             skip_rest_api_test=skip_rest_api_test,
+            use_inference_image_builder=use_inference_image_builder,
         )
 
     def _deploy_model_with_image_override(
@@ -148,8 +171,28 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         autocapture: bool = False,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
+        use_inference_image_builder: bool = False,
     ) -> None:
-        """Deploy model with image override."""
+        """Deploy model with image override.
+
+        Args:
+            mv: The model version to deploy.
+            service_name: Name of the service to create.
+            service_compute_pool: Compute pool for the service.
+            gpu_requests: GPU requests for the service.
+            num_workers: Number of workers.
+            min_instances: Minimum number of instances.
+            max_instances: Maximum number of instances.
+            max_batch_rows: Maximum batch rows.
+            force_rebuild: Whether to force rebuild.
+            cpu_requests: CPU requests.
+            memory_requests: Memory requests.
+            autocapture: Whether to enable autocapture.
+            inference_engine_options: Inference engine options.
+            experimental_options: Experimental options.
+            use_inference_image_builder: If True, use the BuildKit-based inference_image_builder
+                instead of the default kaniko builder.
+        """
         is_gpu = gpu_requests is not None
         image_path = self.BASE_GPU_IMAGE_PATH if is_gpu else self.BASE_CPU_IMAGE_PATH
         assert image_path is not None, "Base image path must be set for image override deployment."
@@ -159,17 +202,6 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         self._add_common_model_deployment_spec_options(
             mv=mv, database=database, schema=schema, force_rebuild=force_rebuild
         )
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
-        # Set inference engine spec if specified
-        if inference_engine_args is not None:
-            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
-                inference_engine_args,
-                gpu_requests,
-            )
-            mv._service_ops._model_deployment_spec.add_inference_engine_spec(
-                inference_engine=inference_engine_args.inference_engine,
-                inference_engine_args=inference_engine_args.inference_engine_args_override,
-            )
 
         mv._service_ops._model_deployment_spec.add_service_spec(
             service_name=service,
@@ -187,12 +219,33 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             autocapture=autocapture,
         )
 
+        # Determine which builder image to use
+        builder_image_path = None
+        if use_inference_image_builder:
+            assert (
+                self.INFERENCE_IMAGE_BUILDER_PATH is not None
+            ), "INFERENCE_IMAGE_BUILDER_PATH must be set when use_inference_image_builder=True"
+            builder_image_path = self.INFERENCE_IMAGE_BUILDER_PATH
+
+        # Set inference engine spec if specified (must be after add_service_spec)
+        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
+        if inference_engine_args is not None:
+            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
+                inference_engine_args,
+                gpu_requests,
+            )
+            mv._service_ops._model_deployment_spec.add_inference_engine_spec(
+                inference_engine=inference_engine_args.inference_engine,
+                inference_engine_args=inference_engine_args.inference_engine_args_override,
+            )
+
         query_id, async_job = self._deploy_override_model(
             mv=mv,
             database=database,
             schema=schema,
             inference_image=image_path,
             is_batch_inference=False,
+            builder_image_path=builder_image_path,
         )
 
         # stream service logs in a thread
@@ -251,6 +304,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         conda_dependencies: Optional[list[str]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
+        use_inference_image_builder: bool = False,
     ) -> ModelVersion:
         with_image_override = self._has_image_override()
 
@@ -276,6 +330,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                     autocapture=autocapture,
                     inference_engine_options=inference_engine_options,
                     experimental_options=experimental_options,
+                    use_inference_image_builder=use_inference_image_builder,
                 )
             else:
                 mv.create_service(
@@ -299,8 +354,8 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         else:
             assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
             assert model is not None
+            # Model logger override is handled in setUp via _MODEL_LOGGER_SESSION_PARAM.
             image_overrides = {
-                "SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL": self.MODEL_LOGGER_PATH,
                 "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL": self.BASE_GPU_IMAGE_PATH,
                 "SPCS_MODEL_BASE_CPU_INFERENCE_CONTAINER_URL": self.BASE_CPU_IMAGE_PATH,
                 "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,

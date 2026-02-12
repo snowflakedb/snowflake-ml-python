@@ -37,6 +37,9 @@ INTERNAL_SNOWPARK_ERROR = "1300"
 # Indicates an internal failure raising a error when using SPCS with an ambiguous cause, such as invalid queries,
 # invalid permission, catching an error with an unknown cause, etc.
 INTERNAL_SNOWPARK_CONTAINER_SERVICE_ERROR = "1301"
+# Snowflake SQL compilation error (error code 1304). Common causes include object type conflicts
+# (e.g., attempting to create a VIEW when a DYNAMIC_TABLE with the same name exists, or vice versa).
+SQL_COMPILATION_ERROR = "1304"
 # Indicates an internal failure raising a Snowflake API error with an ambiguous cause, such as invalid queries, invalid
 # permission, catching an error with an unknown cause, etc.
 INTERNAL_SNOWFLAKE_API_ERROR = "1500"

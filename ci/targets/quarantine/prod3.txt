@@ -4,3 +4,4 @@
 //tests/integ/snowflake/ml/modeling/linear_model:logistic_regression_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
+//tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_audio_video_batch_inference_test

@@ -23,6 +23,7 @@ py_library(
 py_test(
     name = "core_test",
     srcs = ["core_test.py"],
+    optional_dependencies = ["mlflow"],
     tags = ["feature:model_registry"],
     deps = [
         ":core",

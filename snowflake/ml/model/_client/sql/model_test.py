@@ -204,6 +204,41 @@ class ModelSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_show_versions_4(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_df_final = mock_data_frame.MockDataFrame(
+            collect_result=[
+                Row(
+                    create_on="06/01",
+                    name="v1",
+                    comment="This is a comment",
+                    model_name="MODEL",
+                    metadata="{}",
+                    user_data="{}",
+                    is_default_version=True,
+                    runnable_in='["WAREHOUSE"]',
+                ),
+            ],
+            collect_statement_params=m_statement_params,
+        )
+        self.m_session.add_mock_sql("""SHOW VERSIONS LIKE 'v1' IN MODEL TEMP."test".MODEL""", m_df_final)
+        c_session = cast(Session, self.m_session)
+        client = model_sql.ModelSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        )
+        result = client.show_versions(
+            database_name=None,
+            schema_name=None,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            statement_params=m_statement_params,
+        )
+        # Verify the runnable_in column is accessible via the constant
+        self.assertIn(client.MODEL_VERSION_RUNNABLE_IN_COL_NAME, result[0])
+        self.assertEqual(result[0][client.MODEL_VERSION_RUNNABLE_IN_COL_NAME], '["WAREHOUSE"]')
+
     def test_set_comment_for_model(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(collect_result=[Row("")], collect_statement_params=m_statement_params)

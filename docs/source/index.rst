@@ -25,10 +25,15 @@ Container Runtime APIs
 
 The following APIs are available only in the version of ``snowpark-ml-python`` available in the Container Runtime, accessible in Snowflake Notebooks running on Snowpark Container Services (SPCS).
 
-.. toctree::
-   :maxdepth: 2
+..
+   # toctree:: doesn't support the use of intersphinx resolution
+   https://github.com/sphinx-doc/sphinx/issues/1836
 
-   distributors
+- :external+container-runtime:doc:`index`
+
+.. toctree::
+   :maxdepth: 3
+
    data_sharded_data_connector
 
 Standard APIs

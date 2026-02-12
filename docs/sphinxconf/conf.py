@@ -32,6 +32,7 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx.ext.napoleon",
     "sphinx.ext.imgmath",
+    "sphinx.ext.intersphinx",
     # "sphinx.ext.coverage",
     # "sphinx.ext.linkcode"
 ]
@@ -54,6 +55,10 @@ imgmath_embed = True  # embed math images as data: urls, not files. needs sphinx
 imgmath_dvisvgm_args = [f"--fontmap={os.environ['BAZEL_SPHINX_DVISVGM_FONTMAPS'].replace(':', ',')}"]
 
 html_theme_options = {"rightsidebar": "true", "relbarbgcolor": "black"}
+
+# -- Intersphinx resolution -----------------------------------------------
+
+intersphinx_mapping = {"container-runtime": ("container-runtime", "container-runtime.inv")}
 
 # -- Options for autodoc --------------------------------------------------
 autodoc_default_options = {

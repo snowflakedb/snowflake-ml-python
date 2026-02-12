@@ -5,8 +5,15 @@
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
 //tests/integ/snowflake/ml/registry/services:registry_inference_table_test
+//tests/integ/snowflake/ml/registry/services:registry_mv_run_test
 //tests/integ/snowflake/ml/registry/services:registry_sklearn_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_model_deployment_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_default_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_mv_run_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_partial_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_rest_api_flat_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_rest_api_records_test
+//tests/integ/snowflake/ml/registry/services:registry_vllm_params_rest_api_split_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_additional_import_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_case_sensitivity_test
 //tests/integ/snowflake/ml/registry/jobs:registry_catboost_batch_inference_test
@@ -19,6 +26,7 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_mlflow_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_modeling_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_hugging_face_pipeline_batch_inference_test
+//tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_audio_video_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_custom_multi_modality_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_vllm_hugging_face_pipeline_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_pytorch_batch_inference_test
@@ -39,3 +47,4 @@
 //tests/integ/snowflake/ml/registry/model:registry_tensorflow_model_test
 //tests/integ/snowflake/ml/registry/model:registry_keras_torch_model_test
 //tests/integ/snowflake/ml/registry/model:registry_keras_tensorflow_model_test
+//tests/integ/snowflake/ml/jobs:multi_node_jobs_integ_test

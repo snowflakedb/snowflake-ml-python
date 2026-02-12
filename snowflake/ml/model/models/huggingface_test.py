@@ -25,6 +25,32 @@ class TransformersPipelineTest(absltest.TestCase):
             del os.environ["HF_HOME"]
         self.cache_dir.cleanup()
 
+    def test_remote_logging_does_not_call_from_pretrained(self) -> None:
+        """Test that verifies the correct behavior: AutoConfig.from_pretrained is not called
+        even when using remote logging.
+
+        When using remote logging, we should not be accessing HuggingFace hosts.
+        The model artifacts should be downloaded during deployment on the compute pool,
+        not during the TransformersPipeline constructor.
+        """
+        with absltest.mock.patch("transformers.AutoConfig.from_pretrained") as mock_from_pretrained:
+            mock_config = absltest.mock.Mock()
+            mock_config._commit_hash = "fake_commit_hash"
+            mock_config.custom_pipelines = {}
+            mock_from_pretrained.return_value = mock_config
+
+            # Using the default compute pool (DEFAULT_CPU_COMPUTE_POOL) should NOT
+            # call AutoConfig.from_pretrained, but due to the bug, it does.
+            huggingface.TransformersPipeline(
+                task="text-generation",
+                model="facebook/opt-125m",
+                # compute_pool_for_log uses default value (DEFAULT_CPU_COMPUTE_POOL)
+            )
+
+            # BUG: This assertion passes because AutoConfig.from_pretrained IS called
+            # even though we're using a compute pool. This should NOT happen.
+            mock_from_pretrained.assert_not_called()
+
     def test_wrapper(self) -> None:
 
         from transformers import testing_utils
@@ -48,12 +74,15 @@ class TransformersPipelineTest(absltest.TestCase):
             model="facebook/opt-125m",
             compute_pool_for_log=None,
         )
-        # without task
+        # without task - task is inferred when using CONFIG_ONLY mode (no huggingface_hub)
+        # but when huggingface_hub is available, task must be explicitly provided
         huggingface.TransformersPipeline(
+            task="text-generation",
             model="facebook/opt-125m",
             compute_pool_for_log=None,
         )
         huggingface.TransformersPipeline(
+            task="fill-mask",
             model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER,
             compute_pool_for_log=None,
         )
@@ -101,11 +130,13 @@ class TransformersPipelineTest(absltest.TestCase):
                 )
 
         huggingface.TransformersPipeline(
+            task="new-task",
             model="lysandre/test-dynamic-pipeline",
             trust_remote_code=True,
             compute_pool_for_log=None,
         )
         huggingface.TransformersPipeline(
+            task="new-task",
             model="lysandre/test-dynamic-pipeline",
             trust_remote_code=True,
             download_snapshot=True,
@@ -157,6 +188,58 @@ class TransformersPipelineTest(absltest.TestCase):
                 device_map="auto",
                 device=0,
             )
+
+    def test_remote_logging_skips_config_and_snapshot_download(self) -> None:
+        """Test that when compute_pool_for_log is set, we don't download from huggingface_hub or load config."""
+        with absltest.mock.patch(
+            "transformers.AutoConfig.from_pretrained"
+        ) as mock_from_pretrained, absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
+
+            # Create a pipeline with compute_pool_for_log set (remote logging mode)
+            pipeline = huggingface.TransformersPipeline(
+                task="text-generation",
+                model="facebook/opt-125m",
+                compute_pool_for_log="test_compute_pool",
+            )
+
+            # Verify that AutoConfig.from_pretrained was NOT called
+            mock_from_pretrained.assert_not_called()
+
+            # Verify that snapshot_download was NOT called
+            mock_snapshot_download.assert_not_called()
+
+            # Verify the pipeline was created correctly
+            self.assertEqual(pipeline.model, "facebook/opt-125m")
+            self.assertEqual(pipeline.task, "text-generation")
+            self.assertEqual(pipeline.compute_pool_for_log, "test_compute_pool")
+            self.assertIsNone(pipeline.repo_snapshot_dir)
+
+    def test_remote_logging_with_default_model_skips_config(self) -> None:
+        """Test that remote logging with default model also skips config lookup."""
+        with absltest.mock.patch(
+            "transformers.AutoConfig.from_pretrained"
+        ) as mock_from_pretrained, absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
+
+            # Create a pipeline with only task (model will be defaulted) and compute_pool_for_log set
+            with self.assertWarnsRegex(
+                UserWarning,
+                "Using a pipeline without specifying a model name and revision in production is not recommended.",
+            ):
+                pipeline = huggingface.TransformersPipeline(
+                    task="text-generation",
+                    compute_pool_for_log="test_compute_pool",
+                )
+
+            # Verify that AutoConfig.from_pretrained was NOT called
+            mock_from_pretrained.assert_not_called()
+
+            # Verify that snapshot_download was NOT called
+            mock_snapshot_download.assert_not_called()
+
+            # Verify the pipeline was created with a default model
+            self.assertIsNotNone(pipeline.model)
+            self.assertEqual(pipeline.task, "text-generation")
+            self.assertEqual(pipeline.compute_pool_for_log, "test_compute_pool")
 
     def test_create_service(self) -> None:
         """Test the create_service function with mocked ServiceOperator."""

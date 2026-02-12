@@ -6,7 +6,7 @@ from unittest import mock
 import numpy as np
 import pandas as pd
 import yaml
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities
 from snowflake.ml._internal.exceptions import exceptions
@@ -70,7 +70,7 @@ spec:
 """
 
 
-class ModelOpsTest(absltest.TestCase):
+class ModelOpsTest(parameterized.TestCase):
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.m_statement_params = {"test": "1"}
@@ -2903,6 +2903,83 @@ class ModelOpsTest(absltest.TestCase):
                 statement_params=self.m_statement_params,
             )
             mock_validate_model_metadata.assert_called_once_with(m_spec)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {
+            "runnable_in": '["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]',
+            "expected": ["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+        },
+        {"runnable_in": None, "expected": None},
+        {"runnable_in": '["SNOWPARK_CONTAINER_SERVICES"]', "expected": ["SNOWPARK_CONTAINER_SERVICES"]},
+    )
+    def test_fetch_model_spec_and_target_platforms(
+        self, runnable_in: Optional[str], expected: Optional[list[str]]
+    ) -> None:
+        m_spec = {
+            "signatures": {
+                "predict": _DUMMY_SIG["predict"].to_dict(),
+            }
+        }
+        row_kwargs: dict[str, str] = {"model_spec": yaml.safe_dump(m_spec)}
+        if runnable_in is not None:
+            row_kwargs["runnable_in"] = runnable_in
+        m_show_versions_result = [Row(**row_kwargs)]
+        with (
+            mock.patch.object(
+                self.m_ops._model_client,
+                "show_versions",
+                return_value=m_show_versions_result,
+            ) as mock_show_versions,
+            mock.patch.object(
+                model_meta.ModelMetadata,
+                "_validate_model_metadata",
+                return_value=cast(model_meta_schema.ModelMetadataDict, m_spec),
+            ),
+        ):
+            model_spec, target_platforms = self.m_ops._fetch_model_spec_and_target_platforms(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_show_versions.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                check_model_details=True,
+                statement_params={**self.m_statement_params, "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+            )
+            self.assertEqual(model_spec, m_spec)
+            self.assertEqual(target_platforms, expected)
+
+    def test_fetch_model_spec(self) -> None:
+        m_spec = {
+            "signatures": {
+                "predict": _DUMMY_SIG["predict"].to_dict(),
+            }
+        }
+        with mock.patch.object(
+            self.m_ops,
+            "_fetch_model_spec_and_target_platforms",
+            return_value=(cast(model_meta_schema.ModelMetadataDict, m_spec), ["WAREHOUSE"]),
+        ) as mock_combined:
+            result = self.m_ops._fetch_model_spec(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            mock_combined.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier('"v1"'),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(result, m_spec)
 
     def test_get_model_task(self) -> None:
         m_show_versions_result = [Row(name='"v1"', model_attributes='{"task": "TABULAR_BINARY_CLASSIFICATION"}')]

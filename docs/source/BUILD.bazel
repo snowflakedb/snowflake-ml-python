@@ -7,5 +7,6 @@ filegroup(
         "_static/**",
         "_templates/**",
         "_themes/**",
+        "*.inv",
     ]),
 )
