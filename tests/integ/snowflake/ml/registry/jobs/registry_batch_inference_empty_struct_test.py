@@ -16,12 +16,6 @@ class DemoModelEmptyStruct(custom_model.CustomModel):
 
 
 class TestBatchInferenceEmptyStructInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    def setUp(self) -> None:
-        super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest("Skipping multi modality tests: image override environment variables not set.")
-
     def test_empty_struct_output(self) -> None:
         model = DemoModelEmptyStruct(custom_model.ModelContext())
         num_cols = 2

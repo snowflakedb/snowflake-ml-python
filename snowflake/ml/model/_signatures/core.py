@@ -1067,13 +1067,16 @@ class ModelSignature:
 
     @classmethod
     def from_mlflow_sig(cls, mlflow_sig: "mlflow.models.ModelSignature") -> "ModelSignature":
-        return ModelSignature(
-            inputs=[
-                FeatureSpec.from_mlflow_spec(spec, f"input_feature_{idx}") for idx, spec in enumerate(mlflow_sig.inputs)
-            ],
-            outputs=[
-                FeatureSpec.from_mlflow_spec(spec, f"output_feature_{idx}")
-                for idx, spec in enumerate(mlflow_sig.outputs)
-            ],
-            params=[ParamSpec.from_mlflow_spec(spec) for spec in mlflow_sig.params or []],
-        )
+        inputs = [
+            FeatureSpec.from_mlflow_spec(spec, f"input_feature_{idx}") for idx, spec in enumerate(mlflow_sig.inputs)
+        ]
+        outputs = [
+            FeatureSpec.from_mlflow_spec(spec, f"output_feature_{idx}") for idx, spec in enumerate(mlflow_sig.outputs)
+        ]
+
+        if hasattr(mlflow_sig, "params") and mlflow_sig.params:
+            params = [ParamSpec.from_mlflow_spec(spec) for spec in mlflow_sig.params]
+        else:
+            params = []
+
+        return ModelSignature(inputs=inputs, outputs=outputs, params=params)

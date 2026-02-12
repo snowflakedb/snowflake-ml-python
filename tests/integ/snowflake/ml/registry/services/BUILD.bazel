@@ -24,6 +24,18 @@ py_library(
     ],
 )
 
+py_library(
+    name = "registry_vllm_params_test_base",
+    testonly = True,
+    srcs = ["registry_vllm_params_test_base.py"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model:inference_engine",
+        "//snowflake/ml/model/models:huggingface",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+    ],
+)
+
 py_test(
     name = "registry_xgboost_model_deployment_pip_test",
     timeout = "eternal",
@@ -84,6 +96,22 @@ py_test(
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model/models:huggingface",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+    ],
+)
+
+py_test(
+    name = "registry_mv_run_test",
+    timeout = "eternal",
+    srcs = ["registry_mv_run_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 4,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:openai_signatures",
+        "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
@@ -187,5 +215,83 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_mv_run_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_mv_run_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_partial_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_partial_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_default_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_default_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_rest_api_flat_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_rest_api_flat_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_rest_api_split_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_rest_api_split_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_test(
+    name = "registry_vllm_params_rest_api_records_test",
+    timeout = "eternal",
+    srcs = ["registry_vllm_params_rest_api_records_test.py"],
+    optional_dependencies = ["llm"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_vllm_params_test_base",
+        "//snowflake/ml/model:openai_signatures",
     ],
 )

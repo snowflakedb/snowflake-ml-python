@@ -15,6 +15,7 @@ class ModelSQLClient(_base._BaseSQLClient):
     MODEL_VERSION_METADATA_COL_NAME = "metadata"
     MODEL_VERSION_MODEL_SPEC_COL_NAME = "model_spec"
     MODEL_VERSION_ALIASES_COL_NAME = "aliases"
+    MODEL_VERSION_RUNNABLE_IN_COL_NAME = "runnable_in"
     MODEL_VERSION_INFERENCE_SERVICES_COL_NAME = "inference_services"
 
     def show_models(

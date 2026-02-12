@@ -57,7 +57,7 @@ class ModelVersion(lineage_node.LineageNode):
     _version_name: sql_identifier.SqlIdentifier
     _functions: list[model_manifest_schema.ModelFunctionInfo]
     _model_spec: Optional[model_meta_schema.ModelMetadataDict]
-    _model_manifest: Optional[model_manifest_schema.ModelManifestDict]
+    _target_platforms: Optional[list[str]]
 
     def __init__(self) -> None:
         raise RuntimeError("ModelVersion's initializer is not meant to be used. Use `version` from model instead.")
@@ -168,7 +168,7 @@ class ModelVersion(lineage_node.LineageNode):
         self._version_name = version_name
         self._functions = self._get_functions()
         self._model_spec = None
-        self._model_manifest = None
+        self._target_platforms = None
         super(cls, cls).__init__(
             self,
             session=model_ops._session,
@@ -476,28 +476,6 @@ class ModelVersion(lineage_node.LineageNode):
             )
         return self._model_spec
 
-    def _get_model_manifest(
-        self, statement_params: Optional[dict[str, Any]] = None
-    ) -> model_manifest_schema.ModelManifestDict:
-        """Fetch and cache the model manifest for this model version.
-
-        Args:
-            statement_params: Optional dictionary of statement parameters to include
-                in the SQL command to fetch the model manifest.
-
-        Returns:
-            The model manifest as a dictionary for this model version.
-        """
-        if self._model_manifest is None:
-            self._model_manifest = self._model_ops.get_model_version_manifest(
-                database_name=None,
-                schema_name=None,
-                model_name=self._model_name,
-                version_name=self._version_name,
-                statement_params=statement_params,
-            )
-        return self._model_manifest
-
     @overload
     def run(
         self,
@@ -604,46 +582,53 @@ class ModelVersion(lineage_node.LineageNode):
                 statement_params=statement_params,
                 params=params,
             )
-        else:
-            manifest = self._get_model_manifest(statement_params=statement_params)
-            target_platforms = manifest.get("target_platforms", None)
-            if (
-                target_platforms is not None
-                and len(target_platforms) > 0
-                and type_hints.TargetPlatform.WAREHOUSE.value not in target_platforms
-            ):
-                raise ValueError(
-                    f"The model {self.fully_qualified_model_name} version {self.version_name} "
-                    "is not logged for inference in Warehouse. "
-                    "To run the model in Warehouse, please log the model again using `log_model` API with "
-                    '`target_platforms=["WAREHOUSE"]` or '
-                    '`target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]` and rerun the command. '
-                    "To run the model in Snowpark Container Services, the `service_name` argument must be provided. "
-                    "You can create a service using the `create_service` API. "
-                    "For inference in Warehouse, see https://docs.snowflake.com/en/developer-guide/"
-                    "snowflake-ml/model-registry/warehouse#inference-from-python. "
-                    "For inference in Snowpark Container Services, see https://docs.snowflake.com/en/developer-guide/"
-                    "snowflake-ml/model-registry/container#python."
-                )
 
-            explain_case_sensitive = self._determine_explain_case_sensitivity(target_function_info, statement_params)
-
-            return self._model_ops.invoke_method(
-                method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
-                method_function_type=target_function_info["target_method_function_type"],
-                signature=target_function_info["signature"],
-                X=X,
+        if self._model_spec is None:
+            self._model_spec, self._target_platforms = self._model_ops._fetch_model_spec_and_target_platforms(
                 database_name=None,
                 schema_name=None,
                 model_name=self._model_name,
                 version_name=self._version_name,
-                strict_input_validation=strict_input_validation,
-                partition_column=partition_column,
                 statement_params=statement_params,
-                is_partitioned=target_function_info["is_partitioned"],
-                explain_case_sensitive=explain_case_sensitive,
-                params=params,
             )
+
+        if (
+            self._target_platforms is not None
+            and len(self._target_platforms) > 0
+            and type_hints.TargetPlatform.WAREHOUSE.value not in self._target_platforms
+        ):
+            raise ValueError(
+                f"The model {self.fully_qualified_model_name} version {self.version_name} "
+                "is not logged for inference in Warehouse. "
+                "To run the model in Warehouse, please log the model again using `log_model` API with "
+                '`target_platforms=["WAREHOUSE"]` or '
+                '`target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"]` and rerun the command. '
+                "To run the model in Snowpark Container Services, the `service_name` argument must be provided. "
+                "You can create a service using the `create_service` API. "
+                "For inference in Warehouse, see https://docs.snowflake.com/en/developer-guide/"
+                "snowflake-ml/model-registry/warehouse#inference-from-python. "
+                "For inference in Snowpark Container Services, see https://docs.snowflake.com/en/developer-guide/"
+                "snowflake-ml/model-registry/container#python."
+            )
+
+        explain_case_sensitive = self._determine_explain_case_sensitivity(target_function_info, statement_params)
+
+        return self._model_ops.invoke_method(
+            method_name=sql_identifier.SqlIdentifier(target_function_info["name"]),
+            method_function_type=target_function_info["target_method_function_type"],
+            signature=target_function_info["signature"],
+            X=X,
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            strict_input_validation=strict_input_validation,
+            partition_column=partition_column,
+            statement_params=statement_params,
+            is_partitioned=target_function_info["is_partitioned"],
+            explain_case_sensitive=explain_case_sensitive,
+            params=params,
+        )
 
     def _determine_explain_case_sensitivity(
         self,
@@ -703,6 +688,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         Raises:
             ValueError: If warehouse is not set in job_spec and no current warehouse is available.
+            ValueError: If the specified function is a partitioned model function.
             RuntimeError: If the input data cannot be processed or written to the staging location.
 
         Example:
@@ -829,6 +815,12 @@ class ModelVersion(lineage_node.LineageNode):
             job_name = job_spec.job_name
 
         target_function_info = self._get_function_info(function_name=job_spec.function_name)
+
+        # Validate that the function is not partitioned
+        if target_function_info["is_partitioned"]:
+            raise ValueError(
+                f"Function '{target_function_info['name']}' is a partitioned model function which is not supported."
+            )
 
         return self._service_ops.invoke_batch_job_method(
             # model version info

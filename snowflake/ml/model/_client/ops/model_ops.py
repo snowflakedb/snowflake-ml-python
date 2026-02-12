@@ -799,6 +799,9 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> model_manifest_schema.ModelManifestDict:
+        # WARNING: This method uses GET to fetch files from the model's internal stage,
+        # which requires READ privilege on the model. Do NOT call this from code paths
+        # where only USAGE privilege is expected (e.g., model_version.run()).
         with tempfile.TemporaryDirectory() as tmpdir:
             self._model_version_client.get_file(
                 database_name=database_name,
@@ -833,6 +836,51 @@ class ModelOperator:
             res[function_name] = target_method
         return res
 
+    def _fetch_model_spec_and_target_platforms(
+        self,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> tuple[model_meta_schema.ModelMetadataDict, Optional[list[str]]]:
+        """Fetch both model spec and target platforms from a single SQL query.
+
+        Args:
+            database_name: The database name.
+            schema_name: The schema name.
+            model_name: The model name.
+            version_name: The version name.
+            statement_params: Optional dictionary of statement parameters.
+
+        Returns:
+            A tuple of (model_spec, target_platforms) where target_platforms is a list of
+            platform strings (e.g., ["WAREHOUSE"]) or None if not available.
+        """
+        version_row = self._model_client.show_versions(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            version_name=version_name,
+            check_model_details=True,
+            statement_params={**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
+        )[0]
+
+        # Extract model spec
+        raw_model_spec_res = version_row[self._model_client.MODEL_VERSION_MODEL_SPEC_COL_NAME]
+        model_spec_dict = yaml.safe_load(raw_model_spec_res)
+        model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
+
+        # Extract target platforms from runnable_in column
+        target_platforms = None
+        runnable_in_col = self._model_client.MODEL_VERSION_RUNNABLE_IN_COL_NAME
+        if runnable_in_col in version_row:
+            runnable_in_data = version_row[runnable_in_col]
+            if runnable_in_data:
+                target_platforms = json.loads(runnable_in_data)
+
+        return model_spec, target_platforms
+
     def _fetch_model_spec(
         self,
         database_name: Optional[sql_identifier.SqlIdentifier],
@@ -841,16 +889,13 @@ class ModelOperator:
         version_name: sql_identifier.SqlIdentifier,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> model_meta_schema.ModelMetadataDict:
-        raw_model_spec_res = self._model_client.show_versions(
+        model_spec, _ = self._fetch_model_spec_and_target_platforms(
             database_name=database_name,
             schema_name=schema_name,
             model_name=model_name,
             version_name=version_name,
-            check_model_details=True,
-            statement_params={**(statement_params or {}), "SHOW_MODEL_DETAILS_IN_SHOW_VERSIONS_IN_MODEL": True},
-        )[0][self._model_client.MODEL_VERSION_MODEL_SPEC_COL_NAME]
-        model_spec_dict = yaml.safe_load(raw_model_spec_res)
-        model_spec = model_meta.ModelMetadata._validate_model_metadata(model_spec_dict)
+            statement_params=statement_params,
+        )
         return model_spec
 
     def get_model_task(
@@ -1026,31 +1071,29 @@ class ModelOperator:
         identifier_rule = model_signature.SnowparkIdentifierRule.INFERRED
 
         # Validate and prepare input
-        if not isinstance(X, dataframe.DataFrame):
-            keep_order = True
-            output_with_input_features = False
-            df = model_signature._convert_and_validate_local_data(X, signature.inputs, strict=strict_input_validation)
-            s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
-                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
-            )
-        else:
+        if isinstance(X, dataframe.DataFrame):
             keep_order = False
             output_with_input_features = True
             identifier_rule = model_signature._validate_snowpark_data(
                 X, signature.inputs, strict=strict_input_validation
             )
             s_df = X
-
+        else:
+            keep_order = True
+            output_with_input_features = False
+            df = model_signature._convert_and_validate_local_data(X, signature.inputs, strict=strict_input_validation)
+            s_df = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(
+                self._session, df, keep_order=keep_order, features=signature.inputs, statement_params=statement_params
+            )
         original_cols = s_df.columns
-
         # Compose input and output names
-        input_args = []
         quoted_identifiers_ignore_case = (
             snowpark_handler.SnowparkDataFrameHandler._is_quoted_identifiers_ignore_case_enabled(
                 self._session, statement_params
             )
         )
 
+        input_args = []
         for input_feature in signature.inputs:
             col_name = identifier_rule.get_sql_identifier_from_feature(input_feature.name)
             if quoted_identifiers_ignore_case:
@@ -1139,12 +1182,12 @@ class ModelOperator:
             df_res = df_res.drop(*cols_to_drop)
 
         # Get final result
-        if not isinstance(X, dataframe.DataFrame):
+        if isinstance(X, dataframe.DataFrame):
+            return df_res
+        else:
             return snowpark_handler.SnowparkDataFrameHandler.convert_to_df(
                 df_res, features=signature.outputs, statement_params=statement_params
             )
-        else:
-            return df_res
 
     def delete_model_or_version(
         self,

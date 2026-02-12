@@ -1,6 +1,22 @@
 # Release History
 
-## 1.26.0
+## 1.27.0
+
+### New Features
+
+### Bug Fixes
+
+* Registry: Fixed a bug where `model_version.run()` required READ privilege on the model instead of
+  USAGE, causing inference to fail for users with only USAGE privilege granted (introduced in 1.21.0).
+
+* Feature Store: Fixed `register_feature_view()` with `overwrite=True` failing when changing between
+  external and managed feature views.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.26.0 (2026-02-05)
 
 ### New Features
 

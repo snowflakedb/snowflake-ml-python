@@ -1,5 +1,6 @@
 import base64
 import dataclasses
+import datetime
 import json
 import logging
 import pathlib
@@ -27,6 +28,8 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
 module_logger.propagate = False
+
+_UTF8_ENCODING = "utf-8"
 
 
 @dataclasses.dataclass
@@ -937,7 +940,21 @@ class ServiceOperator:
         """
         if params is None:
             return None
-        return base64.b64encode(json.dumps(params).encode("utf-8")).decode("utf-8")
+
+        def serialize_value(v: Any) -> Any:
+            """Convert non-JSON-serializable types to JSON-compatible formats."""
+            if isinstance(v, bytes):
+                return v.hex()
+            if isinstance(v, datetime.datetime):
+                return v.isoformat()
+            if isinstance(v, list):
+                return [serialize_value(item) for item in v]
+            if isinstance(v, dict):
+                return {k: serialize_value(val) for k, val in v.items()}
+            return v
+
+        serializable_params = {k: serialize_value(v) for k, v in params.items()}
+        return base64.b64encode(json.dumps(serializable_params).encode(_UTF8_ENCODING)).decode(_UTF8_ENCODING)
 
     @staticmethod
     def _encode_column_handling(
@@ -955,7 +972,7 @@ class ServiceOperator:
             return None
         adapter = TypeAdapter(dict[str, batch_inference_specs.ColumnHandlingOptions])
         validated_input = adapter.validate_python(column_handling)
-        return base64.b64encode(adapter.dump_json(validated_input)).decode("utf-8")
+        return base64.b64encode(adapter.dump_json(validated_input)).decode(_UTF8_ENCODING)
 
     def invoke_batch_job_method(
         self,

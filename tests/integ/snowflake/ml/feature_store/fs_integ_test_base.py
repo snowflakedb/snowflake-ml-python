@@ -5,6 +5,7 @@ import uuid
 from absl.testing import absltest
 
 from snowflake.ml.feature_store import FeatureStore  # type: ignore[attr-defined]
+from snowflake.ml.feature_store.feature_store import FeatureStore as FeatureStoreImpl
 from snowflake.ml.utils import sql_client
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
@@ -120,3 +121,35 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
             fs: FeatureStore instance whose schema context should be used.
         """
         self._session.sql(f"USE SCHEMA {fs._config.full_schema_path}").collect()
+
+    def assert_no_temp_shadow_swap_objects(self, fs: FeatureStore) -> None:  # type: ignore[name-defined]
+        """Assert that no temporary shadow swap objects remain in the feature store schema.
+
+        This checks for any VIEWs or DYNAMIC TABLE with the temporary prefixes
+        (_TMP_VIEW_ or _TMP_TABLE_) that should have been cleaned up after a shadow swap.
+
+        Args:
+            fs: FeatureStore instance to check for leftover temporary objects.
+        """
+        schema_path = fs._config.full_schema_path
+
+        # Check for leftover temporary views
+        tmp_view_prefix = FeatureStoreImpl._TMP_VIEW_PREFIX
+        views = self._session.sql(f"SHOW VIEWS LIKE '%{tmp_view_prefix}%' IN SCHEMA {schema_path}").collect()
+        self.assertEqual(
+            len(views),
+            0,
+            f"Found leftover temporary views with prefix '{tmp_view_prefix}': {[v['name'] for v in views]}",
+        )
+
+        # Check for leftover temporary dynamic tables
+        tmp_dt_prefix = FeatureStoreImpl._TMP_DT_PREFIX
+        dynamic_tables = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '%{tmp_dt_prefix}%' IN SCHEMA {schema_path}"
+        ).collect()
+        self.assertEqual(
+            len(dynamic_tables),
+            0,
+            f"Found leftover temporary dynamic tables with prefix '{tmp_dt_prefix}': "
+            f"{[dt['name'] for dt in dynamic_tables]}",
+        )

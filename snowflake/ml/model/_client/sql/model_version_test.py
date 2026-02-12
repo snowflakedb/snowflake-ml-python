@@ -342,9 +342,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
@@ -383,9 +383,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
@@ -424,9 +424,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123""",
             m_df,
         )
@@ -465,10 +465,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
-            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, COL2) AS TMP_RESULT_ABCDEF0123
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
         )
@@ -497,10 +496,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
-            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, COL2, 0.7, 50)
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, COL2, 0.7, 50)
                     AS TMP_RESULT_ABCDEF0123
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
@@ -534,10 +532,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
-            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(COL1, 'gpt-4')
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(COL1, 'gpt-4')
                     AS TMP_RESULT_ABCDEF0123
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
             m_df,
@@ -569,10 +566,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!EXPLAIN(COL1, COL2))
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!EXPLAIN(COL1, COL2))
             """,
             m_df,
         )
@@ -614,10 +611,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            f"""
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
             """,
             m_df,
         )
@@ -658,10 +655,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            f"""
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, COL2) OVER (PARTITION BY {partition_column}))
             """,
             m_df,
         )
@@ -703,10 +700,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            f"""
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, COL2, 0.5, 40)
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, COL2, 0.5, 40)
                      OVER (PARTITION BY {partition_column}))
             """,
             m_df,
@@ -752,11 +749,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
-            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(COL1, 'gpt-4') OVER (PARTITION BY 1))
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, 'gpt-4') OVER (PARTITION BY 1))
             """,
             m_df,
         )
@@ -789,10 +785,9 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()
         self.m_session.add_mock_sql(
-            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1),
-            MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            """WITH SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123 AS (query_1)
             SELECT *,
-                MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT(object_construct_keep_null("""
+                MODEL(TEMP."test".MODEL, V1)!PREDICT(object_construct_keep_null("""
             """'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.7, 'TOP_K', 50))
                     AS TMP_RESULT_ABCDEF0123
             FROM SNOWPARK_ML_MODEL_INFERENCE_INPUT_ABCDEF0123""",
@@ -829,10 +824,10 @@ class ModelVersionSQLTest(absltest.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         partition_column = "partition_col"
         self.m_session.add_mock_sql(
-            f"""WITH MODEL_VERSION_ALIAS_ABCDEF0123 AS MODEL TEMP."test".MODEL VERSION V1
+            f"""
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL_VERSION_ALIAS_ABCDEF0123!PREDICT_TABLE(object_construct_keep_null("""
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(object_construct_keep_null("""
             f"""'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.5))
                      OVER (PARTITION BY {partition_column}))
             """,

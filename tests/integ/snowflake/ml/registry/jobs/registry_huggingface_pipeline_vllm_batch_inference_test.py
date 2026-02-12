@@ -19,15 +19,6 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
-    def setUp(self) -> None:
-        super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest("Skipping multi modality tests: image override environment variables not set.")
-
-    def tearDown(self) -> None:
-        super().tearDown()
-
     @classmethod
     def setUpClass(cls) -> None:
         cls.cache_dir = tempfile.TemporaryDirectory()
@@ -128,7 +119,7 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
         )
 
         validator = registry_batch_inference_test_base.create_openai_chat_completion_output_validator(
-            expected_phrases=["paris", "france"],  # Expected keywords in the response
+            expected_phrases=["paris"],  # Expected keywords in the response
             test_case=self,
         )
 

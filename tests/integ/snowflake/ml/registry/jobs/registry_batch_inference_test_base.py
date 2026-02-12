@@ -1,3 +1,4 @@
+import ast
 import inspect
 import json
 import uuid
@@ -388,10 +389,29 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             # Convert Snowpark DataFrame to pandas for comparison
             actual_output = df.to_pandas()
 
-            # Apply json.loads to parse string representations of arrays
+            # Apply json.loads to parse string representations of arrays/objects
+            # Snowflake may return nested arrays as JSON strings when reading from parquet
+            def try_parse_json(x: Any) -> Any:
+                if isinstance(x, str):
+                    x_stripped = x.strip()
+                    if x_stripped.startswith(("[", "{")):
+                        try:
+                            return json.loads(x)
+                        except json.JSONDecodeError:
+                            pass
+                        # Fallback to ast.literal_eval for Python-style syntax (handles trailing commas)
+                        try:
+                            return ast.literal_eval(x)
+                        except (ValueError, SyntaxError):
+                            pass
+                return x
+
             for col in actual_output.columns:
-                if col.startswith("output_feature_"):
-                    actual_output[col] = actual_output[col].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
+                actual_output[col] = actual_output[col].apply(try_parse_json)
+
+            # Also apply to expected_predictions as it may contain data from Snowflake
+            for col in expected_predictions.columns:
+                expected_predictions[col] = expected_predictions[col].apply(try_parse_json)
 
             # Sort both dataframes by the index column for consistent comparison
             self.assertTrue(self._INDEX_COL in expected_predictions.columns)

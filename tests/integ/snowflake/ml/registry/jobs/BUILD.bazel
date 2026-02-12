@@ -43,6 +43,17 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_failure_mode_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_failure_mode_test.py"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_functional_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_functional_test.py"],
@@ -301,8 +312,23 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_multi_modality_hugging_face_pipeline_batch_inference_test.py"],
     data = [
-        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+    ],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/utils:stage_file",
+    ],
+)
+
+py_test(
+    name = "registry_multi_modality_audio_video_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_multi_modality_audio_video_batch_inference_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:batman_audio.mp3",
         "//tests/integ/snowflake/ml/test_data:cutting_in_kitchen.avi",
     ],
     optional_dependencies = ["transformers"],

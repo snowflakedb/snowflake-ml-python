@@ -193,11 +193,18 @@ class FeatureViewVersion(str):
 
 
 class FeatureViewStatus(Enum):
-    MASKED = "MASKED"  # for shared feature views where scheduling state is not available
+    # for shared feature views where scheduling state is not available
+    MASKED = "MASKED"
+    # A FeatureView that exists only locally and hasn't been registered/materialized to Snowflake yet.
+    # This is the initial state when you create a new FeatureView object.
     DRAFT = "DRAFT"
+    # The FeatureView is registered but has no scheduled refreshes.
     STATIC = "STATIC"
-    RUNNING = "RUNNING"  # This can be deprecated after BCR 2024_02 gets fully deployed
+    # This can be deprecated after BCR 2024_02 gets fully deployed
+    RUNNING = "RUNNING"
+    # The FeatureView is registered but its scheduled refreshes are paused/suspended.
     SUSPENDED = "SUSPENDED"
+    # The FeatureView is registered in Snowflake and actively running (e.g., scheduled refreshes are enabled).
     ACTIVE = "ACTIVE"
 
 

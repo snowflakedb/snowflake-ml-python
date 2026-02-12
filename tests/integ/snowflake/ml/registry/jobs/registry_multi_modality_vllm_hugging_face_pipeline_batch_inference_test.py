@@ -14,15 +14,6 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
-    def setUp(self) -> None:
-        super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest("Skipping multi modality tests: image override environment variables not set.")
-
-    def tearDown(self) -> None:
-        super().tearDown()
-
     @classmethod
     def setUpClass(cls) -> None:
         cls.cache_dir = tempfile.TemporaryDirectory()
@@ -336,11 +327,10 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_mljob_get_logs_on_vllm(self) -> None:
-        from transformers import pipeline
 
-        model = pipeline(
-            "text-generation",
-            model="Qwen/Qwen2.5-0.5B-Instruct",
+        model = huggingface.TransformersPipeline(
+            task="text-generation",
+            model="Qwen/Qwen2.5-0.5B",
         )
 
         (
@@ -354,9 +344,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         job = self._test_registry_batch_inference(
             model=model,
             X=dummy_df,
+            options={"cuda_version": "12.4"},
             output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(job_name=job_name),
+            job_spec=JobSpec(job_name=job_name, gpu_requests="1"),
             compute_pool="SYSTEM_COMPUTE_POOL_GPU",
+            signatures=OPENAI_CHAT_SIGNATURE,
             inference_engine_options={
                 "engine": InferenceEngine.VLLM,
                 "engine_args_override": [

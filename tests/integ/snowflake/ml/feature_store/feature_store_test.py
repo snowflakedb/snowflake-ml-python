@@ -659,6 +659,307 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             sort_cols=["ID"],
         )
 
+    def test_register_feature_view_with_overwrite(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("sql_foo", ["id"])
+        fs.register_entity(e)
+
+        e1 = Entity("foo", ["aid"])
+        e2 = Entity("bar", ["uid"])
+        fs.register_entity(e1)
+        fs.register_entity(e2)
+
+        # 1. Register initial view-based feature view
+        table_fv = FeatureView(
+            name="fv",
+            entities=[e],
+            feature_df=self._session.table(self._mock_table).select(["NAME", "ID", "TITLE", "AGE", "TS"]),
+            timestamp_col="ts",
+            desc="initial_table_fv",
+        ).attach_feature_desc({"AGE": "my age"})
+        fs.register_feature_view(feature_view=table_fv, version="2.0")
+
+        # Assertion: Verify initial registration
+        curr_fv = fs.get_feature_view("fv", "2.0")
+        self.assertEqual(curr_fv.desc, "initial_table_fv")
+        self.assertEqual(len(curr_fv.entities), 1)
+        self.assertEqual(curr_fv.refresh_freq, None)
+        self.assertEqual(curr_fv.status, FeatureViewStatus.STATIC)
+
+        # Assertion: Verify list_feature_views output after initial registration
+        fv_list = fs.list_feature_views().collect()
+        self.assertEqual(len(fv_list), 1)
+        self.assertEqual(fv_list[0]["NAME"], "FV")
+        self.assertEqual(fv_list[0]["VERSION"], "2.0")
+        self.assertEqual(fv_list[0]["DESC"], "initial_table_fv")
+        self.assertEqual(fv_list[0]["ENTITIES"], '[\n  "SQL_FOO"\n]')
+
+        # 2. Overwrite with a SQL-based feature view (Managed/Dynamic Table with cron refresh)
+        # Using cron expression to trigger scheduled task creation
+        sql0 = f"SELECT name, id AS aid, id AS uid FROM {self._mock_table}"
+        sql_fv = FeatureView(
+            name="fv",
+            entities=[e1, e2],
+            feature_df=self._session.sql(sql0),
+            refresh_freq="* * * * * UTC",  # Cron expression - creates a scheduled task
+            desc="overwritten_to_sql",
+        ).attach_feature_desc({"NAME": "my name"})
+        fs.register_feature_view(feature_view=sql_fv, version="2.0", overwrite=True)
+
+        # Assertion: Verify metadata updated and it is now a managed view (Dynamic Table)
+        curr_fv = fs.get_feature_view("fv", "2.0")
+        self.assertEqual(curr_fv.desc, "overwritten_to_sql")
+        self.assertEqual(len(curr_fv.entities), 2)
+        self.assertIn(curr_fv.status, [FeatureViewStatus.ACTIVE, FeatureViewStatus.RUNNING])
+
+        # Assertion: Verify dynamic table actually exists in the schema
+        fv_name = FeatureView._get_physical_name("fv", "2.0")
+        dynamic_tables = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dynamic_tables), 1, "Dynamic table should exist for managed feature view")
+
+        # Assertion: Verify scheduled task was created for cron-based refresh
+        tasks = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(tasks), 1, "Scheduled task should exist for cron-based DT")
+
+        # Assertion: Verify shadow swap temp objects were cleaned up
+        self.assert_no_temp_shadow_swap_objects(fs)
+
+        # Assertion: Verify list_feature_views output after overwrite to SQL-based FV
+        fv_list = fs.list_feature_views().collect()
+        self.assertEqual(len(fv_list), 1)
+        self.assertEqual(fv_list[0]["NAME"], "FV")
+        self.assertEqual(fv_list[0]["VERSION"], "2.0")
+        self.assertEqual(fv_list[0]["DESC"], "overwritten_to_sql")
+        self.assertEqual(fv_list[0]["ENTITIES"], '[\n  "FOO",\n  "BAR"\n]')
+
+        # 3. Overwrite back to a table feature view (VIEW) - should clean up scheduled task
+        table_fv_final = FeatureView(
+            name="fv",
+            entities=[e],
+            feature_df=self._session.table(self._mock_table).select(["NAME", "ID", "TS"]),
+            timestamp_col="ts",
+            desc="final_reverted_table",
+        )
+        fs.register_feature_view(feature_view=table_fv_final, version="2.0", overwrite=True)
+
+        # Assertion: Verify final state and data schema
+        curr_fv = fs.get_feature_view("fv", "2.0")
+        self.assertEqual(curr_fv.desc, "final_reverted_table")
+        self.assertIn("NAME", curr_fv.feature_names)
+        self.assertNotIn("AGE", curr_fv.feature_names)  # Verify schema actually changed
+        self.assertEqual(curr_fv.status, FeatureViewStatus.STATIC)
+
+        # Note: Task cleanup during shadow swap was removed - tasks may remain orphaned
+        # when a DT with cron refresh is replaced with a VIEW
+
+        # Assertion: Verify list_feature_views output after final overwrite
+        fv_list = fs.list_feature_views().collect()
+        self.assertEqual(len(fv_list), 1)
+        self.assertEqual(fv_list[0]["NAME"], "FV")
+        self.assertEqual(fv_list[0]["VERSION"], "2.0")
+        self.assertEqual(fv_list[0]["DESC"], "final_reverted_table")
+        self.assertEqual(fv_list[0]["ENTITIES"], '[\n  "SQL_FOO"\n]')
+        self.assertIsNone(fv_list[0]["REFRESH_FREQ"])  # Static view has no refresh_freq
+
+        # Assertion: Verify shadow swap temp objects were cleaned up
+        self.assert_no_temp_shadow_swap_objects(fs)
+
+    def test_type_change_without_overwrite(self) -> None:
+        """Test that changing type (VIEW <-> DYNAMIC TABLE) without overwrite=True. It is ignored."""
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id FROM {self._mock_table}"
+
+        # Case 1: Register as DYNAMIC TABLE first, then try to change to VIEW without overwrite
+        fv_dt = FeatureView(
+            name="fv_dt",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1m",  # Makes it a DYNAMIC TABLE
+            desc="original_dt",
+        )
+        fs.register_feature_view(feature_view=fv_dt, version="v1")
+
+        # Verify it's a DYNAMIC TABLE
+        original_fv = fs.get_feature_view("fv_dt", "v1")
+        self.assertEqual(original_fv.refresh_freq, "1 minute")
+        self.assertEqual(original_fv.desc, "original_dt")
+        self.assertIn(original_fv.status, [FeatureViewStatus.ACTIVE, FeatureViewStatus.RUNNING])
+
+        # Try to register as VIEW (no refresh_freq) without overwrite - should be ignored
+        fv_view = FeatureView(
+            name="fv_dt",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            # No refresh_freq - would make it a VIEW
+            desc="changed_to_view",
+        )
+        with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists. Skip registration.*"):
+            result_fv = fs.register_feature_view(feature_view=fv_view, version="v1")
+
+        # Verify the original DYNAMIC TABLE is unchanged
+        self.assertEqual(result_fv.refresh_freq, "1 minute")  # Still a DT
+        self.assertEqual(result_fv.desc, "original_dt")  # Description unchanged
+
+        # Case 2: Register as VIEW first, then try to change to DYNAMIC TABLE without overwrite
+        fv_view2 = FeatureView(
+            name="fv_view",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            # No refresh_freq - makes it a VIEW
+            desc="original_view",
+        )
+        fs.register_feature_view(feature_view=fv_view2, version="v1")
+
+        # Verify it's a VIEW (no refresh_freq)
+        original_fv2 = fs.get_feature_view("fv_view", "v1")
+        self.assertIsNone(original_fv2.refresh_freq)
+        self.assertEqual(original_fv2.desc, "original_view")
+
+        # Try to register as DYNAMIC TABLE (with refresh_freq) without overwrite - should be ignored
+        fv_dt2 = FeatureView(
+            name="fv_view",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1m",  # Would make it a DYNAMIC TABLE
+            desc="changed_to_dt",
+        )
+        with self.assertWarnsRegex(UserWarning, "FeatureView .* already exists. Skip registration.*"):
+            result_fv2 = fs.register_feature_view(feature_view=fv_dt2, version="v1")
+
+        # Verify the original VIEW is unchanged
+        self.assertIsNone(result_fv2.refresh_freq)  # Still a VIEW
+        self.assertEqual(result_fv2.desc, "original_view")  # Description unchanged
+
+    @parameterized.parameters(  # type: ignore[misc]
+        # Raw DYNAMIC TABLE exists, register managed FV (DT), overwrite=False
+        {
+            "existing_type": "DYNAMIC TABLE",
+            "overwrite": False,
+            "error_pattern": "dynamic table",
+        },
+        # Raw TABLE exists, register managed FV (DT), overwrite=True
+        {"existing_type": "TABLE", "overwrite": True, "error_pattern": "dynamic table"},
+    )
+    def test_register_feature_view_over_non_fs_object_raises_exception(
+        self,
+        existing_type: str,
+        overwrite: bool,
+        error_pattern: str,
+    ) -> None:
+        """Test that registering a FeatureView fails when a non-FS object with the same name exists.
+
+        This tests various combinations of:
+        - Existing object type (TABLE, DYNAMIC TABLE without FS tags)
+        - FeatureView type (VIEW via no refresh_freq, or DT via refresh_freq)
+        - overwrite flag (True/False)
+
+        All should fail because:
+        - For raw DYNAMIC TABLE: The object lacks FeatureStore tags, so it can't be recognized as a FV
+        - For raw TABLE: CREATE OR REPLACE VIEW/DYNAMIC TABLE cannot replace a TABLE
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        # Create a raw object with the same physical name as the FeatureView would have
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("abc"), "v1")
+        obj_name = f"{fs._config.full_schema_path}.{fv_physical_name.identifier()}"
+
+        if existing_type == "DYNAMIC TABLE":
+            self._session.sql(
+                f"CREATE OR REPLACE DYNAMIC TABLE {obj_name} "
+                f"TARGET_LAG = '1 day' "
+                f"WAREHOUSE = {fs._default_warehouse} "
+                f"AS SELECT id, name FROM {self._mock_table}"
+            ).collect()
+            drop_stmt = f"DROP DYNAMIC TABLE IF EXISTS {obj_name}"
+        else:  # TABLE
+            self._session.sql(f"CREATE OR REPLACE TABLE {obj_name} (id INT, name VARCHAR)").collect()
+            drop_stmt = f"DROP TABLE IF EXISTS {obj_name}"
+
+        try:
+            fv = FeatureView(
+                name="abc",
+                entities=[e],
+                feature_df=self._session.sql(f"SELECT name, id FROM {self._mock_table}"),
+                refresh_freq="1 day",
+                desc="should_fail",
+            )
+            with self.assertRaisesRegex(Exception, f"(?i){error_pattern}|already exists"):
+                fs.register_feature_view(feature_view=fv, version="v1", overwrite=overwrite)
+        finally:
+            self._session.sql(drop_stmt).collect()
+
+    def test_overwrite_non_cron_dt_with_view(self) -> None:
+        """Test that overwriting a non-cron DYNAMIC TABLE with a VIEW works correctly."""
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id FROM {self._mock_table}"
+
+        # Register a DYNAMIC TABLE with interval-based refresh (non-cron, no scheduled task)
+        fv_dt = FeatureView(
+            name="fv_interval_dt",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1 day",  # Interval-based refresh, not cron
+            desc="interval_dt",
+        )
+        fs.register_feature_view(feature_view=fv_dt, version="v1")
+
+        # Verify it's a DYNAMIC TABLE
+        fv_name = FeatureView._get_physical_name("fv_interval_dt", "v1")
+        dynamic_tables = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dynamic_tables), 1, "Dynamic table should exist")
+
+        original_fv = fs.get_feature_view("fv_interval_dt", "v1")
+        self.assertEqual(original_fv.refresh_freq, "1 day")
+        self.assertIn(original_fv.status, [FeatureViewStatus.ACTIVE, FeatureViewStatus.RUNNING])
+
+        # Verify no scheduled task exists for interval-based DT
+        tasks = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(tasks), 0, "No scheduled task should exist for interval-based DT")
+
+        # Overwrite with a VIEW (no refresh_freq) using overwrite=True
+        fv_view = FeatureView(
+            name="fv_interval_dt",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            desc="overwritten_to_view",
+        )
+        fs.register_feature_view(feature_view=fv_view, version="v1", overwrite=True)
+
+        # Verify it's now a VIEW
+        curr_fv = fs.get_feature_view("fv_interval_dt", "v1")
+        self.assertIsNone(curr_fv.refresh_freq)
+        self.assertEqual(curr_fv.status, FeatureViewStatus.STATIC)
+        self.assertEqual(curr_fv.desc, "overwritten_to_view")
+
+        # Verify dynamic table no longer exists
+        dynamic_tables_after = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dynamic_tables_after), 0, "Dynamic table should be replaced with VIEW")
+
+        # Assertion: Verify shadow swap temp objects were cleaned up
+        self.assert_no_temp_shadow_swap_objects(fs)
+
     def test_register_feature_view_system_error(self) -> None:
         fs = self._create_feature_store()
         e = Entity("foo", ["id"])
@@ -2386,9 +2687,9 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
         fs.register_feature_view(feature_view=non_existing_fv, version="v1", overwrite=True)
 
-    # TODO: Add target_type = "view" test when feature view supports it.
     @parameterized.parameters(  # type: ignore[misc]
         {"target_type": "duration"},
+        {"target_type": "view"},
     )
     def test_replace_cron_fv_cleans_up_task(self, target_type: Literal["duration", "view"]) -> None:
         """Test that replacing a CRON-based FV properly cleans up the associated task.
@@ -3908,7 +4209,6 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         a Dynamic Iceberg Table using fs.read_feature_view(), and that the
         Feature View can be deleted afterwards.
         """
-
         fs = self._create_feature_store()
 
         e = Entity("foo", ["id"])
@@ -4244,6 +4544,58 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.delete_feature_view(resumed_fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
+        sql = f"SELECT name, id FROM {self._mock_table}"
+
+        # Register a DYNAMIC TABLE with scheduled task created
+        fv_dt = FeatureView(
+            name="fv_non_fs_task",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="* * * * * America/Los_Angeles",
+            desc="dt_without_task",
+        )
+        fs.register_feature_view(feature_view=fv_dt, version="v1")
+
+        fv_name = FeatureView._get_physical_name("fv_non_fs_task", "v1")
+        tasks_before = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+
+        self.assertEqual(len(tasks_before), 1, "FS-tagged task should exist")
+
+        # Manually create a task with the same name as the FV (no FS tag)
+        fv_name = FeatureView._get_physical_name("fv_non_fs_task", "v1")
+        fully_qualified_name = f"{fs._config.full_schema_path}.{fv_name.resolved()}"
+        self._session.sql(
+            f"CREATE TASK {fully_qualified_name} "
+            f"WAREHOUSE = {fs._default_warehouse} "
+            f"SCHEDULE = 'USING CRON * * * * * UTC' "
+            f"AS SELECT 1"
+        ).collect()
+
+        # Verify the non-FS task exists
+        both_tasks = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(both_tasks), 2, "Both FS and Non-FS task should exist")
+
+        # Overwrite with a VIEW - should NOT drop the non-FS task
+        fv_view = FeatureView(
+            name="fv_non_fs_task",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            desc="overwritten_to_view",
+        )
+        fs.register_feature_view(feature_view=fv_view, version="v1", overwrite=True)
+
+        # Verify the non-FS task still exists
+        tasks_after = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(tasks_after), 1, "Non-FS task should NOT be dropped during shadow swap")
+
+        # Clean up the manually created task
+        self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect()
 
 
 if __name__ == "__main__":

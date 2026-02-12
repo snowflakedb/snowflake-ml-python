@@ -381,13 +381,6 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
 
         INTERMEDIATE_OBJ_NAME = ModelVersionSQLClient.get_tmp_name_with_prefix("TMP_RESULT")
 
-        module_version_alias = ModelVersionSQLClient.get_tmp_name_with_prefix("MODEL_VERSION_ALIAS")
-        with_statements.append(
-            f"{module_version_alias} AS "
-            f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
-            f" VERSION {version_name.identifier()}"
-        )
-
         args_sql_list = []
         for input_arg_value in input_args:
             args_sql_list.append(input_arg_value)
@@ -406,10 +399,15 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 parts.extend(f"'{name}', {param_utils.format_param_value_for_sql(val)}" for name, val in params)
             args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
+        model_function_str = (
+            f"MODEL({self.fully_qualified_object_name(database_name, schema_name, model_name)},"
+            f"{version_name.identifier()})!{method_name.identifier()}"
+        )
+        with_statements_str = f"WITH {','.join(with_statements)}" if with_statements else ""
         sql = textwrap.dedent(
-            f"""WITH {','.join(with_statements)}
+            f"""{with_statements_str}
                 SELECT *,
-                    {module_version_alias}!{method_name.identifier()}({args_sql}) AS {INTERMEDIATE_OBJ_NAME}
+                    {model_function_str}({args_sql}) AS {INTERMEDIATE_OBJ_NAME}
                 FROM {INTERMEDIATE_TABLE_NAME}"""
         )
 
@@ -472,13 +470,6 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 statement_params=statement_params,
             )
 
-        module_version_alias = f"MODEL_VERSION_ALIAS_{snowpark_utils.generate_random_alphanumeric().upper()}"
-        with_statements.append(
-            f"{module_version_alias} AS "
-            f"MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
-            f" VERSION {version_name.identifier()}"
-        )
-
         partition_by = partition_column.identifier() if partition_column is not None else "1"
 
         args_sql_list = []
@@ -499,19 +490,24 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
                 parts.extend(f"'{name}', {param_utils.format_param_value_for_sql(val)}" for name, val in params)
             args_sql = f"object_construct_keep_null({', '.join(parts)})"
 
+        model_function_str = (
+            f"MODEL({self.fully_qualified_object_name(database_name, schema_name, model_name)},"
+            f"{version_name.identifier()})!{method_name.identifier()}"
+        )
+        with_statements_str = f"WITH {','.join(with_statements)}" if with_statements else ""
         sql = textwrap.dedent(
-            f"""WITH {','.join(with_statements)}
+            f"""{with_statements_str}
                 SELECT *,
                 FROM {INTERMEDIATE_TABLE_NAME},
-                    TABLE({module_version_alias}!{method_name.identifier()}({args_sql}))"""
+                    TABLE({model_function_str}({args_sql}))"""
         )
 
         if is_partitioned or partition_column is not None:
             sql = textwrap.dedent(
-                f"""WITH {','.join(with_statements)}
+                f"""{with_statements_str}
                     SELECT *,
                     FROM {INTERMEDIATE_TABLE_NAME},
-                        TABLE({module_version_alias}!{method_name.identifier()}({args_sql})
+                        TABLE({model_function_str}({args_sql})
                         OVER (PARTITION BY {partition_by}))"""
             )
 

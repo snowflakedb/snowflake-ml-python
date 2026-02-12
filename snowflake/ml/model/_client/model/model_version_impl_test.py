@@ -306,9 +306,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
         ):
-            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict"')
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -327,10 +326,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 params=None,
             )
 
-        with (
-            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
-        ):
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df, function_name="__call__")
             mock_invoke_method.assert_called_once_with(
                 method_name="__CALL__",
@@ -367,9 +363,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
         ):
-            self._add_show_versions_mock()
             self.m_mv.run(m_df)
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -406,9 +401,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
         ):
-            self._add_show_versions_mock()
             self.m_mv.run(m_df, strict_input_validation=True)
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict"',
@@ -453,9 +447,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
         ):
-            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_table"')
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict_table"',
@@ -474,11 +467,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 params=None,
             )
 
-        with (
-            mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
-        ):
-            self._add_show_versions_mock()
+        with mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method:
             self.m_mv.run(m_df, function_name='"predict_table"', partition_column="PARTITION_COLUMN")
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict_table"',
@@ -523,19 +512,21 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
             mock.patch.object(
                 self.m_mv._model_ops,
-                "_fetch_model_spec",
-                return_value={
-                    "model_type": "huggingface_pipeline",
-                    "models": {
-                        "model1": {
-                            "model_type": "huggingface_pipeline",
-                            "options": {"task": "text-generation"},
-                        }
+                "_fetch_model_spec_and_target_platforms",
+                return_value=(
+                    {
+                        "model_type": "huggingface_pipeline",
+                        "models": {
+                            "model1": {
+                                "model_type": "huggingface_pipeline",
+                                "options": {"task": "text-generation"},
+                            }
+                        },
                     },
-                },
+                    None,
+                ),
             ),
         ):
             self.m_mv.run(m_df, function_name='"explain_table"')
@@ -621,9 +612,8 @@ class ModelVersionImplTest(absltest.TestCase):
 
         with (
             mock.patch.object(self.m_mv._model_ops, "invoke_method", return_value=m_df) as mock_invoke_method,
-            mock.patch.object(self.m_mv._model_ops, "get_model_version_manifest", return_value={}),
+            mock.patch.object(self.m_mv._model_ops, "_fetch_model_spec_and_target_platforms", return_value=({}, None)),
         ):
-            self._add_show_versions_mock()
             self.m_mv.run(m_df, function_name='"predict_with_params"', params=test_params)
             mock_invoke_method.assert_called_once_with(
                 method_name='"predict_with_params"',
@@ -690,17 +680,12 @@ class ModelVersionImplTest(absltest.TestCase):
         ]
         self.m_mv._functions = m_methods
 
-        # Mock manifest indicating SPCS only support (WAREHOUSE missing from target_platforms)
-        manifest = {
-            "target_platforms": ["SNOWPARK_CONTAINER_SERVICES"],
-            "methods": [],
-            "runtimes": {},
-            "manifest_version": "1.0",
-        }
-
+        # Mock target_platforms indicating SPCS only support (WAREHOUSE missing from target_platforms)
         with mock.patch.object(
-            self.m_mv._model_ops, "get_model_version_manifest", return_value=manifest
-        ) as mock_get_manifest:
+            self.m_mv._model_ops,
+            "_fetch_model_spec_and_target_platforms",
+            return_value=({}, ["SNOWPARK_CONTAINER_SERVICES"]),
+        ) as mock_fetch:
             expected_msg = (
                 f"The model {self.m_mv.fully_qualified_model_name} version {self.m_mv.version_name} "
                 "is not logged for inference in Warehouse. "
@@ -717,7 +702,7 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(ValueError, expected_msg):
                 self.m_mv.run(m_df, function_name='"predict"')
 
-            mock_get_manifest.assert_called_once()
+            mock_fetch.assert_called_once()
 
     def test_description_getter(self) -> None:
         with mock.patch.object(
@@ -2004,7 +1989,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2075,7 +2065,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2145,7 +2140,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2222,7 +2222,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2290,7 +2295,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2335,7 +2345,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2402,7 +2417,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2472,7 +2492,12 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv,
                 "_get_function_info",
-                return_value={"target_method": "predict", "signature": _DUMMY_SIG["predict"]},
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
             ),
             mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
             mock.patch.object(
@@ -2511,6 +2536,38 @@ class ModelVersionImplTest(absltest.TestCase):
                 expected_args,
             )
 
+    def test_run_batch_partitioned_function_raises_error(self) -> None:
+        """Test run_batch raises ValueError when the function is partitioned."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict_table",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "name": '"predict_table"',
+                    "target_method": "predict_table",
+                    "target_method_function_type": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                    "signature": _DUMMY_SIG["predict_table"],
+                    "is_partitioned": True,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                r"predict_table.*partitioned model function.*not supported",
+            ):
+                self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
+
     def _add_show_versions_mock(self) -> None:
         current_dir = os.path.dirname(__file__)
         data_file_path = os.path.join(current_dir, "sample_model_spec.yaml")
@@ -2532,6 +2589,151 @@ class ModelVersionImplTest(absltest.TestCase):
         self.m_session.add_mock_sql(
             "SHOW VERSIONS LIKE 'v1' IN MODEL TEMP.\"test\".MODEL", result=mock_data_frame.MockDataFrame(sql_result)
         )
+
+    def test_run_batch_with_unknown_params(self) -> None:
+        """Test run_batch raises error when unknown params are provided."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict_with_params",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+        # Provide an unknown parameter that doesn't exist in signature
+        input_spec = batch_inference_specs.InputSpec(params={"unknown_param": 0.5})
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict_with_params",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict_with_params"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Unknown parameter.*unknown_param"):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
+
+    def test_run_batch_with_duplicate_params_different_cases(self) -> None:
+        """Test run_batch raises error when duplicate params with different cases are provided."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict_with_params",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+        # Provide duplicate params with different cases
+        input_spec = batch_inference_specs.InputSpec(params={"temperature": 0.5, "TEMPERATURE": 0.8})
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict_with_params",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict_with_params"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Duplicate parameter.*case-insensitive"):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
+
+    def test_run_batch_with_invalid_param_type(self) -> None:
+        """Test run_batch raises error when param value has invalid type."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict_with_params",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+        # Provide a string value for an INT64 param
+        input_spec = batch_inference_specs.InputSpec(params={"max_tokens": "not_an_int"})
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict_with_params",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict_with_params"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(ValueError, "not compatible with dtype"):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
+
+    def test_run_batch_with_params_when_no_params_in_signature(self) -> None:
+        """Test run_batch raises error when params are provided but signature has no params."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+        # Provide params when the signature doesn't accept any
+        input_spec = batch_inference_specs.InputSpec(params={"temperature": 0.5})
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                # _DUMMY_SIG["predict"] has no params
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(ValueError, "does not accept any parameters"):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
 
 
 if __name__ == "__main__":

@@ -27,6 +27,8 @@ from snowflake.ml._internal.exceptions import (
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
+    get_fully_qualified_name,
+    parse_fully_qualified_name,
     to_sql_identifiers,
 )
 from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
@@ -210,6 +212,10 @@ class FeatureStore:
     """
     FeatureStore provides APIs to create, materialize, retrieve and manage feature pipelines.
     """
+
+    # Prefixes for temporary objects used during shadow swap operations
+    _TMP_VIEW_PREFIX = "_TMP_VIEW_"
+    _TMP_DT_PREFIX = "_TMP_TABLE_"
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def __init__(
@@ -2680,9 +2686,11 @@ class FeatureStore:
             )
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
 
+            # Create scheduled task after DT creation
             if schedule_task:
-                self._create_dynamic_table_with_scheduled_tasks(
-                    override_clause,
+                task_override_clause = " OR REPLACE" if override else ""
+                self._create_scheduled_refresh_task(
+                    task_override_clause,
                     feature_view,
                     fully_qualified_name,
                     warehouse,
@@ -2695,15 +2703,164 @@ class FeatureStore:
                     statement_params=self._telemetry_stmp
                 )
         except Exception as e:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                original_exception=RuntimeError(
-                    f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
-                ),
-            ) from e
+            # Check for type conflict: VIEW exists but we want to create a DYNAMIC TABLE
+            if (
+                override
+                and isinstance(e, SnowparkSQLException)
+                and e.error_code == error_codes.SQL_COMPILATION_ERROR
+                and self._get_existing_feature_view_object_type(feature_view_name) == "VIEW"
+            ):
+                # Use shadow swap to replace VIEW with DYNAMIC TABLE
+                logger.info(
+                    f"Existing VIEW detected, performing shadow swap to DYNAMIC TABLE for {fully_qualified_name}"
+                )
+                self._shadow_swap_to_dynamic_table(
+                    feature_view,
+                    fully_qualified_name,
+                    column_descs,
+                    tagging_clause,
+                    schedule_task,
+                    warehouse,
+                    block,
+                )
+                # Create scheduled task after shadow swap (shadow swap only happens with override=True)
+                if schedule_task:
+                    self._create_scheduled_refresh_task(
+                        " OR REPLACE",
+                        feature_view,
+                        fully_qualified_name,
+                        warehouse,
+                    )
+            else:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(
+                        f"Create dynamic table [\n{query}\n] or task {fully_qualified_name} failed: {e}."
+                    ),
+                ) from e
 
         if block:
             self._check_dynamic_table_refresh_mode(feature_view_name)
+
+    def _create_dynamic_table_query(
+        self,
+        override_clause: str,
+        table_name: str,
+        column_descs: str,
+        schedule_task: bool,
+        feature_view: FeatureView,
+        tagging_clause: str,
+        warehouse: str,
+    ) -> str:
+        # Use tiling query for tiled feature views
+        if feature_view.is_tiled:
+            source_query = feature_view._get_tile_query()
+        else:
+            source_query = feature_view.query
+
+        # Include column definitions only if provided (skip for tiled feature views)
+        column_clause = f" ({column_descs})" if column_descs else ""
+
+        storage_config = feature_view.storage_config
+        if storage_config is not None and storage_config.format == StorageFormat.ICEBERG:
+            # These should be validated by FeatureView constructor and _resolve_storage_config
+            assert storage_config.external_volume is not None, "external_volume is required for ICEBERG format"
+            assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
+            query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {tagging_clause}
+                )
+                WAREHOUSE = {warehouse}
+                REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
+                CATALOG = 'SNOWFLAKE'
+                EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}
+                BASE_LOCATION = '{storage_config.base_location.replace("'", "''")}'
+            """
+        else:
+            query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
+                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {tagging_clause}
+                )
+                WAREHOUSE = {warehouse}
+                REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
+            """
+        if feature_view.cluster_by:
+            # For tiled FVs, replace timestamp column with TILE_START in cluster_by
+            if feature_view.is_tiled and feature_view.timestamp_col:
+                ts_col_upper = feature_view.timestamp_col.upper()
+                cluster_by_cols = [
+                    "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
+                ]
+            else:
+                cluster_by_cols = [str(col) for col in feature_view.cluster_by]
+            cluster_by_clause = f"CLUSTER BY ({', '.join(cluster_by_cols)})"
+            query += f"{cluster_by_clause}"
+
+        query += f"""
+            AS {source_query}
+        """
+        return query
+
+    def _create_scheduled_refresh_task(
+        self,
+        override_clause: str,
+        feature_view: FeatureView,
+        fully_qualified_name: str,
+        warehouse: SqlIdentifier,
+    ) -> None:
+        """Create a Snowflake Task to refresh a Dynamic Table on a CRON schedule.
+
+        This function creates a scheduled task that executes ALTER DYNAMIC TABLE ... REFRESH
+        to trigger periodic refreshes based on a CRON expression.
+
+        Note:
+            Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
+            so this approach works the same way for both regular Dynamic Tables and
+            Dynamic Iceberg Tables.
+
+        Args:
+            override_clause: SQL clause for CREATE OR REPLACE behavior.
+            feature_view: The FeatureView containing refresh configuration.
+            fully_qualified_name: Fully qualified name for the task (same as the DT).
+            warehouse: Warehouse to use for task execution.
+
+        Raises:
+            Exception: Re-raises any exception after cleanup (dropping DT and task).
+        """
+        task_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION)
+        try:
+            # ALTER DYNAMIC TABLE works for both regular Dynamic Tables and Dynamic Iceberg Tables.
+            # The ICEBERG keyword is only used in CREATE, not in ALTER/SHOW/DROP.
+            self._session.sql(
+                f"""CREATE{override_clause} TASK {fully_qualified_name}
+                    WAREHOUSE = {warehouse}
+                    SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
+                    AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(
+                f"""
+                ALTER TASK {fully_qualified_name}
+                SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}='{task_obj_info.to_json()}'
+            """
+            ).collect(statement_params=self._telemetry_stmp)
+            self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
+                statement_params=self._telemetry_stmp
+            )
+        except Exception:
+            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+            raise
 
     def _create_offline_feature_view(
         self,
@@ -2741,30 +2898,50 @@ class FeatureStore:
 
         # External feature view via View (no refresh schedule)
         if refresh_freq is None:
+            overwrite_clause = " OR REPLACE" if overwrite else ""
+            query = self._create_offline_feature_view_view_query(
+                overwrite_clause,
+                fully_qualified_name,
+                column_descs,
+                feature_view,
+                tagging_clause_str,
+            )
             try:
-                overwrite_clause = " OR REPLACE" if overwrite else ""
-                query = f"""CREATE{overwrite_clause} VIEW {fully_qualified_name} ({column_descs})
-                    COMMENT = '{feature_view.desc}'
-                    TAG (
-                        {tagging_clause_str}
-                    )
-                    AS {feature_view.query}
-                """
                 self._session.sql(query).collect(statement_params=self._telemetry_stmp)
                 created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
-                if overwrite:
-                    # Clean up any existing task from a previous CRON-based DT registration.
-                    # This handles the case: CRON DT → View
-                    self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                        statement_params=self._telemetry_stmp
-                    )
-                return created
             except Exception as e:
-                raise snowml_exceptions.SnowflakeMLException(
-                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
-                    original_exception=RuntimeError(f"Create view {fully_qualified_name} failed: {e}"),
-                ) from e
-
+                # Only check for type conflict when SQL_COMPILATION_ERROR is thrown
+                if (
+                    overwrite
+                    and isinstance(e, SnowparkSQLException)
+                    and e.error_code == error_codes.SQL_COMPILATION_ERROR
+                    and self._get_existing_feature_view_object_type(feature_view_name) == "DYNAMIC TABLE"
+                ):
+                    # A DYNAMIC TABLE exists but we want to create a VIEW - use shadow swap
+                    logger.info(
+                        f"Existing DYNAMIC TABLE detected, performing shadow swap to VIEW for "
+                        f"{fully_qualified_name}"
+                    )
+                    self._shadow_swap_to_view(
+                        fully_qualified_name,
+                        column_descs,
+                        feature_view,
+                        tagging_clause_str,
+                        block,
+                    )
+                    created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
+                else:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                        original_exception=RuntimeError(f"Create view {fully_qualified_name} failed: {e}"),
+                    ) from e
+            if overwrite:
+                # Clean up any existing task from a previous CRON-based DT registration.
+                # This handles the case: CRON DT → View
+                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+            return created
         # Managed feature view via Dynamic Table (and optional Task)
         #
         # Refresh behavior based on refresh_freq input type:
@@ -2794,6 +2971,179 @@ class FeatureStore:
         if schedule_task:
             created.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
         return created
+
+    def _shadow_replace(
+        self, old_obj_fqn: str, old_obj_type: str, new_obj_fqn: str, new_obj_type: str, fully_qualified_name: str
+    ) -> None:
+        try:
+            # Swap: drop old <object type>, rename new <object type> to target
+            self._session.sql(
+                f"""ALTER {old_obj_type} IF EXISTS {fully_qualified_name} RENAME TO {old_obj_fqn}"""
+            ).collect()
+            self._session.sql(
+                f"""ALTER {new_obj_type} IF EXISTS {new_obj_fqn} RENAME TO {fully_qualified_name}"""
+            ).collect()
+            self._session.sql(f"""DROP {old_obj_type} IF EXISTS {old_obj_fqn}""").collect()
+        except Exception as tx_e:
+            # If rename fails, recover at best-effort
+            self._session.sql(
+                f"""ALTER {old_obj_type} IF EXISTS {old_obj_fqn} RENAME TO {fully_qualified_name}"""
+            ).collect()
+            self._session.sql(f"""DROP {new_obj_type} IF EXISTS {new_obj_fqn}""").collect()
+            raise tx_e
+
+        logger.info(f"Shadow swap for {fully_qualified_name} completed successfully.")
+
+    def _get_existing_feature_view_object_type(self, feature_view_name: SqlIdentifier) -> Optional[str]:
+        """Check if a VIEW or DYNAMIC TABLE with the given name already exists.
+
+        Args:
+            feature_view_name: The name of the feature view object to check.
+
+        Returns:
+            "VIEW" if a view exists, "DYNAMIC TABLE" if a dynamic table exists,
+            or None if no object with that name exists.
+        """
+        # Check for existing VIEW
+        found_views = self._find_object("VIEWS", feature_view_name)
+        if len(found_views) > 0:
+            return "VIEW"
+
+        # Check for existing DYNAMIC TABLE
+        found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
+        if len(found_dts) > 0:
+            return "DYNAMIC TABLE"
+
+        return None
+
+    def _shadow_swap_to_view(
+        self,
+        fully_qualified_name: str,
+        column_descs: str,
+        feature_view: FeatureView,
+        tagging_clause_str: str,
+        block: bool,
+    ) -> None:
+        """Replace an existing DYNAMIC TABLE with a VIEW using shadow swap.
+
+        Creates a temporary VIEW, then atomically swaps it with the existing DYNAMIC TABLE.
+        Also cleans up any scheduled refresh task and online feature table associated with the DYNAMIC TABLE.
+
+        Args:
+            fully_qualified_name: Fully qualified name for the target object.
+            column_descs: Column descriptions clause used in the CREATE statement.
+            feature_view: The feature view definition.
+            tagging_clause_str: Tagging clause used in the CREATE statement.
+            block: Whether to block until completion.
+
+        Raises:
+            SnowflakeMLException: [RuntimeError] Failed to replace dynamic table with view.
+        """
+        import uuid
+
+        temp_suffix = uuid.uuid4().hex[:8]
+        db, schema, obj = parse_fully_qualified_name(fully_qualified_name)
+        new_view_name = identifier.concat_names([obj.identifier(), self._TMP_VIEW_PREFIX, temp_suffix])
+        new_table_name = identifier.concat_names([obj.identifier(), self._TMP_DT_PREFIX, temp_suffix])
+        temp_view_fqn = get_fully_qualified_name(db, schema, SqlIdentifier(new_view_name))
+        temp_table_fqn = get_fully_qualified_name(db, schema, SqlIdentifier(new_table_name))
+
+        # Create the new version as a shadow view first
+        query = self._create_offline_feature_view_view_query(
+            "",  # Don't use override_clause for temp objects
+            temp_view_fqn,
+            column_descs,
+            feature_view,
+            tagging_clause_str,
+        )
+
+        try:
+            self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
+            self._shadow_replace(temp_table_fqn, "DYNAMIC TABLE", temp_view_fqn, "VIEW", fully_qualified_name)
+
+            logger.info(f"Successfully replaced DYNAMIC TABLE with VIEW for {fully_qualified_name}")
+        except Exception as e:
+            # Cleanup shadow object if creation failed
+            self._session.sql(f"""DROP VIEW IF EXISTS {temp_view_fqn}""").collect()
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Shadow swap to VIEW for {fully_qualified_name} failed: {e}"),
+            ) from e
+
+    def _shadow_swap_to_dynamic_table(
+        self,
+        feature_view: FeatureView,
+        fully_qualified_name: str,
+        column_descs: str,
+        tagging_clause_str: str,
+        schedule_task: bool,
+        warehouse: SqlIdentifier,
+        block: bool,
+    ) -> None:
+        """Replace an existing VIEW with a DYNAMIC TABLE using shadow swap.
+
+        Creates a temporary DYNAMIC TABLE, then atomically swaps it with the existing VIEW.
+
+        Args:
+            feature_view: The feature view definition.
+            fully_qualified_name: Fully qualified name for the target object.
+            column_descs: Column descriptions clause used in the CREATE statement.
+            tagging_clause_str: Tagging clause used in the CREATE statement.
+            schedule_task: Whether a scheduled refresh task will be created (affects TARGET_LAG).
+            warehouse: The warehouse to use for the dynamic table.
+            block: Whether to block until completion.
+
+        raises:
+            SnowflakeMLException: [RuntimeError] Failed to replace view with dynamic table.
+        """
+        import uuid
+
+        temp_suffix = uuid.uuid4().hex[:8]
+        db, schema, obj = parse_fully_qualified_name(fully_qualified_name)
+        new_view_name = identifier.concat_names([obj.identifier(), self._TMP_VIEW_PREFIX, temp_suffix])
+        new_table_name = identifier.concat_names([obj.identifier(), self._TMP_DT_PREFIX, temp_suffix])
+        temp_view_fqn = get_fully_qualified_name(db, schema, SqlIdentifier(new_view_name))
+        temp_table_fqn = get_fully_qualified_name(db, schema, SqlIdentifier(new_table_name))
+
+        # Create the new version as a shadow dynamic table first
+        query = self._create_dynamic_table_query(
+            "",  # Don't use override_clause for temp objects
+            temp_table_fqn,
+            column_descs,
+            schedule_task,
+            feature_view,
+            tagging_clause_str,
+            warehouse,
+        )
+
+        try:
+            self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
+            self._shadow_replace(temp_view_fqn, "VIEW", temp_table_fqn, "TABLE", fully_qualified_name)
+
+            logger.info(f"Successfully replaced VIEW with DYNAMIC TABLE for {fully_qualified_name}")
+        except Exception as e:
+            # Cleanup shadow object if creation failed
+            self._session.sql(f"""DROP DYNAMIC TABLE IF EXISTS {temp_table_fqn}""").collect()
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                original_exception=RuntimeError(f"Shadow swap to DYNAMIC TABLE for {fully_qualified_name} failed: {e}"),
+            ) from e
+
+    def _create_offline_feature_view_view_query(
+        self,
+        overwrite_clause: str,
+        view_name: str,
+        column_descs: str,
+        feature_view: FeatureView,
+        tagging_clause_str: str,
+    ) -> str:
+        return f"""CREATE{overwrite_clause} VIEW {view_name} ({column_descs})
+            COMMENT = '{feature_view.desc}'
+            TAG (
+                {tagging_clause_str}
+            )
+            AS {feature_view.query}
+        """
 
     def _check_dynamic_table_refresh_mode(self, feature_view_name: SqlIdentifier) -> None:
         found_dts = self._find_object("DYNAMIC TABLES", feature_view_name)
@@ -3752,6 +4102,11 @@ FROM SPINE{' '.join(join_clauses)}
                     original_exception=RuntimeError(f"Failed to extract feature_view metadata for {fv_name}: {e}."),
                 )
         else:
+            # Parse the CREATE statement text to extract FeatureView metadata.
+            # This regex expects FeatureStore-specific clauses (COMMENT, TAG with _FEATURE_VIEW_METADATA_TAG).
+            # If a raw DYNAMIC TABLE/VIEW exists without these clauses (i.e., not created by FeatureStore),
+            # the regex won't match and we'll raise an error. This is intentional - we can only
+            # reconstruct FeatureViews that were created by FeatureStore with proper metadata tags.
             m = re.match(_DT_OR_VIEW_QUERY_PATTERN, row["text"])
             if m is None:
                 raise snowml_exceptions.SnowflakeMLException(
@@ -3762,126 +4117,6 @@ FROM SPINE{' '.join(join_clauses)}
             query = m.group("query")
 
             return (fv_metadata, query)
-
-    def _create_dynamic_table_query(
-        self,
-        override_clause: str,
-        table_name: str,
-        column_descs: str,
-        schedule_task: bool,
-        feature_view: FeatureView,
-        tagging_clause: str,
-        warehouse: str,
-    ) -> str:
-        # Use tiling query for tiled feature views
-        if feature_view.is_tiled:
-            source_query = feature_view._get_tile_query()
-        else:
-            source_query = feature_view.query
-
-        # Include column definitions only if provided (skip for tiled feature views)
-        column_clause = f" ({column_descs})" if column_descs else ""
-
-        storage_config = feature_view.storage_config
-        if storage_config is not None and storage_config.format == StorageFormat.ICEBERG:
-            # These should be validated by FeatureView constructor and _resolve_storage_config
-            assert storage_config.external_volume is not None, "external_volume is required for ICEBERG format"
-            assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
-            query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
-                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
-                TAG (
-                    {tagging_clause}
-                )
-                WAREHOUSE = {warehouse}
-                REFRESH_MODE = {feature_view.refresh_mode}
-                INITIALIZE = {feature_view.initialize}
-                CATALOG = 'SNOWFLAKE'
-                EXTERNAL_VOLUME = {SqlIdentifier(storage_config.external_volume)}
-                BASE_LOCATION = '{storage_config.base_location.replace("'", "''")}'
-            """
-        else:
-            query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
-                TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
-                TAG (
-                    {tagging_clause}
-                )
-                WAREHOUSE = {warehouse}
-                REFRESH_MODE = {feature_view.refresh_mode}
-                INITIALIZE = {feature_view.initialize}
-            """
-        if feature_view.cluster_by:
-            # For tiled FVs, replace timestamp column with TILE_START in cluster_by
-            if feature_view.is_tiled and feature_view.timestamp_col:
-                ts_col_upper = feature_view.timestamp_col.upper()
-                cluster_by_cols = [
-                    "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
-                ]
-            else:
-                cluster_by_cols = [str(col) for col in feature_view.cluster_by]
-            cluster_by_clause = f"CLUSTER BY ({', '.join(cluster_by_cols)})"
-            query += f"{cluster_by_clause}"
-
-        query += f"""
-            AS {source_query}
-        """
-        return query
-
-    def _create_dynamic_table_with_scheduled_tasks(
-        self,
-        override_clause: str,
-        feature_view: FeatureView,
-        fully_qualified_name: str,
-        warehouse: SqlIdentifier,
-    ) -> None:
-        """Create a Snowflake Task to refresh a Dynamic Table on a CRON schedule.
-
-        This function creates a scheduled task that executes ALTER DYNAMIC TABLE ... REFRESH
-        to trigger periodic refreshes based on a CRON expression.
-
-        Note:
-            Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
-            so this approach works the same way for both regular Dynamic Tables and
-            Dynamic Iceberg Tables.
-
-        Args:
-            override_clause: SQL clause for CREATE OR REPLACE behavior.
-            feature_view: The FeatureView containing refresh configuration.
-            fully_qualified_name: Fully qualified name for the task (same as the DT).
-            warehouse: Warehouse to use for task execution.
-
-        Raises:
-            Exception: Re-raises any exception after cleanup (dropping DT and task).
-        """
-        task_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION)
-        try:
-            # ALTER DYNAMIC TABLE works for both regular Dynamic Tables and Dynamic Iceberg Tables.
-            # The ICEBERG keyword is only used in CREATE, not in ALTER/SHOW/DROP.
-            self._session.sql(
-                f"""CREATE{override_clause} TASK {fully_qualified_name}
-                    WAREHOUSE = {warehouse}
-                    SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
-                    AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
-                """
-            ).collect(statement_params=self._telemetry_stmp)
-            self._session.sql(
-                f"""
-                ALTER TASK {fully_qualified_name}
-                SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}='{task_obj_info.to_json()}'
-            """
-            ).collect(statement_params=self._telemetry_stmp)
-            self._session.sql(f"ALTER TASK {fully_qualified_name} RESUME").collect(
-                statement_params=self._telemetry_stmp
-            )
-        except Exception:
-            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
-            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
-            raise
 
     def _compose_feature_view(self, row: Row, obj_type: _FeatureStoreObjTypes, entity_list: list[Row]) -> FeatureView:
         def find_and_compose_entity(name: str) -> Entity:

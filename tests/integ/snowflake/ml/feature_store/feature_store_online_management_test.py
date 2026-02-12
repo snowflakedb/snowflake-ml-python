@@ -956,6 +956,141 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         ).collect()
         self.assertEqual(len(online_tables_after), 0, "Online feature table should be deleted after overwrite")
 
+    @parameterized.parameters(  # type: ignore[misc]
+        # source_type, source_online, target_type, target_online, expected_online_after
+        {"source_type": "view", "source_online": False, "target_type": "dt", "target_online": True},
+        {"source_type": "view", "source_online": True, "target_type": "dt", "target_online": False},
+        {"source_type": "dt", "source_online": False, "target_type": "view", "target_online": True},
+        {"source_type": "dt", "source_online": True, "target_type": "view", "target_online": False},
+    )
+    def test_overwrite_type_change_online_table(
+        self, source_type: str, source_online: bool, target_type: str, target_online: bool
+    ) -> None:
+        """Test online table creation/deletion during DT ↔ View type transitions.
+
+        Covers all combinations of type changes with online config:
+        - View (no online) → DT (online): creates online table
+        - View (online) → DT (no online): deletes online table
+        - DT (no online) → View (online): creates online table
+        - DT (online) → View (no online): deletes online table
+        """
+        fv_name = f"test_type_change_{source_type}_{source_online}_to_{target_type}_{target_online}"
+
+        # Create source feature view
+        source_online_config = feature_view.OnlineConfig(enable=True) if source_online else None
+        if source_type == "view":
+            source_fv = feature_view.FeatureView(
+                name=fv_name,
+                entities=[self.user_entity],
+                feature_df=self.sample_data.select("user_id", "purchase_amount"),
+                desc=f"source_view_online_{source_online}",
+                online_config=source_online_config,
+            )
+        else:  # dt
+            source_fv = feature_view.FeatureView(
+                name=fv_name,
+                entities=[self.user_entity],
+                feature_df=self.sample_data.select("user_id", "purchase_amount"),
+                refresh_freq="1m",
+                desc=f"source_dt_online_{source_online}",
+                online_config=source_online_config,
+            )
+
+        self.fs.register_feature_view(source_fv, "v1")
+
+        # Verify source online state
+        physical_name = feature_view.FeatureView._get_physical_name(fv_name, "v1")
+        online_table_name = feature_view.FeatureView._get_online_table_name(physical_name)
+        online_tables_before = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '{online_table_name.resolved()}' "
+            f"IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        expected_before = 1 if source_online else 0
+        self.assertEqual(
+            len(online_tables_before),
+            expected_before,
+            f"Source {source_type} with online={source_online} should have {expected_before} online table(s)",
+        )
+
+        # Overwrite with target type
+        target_online_config = feature_view.OnlineConfig(enable=True) if target_online else None
+        if target_type == "view":
+            target_fv = feature_view.FeatureView(
+                name=fv_name,
+                entities=[self.user_entity],
+                feature_df=self.sample_data.select("user_id", "purchase_amount"),
+                desc=f"target_view_online_{target_online}",
+                online_config=target_online_config,
+            )
+        else:  # dt
+            target_fv = feature_view.FeatureView(
+                name=fv_name,
+                entities=[self.user_entity],
+                feature_df=self.sample_data.select("user_id", "purchase_amount"),
+                refresh_freq="1m",
+                desc=f"target_dt_online_{target_online}",
+                online_config=target_online_config,
+            )
+
+        self.fs.register_feature_view(target_fv, "v1", overwrite=True)
+
+        # Verify target online state
+        curr_fv = self.fs.get_feature_view(fv_name, "v1")
+        self.assertEqual(curr_fv.online, target_online, f"After overwrite, online should be {target_online}")
+
+        online_tables_after = self._session.sql(
+            f"SHOW ONLINE FEATURE TABLES LIKE '{online_table_name.resolved()}' "
+            f"IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        expected_after = 1 if target_online else 0
+        self.assertEqual(
+            len(online_tables_after),
+            expected_after,
+            f"After {source_type}(online={source_online}) → {target_type}(online={target_online}), "
+            f"should have {expected_after} online table(s)",
+        )
+
+    def test_overwrite_with_online_recreates_online_table(self) -> None:
+        """Test that overwriting with online=True recreates the online feature table with new config."""
+        fv_name = "test_online_recreate"
+
+        # Register a DYNAMIC TABLE with online feature table (target_lag=10s)
+        fv_dt1 = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="1m",
+            desc="original_dt",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="10s"),
+        )
+        registered_fv1 = self.fs.register_feature_view(fv_dt1, "v1")
+
+        # Verify original online config
+        self.assertTrue(registered_fv1.online)
+        self.assertEqual(registered_fv1.online_config.target_lag, "10 seconds")
+
+        # Overwrite with a different refresh_freq (still DT) and different online config
+        fv_dt2 = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="5m",  # Different refresh freq
+            desc="overwritten_dt",
+            online_config=feature_view.OnlineConfig(enable=True, target_lag="30s"),  # Different target_lag
+        )
+        self.fs.register_feature_view(fv_dt2, "v1", overwrite=True)
+
+        # Verify the feature view was updated
+        curr_fv = self.fs.get_feature_view(fv_name, "v1")
+        self.assertEqual(curr_fv.refresh_freq, "5 minutes")
+        self.assertEqual(curr_fv.desc, "overwritten_dt")
+
+        # Verify online table exists with new config
+        self.assertTrue(curr_fv.online)
+        self.assertEqual(curr_fv.online_config.target_lag, "30 seconds")
+
 
 if __name__ == "__main__":
     absltest.main()

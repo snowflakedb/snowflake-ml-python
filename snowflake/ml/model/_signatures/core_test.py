@@ -1,4 +1,5 @@
 import datetime
+from unittest import mock
 
 import numpy as np
 import pandas as pd
@@ -676,6 +677,65 @@ ModelSignature(
                     ),
                 ],
             )
+
+    def test_from_mlflow_sig_without_params_attribute(self) -> None:
+        """Test from_mlflow_sig when mlflow signature has no params attribute."""
+        import mlflow
+
+        # Create actual MLflow types for inputs and outputs
+        input_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "input_col")])
+        output_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "output_col")])
+
+        # Create a mock signature object without params attribute
+        mock_mlflow_sig = mock.MagicMock(spec=["inputs", "outputs"])  # No params in spec
+        mock_mlflow_sig.inputs = input_schema
+        mock_mlflow_sig.outputs = output_schema
+
+        sig = core.ModelSignature.from_mlflow_sig(mock_mlflow_sig)
+
+        self.assertEqual(len(sig.inputs), 1)
+        self.assertEqual(sig.inputs[0].name, "input_col")
+        self.assertEqual(len(sig.outputs), 1)
+        self.assertEqual(sig.outputs[0].name, "output_col")
+        self.assertEqual(len(sig.params), 0)
+
+    def test_from_mlflow_sig_with_params_none(self) -> None:
+        """Test from_mlflow_sig when mlflow signature has params=None."""
+        import mlflow
+
+        input_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "input_col")])
+        output_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "output_col")])
+
+        # Create actual MLflow ModelSignature without params (defaults to None)
+        mlflow_sig = mlflow.models.ModelSignature(inputs=input_schema, outputs=output_schema)
+
+        sig = core.ModelSignature.from_mlflow_sig(mlflow_sig)
+
+        self.assertEqual(len(sig.inputs), 1)
+        self.assertEqual(len(sig.outputs), 1)
+        self.assertEqual(len(sig.params), 0)
+
+    def test_from_mlflow_sig_with_params(self) -> None:
+        """Test from_mlflow_sig when mlflow signature has params."""
+        import mlflow
+
+        input_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "input_col")])
+        output_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "output_col")])
+        param_schema = mlflow.types.ParamSchema(
+            [mlflow.types.ParamSpec("temperature", mlflow.types.DataType.double, 1.0)]
+        )
+
+        # Create actual MLflow ModelSignature with params
+        mlflow_sig = mlflow.models.ModelSignature(inputs=input_schema, outputs=output_schema, params=param_schema)
+
+        sig = core.ModelSignature.from_mlflow_sig(mlflow_sig)
+
+        self.assertEqual(len(sig.inputs), 1)
+        self.assertEqual(len(sig.outputs), 1)
+        self.assertEqual(len(sig.params), 1)
+        self.assertEqual(sig.params[0].name, "temperature")
+        self.assertIsInstance(sig.params[0], core.ParamSpec)
+        self.assertEqual(sig.params[0].default_value, 1.0)  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

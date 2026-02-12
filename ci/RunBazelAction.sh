@@ -132,6 +132,7 @@ if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
         "--action_env=MODEL_LOGGER_PATH=${MODEL_LOGGER_PATH}"
         "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}"
         "--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}"
+        "--action_env=INFERENCE_IMAGE_BUILDER_PATH=${INFERENCE_IMAGE_BUILDER_PATH}"
     )
 fi
 

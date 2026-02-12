@@ -1,3 +1,4 @@
+import datetime
 from typing import Any, Optional
 
 import pandas as pd
@@ -13,22 +14,40 @@ from snowflake.ml.model import (
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 # Default values for all parameters
-_DEFAULT_INT64 = 1
-_DEFAULT_DOUBLE = 1.5
+_DEFAULT_INT8 = 1
+_DEFAULT_INT16 = 2
+_DEFAULT_INT32 = 3
+_DEFAULT_INT64 = 4
+_DEFAULT_UINT8 = 5
+_DEFAULT_UINT16 = 6
+_DEFAULT_UINT32 = 7
+_DEFAULT_UINT64 = 8
+_DEFAULT_FLOAT = 1.5
+_DEFAULT_DOUBLE = 2.5
 _DEFAULT_BOOL = True
 _DEFAULT_STRING = "default"
-# TODO: Add bytes and timestamp types after the params fix
-# _DEFAULT_BYTES = b""
-# _DEFAULT_TIMESTAMP = datetime.datetime(2026, 1, 1)
+_DEFAULT_BYTES = b"default"
+_DEFAULT_TIMESTAMP = datetime.datetime(2024, 1, 1, 12, 0, 0)
+_DEFAULT_WEIGHTS = [1.0, 2.0, 3.0]
+_DEFAULT_NESTED_LIST = [[1, 2], [3, 4]]
 
 # Override values for testing
-_OVERRIDE_INT64 = 42
-_OVERRIDE_DOUBLE = 3.14
+_OVERRIDE_INT8 = 10
+_OVERRIDE_INT16 = 200
+_OVERRIDE_INT32 = 3000
+_OVERRIDE_INT64 = 40000
+_OVERRIDE_UINT8 = 15
+_OVERRIDE_UINT16 = 300
+_OVERRIDE_UINT32 = 4000
+_OVERRIDE_UINT64 = 50000
+_OVERRIDE_FLOAT = 1.25
+_OVERRIDE_DOUBLE = 2.75
 _OVERRIDE_BOOL = False
 _OVERRIDE_STRING = "overridden"
-# TODO: Add bytes and timestamp types after the params fix
-# _OVERRIDE_BYTES = b"test"
-# _OVERRIDE_TIMESTAMP = datetime.datetime(2026, 6, 15, 12, 30, 0)
+_OVERRIDE_BYTES = b"hello"
+_OVERRIDE_TIMESTAMP = datetime.datetime(2025, 6, 15, 10, 30, 0)
+_OVERRIDE_WEIGHTS = [0.5, 1.5, 2.5]
+_OVERRIDE_NESTED_LIST = [[5, 6], [7, 8]]
 
 
 class DemoModelWithParams(custom_model.CustomModel):
@@ -42,23 +61,54 @@ class DemoModelWithParams(custom_model.CustomModel):
         self,
         input: pd.DataFrame,
         *,
-        int64_type: int = _DEFAULT_INT64,
-        double_type: float = _DEFAULT_DOUBLE,
-        bool_type: bool = _DEFAULT_BOOL,
-        string_type: str = _DEFAULT_STRING,
-        # TODO: Add bytes and timestamp types after the params fix
-        # bytes_type: bytes = _DEFAULT_BYTES,
-        # timestamp_ntz_type: datetime.datetime = _DEFAULT_TIMESTAMP,
+        # Signed integers
+        int8_param: int = _DEFAULT_INT8,
+        int16_param: int = _DEFAULT_INT16,
+        int32_param: int = _DEFAULT_INT32,
+        int64_param: int = _DEFAULT_INT64,
+        # Unsigned integers
+        uint8_param: int = _DEFAULT_UINT8,
+        uint16_param: int = _DEFAULT_UINT16,
+        uint32_param: int = _DEFAULT_UINT32,
+        uint64_param: int = _DEFAULT_UINT64,
+        # Floating point
+        float_param: float = _DEFAULT_FLOAT,
+        double_param: float = _DEFAULT_DOUBLE,
+        # Other scalars
+        bool_param: bool = _DEFAULT_BOOL,
+        string_param: str = _DEFAULT_STRING,
+        # Extended types
+        bytes_param: bytes = _DEFAULT_BYTES,
+        timestamp_param: datetime.datetime = _DEFAULT_TIMESTAMP,
+        weights_param: list[float] = _DEFAULT_WEIGHTS,
+        nested_list: list[list[int]] = _DEFAULT_NESTED_LIST,
     ) -> pd.DataFrame:
+        bytes_str = bytes_param.decode("utf-8") if isinstance(bytes_param, bytes) else str(bytes_param)
+        timestamp_str = (
+            timestamp_param.isoformat() if isinstance(timestamp_param, datetime.datetime) else str(timestamp_param)
+        )
+        weights_sum = sum(weights_param) if isinstance(weights_param, list) else float(weights_param)
+
         return pd.DataFrame(
             {
                 "output": input["C1"],
-                "int64_type": [int64_type] * len(input),
-                "double_type": [double_type] * len(input),
-                "bool_type": [bool_type] * len(input),
-                "string_type": [string_type] * len(input),
-                # "bytes_type": [bytes_type] * len(input),
-                # "timestamp_ntz_type": [timestamp_ntz_type] * len(input),
+                "received_int8": [int8_param] * len(input),
+                "received_int16": [int16_param] * len(input),
+                "received_int32": [int32_param] * len(input),
+                "received_int64": [int64_param] * len(input),
+                "received_uint8": [uint8_param] * len(input),
+                "received_uint16": [uint16_param] * len(input),
+                "received_uint32": [uint32_param] * len(input),
+                "received_uint64": [uint64_param] * len(input),
+                "received_float": [float_param] * len(input),
+                "received_double": [double_param] * len(input),
+                "received_bool": [bool_param] * len(input),
+                "received_string": [string_param] * len(input),
+                "received_bytes_str": [bytes_str] * len(input),
+                "received_timestamp_str": [timestamp_str] * len(input),
+                "received_weights_sum": [weights_sum] * len(input),
+                "received_weights_len": [len(weights_param) if isinstance(weights_param, list) else 1] * len(input),
+                "received_nested_list": [nested_list] * len(input),
             }
         )
 
@@ -66,30 +116,76 @@ class DemoModelWithParams(custom_model.CustomModel):
 class TestCustomModelWithParamsBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     """Test batch inference with custom model that accepts parameters in model signature."""
 
-    def _get_param_specs(self) -> list:
+    def setUp(self) -> None:
+        super().setUp()
+        # TODO: this is temporary since batch inference server image not released yet
+        if not self._with_image_override():
+            self.skipTest(
+                "Skipping custom model with params batch inference tests: image override environment variables not set."
+            )
+
+    def tearDown(self) -> None:
+        super().tearDown()
+
+    def _get_param_specs(self) -> list[model_signature.ParamSpec]:
         """Return the list of ParamSpec definitions for the model signature."""
         return [
             model_signature.ParamSpec(
-                name="int64_type", dtype=model_signature.DataType.INT64, default_value=_DEFAULT_INT64
+                name="int8_param", dtype=model_signature.DataType.INT8, default_value=_DEFAULT_INT8
             ),
             model_signature.ParamSpec(
-                name="double_type", dtype=model_signature.DataType.DOUBLE, default_value=_DEFAULT_DOUBLE
+                name="int16_param", dtype=model_signature.DataType.INT16, default_value=_DEFAULT_INT16
             ),
             model_signature.ParamSpec(
-                name="bool_type", dtype=model_signature.DataType.BOOL, default_value=_DEFAULT_BOOL
+                name="int32_param", dtype=model_signature.DataType.INT32, default_value=_DEFAULT_INT32
             ),
             model_signature.ParamSpec(
-                name="string_type", dtype=model_signature.DataType.STRING, default_value=_DEFAULT_STRING
+                name="int64_param", dtype=model_signature.DataType.INT64, default_value=_DEFAULT_INT64
             ),
-            # TODO: Add bytes and timestamp types after the params fix
-            # model_signature.ParamSpec(
-            #     name="bytes_type", dtype=model_signature.DataType.BYTES, default_value=_DEFAULT_BYTES
-            # ),
-            # model_signature.ParamSpec(
-            #     name="timestamp_ntz_type",
-            #     dtype=model_signature.DataType.TIMESTAMP_NTZ,
-            #     default_value=_DEFAULT_TIMESTAMP,
-            # ),
+            model_signature.ParamSpec(
+                name="uint8_param", dtype=model_signature.DataType.UINT8, default_value=_DEFAULT_UINT8
+            ),
+            model_signature.ParamSpec(
+                name="uint16_param", dtype=model_signature.DataType.UINT16, default_value=_DEFAULT_UINT16
+            ),
+            model_signature.ParamSpec(
+                name="uint32_param", dtype=model_signature.DataType.UINT32, default_value=_DEFAULT_UINT32
+            ),
+            model_signature.ParamSpec(
+                name="uint64_param", dtype=model_signature.DataType.UINT64, default_value=_DEFAULT_UINT64
+            ),
+            model_signature.ParamSpec(
+                name="float_param", dtype=model_signature.DataType.FLOAT, default_value=_DEFAULT_FLOAT
+            ),
+            model_signature.ParamSpec(
+                name="double_param", dtype=model_signature.DataType.DOUBLE, default_value=_DEFAULT_DOUBLE
+            ),
+            model_signature.ParamSpec(
+                name="bool_param", dtype=model_signature.DataType.BOOL, default_value=_DEFAULT_BOOL
+            ),
+            model_signature.ParamSpec(
+                name="string_param", dtype=model_signature.DataType.STRING, default_value=_DEFAULT_STRING
+            ),
+            model_signature.ParamSpec(
+                name="bytes_param", dtype=model_signature.DataType.BYTES, default_value=_DEFAULT_BYTES
+            ),
+            model_signature.ParamSpec(
+                name="timestamp_param",
+                dtype=model_signature.DataType.TIMESTAMP_NTZ,
+                default_value=_DEFAULT_TIMESTAMP,
+            ),
+            model_signature.ParamSpec(
+                name="weights_param",
+                dtype=model_signature.DataType.DOUBLE,
+                default_value=list(_DEFAULT_WEIGHTS),
+                shape=(3,),
+            ),
+            model_signature.ParamSpec(
+                name="nested_list",
+                dtype=model_signature.DataType.INT64,
+                default_value=_DEFAULT_NESTED_LIST,
+                shape=(2, 2),
+            ),
         ]
 
     def _run_params_test(self, input_spec_params: Optional[dict[str, Any]], model_call_params: dict[str, Any]) -> None:
@@ -149,13 +245,22 @@ class TestCustomModelWithParamsBatchInferenceInteg(registry_batch_inference_test
     def test_all_overwritten_params(self) -> None:
         """Test with all parameters overwritten via InputSpec."""
         override_params = {
-            "int64_type": _OVERRIDE_INT64,
-            "double_type": _OVERRIDE_DOUBLE,
-            "bool_type": _OVERRIDE_BOOL,
-            "string_type": _OVERRIDE_STRING,
-            # TODO: Add bytes and timestamp types after the params fix
-            # "bytes_type": _OVERRIDE_BYTES,
-            # "timestamp_ntz_type": _OVERRIDE_TIMESTAMP,
+            "int8_param": _OVERRIDE_INT8,
+            "int16_param": _OVERRIDE_INT16,
+            "int32_param": _OVERRIDE_INT32,
+            "int64_param": _OVERRIDE_INT64,
+            "uint8_param": _OVERRIDE_UINT8,
+            "uint16_param": _OVERRIDE_UINT16,
+            "uint32_param": _OVERRIDE_UINT32,
+            "uint64_param": _OVERRIDE_UINT64,
+            "float_param": _OVERRIDE_FLOAT,
+            "double_param": _OVERRIDE_DOUBLE,
+            "bool_param": _OVERRIDE_BOOL,
+            "string_param": _OVERRIDE_STRING,
+            "bytes_param": _OVERRIDE_BYTES,
+            "timestamp_param": _OVERRIDE_TIMESTAMP,
+            "weights_param": _OVERRIDE_WEIGHTS,
+            "nested_list": _OVERRIDE_NESTED_LIST,
         }
         self._run_params_test(
             input_spec_params=override_params,
@@ -164,10 +269,15 @@ class TestCustomModelWithParamsBatchInferenceInteg(registry_batch_inference_test
 
     def test_mixed_params(self) -> None:
         """Test with some parameters using defaults and some overwritten."""
-        # Override only int64_type and string_type
+        # Override a subset of parameters across different types
         override_params = {
-            "int64_type": _OVERRIDE_INT64,
-            "string_type": _OVERRIDE_STRING,
+            "int8_param": _OVERRIDE_INT8,
+            "uint16_param": _OVERRIDE_UINT16,
+            "float_param": _OVERRIDE_FLOAT,
+            "bool_param": _OVERRIDE_BOOL,
+            "string_param": _OVERRIDE_STRING,
+            "bytes_param": _OVERRIDE_BYTES,
+            "weights_param": _OVERRIDE_WEIGHTS,
         }
         self._run_params_test(
             input_spec_params=override_params,

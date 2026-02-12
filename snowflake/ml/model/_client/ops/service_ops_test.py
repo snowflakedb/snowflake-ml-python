@@ -1930,6 +1930,75 @@ class ServiceOpsTest(parameterized.TestCase):
             self.assertEqual(decoded_column_handling["image_col"]["convert_to"], "base64")
             self.assertEqual(decoded_column_handling["image_col"]["input_format"], "full_stage_path")
 
+    def test_encode_params_none(self) -> None:
+        """Test _encode_params returns None when input is None."""
+        result = service_ops.ServiceOperator._encode_params(None)
+        self.assertIsNone(result)
+
+    def test_encode_params_basic_types(self) -> None:
+        """Test _encode_params with basic JSON-serializable types."""
+        import base64
+        import json
+
+        params = {"temperature": 0.7, "max_tokens": 100, "prompt": "hello"}
+        result = service_ops.ServiceOperator._encode_params(params)
+
+        self.assertIsNotNone(result)
+        assert result is not None  # Type narrowing for mypy
+        decoded = json.loads(base64.b64decode(result).decode("utf-8"))
+        self.assertEqual(decoded, params)
+
+    def test_encode_params_with_bytes(self) -> None:
+        """Test _encode_params correctly serializes bytes to hex string."""
+        import base64
+        import json
+
+        params = {"data": b"\x00\x01\x02\xff"}
+        result = service_ops.ServiceOperator._encode_params(params)
+
+        self.assertIsNotNone(result)
+        assert result is not None  # Type narrowing for mypy
+        decoded = json.loads(base64.b64decode(result).decode("utf-8"))
+        self.assertEqual(decoded["data"], "000102ff")
+
+    def test_encode_params_with_datetime(self) -> None:
+        """Test _encode_params correctly serializes datetime to ISO format."""
+        import base64
+        import datetime
+        import json
+
+        test_datetime = datetime.datetime(2025, 1, 15, 10, 30, 0)
+        params = {"timestamp": test_datetime}
+        result = service_ops.ServiceOperator._encode_params(params)
+
+        self.assertIsNotNone(result)
+        assert result is not None  # Type narrowing for mypy
+        decoded = json.loads(base64.b64decode(result).decode("utf-8"))
+        self.assertEqual(decoded["timestamp"], "2025-01-15T10:30:00")
+
+    def test_encode_params_with_nested_structures(self) -> None:
+        """Test _encode_params correctly handles nested lists and dicts with special types."""
+        import base64
+        import datetime
+        import json
+
+        test_datetime = datetime.datetime(2025, 6, 1, 12, 0, 0)
+        params = {
+            "config": {
+                "nested_bytes": b"\xab\xcd",
+                "nested_datetime": test_datetime,
+            },
+            "items": [b"\x01", b"\x02", {"inner": b"\x03"}],
+        }
+        result = service_ops.ServiceOperator._encode_params(params)
+
+        self.assertIsNotNone(result)
+        assert result is not None  # Type narrowing for mypy
+        decoded = json.loads(base64.b64decode(result).decode("utf-8"))
+        self.assertEqual(decoded["config"]["nested_bytes"], "abcd")
+        self.assertEqual(decoded["config"]["nested_datetime"], "2025-06-01T12:00:00")
+        self.assertEqual(decoded["items"], ["01", "02", {"inner": "03"}])
+
 
 if __name__ == "__main__":
     absltest.main()
