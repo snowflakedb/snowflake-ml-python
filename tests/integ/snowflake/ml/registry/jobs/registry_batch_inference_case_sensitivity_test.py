@@ -1,7 +1,8 @@
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import JobSpec, OutputSpec, custom_model
+from snowflake.ml.model import custom_model
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 

@@ -3,7 +3,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets
 
-from snowflake.ml.model import JobSpec, OutputSpec
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from snowflake.ml.modeling.lightgbm import LGBMRegressor
 from snowflake.ml.modeling.linear_model import LogisticRegression
 from snowflake.ml.modeling.pipeline import Pipeline

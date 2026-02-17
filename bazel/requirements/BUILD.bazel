@@ -1,3 +1,4 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
 load("//bazel:py_rules.bzl", "py_binary")
 load("//bazel/platforms:optional_dependency_groups.bzl", "OPTIONAL_DEPENDENCY_GROUPS")
 load("//bazel/requirements:rules.bzl", "generate_requirement_file", "generate_requirement_file_yaml", "sync_target")
@@ -21,6 +22,11 @@ py_binary(
 py_binary(
     name = "update_bazelrc",
     srcs = ["update_bazelrc.py"],
+)
+
+py_binary(
+    name = "update_model_logger_version",
+    srcs = ["update_model_logger_version.py"],
 )
 
 _SRC_REQUIREMENT_FILE = "//:requirements.yml"
@@ -137,13 +143,36 @@ generate_requirement_file_yaml(
     template_file = "//bazel/requirements/templates:meta.tpl.yaml",
 )
 
+# The model_logger pins the last released version of snowflake-ml-python,
+# fetched from PyPI at sync time (requires network access via local = True).
+_MODEL_LOGGER_REQUIREMENTS_TARGET = {
+    "generated": "model_logger_requirements.txt",
+    "target": "//model_container_services_deployment/model_logger:requirements.txt",
+}
+
+genrule(
+    name = "gen_model_logger_requirements",
+    srcs = ["//model_container_services_deployment/model_logger:base_requirements.txt"],
+    outs = [_MODEL_LOGGER_REQUIREMENTS_TARGET["generated"]],
+    cmd = "$(location :update_model_logger_version) $< > $@",
+    local = True,
+    tools = [":update_model_logger_version"],
+)
+
+diff_test(
+    name = "check_model_logger_requirements",
+    failure_message = "Please run: " + _SYNC_BAZEL_CMD,
+    file1 = ":" + _MODEL_LOGGER_REQUIREMENTS_TARGET["generated"],
+    file2 = _MODEL_LOGGER_REQUIREMENTS_TARGET["target"],
+)
+
 # Generate the updater script so there's only one target for devs to run,
 # even if many generated files are in the source folder.
 sync_target(
     name = _SYNC_RULE_NAME,
     root_path = _CURRENT_PATH,
     src_requirement_file = _SRC_REQUIREMENT_FILE,
-    targets = _GENERATED_REQUIREMENTS_FILES.values(),
+    targets = _GENERATED_REQUIREMENTS_FILES.values() + [_MODEL_LOGGER_REQUIREMENTS_TARGET],
 )
 
 sh_test(

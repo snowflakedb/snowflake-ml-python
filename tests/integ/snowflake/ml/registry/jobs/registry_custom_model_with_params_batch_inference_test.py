@@ -4,13 +4,8 @@ from typing import Any, Optional
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import (
-    InputSpec,
-    JobSpec,
-    OutputSpec,
-    custom_model,
-    model_signature,
-)
+from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 # Default values for all parameters
@@ -118,11 +113,6 @@ class TestCustomModelWithParamsBatchInferenceInteg(registry_batch_inference_test
 
     def setUp(self) -> None:
         super().setUp()
-        # TODO: this is temporary since batch inference server image not released yet
-        if not self._with_image_override():
-            self.skipTest(
-                "Skipping custom model with params batch inference tests: image override environment variables not set."
-            )
 
     def tearDown(self) -> None:
         super().tearDown()

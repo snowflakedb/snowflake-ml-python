@@ -10,15 +10,9 @@ from absl.testing import absltest
 from snowflake import snowpark
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
-from snowflake.ml.model import (
-    InputSpec,
-    JobSpec,
-    ModelVersion,
-    OutputSpec,
-    model_signature,
-    type_hints as model_types,
-)
+from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
 from snowflake.ml.model._client.ops.service_ops import ServiceOperator
+from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 

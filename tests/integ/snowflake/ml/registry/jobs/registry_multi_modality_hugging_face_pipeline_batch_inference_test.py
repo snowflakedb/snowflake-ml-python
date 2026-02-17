@@ -3,8 +3,13 @@ import tempfile
 
 from absl.testing import absltest
 
-from snowflake.ml.model import InputSpec, JobSpec, OutputSpec
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model.batch import (
+    FileEncoding,
+    InputFormat,
+    InputSpec,
+    JobSpec,
+    OutputSpec,
+)
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -57,8 +62,8 @@ class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             }
         }
 
@@ -98,8 +103,8 @@ class TestRegistryMultiModalityHuggingFacePipelineBatchInferenceInteg(
 
         column_handling = {
             "IMAGES": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             }
         }
 
