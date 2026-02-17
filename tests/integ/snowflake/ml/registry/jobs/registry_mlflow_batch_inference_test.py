@@ -5,8 +5,8 @@ from absl.testing import absltest, parameterized
 from sklearn import datasets, ensemble, model_selection
 
 from snowflake.ml._internal import env
-from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._signatures import numpy_handler, snowpark_handler
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 

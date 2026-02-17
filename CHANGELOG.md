@@ -1,6 +1,16 @@
 # Release History
 
-## 1.27.0
+## 1.28.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.27.0 (2026-02-12)
 
 ### New Features
 

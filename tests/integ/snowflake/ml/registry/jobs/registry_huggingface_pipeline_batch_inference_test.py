@@ -6,7 +6,8 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import JobSpec, OutputSpec, openai_signatures
+from snowflake.ml.model import openai_signatures
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 

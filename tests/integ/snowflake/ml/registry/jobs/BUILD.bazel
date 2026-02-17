@@ -14,6 +14,7 @@ py_library(
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/batch",
         "//tests/integ/snowflake/ml/registry:registry_spcs_test_base",
         "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],

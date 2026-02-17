@@ -9,7 +9,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml import jobs
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import exceptions as sp_exceptions
+from snowflake.snowpark import exceptions as sp_exceptions, session
 from tests.integ.snowflake.ml.jobs import (
     reflection_utils,
     test_constants,
@@ -31,7 +31,10 @@ class JobTestBase(parameterized.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()
-        cls.session = test_env_utils.get_available_session()
+        try:
+            cls.session = session._get_active_session()
+        except sp_exceptions.SnowparkSessionException:
+            cls.session = test_env_utils.get_available_session()
         cls.dbm = db_manager.DBManager(cls.session)
         cls.dbm.cleanup_schemas(prefix=test_constants._TEST_SCHEMA, expire_days=1)
         cls.db = cls.session.get_current_database()

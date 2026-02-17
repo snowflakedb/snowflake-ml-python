@@ -5,13 +5,8 @@ from typing import Optional
 import pandas as pd
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import (
-    InputSpec,
-    JobSpec,
-    OutputSpec,
-    inference_engine,
-    openai_signatures,
-)
+from snowflake.ml.model import inference_engine, openai_signatures
+from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 

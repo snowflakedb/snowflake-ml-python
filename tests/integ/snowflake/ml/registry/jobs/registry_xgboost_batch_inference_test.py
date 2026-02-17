@@ -4,8 +4,8 @@ import xgboost
 from absl.testing import absltest, parameterized
 from sklearn import datasets, model_selection
 
-from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 

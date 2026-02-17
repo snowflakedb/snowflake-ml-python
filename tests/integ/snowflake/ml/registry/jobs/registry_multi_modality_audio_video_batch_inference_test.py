@@ -5,8 +5,14 @@ from typing import Any
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import InputSpec, JobSpec, OutputSpec, custom_model
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model import custom_model
+from snowflake.ml.model.batch import (
+    FileEncoding,
+    InputFormat,
+    InputSpec,
+    JobSpec,
+    OutputSpec,
+)
 from snowflake.ml.model.model_signature import core
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
@@ -218,8 +224,8 @@ class TestRegistryMultiModalityAudioVideoBatchInferenceInteg(
 
         column_handling = {
             "AUDIO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             }
         }
 
@@ -254,8 +260,8 @@ class TestRegistryMultiModalityAudioVideoBatchInferenceInteg(
 
         column_handling = {
             "VIDEO": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             }
         }
 
@@ -296,20 +302,20 @@ class TestRegistryMultiModalityAudioVideoBatchInferenceInteg(
 
         column_handling = {
             "VIDEO1": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             },
             "VIDEO2": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             },
             "IMAGE1": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             },
             "IMAGE2": {
-                "input_format": batch_inference_specs.InputFormat.FULL_STAGE_PATH,
-                "convert_to": batch_inference_specs.FileEncoding.RAW_BYTES,
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
             },
         }
 

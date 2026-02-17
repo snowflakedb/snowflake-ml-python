@@ -12,7 +12,8 @@ import xgboost as xgb
 from absl.testing import absltest, parameterized
 from sklearn import compose, datasets, impute, pipeline, preprocessing
 
-from snowflake.ml.model import JobSpec, OutputSpec, custom_model, model_signature
+from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.registry.model.my_module.utils import column_labeller
 

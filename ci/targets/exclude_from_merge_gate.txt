@@ -35,7 +35,6 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_tensorflow_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_xgboost_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_wide_input_test
-//tests/integ/snowflake/ml/registry/jobs:registry_custom_model_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_empty_struct_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_functional_test
 //snowflake/ml/model/_packager/model_task:model_task_utils_test

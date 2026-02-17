@@ -4,7 +4,7 @@ import pandas as pd
 from absl.testing import absltest, parameterized
 from sklearn import datasets, svm
 
-from snowflake.ml.model import JobSpec, OutputSpec
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 

@@ -1,13 +1,8 @@
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import (
-    InputSpec,
-    JobSpec,
-    OutputSpec,
-    custom_model,
-    model_signature,
-)
+from snowflake.ml.model import custom_model, model_signature
+from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 # Signature with params for testing param validation (used with predict_with_params method)

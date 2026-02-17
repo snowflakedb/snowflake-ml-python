@@ -1,0 +1,11 @@
+load("//bazel:py_rules.bzl", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "batch",
+    srcs = ["__init__.py"],
+    deps = [
+        "//snowflake/ml/model/_client/model:batch_inference_specs",
+    ],
+)

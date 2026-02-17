@@ -4,7 +4,7 @@ import tempfile
 import pandas as pd
 from absl.testing import absltest
 
-from snowflake.ml.model import JobSpec, OutputSpec
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface
 from snowflake.ml.model.openai_signatures import OPENAI_CHAT_SIGNATURE

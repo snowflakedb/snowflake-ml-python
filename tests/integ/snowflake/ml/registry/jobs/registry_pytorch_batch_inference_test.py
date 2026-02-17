@@ -2,8 +2,8 @@ import pandas as pd
 import torch
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.model import JobSpec, OutputSpec
 from snowflake.ml.model._signatures import pytorch_handler
+from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import model_factory
 
