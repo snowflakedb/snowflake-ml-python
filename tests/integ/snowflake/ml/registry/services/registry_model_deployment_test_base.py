@@ -1,28 +1,22 @@
 import http
 import inspect
 import logging
-import random
-import string
 import time
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pandas as pd
 import requests
 import retrying
 
-from snowflake.ml._internal.utils import identifier, jwt_generator, sql_identifier
+from snowflake.ml._internal.utils import identifier, jwt_generator
 from snowflake.ml.model import (
     ModelVersion,
     inference_engine,
     model_signature,
     type_hints as model_types,
 )
-from snowflake.ml.model._client.model import inference_engine_utils
-from snowflake.ml.model._client.ops import deployment_step, service_ops
-from snowflake.ml.model.models import huggingface_pipeline
 from snowflake.ml.utils import authentication
-from snowflake.snowpark import row
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
@@ -32,21 +26,46 @@ INFERENCE_IMAGE_BUILDER = "inference_image_builder"
 
 
 class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
-    # Session parameter used to override the model logger image.
+
+    # Session parameter names used to override the images.
+    _BUILDER_SESSION_PARAM = "SPCS_MODEL_BUILD_CONTAINER_URL"
+
+    _INFERENCE_ENGINE_SESSION_PARAM = "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS"
+
+    _PROXY_SESSION_PARAM = "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL"
+
     _MODEL_LOGGER_SESSION_PARAM = "SPCS_MODEL_LOGGER_ARCH_AGNOSTIC_CONTAINER_URL"
+
+    _BASE_CPU_IMAGE_SESSION_PARAM = "SPCS_MODEL_BASE_CPU_INFERENCE_CONTAINER_URL"
+    _BASE_GPU_IMAGE_SESSION_PARAM = "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL"
+
+    def _get_image_override_session_params(self) -> dict[str, str]:
+        overrides: dict[str, str] = {
+            self._MODEL_LOGGER_SESSION_PARAM: self.MODEL_LOGGER_PATH,
+            self._BASE_GPU_IMAGE_SESSION_PARAM: self.BASE_GPU_IMAGE_PATH,
+            self._BASE_CPU_IMAGE_SESSION_PARAM: self.BASE_CPU_IMAGE_PATH,
+            self._PROXY_SESSION_PARAM: self.PROXY_IMAGE_PATH,
+            self._BUILDER_SESSION_PARAM: self.BUILDER_IMAGE_PATH,
+        }
+        result = {k: v for k, v in overrides.items() if v is not None}
+
+        if self.VLLM_IMAGE_PATH is not None:
+            result[self._INFERENCE_ENGINE_SESSION_PARAM] = f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}'
+
+        return result
 
     def setUp(self) -> None:
         super().setUp()
         # When running with image override, set the model logger session parameter once
         # so all deployment paths use the locally built image instead of the production one.
         if self._has_image_override():
-            self.session.sql(
-                f"ALTER SESSION SET {self._MODEL_LOGGER_SESSION_PARAM} = '{self.MODEL_LOGGER_PATH}'"
-            ).collect()
+            for key, value in self._get_image_override_session_params().items():
+                self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
 
     def tearDown(self) -> None:
         if self._has_image_override():
-            self.session.sql(f"ALTER SESSION UNSET {self._MODEL_LOGGER_SESSION_PARAM}").collect()
+            for key in self._get_image_override_session_params():
+                self.session.sql(f"ALTER SESSION UNSET {key}").collect()
         super().tearDown()
 
     def _has_image_override(self) -> bool:
@@ -94,10 +113,9 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
-        use_model_logging: bool = False,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
         use_inference_image_builder: bool = False,
@@ -117,23 +135,20 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         # True when the snowml package is not available in the Snowflake Anaconda Channel.
         options = options or {}
         options["embed_local_ml_library"] = True
-        mv = None
-        if not use_model_logging:
-            mv = self.registry.log_model(
-                model=model,
-                model_name=name,
-                version_name=version,
-                sample_input_data=sample_input_data,
-                conda_dependencies=conda_dependencies,
-                pip_requirements=pip_requirements,
-                target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
-                options=options,
-                signatures=signatures,
-            )
+        mv = self.registry.log_model(
+            model=model,
+            model_name=name,
+            version_name=version,
+            sample_input_data=sample_input_data,
+            conda_dependencies=conda_dependencies,
+            pip_requirements=pip_requirements,
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            options=options,
+            signatures=signatures,
+        )
 
         return self._deploy_model_service(
             mv=mv,
-            model=model,
             prediction_assert_fns=prediction_assert_fns,
             service_name=service_name,
             gpu_requests=gpu_requests,
@@ -147,145 +162,14 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             autocapture=autocapture,
             inference_engine_options=inference_engine_options,
             experimental_options=experimental_options,
-            pip_requirements=pip_requirements,
-            conda_dependencies=conda_dependencies,
             params=params,
             skip_rest_api_test=skip_rest_api_test,
             use_inference_image_builder=use_inference_image_builder,
         )
 
-    def _deploy_model_with_image_override(
-        self,
-        mv: ModelVersion,
-        *,
-        service_name: str,
-        service_compute_pool: str,
-        gpu_requests: Optional[str] = None,
-        num_workers: Optional[int] = None,
-        min_instances: int = 0,
-        max_instances: int = 1,
-        max_batch_rows: Optional[int] = None,
-        force_rebuild: bool = True,
-        cpu_requests: Optional[str] = None,
-        memory_requests: Optional[str] = None,
-        autocapture: bool = False,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-        experimental_options: Optional[dict[str, Any]] = None,
-        use_inference_image_builder: bool = False,
-    ) -> None:
-        """Deploy model with image override.
-
-        Args:
-            mv: The model version to deploy.
-            service_name: Name of the service to create.
-            service_compute_pool: Compute pool for the service.
-            gpu_requests: GPU requests for the service.
-            num_workers: Number of workers.
-            min_instances: Minimum number of instances.
-            max_instances: Maximum number of instances.
-            max_batch_rows: Maximum batch rows.
-            force_rebuild: Whether to force rebuild.
-            cpu_requests: CPU requests.
-            memory_requests: Memory requests.
-            autocapture: Whether to enable autocapture.
-            inference_engine_options: Inference engine options.
-            experimental_options: Experimental options.
-            use_inference_image_builder: If True, use the BuildKit-based inference_image_builder
-                instead of the default kaniko builder.
-        """
-        is_gpu = gpu_requests is not None
-        image_path = self.BASE_GPU_IMAGE_PATH if is_gpu else self.BASE_CPU_IMAGE_PATH
-        assert image_path is not None, "Base image path must be set for image override deployment."
-        database, schema, service = self._get_fully_qualified_service_or_job_name(service_name)
-        compute_pool = sql_identifier.SqlIdentifier(service_compute_pool)
-
-        self._add_common_model_deployment_spec_options(
-            mv=mv, database=database, schema=schema, force_rebuild=force_rebuild
-        )
-
-        mv._service_ops._model_deployment_spec.add_service_spec(
-            service_name=service,
-            inference_compute_pool_name=compute_pool,
-            service_database_name=database,
-            service_schema_name=schema,
-            ingress_enabled=True,
-            min_instances=min_instances,
-            max_instances=max_instances,
-            num_workers=num_workers,
-            cpu=cpu_requests,
-            memory=memory_requests,
-            gpu=gpu_requests,
-            max_batch_rows=max_batch_rows,
-            autocapture=autocapture,
-        )
-
-        # Determine which builder image to use
-        builder_image_path = None
-        if use_inference_image_builder:
-            assert (
-                self.INFERENCE_IMAGE_BUILDER_PATH is not None
-            ), "INFERENCE_IMAGE_BUILDER_PATH must be set when use_inference_image_builder=True"
-            builder_image_path = self.INFERENCE_IMAGE_BUILDER_PATH
-
-        # Set inference engine spec if specified (must be after add_service_spec)
-        inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
-        if inference_engine_args is not None:
-            inference_engine_args = inference_engine_utils._enrich_inference_engine_args(
-                inference_engine_args,
-                gpu_requests,
-            )
-            mv._service_ops._model_deployment_spec.add_inference_engine_spec(
-                inference_engine=inference_engine_args.inference_engine,
-                inference_engine_args=inference_engine_args.inference_engine_args_override,
-            )
-
-        query_id, async_job = self._deploy_override_model(
-            mv=mv,
-            database=database,
-            schema=schema,
-            inference_image=image_path,
-            is_batch_inference=False,
-            builder_image_path=builder_image_path,
-        )
-
-        # stream service logs in a thread
-        model_build_service_name = sql_identifier.SqlIdentifier(
-            deployment_step.get_service_id_from_deployment_step(
-                query_id,
-                deployment_step.DeploymentStep.MODEL_BUILD,
-            )
-        )
-        model_build_service = service_ops.ServiceLogInfo(
-            database_name=database,
-            schema_name=schema,
-            service_name=model_build_service_name,
-            deployment_step=deployment_step.DeploymentStep.MODEL_BUILD,
-        )
-        model_inference_service = service_ops.ServiceLogInfo(
-            database_name=database,
-            schema_name=schema,
-            service_name=service,
-            deployment_step=deployment_step.DeploymentStep.MODEL_INFERENCE,
-        )
-
-        log_thread = mv._service_ops._start_service_log_streaming(
-            async_job=async_job,
-            model_logger_service=None,
-            model_build_service=model_build_service,
-            model_inference_service=model_inference_service,
-            model_inference_service_exists=False,
-            force_rebuild=True,
-            operation_id=query_id,
-        )
-        log_thread.join()
-
-        res = cast(str, cast(list[row.Row], async_job.result())[0][0])
-        logging.info(f"Inference service {service_name} deployment complete: {res}")
-
     def _deploy_model_service(
         self,
-        model: Optional[model_types.SupportedModelType],
-        mv: Optional[ModelVersion],
+        mv: ModelVersion,
         prediction_assert_fns: dict[str, tuple[Any, Callable[[Any], Any]]],
         service_name: Optional[str] = None,
         gpu_requests: Optional[str] = None,
@@ -297,105 +181,44 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         cpu_requests: Optional[str] = None,
         memory_requests: Optional[str] = None,
         use_default_repo: bool = False,
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
-        pip_requirements: Optional[list[str]] = None,
-        conda_dependencies: Optional[list[str]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
         use_inference_image_builder: bool = False,
     ) -> ModelVersion:
-        with_image_override = self._has_image_override()
 
         if service_name is None:
             service_name = f"service_{inspect.stack()[1].function}_{self._run_id}"
         if service_compute_pool is None:
             service_compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
-        if mv is not None:
-            if with_image_override:
-                self._deploy_model_with_image_override(
-                    mv,
-                    service_name=service_name,
-                    service_compute_pool=sql_identifier.SqlIdentifier(service_compute_pool),
-                    gpu_requests=gpu_requests,
-                    num_workers=num_workers,
-                    min_instances=min_instances,
-                    max_instances=max_instances,
-                    max_batch_rows=max_batch_rows,
-                    force_rebuild=False,
-                    cpu_requests=cpu_requests,
-                    memory_requests=memory_requests,
-                    autocapture=autocapture,
-                    inference_engine_options=inference_engine_options,
-                    experimental_options=experimental_options,
-                    use_inference_image_builder=use_inference_image_builder,
-                )
-            else:
-                mv.create_service(
-                    service_name=service_name,
-                    image_build_compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                    service_compute_pool=service_compute_pool,
-                    image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
-                    gpu_requests=gpu_requests,
-                    force_rebuild=True,
-                    num_workers=num_workers,
-                    min_instances=min_instances,
-                    max_instances=max_instances,
-                    max_batch_rows=max_batch_rows,
-                    ingress_enabled=True,
-                    cpu_requests=cpu_requests,
-                    memory_requests=memory_requests,
-                    autocapture=autocapture,
-                    inference_engine_options=inference_engine_options,
-                    experimental_options=experimental_options,
-                )
-        else:
-            assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel)
-            assert model is not None
-            # Model logger override is handled in setUp via _MODEL_LOGGER_SESSION_PARAM.
-            image_overrides = {
-                "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL": self.BASE_GPU_IMAGE_PATH,
-                "SPCS_MODEL_BASE_CPU_INFERENCE_CONTAINER_URL": self.BASE_CPU_IMAGE_PATH,
-                "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,
-                "SPCS_MODEL_BUILD_CONTAINER_URL": self.BUILDER_IMAGE_PATH,
-                "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS": f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}',
-            }
-            if with_image_override:
-                for key, value in image_overrides.items():
-                    self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
-            try:
-                model_name = "".join(random.choices(string.ascii_uppercase, k=5))
-                version_name = "".join(random.choices(string.ascii_uppercase, k=5))
-                model.log_model_and_create_service(
-                    session=self.session,
-                    model_name=model_name,
-                    version_name=version_name,
-                    pip_requirements=pip_requirements,
-                    conda_dependencies=conda_dependencies,
-                    service_name=service_name,
-                    service_compute_pool=service_compute_pool,
-                    image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
-                    gpu_requests=gpu_requests,
-                    force_rebuild=True,
-                    num_workers=num_workers,
-                    min_instances=min_instances,
-                    max_instances=max_instances,
-                    max_batch_rows=max_batch_rows,
-                    ingress_enabled=True,
-                    cpu_requests=cpu_requests,
-                    memory_requests=memory_requests,
-                    inference_engine_options=inference_engine_options,
-                    experimental_options=experimental_options,
-                )
-                mv = self.registry.get_model(model_name).version(version_name)
-            finally:
-                if with_image_override:
-                    for key in image_overrides.keys():
-                        self.session.sql(f"ALTER SESSION UNSET {key}").collect()
+        builder_swapped = False
+        if use_inference_image_builder and self._has_image_override():
+            assert (
+                self.INFERENCE_IMAGE_BUILDER_PATH is not None
+            ), "INFERENCE_IMAGE_BUILDER_PATH must be set when use_inference_image_builder=True"
+            self.session.sql(
+                f"ALTER SESSION SET {self._BUILDER_SESSION_PARAM} = '{self.INFERENCE_IMAGE_BUILDER_PATH}'"
+            ).collect()
+            builder_swapped = True
 
-        assert mv is not None
+        mv.create_service(
+            service_name=service_name,
+            service_compute_pool=service_compute_pool,
+            gpu_requests=gpu_requests,
+            num_workers=num_workers,
+            min_instances=min_instances,
+            max_instances=max_instances,
+            max_batch_rows=max_batch_rows,
+            ingress_enabled=True,
+            cpu_requests=cpu_requests,
+            memory_requests=memory_requests,
+            autocapture=autocapture,
+            inference_engine_options=inference_engine_options,
+            experimental_options=experimental_options,
+        )
         while True:
             service_status = mv.list_services().loc[0, "status"]
             if service_status != "PENDING":
@@ -451,6 +274,9 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                 target_method=target_method,
             )
             check_func(res_df)
+
+        if builder_swapped:
+            self.session.sql(f"ALTER SESSION SET {self._BUILDER_SESSION_PARAM} = '{self.BUILDER_IMAGE_PATH}'").collect()
 
         return mv
 

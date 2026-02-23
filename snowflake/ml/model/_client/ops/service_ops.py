@@ -195,7 +195,7 @@ class ServiceOperator:
         # inference engine model
         inference_engine_args: Optional[InferenceEngineArgs] = None,
         # inference table
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
     ) -> Union[str, async_job.AsyncJob]:
 
         # Generate operation ID for this deployment

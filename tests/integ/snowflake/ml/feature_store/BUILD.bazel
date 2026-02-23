@@ -236,6 +236,22 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_stream_source_test",
+    timeout = "long",
+    srcs = [
+        "feature_store_stream_source_test.py",
+    ],
+    shard_count = 1,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
     name = "feature_store_tiled_aggregation_test",
     timeout = "eternal",
     srcs = [

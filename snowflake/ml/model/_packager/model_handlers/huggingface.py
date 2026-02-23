@@ -534,10 +534,7 @@ class TransformersPipelineHandler(
                         # verify when the target method is __call__ and
                         # if the signature is default text-generation signature
                         # then use the HuggingFaceOpenAICompatibleModel to wrap the pipeline
-                        if (
-                            signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC
-                            or signature == openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC_WITH_CONTENT_FORMAT_STRING
-                        ):
+                        if signature in openai_signatures._OPENAI_CHAT_SIGNATURE_SPECS:
                             wrapped_model = HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
 
                             temp_res = X.apply(

@@ -33,6 +33,7 @@ class MetadataObjectType(str, Enum):
     """Types of objects that can have metadata stored."""
 
     FEATURE_VIEW = "FEATURE_VIEW"
+    STREAM_SOURCE = "STREAM_SOURCE"
 
 
 class MetadataType(str, Enum):
@@ -40,6 +41,7 @@ class MetadataType(str, Enum):
 
     FEATURE_SPECS = "FEATURE_SPECS"
     FEATURE_DESCS = "FEATURE_DESCS"
+    STREAM_SOURCE_CONFIG = "STREAM_SOURCE_CONFIG"
 
 
 @dataclass
@@ -247,8 +249,7 @@ class FeatureStoreMetadataManager:
         """
         self.ensure_table_exists()
 
-        # Normalize name: strip quotes and uppercase for consistent storage
-        normalized_name = fv_name.strip('"').upper()
+        normalized_name = fv_name.strip('"')
         specs_json = json.dumps(specs.to_dict())
 
         # Build SELECT statements for atomic insert (PARSE_JSON can't be used in VALUES)
@@ -315,8 +316,7 @@ class FeatureStoreMetadataManager:
         if not self._check_table_exists():
             return
 
-        # Normalize name: strip quotes and uppercase for consistent lookup
-        normalized_name = fv_name.strip('"').upper()
+        normalized_name = fv_name.strip('"')
 
         self._session.sql(
             f"""
@@ -326,6 +326,186 @@ class FeatureStoreMetadataManager:
             AND VERSION = '{version}'
             """
         ).collect(statement_params=self._telemetry_stmp)
+
+    # =========================================================================
+    # Stream Source
+    # =========================================================================
+
+    def save_stream_source(self, name: str, metadata: dict[str, Any]) -> None:
+        """Save a stream source configuration.
+
+        Args:
+            name: Stream source name (resolved identifier).
+            metadata: Dictionary containing schema, desc, owner, and ref_count.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.STREAM_SOURCE,
+            object_name=name,
+            version="",
+            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
+            metadata=metadata,
+        )
+
+    def get_stream_source_metadata(self, name: str) -> Optional[dict[str, Any]]:
+        """Get a stream source configuration by name.
+
+        Args:
+            name: Stream source name (resolved identifier).
+
+        Returns:
+            Metadata dictionary if found, None otherwise.
+        """
+        return self._get_metadata(
+            object_type=MetadataObjectType.STREAM_SOURCE,
+            object_name=name,
+            version="",
+            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
+        )
+
+    def list_stream_source_metadata(self) -> list[dict[str, Any]]:
+        """List all stream source configurations.
+
+        Returns:
+            List of metadata dictionaries for all registered stream sources.
+        """
+        if not self._check_table_exists():
+            return []
+
+        result = self._session.sql(
+            f"""
+            SELECT METADATA
+            FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
+            AND METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
+            ORDER BY OBJECT_NAME
+            """
+        ).collect(statement_params=self._telemetry_stmp)
+
+        sources = []
+        for row in result:
+            metadata_value = row["METADATA"]
+            if isinstance(metadata_value, str):
+                sources.append(json.loads(metadata_value))
+            else:
+                sources.append(dict(metadata_value))
+        return sources
+
+    def delete_stream_source_metadata(self, name: str) -> None:
+        """Delete a stream source configuration.
+
+        Args:
+            name: Stream source name (resolved identifier).
+        """
+        if not self._check_table_exists():
+            return
+
+        normalized_name = name.strip('"')
+
+        self._session.sql(
+            f"""
+            DELETE FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
+            AND OBJECT_NAME = '{normalized_name}'
+            """
+        ).collect(statement_params=self._telemetry_stmp)
+
+    def stream_source_exists(self, name: str) -> bool:
+        """Check if a stream source exists.
+
+        Args:
+            name: Stream source name (resolved identifier).
+
+        Returns:
+            True if the stream source exists, False otherwise.
+        """
+        return self.get_stream_source_metadata(name) is not None
+
+    def get_stream_source_ref_count(self, name: str) -> int:
+        """Get the reference count for a stream source.
+
+        Args:
+            name: Stream source name (resolved identifier).
+
+        Returns:
+            Number of active references. 0 if stream source not found.
+        """
+        metadata = self.get_stream_source_metadata(name)
+        if metadata is None:
+            return 0
+        return int(metadata.get("ref_count", 0))
+
+    def increment_stream_source_ref_count(self, name: str) -> None:
+        """Increment the reference count of a stream source.
+
+        Called when a FeatureView that uses this stream source is registered.
+
+        Args:
+            name: Stream source name (resolved identifier).
+        """
+        metadata = self.get_stream_source_metadata(name)
+        if metadata is None:
+            return
+
+        metadata["ref_count"] = int(metadata.get("ref_count", 0)) + 1
+        self._upsert_metadata(
+            object_type=MetadataObjectType.STREAM_SOURCE,
+            object_name=name,
+            version="",
+            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
+            metadata=metadata,
+        )
+
+    def decrement_stream_source_ref_count(self, name: str) -> None:
+        """Decrement the reference count of a stream source (clamped to 0).
+
+        Called when a FeatureView that uses this stream source is deleted.
+
+        Args:
+            name: Stream source name (resolved identifier).
+        """
+        metadata = self.get_stream_source_metadata(name)
+        if metadata is None:
+            return
+
+        current = int(metadata.get("ref_count", 0))
+        metadata["ref_count"] = max(0, current - 1)
+        self._upsert_metadata(
+            object_type=MetadataObjectType.STREAM_SOURCE,
+            object_name=name,
+            version="",
+            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
+            metadata=metadata,
+        )
+
+    def update_stream_source_desc(self, name: str, desc: str) -> None:
+        """Update the description of an existing stream source.
+
+        Args:
+            name: Stream source name (resolved identifier).
+            desc: New description to set.
+        """
+        existing = self.get_stream_source_metadata(name)
+        if existing is None:
+            return
+
+        existing["desc"] = desc
+        self._upsert_metadata(
+            object_type=MetadataObjectType.STREAM_SOURCE,
+            object_name=name,
+            version="",
+            metadata_type=MetadataType.STREAM_SOURCE_CONFIG,
+            metadata=existing,
+        )
+
+    @property
+    def table_path(self) -> str:
+        """Fully qualified path to the metadata table."""
+        return self._table_path
+
+    def table_exists(self) -> bool:
+        """Check if the metadata table exists."""
+        return self._check_table_exists()
 
     # =========================================================================
     # Private helpers
@@ -358,8 +538,8 @@ class FeatureStoreMetadataManager:
     ) -> None:
         """Insert or update a metadata entry."""
         metadata_json = json.dumps(metadata)
-        # Normalize name: strip quotes and uppercase for consistent storage
-        normalized_name = object_name.strip('"').upper()
+        # Strip surrounding quotes if present; callers pass resolved() which handles casing.
+        normalized_name = object_name.strip('"')
 
         self._session.sql(
             f"""
@@ -400,8 +580,8 @@ class FeatureStoreMetadataManager:
         if not self._check_table_exists():
             return None
 
-        # Normalize name: strip quotes and uppercase for consistent lookup
-        normalized_name = object_name.strip('"').upper()
+        # Strip surrounding quotes if present; callers pass resolved() which handles casing.
+        normalized_name = object_name.strip('"')
 
         result = self._session.sql(
             f"""

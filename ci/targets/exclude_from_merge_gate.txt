@@ -4,6 +4,7 @@
 //tests/integ/snowflake/ml/registry/services:registry_sentence_transformers_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
+//tests/integ/snowflake/ml/registry/services:registry_inference_params_test
 //tests/integ/snowflake/ml/registry/services:registry_inference_table_test
 //tests/integ/snowflake/ml/registry/services:registry_mv_run_test
 //tests/integ/snowflake/ml/registry/services:registry_sklearn_model_deployment_test
@@ -18,7 +19,6 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_case_sensitivity_test
 //tests/integ/snowflake/ml/registry/jobs:registry_catboost_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_custom_model_with_params_batch_inference_test
-//tests/integ/snowflake/ml/registry/jobs:registry_huggingface_pipeline_batch_inference_gpu_test
 //tests/integ/snowflake/ml/registry/jobs:registry_huggingface_pipeline_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_huggingface_pipeline_vllm_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_keras_batch_inference_test
@@ -37,6 +37,7 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_wide_input_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_empty_struct_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_functional_test
+//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_cse_stage_test
 //snowflake/ml/model/_packager/model_task:model_task_utils_test
 //snowflake/ml/model/_packager/model_handlers_test:lightgbm_test
 //snowflake/ml/model/_packager/model_handlers_test:snowmlmodel_test
@@ -46,4 +47,3 @@
 //tests/integ/snowflake/ml/registry/model:registry_tensorflow_model_test
 //tests/integ/snowflake/ml/registry/model:registry_keras_torch_model_test
 //tests/integ/snowflake/ml/registry/model:registry_keras_tensorflow_model_test
-//tests/integ/snowflake/ml/jobs:multi_node_jobs_integ_test

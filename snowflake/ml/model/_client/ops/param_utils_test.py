@@ -60,6 +60,13 @@ class FormatParamValueForSqlTest(absltest.TestCase):
         self.assertEqual(param_utils.format_param_value_for_sql(-42), "-42")
         self.assertEqual(param_utils.format_param_value_for_sql(3.14159), "3.14159")
 
+    def test_format_float_for_table_function(self) -> None:
+        """Test that float values get explicit ::FLOAT cast for table function invocation."""
+        self.assertEqual(param_utils.format_param_value_for_table_function_sql(0.5), "0.5::FLOAT")
+        self.assertEqual(param_utils.format_param_value_for_table_function_sql(3.14159), "3.14159::FLOAT")
+        self.assertEqual(param_utils.format_param_value_for_table_function_sql(100), "100")
+        self.assertEqual(param_utils.format_param_value_for_table_function_sql("hello"), "'hello'")
+
 
 class ValidateParamsTest(absltest.TestCase):
     """Tests for validate_params function."""

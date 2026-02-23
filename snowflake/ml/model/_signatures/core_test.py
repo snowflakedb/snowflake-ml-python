@@ -738,5 +738,199 @@ ModelSignature(
         self.assertEqual(sig.params[0].default_value, 1.0)  # type: ignore[attr-defined]
 
 
+class ConvertMlflowColTypeTest(absltest.TestCase):
+    """Tests for _convert_mlflow_col_type."""
+
+    def test_scalar_datatype(self) -> None:
+        """Scalar MLflow DataType maps to a FeatureSpec with the correct dtype."""
+        import mlflow
+
+        for mlflow_dt, expected_snowml_dt in [
+            (mlflow.types.DataType.float, core.DataType.FLOAT),
+            (mlflow.types.DataType.double, core.DataType.DOUBLE),
+            (mlflow.types.DataType.integer, core.DataType.INT32),
+            (mlflow.types.DataType.long, core.DataType.INT64),
+            (mlflow.types.DataType.boolean, core.DataType.BOOL),
+            (mlflow.types.DataType.string, core.DataType.STRING),
+        ]:
+            result = core._convert_mlflow_col_type("feat", mlflow_dt)
+            self.assertIsInstance(result, core.FeatureSpec)
+            self.assertEqual(result.name, "feat")
+            self.assertEqual(result._dtype, expected_snowml_dt)  # type: ignore[attr-defined]
+            self.assertIsNone(result._shape)
+
+    def test_1d_array_of_scalar(self) -> None:
+        """Array(scalar) maps to FeatureSpec with shape=(-1,)."""
+        import mlflow
+
+        arr = mlflow.types.schema.Array(mlflow.types.DataType.double)
+        result = core._convert_mlflow_col_type("arr_feat", arr)
+        self.assertIsInstance(result, core.FeatureSpec)
+        self.assertEqual(result.name, "arr_feat")
+        self.assertEqual(result._dtype, core.DataType.DOUBLE)  # type: ignore[attr-defined]
+        self.assertEqual(result._shape, (-1,))
+
+    def test_nested_array_of_scalar(self) -> None:
+        """Array(Array(scalar)) maps to FeatureSpec with shape=(-1, -1)."""
+        import mlflow
+
+        nested = mlflow.types.schema.Array(mlflow.types.schema.Array(mlflow.types.DataType.long))
+        result = core._convert_mlflow_col_type("nested", nested)
+        self.assertIsInstance(result, core.FeatureSpec)
+        self.assertEqual(result.name, "nested")
+        self.assertEqual(result._dtype, core.DataType.INT64)  # type: ignore[attr-defined]
+        self.assertEqual(result._shape, (-1, -1))
+
+    def test_3d_array_of_scalar(self) -> None:
+        """Triple-nested Array maps to FeatureSpec with shape=(-1, -1, -1)."""
+        import mlflow
+
+        triple = mlflow.types.schema.Array(
+            mlflow.types.schema.Array(mlflow.types.schema.Array(mlflow.types.DataType.float))
+        )
+        result = core._convert_mlflow_col_type("deep", triple)
+        self.assertIsInstance(result, core.FeatureSpec)
+        self.assertEqual(result._shape, (-1, -1, -1))
+
+    def test_array_of_object(self) -> None:
+        """Array(Object) maps to FeatureGroupSpec with shape=(-1,)."""
+        import mlflow
+
+        obj = mlflow.types.schema.Object([mlflow.types.schema.Property("x", mlflow.types.DataType.double)])
+        arr = mlflow.types.schema.Array(obj)
+        result = core._convert_mlflow_col_type("arr_obj", arr)
+        self.assertIsInstance(result, core.FeatureGroupSpec)
+        self.assertEqual(result.name, "arr_obj")
+        self.assertEqual(result._shape, (-1,))
+        self.assertEqual(len(result._specs), 1)  # type: ignore[attr-defined]
+        self.assertEqual(result._specs[0].name, "x")  # type: ignore[attr-defined]
+
+    def test_nested_array_of_object(self) -> None:
+        """Array(Array(Object)) maps to FeatureGroupSpec with shape=(-1, -1)."""
+        import mlflow
+
+        obj = mlflow.types.schema.Object([mlflow.types.schema.Property("val", mlflow.types.DataType.integer)])
+        nested = mlflow.types.schema.Array(mlflow.types.schema.Array(obj))
+        result = core._convert_mlflow_col_type("nested_obj", nested)
+        self.assertIsInstance(result, core.FeatureGroupSpec)
+        self.assertEqual(result._shape, (-1, -1))
+
+    def test_object_type(self) -> None:
+        """Plain Object maps to FeatureGroupSpec (no shape)."""
+        import mlflow
+
+        obj = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("a", mlflow.types.DataType.string),
+                mlflow.types.schema.Property("b", mlflow.types.DataType.long),
+            ]
+        )
+        result = core._convert_mlflow_col_type("obj_feat", obj)
+        self.assertIsInstance(result, core.FeatureGroupSpec)
+        self.assertEqual(result.name, "obj_feat")
+        self.assertIsNone(result._shape)
+        self.assertEqual(len(result._specs), 2)  # type: ignore[attr-defined]
+        self.assertEqual(result._specs[0].name, "a")  # type: ignore[attr-defined]
+        self.assertEqual(result._specs[1].name, "b")  # type: ignore[attr-defined]
+
+    def test_unsupported_type_raises(self) -> None:
+        """An unsupported MLflow column type raises SnowflakeMLException."""
+        with exception_utils.assert_snowml_exceptions(
+            self,
+            expected_original_error_type=NotImplementedError,
+            expected_regex="MLflow column type .* is not supported",
+        ):
+            core._convert_mlflow_col_type("bad", 42)
+
+
+class ConvertMlflowObjectTest(absltest.TestCase):
+    """Tests for _convert_mlflow_object."""
+
+    def test_simple_object(self) -> None:
+        """Object with scalar properties returns FeatureGroupSpec with FeatureSpec children."""
+        import mlflow
+
+        obj = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("name", mlflow.types.DataType.string),
+                mlflow.types.schema.Property("score", mlflow.types.DataType.double),
+            ]
+        )
+        result = core._convert_mlflow_object("record", obj)
+        self.assertIsInstance(result, core.FeatureGroupSpec)
+        self.assertEqual(result.name, "record")
+        self.assertIsNone(result._shape)
+        self.assertEqual(len(result._specs), 2)
+
+        self.assertIsInstance(result._specs[0], core.FeatureSpec)
+        self.assertEqual(result._specs[0].name, "name")
+        self.assertEqual(result._specs[0]._dtype, core.DataType.STRING)  # type: ignore[attr-defined]
+
+        self.assertIsInstance(result._specs[1], core.FeatureSpec)
+        self.assertEqual(result._specs[1].name, "score")
+        self.assertEqual(result._specs[1]._dtype, core.DataType.DOUBLE)  # type: ignore[attr-defined]
+
+    def test_object_with_array_property(self) -> None:
+        """Object containing an Array property returns a FeatureSpec child with shape."""
+        import mlflow
+
+        obj = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("id", mlflow.types.DataType.long),
+                mlflow.types.schema.Property("values", mlflow.types.schema.Array(mlflow.types.DataType.float)),
+            ]
+        )
+        result = core._convert_mlflow_object("mixed", obj)
+        self.assertEqual(len(result._specs), 2)
+
+        id_spec = result._specs[0]
+        self.assertIsInstance(id_spec, core.FeatureSpec)
+        self.assertIsNone(id_spec._shape)
+
+        values_spec = result._specs[1]
+        self.assertIsInstance(values_spec, core.FeatureSpec)
+        self.assertEqual(values_spec.name, "values")
+        self.assertEqual(values_spec._dtype, core.DataType.FLOAT)  # type: ignore[attr-defined]
+        self.assertEqual(values_spec._shape, (-1,))
+
+    def test_nested_object(self) -> None:
+        """Object containing another Object returns a nested FeatureGroupSpec."""
+        import mlflow
+
+        inner = mlflow.types.schema.Object([mlflow.types.schema.Property("x", mlflow.types.DataType.integer)])
+        outer = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("label", mlflow.types.DataType.string),
+                mlflow.types.schema.Property("inner", inner),
+            ]
+        )
+        result = core._convert_mlflow_object("nested", outer)
+        self.assertEqual(len(result._specs), 2)
+
+        specs_by_name = {s.name: s for s in result._specs}
+
+        self.assertIsInstance(specs_by_name["label"], core.FeatureSpec)
+        self.assertEqual(specs_by_name["label"]._dtype, core.DataType.STRING)  # type: ignore[attr-defined]
+
+        self.assertIsInstance(specs_by_name["inner"], core.FeatureGroupSpec)
+        self.assertEqual(len(specs_by_name["inner"]._specs), 1)  # type: ignore[attr-defined]
+        self.assertEqual(specs_by_name["inner"]._specs[0].name, "x")  # type: ignore[attr-defined]
+
+    def test_object_with_array_of_object_property(self) -> None:
+        """Object containing Array(Object) produces a FeatureGroupSpec child with shape."""
+        import mlflow
+
+        inner_obj = mlflow.types.schema.Object([mlflow.types.schema.Property("k", mlflow.types.DataType.string)])
+        obj = mlflow.types.schema.Object([mlflow.types.schema.Property("items", mlflow.types.schema.Array(inner_obj))])
+        result = core._convert_mlflow_object("parent", obj)
+        self.assertEqual(len(result._specs), 1)
+
+        items_spec = result._specs[0]
+        self.assertIsInstance(items_spec, core.FeatureGroupSpec)
+        self.assertEqual(items_spec.name, "items")
+        self.assertEqual(items_spec._shape, (-1,))
+        self.assertEqual(items_spec._specs[0].name, "k")  # type: ignore[attr-defined]
+
+
 if __name__ == "__main__":
     absltest.main()

@@ -200,13 +200,6 @@ class ModelWithManyFeatures(custom_model.CustomModel):
 class TestRegistryInferenceParamsInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
     """Integration tests for inference with runtime parameters."""
 
-    def setUp(self) -> None:
-        super().setUp()
-        # These tests require the updated inference server image that supports params.
-        # Skip if not running with image override (i.e., using the latest built images).
-        if not self._has_image_override():
-            self.skipTest("Skipping params tests: requires image override with updated inference server.")
-
     def _get_model_with_params_signature(self) -> model_signature.ModelSignature:
         """Shared signature for ModelWithParams tests."""
         return model_signature.ModelSignature(

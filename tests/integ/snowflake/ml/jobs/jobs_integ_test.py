@@ -545,23 +545,33 @@ class JobManagerTest(JobTestBase):
 
     def test_job_result_backcompat(self) -> None:
         """Test that v1 job results can still be loaded correctly."""
-
-        def func_with_return_value() -> None:
-            return {"key": "value", "number": 123}
-
-        job = self._submit_func_as_file(
-            func_with_return_value,
+        # if image is overridden, users must provide args to specify the entrypoint
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
             spec_overrides={
                 "spec": {
                     "containers": [
                         {
                             "name": constants.DEFAULT_CONTAINER_NAME,
                             "image": f"{constants.DEFAULT_IMAGE_REPO}/{constants.DEFAULT_IMAGE_CPU}:1.7.1",
+                            "args": [
+                                "bash",
+                                "/mnt/job_stage/system/startup.sh",
+                                "/mnt/job_stage/app/func.py",
+                                "--script_main_func",
+                                "func",
+                            ],
                         }
                     ]
                 }
             },
         )
+        def func_with_return_value() -> dict[str, Any]:
+            return {"key": "value", "number": 123}
+
+        job = func_with_return_value()
         self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
         # Validate result
@@ -612,8 +622,7 @@ class JobManagerTest(JobTestBase):
         # Check job completions
         for param, job in zip(params, job_list):
             with self.subTest(param):
-                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
-                self.assertIn("Job complete", job_logs)
+                self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs())
 
                 args, kwargs = param
                 for arg in args:
@@ -755,14 +764,14 @@ class JobManagerTest(JobTestBase):
             self.fail("No compatible EAIs found in environment.")
         pypi_eais = [r["name"] for r in rows]
 
-        payload = TestAsset("src/main.py")
+        payload = TestAsset("src/check_package_version.py")
 
         # Create a job with invalid requirements
         job_bad_requirement = jobs.submit_file(
             payload.path,
             self.compute_pool,
             stage_name="payload_stage",
-            args=["foo"],
+            args=["nonexistent_package"],
             pip_requirements=["nonexistent_package"],
             external_access_integrations=pypi_eais,
             session=self.session,
@@ -773,7 +782,7 @@ class JobManagerTest(JobTestBase):
             payload.path,
             self.compute_pool,
             stage_name="payload_stage",
-            args=["foo"],
+            args=["tabulate"],
             pip_requirements=["tabulate"],
             external_access_integrations=None,
             session=self.session,
@@ -784,7 +793,7 @@ class JobManagerTest(JobTestBase):
             payload.path,
             self.compute_pool,
             stage_name="payload_stage",
-            args=["foo"],
+            args=["tabulate"],
             pip_requirements=["tabulate"],
             external_access_integrations=pypi_eais,
             session=self.session,
@@ -812,28 +821,29 @@ class JobManagerTest(JobTestBase):
 
         # Job with valid requirements and EAI should succeed
         self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
-        self.assertRegex(job_logs, r"Successfully installed\s+.*\btabulate[-\d\.]*\b")
-        self.assertIn("[foo] Job complete", job_logs)
+        self.assertRegex(job_logs, r"tabulate version: \d+\.\d+\.\d+")
 
         # Job with conflicting requirement should prefer the user specified package
-        self.assertEqual(
-            job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs(verbose=True)
-        )
+        self.assertEqual(job_dep_conflict.wait(), "DONE", job_dep_conflict_logs := job_dep_conflict.get_logs())
         self.assertIn("Numpy version: 2.0.0", job_dep_conflict_logs)
 
     @parameterized.parameters(  # type: ignore[misc]
-        "cloudpickle~=2.0",
-        "cloudpickle~=3.0",
+        ("cloudpickle~=2.0", r"cloudpickle version: 2\.\d+"),
+        ("cloudpickle~=3.0", r"cloudpickle version: 3\.\d+"),
     )
-    def test_job_cached_packages(self, package: str) -> None:
+    def test_job_cached_packages(self, package: str, expected_version_pattern: str) -> None:
         """Test that cached packages are available without requiring network access."""
-
-        job = self._submit_func_as_file(dummy_function, pip_requirements=[package])
-        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
-        self.assertTrue(
-            package in job_logs or "Successfully installed" in job_logs,
-            "Didn't find expected package log:" + job_logs,
+        payload = TestAsset("src/check_package_version.py")
+        job = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            args=[package],
+            pip_requirements=[package],
+            session=self.session,
         )
+        self.assertEqual(job.wait(), "DONE", job_logs := job.get_logs(verbose=True))
+        self.assertRegex(job_logs, expected_version_pattern)
 
     def test_job_arctic_training(self) -> None:
         """Test that arctic-training can be run as a job."""

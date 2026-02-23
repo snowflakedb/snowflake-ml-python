@@ -703,7 +703,7 @@ class ModelVersionSQLTest(absltest.TestCase):
             f"""
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
-                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, COL2, 0.5, 40)
+                 TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(COL1, COL2, 0.5::FLOAT, 40)
                      OVER (PARTITION BY {partition_column}))
             """,
             m_df,
@@ -828,7 +828,7 @@ class ModelVersionSQLTest(absltest.TestCase):
             SELECT *,
             FROM TEMP."test".SNOWPARK_TEMP_TABLE_ABCDEF0123,
                  TABLE(MODEL(TEMP."test".MODEL, V1)!PREDICT_TABLE(object_construct_keep_null("""
-            f"""'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.5))
+            f"""'COL1', COL1, 'COL2', COL2, 'TEMPERATURE', 0.5::FLOAT))
                      OVER (PARTITION BY {partition_column}))
             """,
             m_df,

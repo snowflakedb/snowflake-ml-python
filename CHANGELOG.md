@@ -1,6 +1,25 @@
 # Release History
 
-## 1.28.0
+## 1.29.0
+
+### New Features
+
+* Model serving: Introducing `InferenceEngine.PYTHON_GENERIC` enum value.
+  Users can pass `InferenceEngine.PYTHON_GENERIC` to use a Python-based inference server for model serving.
+
+### Bug Fixes
+
+* Registry: Fixed a bug where using inference parameters (ParamSpec) with table function or
+  partitioned model methods would fail at runtime with a `NameError`.
+* Registry: Fixed a bug where MLflow models with string columns failed during inference with
+  "Can not safely convert string to \<U0\>" errors due to MLflow's schema validation not handling
+  `pd.StringDtype` correctly.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.28.0 (2026-02-17)
 
 ### New Features
 
