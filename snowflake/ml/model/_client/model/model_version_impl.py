@@ -11,7 +11,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
-from snowflake.ml.model import openai_signatures, task, type_hints
+from snowflake.ml.model import inference_engine, openai_signatures, task, type_hints
 from snowflake.ml.model._client.model import (
     batch_inference_specs,
     inference_engine_utils,
@@ -1088,7 +1088,10 @@ class ModelVersion(lineage_node.LineageNode):
         """
         inference_engine_args = inference_engine_utils._get_inference_engine_args(inference_engine_options)
 
-        if inference_engine_args is not None:
+        if (
+            inference_engine_args is not None
+            and inference_engine_args.inference_engine == inference_engine.InferenceEngine.VLLM
+        ):
             # Validate that model is HuggingFace vLLM supported model and is logged with
             # OpenAI compatible signature.
             self._check_huggingface_vllm_supported_model(statement_params)
@@ -1186,7 +1189,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integration: Optional[str] = None,
         block: bool = True,
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
@@ -1252,7 +1255,7 @@ class ModelVersion(lineage_node.LineageNode):
         force_rebuild: bool = False,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:
@@ -1333,7 +1336,7 @@ class ModelVersion(lineage_node.LineageNode):
         build_external_access_integration: Optional[str] = None,
         build_external_access_integrations: Optional[list[str]] = None,
         block: bool = True,
-        autocapture: bool = False,
+        autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
     ) -> Union[str, async_job.AsyncJob]:

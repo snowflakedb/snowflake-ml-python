@@ -83,17 +83,17 @@ class PayloadUtilsTests(parameterized.TestCase):
         (TestAsset("src/main.py"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 1),
         (TestAsset("src/main.py"), None, "/mnt/job_stage/app/main.py", 1),
         # Entrypoint as relative path inside payload directory
-        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 28),
+        (TestAsset("src"), TestAsset("main.py", resolve_path=False), "/mnt/job_stage/app/main.py", 29),
         (
             TestAsset("src"),
             TestAsset("subdir/sub_main.py", resolve_path=False),
             "/mnt/job_stage/app/subdir/sub_main.py",
-            28,
+            29,
         ),
         (TestAsset("src/subdir"), TestAsset("sub_main.py", resolve_path=False), "/mnt/job_stage/app/sub_main.py", 2),
         # Entrypoint as absolute path
-        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 28),
-        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 28),
+        (TestAsset("src"), TestAsset("src/main.py"), "/mnt/job_stage/app/main.py", 29),
+        (TestAsset("src"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/subdir/sub_main.py", 29),
         (TestAsset("src/subdir"), TestAsset("src/subdir/sub_main.py"), "/mnt/job_stage/app/sub_main.py", 2),
         # Function as payload
         (function_with_pos_arg, pathlib.Path("function_payload.py"), "/mnt/job_stage/app/function_payload.py", 1),
@@ -135,14 +135,14 @@ class PayloadUtilsTests(parameterized.TestCase):
             1,
         ),
         (TestAsset("src/main.py"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 1),
-        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 28),
-        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 28),
+        (TestAsset("src"), f"@{_TEST_STAGE}/main.py", None, "/mnt/job_stage/app/main.py", 29),
+        (TestAsset("src"), f"@{_TEST_STAGE}/", f"@{_TEST_STAGE}/main.py", "/mnt/job_stage/app/main.py", 29),
         (
             TestAsset("src"),
             f"@{_TEST_STAGE}/",
             f"@{_TEST_STAGE}/subdir/sub_main.py",
             "/mnt/job_stage/app/subdir/sub_main.py",
-            28,
+            29,
         ),
         (
             TestAsset("src"),
@@ -238,7 +238,7 @@ class PayloadUtilsTests(parameterized.TestCase):
             "entrypoint": f"@{_TEST_STAGE}/subdir/sub_main.py",
             "imports": [(f"@{_TEST_STAGE}/subdir/utils/tool.py", "subdir.utils.tool")],
             "expected_entrypoint": "/mnt/job_stage/app/subdir/sub_main.py",
-            "expected_file_count": 29,
+            "expected_file_count": 30,
         },
         {
             "source": f"@{_TEST_STAGE}/subdir",

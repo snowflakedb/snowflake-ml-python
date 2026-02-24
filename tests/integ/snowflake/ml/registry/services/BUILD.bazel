@@ -105,14 +105,14 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_mv_run_test.py"],
     optional_dependencies = ["llm"],
-    shard_count = 4,
+    shard_count = 12,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/models:huggingface_pipeline",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 
@@ -188,6 +188,8 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
     ],
 )
 

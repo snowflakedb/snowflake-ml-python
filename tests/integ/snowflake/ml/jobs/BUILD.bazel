@@ -97,6 +97,22 @@ py_test(
     name = "multi_node_jobs_integ_test",
     timeout = "long",
     srcs = ["multi_node_jobs_integ_test.py"],
+    shard_count = 1,
+    tags = [
+        "feature:jobs",
+    ],
+    deps = [
+        ":job_test_base",
+        "//snowflake/ml/jobs",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "distributed_estimator_jobs_integ_test",
+    timeout = "long",
+    srcs = ["distributed_estimator_jobs_integ_test.py"],
     optional_dependencies = [
         "lightgbm",
     ],

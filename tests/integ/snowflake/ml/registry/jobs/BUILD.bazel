@@ -245,18 +245,6 @@ py_test(
 )
 
 py_test(
-    name = "registry_huggingface_pipeline_batch_inference_gpu_test",
-    timeout = "eternal",
-    srcs = ["registry_huggingface_pipeline_batch_inference_gpu_test.py"],
-    optional_dependencies = ["transformers"],
-    shard_count = 2,
-    tags = ["feature:model_serving"],
-    deps = [
-        ":registry_batch_inference_test_base",
-    ],
-)
-
-py_test(
     name = "registry_huggingface_pipeline_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_huggingface_pipeline_batch_inference_test.py"],
@@ -361,6 +349,21 @@ py_test(
     name = "registry_batch_inference_explainability_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_explainability_test.py"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_batch_inference_cse_stage_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_cse_stage_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+    ],
+    optional_dependencies = ["transformers"],
     shard_count = 1,
     tags = ["feature:model_serving"],
     deps = [

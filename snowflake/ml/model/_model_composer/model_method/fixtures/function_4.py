@@ -10,6 +10,7 @@ from types import TracebackType
 from typing import Optional, Type
 
 import anyio
+import numpy as np
 import pandas as pd
 from _snowflake import vectorized
 

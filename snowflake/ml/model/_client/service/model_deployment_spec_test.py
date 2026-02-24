@@ -29,6 +29,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 ingress_enabled=True,
                 min_instances=1,
                 max_instances=5,
+                autocapture=None,
             )
 
             assert mds.workspace_path
@@ -185,6 +186,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=10,
                 max_batch_rows=1024,
+                autocapture=True,
             )
             file_path_str = mds.save()
 
@@ -213,6 +215,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                             "gpu": "1",
                             "num_workers": 10,
                             "max_batch_rows": 1024,
+                            "autocapture": True,
                         },
                     },
                 )

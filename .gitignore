@@ -408,3 +408,6 @@ html_coverage_report/
 
 # Claude local
 CLAUDE.local.md
+
+# MCP server configuration
+.mcp.json

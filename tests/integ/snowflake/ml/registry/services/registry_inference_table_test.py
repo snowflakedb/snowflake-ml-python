@@ -1,15 +1,70 @@
+import json
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 import pytest
 from absl.testing import absltest, parameterized
 from sklearn.ensemble import RandomForestRegressor
 
-from snowflake.ml.model import ModelVersion
+from snowflake.ml.model import ModelVersion, custom_model, model_signature
 from tests.integ.snowflake.ml.registry.services.registry_model_deployment_test_base import (
     RegistryModelDeploymentTestBase,
 )
+
+
+class ModelWithScalarParams(custom_model.CustomModel):
+    """Custom model with scalar parameters for testing autocapture with records format."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        temperature: float = 0.2,  # intentionally different from ParamSpec default
+        max_tokens: int = 10,  # intentionally different from ParamSpec default
+    ) -> pd.DataFrame:
+        input_value = input_df["value"].iloc[0]
+        output_value = input_value * temperature + max_tokens
+        return pd.DataFrame(
+            {
+                "output": [output_value],
+                "received_temperature": [temperature],
+                "received_max_tokens": [max_tokens],
+            }
+        )
+
+
+class ModelWithComplexParams(custom_model.CustomModel):
+    """Custom model with complex param types (list, nested list, bool)."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        learning_rate: float = -1.0,
+        use_gpu: bool = False,
+        weights: list[float] = [],  # noqa: B006
+        nested_config: list[list[int]] = [],  # noqa: B006
+    ) -> pd.DataFrame:
+        input_value = input_df["value"].iloc[0]
+        weights_sum = sum(weights) if weights else 0.0
+        return pd.DataFrame(
+            {
+                "output": [input_value * learning_rate + weights_sum],
+                "received_learning_rate": [learning_rate],
+                "received_use_gpu": [use_gpu],
+                "received_weights": [weights],
+                "received_nested_config": [nested_config],
+            }
+        )
 
 
 @pytest.mark.spcs_deployment_image
@@ -248,6 +303,240 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
                 service_name=service_name,
             )
         self.assertIn("Feature autocapture is not supported.", str(context.exception))
+
+    def test_autocapture_records_format_with_partial_params(self):
+        """Test that autocapture only captures explicitly provided params, not defaults."""
+        service_name = f"autocapture_params_test_{self._run_id}"
+
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        model = ModelWithScalarParams(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
+        sample_output = model.predict(sample_input, temperature=0.7, max_tokens=100)
+
+        params = [
+            model_signature.ParamSpec(
+                name="temperature",
+                dtype=model_signature.DataType.FLOAT,
+                default_value=0.7,
+            ),
+            model_signature.ParamSpec(
+                name="max_tokens",
+                dtype=model_signature.DataType.INT64,
+                default_value=100,
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
+        )
+
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # Send request with only temperature param (not max_tokens)
+        records_payload = {
+            "dataframe_records": [{"value": 10.0}],
+            "params": {"temperature": 0.9},
+        }
+
+        result_df = self._inference_using_rest_api(records_payload, endpoint=endpoint, target_method="predict")
+
+        # Verify inference used provided temperature=0.9 and ParamSpec default max_tokens=100
+        # output = 10.0 * 0.9 + 100 = 109.0
+        self.assertAlmostEqual(result_df["output"].iloc[0], 109.0, places=5)
+        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.9, places=5)
+        self.assertEqual(result_df["received_max_tokens"].iloc[0], 100)
+
+        # Query INFERENCE_TABLE expecting 1 record from the records_payload request
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=1, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+
+        record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
+
+        # temperature was explicitly provided -- should be captured with the correct value
+        self.assertIn(
+            "snow.model_serving.request.params.temperature",
+            record_attributes,
+            "Expected 'temperature' to be captured since it was explicitly provided.",
+        )
+        self.assertAlmostEqual(
+            record_attributes["snow.model_serving.request.params.temperature"],
+            0.9,
+            places=5,
+            msg="Captured temperature value should match the request-provided value.",
+        )
+
+        # max_tokens was NOT provided -- should not be captured
+        self.assertNotIn(
+            "snow.model_serving.request.params.max_tokens",
+            record_attributes,
+            "Expected 'max_tokens' to NOT be captured since only the default value was used.",
+        )
+
+        # Validate standard keys are present with correct values
+        self.assertIn("snow.model_serving.request.data.value", record_attributes)
+        self.assertAlmostEqual(
+            record_attributes["snow.model_serving.request.data.value"],
+            10.0,
+            places=5,
+            msg="Captured input feature value should match the request.",
+        )
+        self.assertIn("snow.model_serving.request.timestamp", record_attributes)
+        self.assertIn("snow.model_serving.response.timestamp", record_attributes)
+        self.assertIn("snow.model_serving.response.code", record_attributes)
+        self.assertIn("snow.model_serving.function.name", record_attributes)
+
+    def test_autocapture_split_format_with_complex_params(self):
+        """Test autocapture with split format and complex param types (list, nested list, bool).
+        Only some params are provided; defaults should be excluded from capture.
+        """
+        service_name = f"autocapture_split_complex_test_{self._run_id}"
+
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        model = ModelWithComplexParams(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
+        sample_output = model.predict(
+            sample_input,
+            learning_rate=0.01,
+            use_gpu=True,
+            weights=[1.0, 2.0, 3.0],
+            nested_config=[[1, 2], [3, 4]],
+        )
+
+        params = [
+            model_signature.ParamSpec(name="learning_rate", dtype=model_signature.DataType.DOUBLE, default_value=0.01),
+            model_signature.ParamSpec(name="use_gpu", dtype=model_signature.DataType.BOOL, default_value=False),
+            model_signature.ParamSpec(
+                name="weights",
+                dtype=model_signature.DataType.DOUBLE,
+                default_value=[1.0, 2.0, 3.0],
+                shape=(-1,),
+            ),
+            model_signature.ParamSpec(
+                name="nested_config",
+                dtype=model_signature.DataType.INT64,
+                default_value=[[1, 2], [3, 4]],
+                shape=(2, 2),
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
+        )
+
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # Send split format with weights (list) and use_gpu (bool) provided.
+        # learning_rate (scalar) and nested_config (nested list) use defaults -- excluded from capture.
+        split_payload = {
+            "dataframe_split": {
+                "index": [0],
+                "columns": ["value"],
+                "data": [[10.0]],
+            },
+            "params": {
+                "weights": [4.5, 3.5, 2.5],
+                "use_gpu": True,
+            },
+        }
+
+        result_df = self._inference_using_rest_api(split_payload, endpoint=endpoint, target_method="predict")
+
+        # output = 10.0 * 0.01 (default learning_rate) + sum([4.5, 3.5, 2.5]) = 0.1 + 10.5 = 10.6
+        self.assertAlmostEqual(result_df["output"].iloc[0], 10.6, places=3)
+
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=1, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+
+        record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
+
+        # Provided list param should be captured with correct value
+        self.assertIn(
+            "snow.model_serving.request.params.weights",
+            record_attributes,
+            "Expected list param 'weights' to be captured since it was explicitly provided.",
+        )
+        self.assertEqual(
+            record_attributes["snow.model_serving.request.params.weights"],
+            "[4.5,3.5,2.5]",
+            "Captured weights value should match the request-provided list.",
+        )
+        # Provided bool param should be captured with correct value
+        self.assertIn(
+            "snow.model_serving.request.params.use_gpu",
+            record_attributes,
+            "Expected bool param 'use_gpu' to be captured since it was explicitly provided.",
+        )
+        self.assertEqual(
+            record_attributes["snow.model_serving.request.params.use_gpu"],
+            True,
+            "Captured use_gpu value should be True.",
+        )
+
+        # Default scalar param should NOT be captured
+        self.assertNotIn(
+            "snow.model_serving.request.params.learning_rate",
+            record_attributes,
+            "Expected 'learning_rate' to NOT be captured since only the default was used.",
+        )
+        # Default nested list param should NOT be captured
+        self.assertNotIn(
+            "snow.model_serving.request.params.nested_config",
+            record_attributes,
+            "Expected 'nested_config' to NOT be captured since only the default was used.",
+        )
+
+        # Validate standard keys are present with correct values
+        self.assertIn("snow.model_serving.request.data.value", record_attributes)
+        self.assertAlmostEqual(
+            record_attributes["snow.model_serving.request.data.value"],
+            10.0,
+            places=5,
+            msg="Captured input feature value should match the request.",
+        )
+        self.assertIn("snow.model_serving.request.timestamp", record_attributes)
+        self.assertIn("snow.model_serving.response.timestamp", record_attributes)
+        self.assertIn("snow.model_serving.response.code", record_attributes)
+        self.assertIn("snow.model_serving.function.name", record_attributes)
 
 
 if __name__ == "__main__":

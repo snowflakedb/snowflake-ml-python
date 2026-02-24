@@ -967,7 +967,6 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=True,
                 build_external_access_integrations=["EAI"],
                 block=True,
-                autocapture=False,
             )
             mock_create_service.assert_called_once_with(
                 database_name=None,
@@ -994,7 +993,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=False,
+                autocapture=None,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -1047,7 +1046,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=False,
+                autocapture=None,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -1100,7 +1099,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=False,
+                autocapture=None,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -1154,7 +1153,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 statement_params=mock.ANY,
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
-                autocapture=False,
+                autocapture=None,
             )
 
     def test_list_services(self) -> None:
@@ -1307,6 +1306,88 @@ class ModelVersionImplTest(absltest.TestCase):
             call_args = mock_create_service.call_args
 
             self.assertIsNone(call_args.kwargs["inference_engine_args"])
+
+    def test_create_service_with_python_generic_inference_engine(self) -> None:
+        """Test create_service with PYTHON_GENERIC inference engine options.
+
+        When PYTHON_GENERIC is specified, it should:
+        - NOT call _check_huggingface_vllm_supported_model (VLLM-only validation)
+        - NOT enrich inference engine args (VLLM-only enrichment like tensor-parallel-size)
+        - Pass the inference engine args directly to create_service
+        """
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch.object(
+                self.m_mv, "_check_huggingface_vllm_supported_model"
+            ) as mock_check_huggingface_vllm_supported_model,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
+        ):
+            # Test with PYTHON_GENERIC inference engine
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                gpu_requests="2",
+                inference_engine_options={
+                    "engine": inference_engine.InferenceEngine.PYTHON_GENERIC,
+                },
+            )
+
+            # HuggingFace/VLLM validation should NOT be called for PYTHON_GENERIC
+            mock_check_huggingface_vllm_supported_model.assert_not_called()
+
+            # Verify create_service was called with the correct inference_engine_args
+            mock_create_service.assert_called_once()
+            call_args = mock_create_service.call_args
+
+            # Check that inference_engine is passed correctly
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine,
+                inference_engine.InferenceEngine.PYTHON_GENERIC,
+            )
+
+            # Check that inference_engine_args_override is None (not enriched for PYTHON_GENERIC)
+            self.assertIsNone(call_args.kwargs["inference_engine_args"].inference_engine_args_override)
+
+    def test_create_service_with_python_generic_inference_engine_with_args_override(self) -> None:
+        """Test create_service with PYTHON_GENERIC inference engine with custom args override."""
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch.object(
+                self.m_mv, "_check_huggingface_vllm_supported_model"
+            ) as mock_check_huggingface_vllm_supported_model,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
+        ):
+            # Test with PYTHON_GENERIC inference engine and custom args
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+                gpu_requests="2",
+                inference_engine_options={
+                    "engine": inference_engine.InferenceEngine.PYTHON_GENERIC,
+                    "engine_args_override": ["--custom-arg=value", "--another-arg"],
+                },
+            )
+
+            # HuggingFace/VLLM validation should NOT be called for PYTHON_GENERIC
+            mock_check_huggingface_vllm_supported_model.assert_not_called()
+
+            # Verify create_service was called with the correct inference_engine_args
+            mock_create_service.assert_called_once()
+            call_args = mock_create_service.call_args
+
+            # Check that inference_engine is passed correctly
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine,
+                inference_engine.InferenceEngine.PYTHON_GENERIC,
+            )
+
+            # Check that engine_args_override is passed through unchanged (not enriched)
+            self.assertEqual(
+                call_args.kwargs["inference_engine_args"].inference_engine_args_override,
+                ["--custom-arg=value", "--another-arg"],
+            )
 
     def test_repr_html_happy_path_with_functions_and_metrics(self) -> None:
         """Test _repr_html_ method with functions and metrics present."""

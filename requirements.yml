@@ -1,6 +1,7 @@
 ---
 # Add requirements information here and use `bazel run --config=pre_build //bazel/requirements:sync_requirements`
-# to generate all other requirements files.
+# to generate all other requirements files. If there is an internal testing dependency, please also sync
+# the internal requirements file using `bazel run --config=pre_build //ci/internal:sync_internal_requirements`.
 # Please provide the following fields when adding a new record:
 # # Package Name Fields
 
@@ -252,9 +253,10 @@
   version_requirements: '>=3.17.3,<5'
 - name: snowflake.core
   dev_version: 1.0.5
-  version_requirements: '>=1.0.2,<2'
+  # Removed from runtime dependencies - snowflake-snowpark-python brings it in transitively.
+  # Keeping as dev dependency for tests that use snowflake.core.Root and snowflake.core.task.Task.
 - name: snowflake-snowpark-python
-  dev_version: 1.28.0
+  dev_version: 1.38.0
   version_requirements: '>=1.17.0,<2,!=1.26.0'
 - name: sphinx
   dev_version: 5.0.2

@@ -132,7 +132,6 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
-            use_model_logging=True,
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(
                 inference_engine,
             ),

@@ -219,6 +219,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 hf_model_args=service_ops.HFModelArgs(**huggingface_args) if huggingface_args else None,
                 progress_status=create_mock_progress_status(),
                 inference_engine_args=None,
+                autocapture=False,
             )
             mock_add_model_spec.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
@@ -400,7 +401,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=False,
+                autocapture=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -562,7 +563,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="1",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=False,
+                autocapture=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -919,7 +920,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=False,
+                autocapture=None,
             )
 
             # This is the key assertion - verify add_inference_engine_spec was called
@@ -1086,7 +1087,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=False,
+                autocapture=None,
             )
 
             # key assertions -- image build is not called and inference engine model is called
@@ -1124,6 +1125,251 @@ class ServiceOpsTest(parameterized.TestCase):
                 include_message=False,
                 statement_params=self.m_statement_params,
             )
+
+    def test_create_service_with_python_generic_inference_engine(self) -> None:
+        """Test create_service with PYTHON_GENERIC inference engine.
+
+        When PYTHON_GENERIC is specified, it should:
+        - Call add_inference_engine_spec with PYTHON_GENERIC
+        - Skip image build (same as VLLM)
+        """
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status="PENDING",
+                container_status="PENDING",
+                message=None,
+            )
+        ]
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ) as _mock_create_stage,  # noqa: F841
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ) as mock_save,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ) as mock_add_model_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(
+                file_utils, "upload_directory_to_stage", return_value=None
+            ) as _mock_upload_directory_to_stage,  # noqa: F841
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ) as mock_deploy_model,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ) as mock_get_service_container_statuses,
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
+        ):
+            # Call create_service with PYTHON_GENERIC inference engine (no args override)
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                min_instances=0,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="2",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=False,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
+                statement_params=self.m_statement_params,
+                inference_engine_args=service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.PYTHON_GENERIC,
+                    inference_engine_args_override=None,
+                ),
+                progress_status=create_mock_progress_status(),
+            )
+
+            # Verify model spec was added
+            mock_add_model_spec.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+            )
+
+            # Verify service spec was added
+            mock_add_service_spec.assert_called_once_with(
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                ingress_enabled=True,
+                min_instances=0,
+                max_instances=1,
+                cpu="1",
+                memory="6GiB",
+                gpu="2",
+                num_workers=1,
+                max_batch_rows=1024,
+                autocapture=False,
+            )
+
+            # Key assertion: verify add_inference_engine_spec was called with PYTHON_GENERIC
+            mock_add_inference_engine_spec.assert_called_once_with(
+                inference_engine=inference_engine.InferenceEngine.PYTHON_GENERIC,
+                inference_engine_args=None,
+            )
+
+            # Image build should be skipped when inference engine is specified
+            mock_add_image_build_spec.assert_not_called()
+
+            mock_save.assert_called_once()
+            mock_deploy_model.assert_called_once()
+            mock_get_service_container_statuses.assert_called_once()
+
+    def test_create_service_with_python_generic_inference_engine_with_args(self) -> None:
+        """Test create_service with PYTHON_GENERIC inference engine and custom args override."""
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        m_statuses = [
+            service_sql.ServiceStatusInfo(
+                service_status=service_sql.ServiceStatus.PENDING,
+                instance_id=0,
+                instance_status="PENDING",
+                container_status="PENDING",
+                message=None,
+            )
+        ]
+
+        # Custom args for PYTHON_GENERIC
+        test_inference_engine_args = ["--custom-arg=value", "--another-arg"]
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_model_spec",
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_image_build_spec",
+            ) as mock_add_image_build_spec,
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_inference_engine_spec",
+            ) as mock_add_inference_engine_spec,
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=m_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                return_value=None,
+            ),
+        ):
+            # Call create_service with PYTHON_GENERIC inference engine with custom args
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                min_instances=0,
+                max_instances=1,
+                cpu_requests="1",
+                memory_requests="6GiB",
+                gpu_requests="2",
+                num_workers=1,
+                max_batch_rows=1024,
+                force_rebuild=False,
+                build_external_access_integrations=[sql_identifier.SqlIdentifier("EXTERNAL_ACCESS_INTEGRATION")],
+                block=True,
+                statement_params=self.m_statement_params,
+                inference_engine_args=service_ops.InferenceEngineArgs(
+                    inference_engine=inference_engine.InferenceEngine.PYTHON_GENERIC,
+                    inference_engine_args_override=test_inference_engine_args,
+                ),
+                progress_status=create_mock_progress_status(),
+            )
+
+            # Key assertion: verify add_inference_engine_spec was called with PYTHON_GENERIC and custom args
+            mock_add_inference_engine_spec.assert_called_once_with(
+                inference_engine=inference_engine.InferenceEngine.PYTHON_GENERIC,
+                inference_engine_args=test_inference_engine_args,
+            )
+
+            # Image build should be skipped when inference engine is specified
+            mock_add_image_build_spec.assert_not_called()
 
     @parameterized.parameters(  # type: ignore[misc]
         {

@@ -167,7 +167,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                     check_res,
                 ),
             },
-            use_model_logging=True,
             use_inference_image_builder=use_inference_image_builder,
         )
 

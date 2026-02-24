@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -14,12 +14,15 @@
 #       quarantined: Run quarantined tests.
 #       local_unit: run all unit tests affected by target defined by -t
 #       local_all: run all tests including integration tests affected by target defined by -t
+#       targeted: run specific Bazel targets defined by --targets
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
 #   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.10)
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
 #   --with-spcs-image: use spcs image for testing.
+#   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")
+#   --test-filter: filter to run specific test class/method (e.g., "TestClassName.test_method")
 #
 
 set -o pipefail
@@ -33,24 +36,40 @@ SF_ENV="prod3"
 WITH_SPCS_IMAGE=false
 TAG_FILTERS=""
 PYTHON_VERSION=""
+TARGETED_BAZEL_TARGETS=""
+TEST_FILTER=""
 PROG=$0
 
 action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]"
     echo ""
     echo "Options:"
-    echo "  -p <version>        Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
-    echo "  --tags <tags>       Specify bazel tag filters (comma-separated)"
-    echo "  --with-spcs-image   Use spcs image for testing."
+    echo "  -p <version>           Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
+    echo "  --tags <tags>          Specify bazel tag filters (comma-separated)"
+    echo "  --with-spcs-image      Use spcs image for testing."
+    echo "  --targets <targets>    Comma-separated Bazel targets for targeted mode (e.g., '//path:target,//path/...')"
+    echo "  --test-filter <filter> Filter to run specific test class/method (e.g., 'TestClassName.test_method')"
+    echo ""
+    echo "Modes:"
+    echo "  merge_gate      Run affected tests only"
+    echo "  continuous_run  Run all tests (default, for nightly runs)"
+    echo "  quarantined     Run quarantined tests"
+    echo "  local_unittest  Run unit tests affected by -t target"
+    echo "  local_all       Run all tests affected by -t target"
+    echo "  perf            Run performance tests"
+    echo "  targeted        Run specific Bazel targets (requires --targets, runs in separate groups)"
     echo ""
     echo "Examples:"
     echo "  ${PROG} test --tags 'feature:jobs'"
     echo "  ${PROG} test --tags 'feature:jobs,feature:data'"
     echo "  ${PROG} test -p 3.13"
     echo "  ${PROG} test -m continuous_run -p 3.14"
+    echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/model:registry_sklearn_model_test'"
+    echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/services/...' -p 3.11"
+    echo "  ${PROG} test -m targeted --targets '//tests/integ/snowflake/ml/registry/model:registry_sklearn_model_test' --test-filter 'test_skl_model'"
     exit "${exit_code}"
 }
 
@@ -62,7 +81,7 @@ while (($#)); do
     case $1 in
     -m | --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" || $1 = "targeted" ]]; then
             mode=$1
         else
             help 1
@@ -96,6 +115,14 @@ while (($#)); do
         shift
         TAG_FILTERS="$1"
         ;;
+    --targets)
+        shift
+        TARGETED_BAZEL_TARGETS="$1"
+        ;;
+    --test-filter)
+        shift
+        TEST_FILTER="$1"
+        ;;
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
@@ -112,6 +139,55 @@ done
 if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
     if [[ -z "${target}" ]]; then
         help 1
+    fi
+elif [[ "${mode}" = "targeted" ]]; then
+    # Targeted mode only supports test action
+    if [[ "${action}" != "test" ]]; then
+        echo "Error: targeted mode only supports 'test' action, not '${action}'"
+        exit 1
+    fi
+    # Validate that --targets is provided for targeted mode
+    if [[ -z "${TARGETED_BAZEL_TARGETS}" ]]; then
+        echo "Error: --targets is required for targeted mode"
+        help 1
+    fi
+    # Security validation for Bazel targets
+    # Allow: alphanumeric, underscore, slash, dot, colon, at-sign, dash, comma (for multiple targets), ellipsis (...)
+    IFS=',' read -ra TARGET_ARRAY <<< "${TARGETED_BAZEL_TARGETS}"
+    VALIDATED_TARGETS=()
+    for tgt in "${TARGET_ARRAY[@]}"; do
+        # Trim leading/trailing whitespace using bash parameter expansion
+        tgt="${tgt#"${tgt%%[![:space:]]*}"}"
+        tgt="${tgt%"${tgt##*[![:space:]]}"}"
+        # Skip empty elements
+        if [[ -z "${tgt}" ]]; then
+            continue
+        fi
+        # Must start with //
+        if [[ ! "${tgt}" =~ ^// ]]; then
+            echo "Error: Invalid target '${tgt}'. Bazel targets must start with '//'"
+            exit 1
+        fi
+        # Only allow safe characters (alphanumeric, underscore, slash, dot, colon, at-sign, dash)
+        if [[ ! "${tgt}" =~ ^//[a-zA-Z0-9_/.:@-]+$ ]]; then
+            echo "Error: Invalid target '${tgt}'. Contains disallowed characters."
+            echo "Allowed characters: alphanumeric, underscore, slash, dot, colon, at-sign, dash"
+            exit 1
+        fi
+        VALIDATED_TARGETS+=("${tgt}")
+    done
+    # Ensure at least one valid target after filtering
+    if [[ ${#VALIDATED_TARGETS[@]} -eq 0 ]]; then
+        echo "Error: No valid targets provided after parsing"
+        exit 1
+    fi
+    TARGET_ARRAY=("${VALIDATED_TARGETS[@]}")
+    # Security validation for test filter (if provided)
+    if [[ -n "${TEST_FILTER}" ]]; then
+        if [[ ! "${TEST_FILTER}" =~ ^[a-zA-Z0-9_.]+$ ]]; then
+            echo "Error: Invalid test filter '${TEST_FILTER}'. Only alphanumeric, underscore, and dot are allowed."
+            exit 1
+        fi
     fi
 else
     "${bazel}" clean
@@ -218,19 +294,36 @@ perf)
     fi
 
     ;;
+targeted)
+    # Targeted mode: run specific Bazel targets directly
+    cache_test_results="--cache_test_results=no"
+    query_expr=""
+    ;;
 *)
     help 1
     ;;
 esac
 
-# Query all targets
-all_test_targets_query_file=${working_dir}/all_test_targets_query
-printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
-all_test_targets_file=${working_dir}/all_test_targets
-"${bazel}" query --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
+# Build test filter flag if specified (for targeted mode)
+test_filter_flag=""
+if [[ -n "${TEST_FILTER}" ]]; then
+    test_filter_flag="--test_filter=${TEST_FILTER}"
+fi
 
-if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
-    exit 0
+# For targeted mode: write targets directly to file; for other modes: run query
+all_test_targets_file=${working_dir}/all_test_targets
+if [[ "${mode}" = "targeted" ]]; then
+    # Write validated targets to file (TARGET_ARRAY was populated during validation)
+    printf "%s\n" "${TARGET_ARRAY[@]}" > "${all_test_targets_file}"
+else
+    # Query all targets
+    all_test_targets_query_file=${working_dir}/all_test_targets_query
+    printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
+    "${bazel}" query --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
+
+    if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
+        exit 0
+    fi
 fi
 
 # Read groups from optional_dependency_groups.bzl
@@ -340,6 +433,7 @@ if [[ "${action}" = "test" ]]; then
             ${TEST_OUTPUT_FLAG} \
             ${action_env[@]+"${action_env[@]}"} \
             "${tag_filter}" \
+            ${test_filter_flag} \
             --target_pattern_file "${group_test_targets_files[$i]}"
         group_bazel_exit_codes[$i]=$?
     done
@@ -402,5 +496,33 @@ for i in "${!groups[@]}"; do
         exit_code=1
     fi
 done
+
+# Print compact summary for targeted mode
+if [[ "${mode}" = "targeted" ]]; then
+    # Build groups summary string
+    groups_summary=""
+    for i in "${!groups[@]}"; do
+        group="${groups[$i]}"
+        if [[ -s "${group_test_targets_files[$i]}" ]]; then
+            if [[ ${group_bazel_exit_codes[$i]} -eq 0 ]]; then
+                groups_summary+="${group}(OK) "
+            else
+                groups_summary+="${group}(FAIL) "
+            fi
+        fi
+    done
+
+    result_str="SUCCESS"
+    if [[ ${exit_code} -ne 0 ]]; then
+        result_str="FAILED"
+    fi
+
+    echo ""
+    echo "--- Targeted Test Summary ---"
+    echo "Result: ${result_str} | Groups: ${groups_summary}"
+    echo "Targets: ${TARGETED_BAZEL_TARGETS}"
+    echo "Env: ${SF_ENV} | Python: ${PYTHON_VERSION}${TEST_FILTER:+ | Test Filter: ${TEST_FILTER}}"
+    echo "-----------------------------"
+fi
 
 exit $exit_code

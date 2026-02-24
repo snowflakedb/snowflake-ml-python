@@ -49,13 +49,6 @@ class RegistryVLLMParamsTestBase(registry_model_deployment_test_base.RegistryMod
         if cls._original_hf_endpoint:
             os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
 
-    def setUp(self) -> None:
-        super().setUp()
-        # These tests require the updated inference server image that supports params.
-        # Skip if not running with image override (i.e., using the latest built images).
-        # if not self._has_image_override():
-        #     self.skipTest("Skipping vLLM params tests: requires image override with updated inference server.")
-
     def _create_vllm_model(self) -> huggingface.TransformersPipeline:
         """Create a HuggingFace model for vLLM testing."""
         return huggingface.TransformersPipeline(

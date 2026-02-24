@@ -447,14 +447,14 @@ class FeatureSpec(BaseFeatureSpec):
     @classmethod
     def from_mlflow_spec(
         cls, input_spec: Union["mlflow.types.ColSpec", "mlflow.types.TensorSpec"], feature_name: str
-    ) -> "FeatureSpec":
+    ) -> BaseFeatureSpec:
         import mlflow
 
         if isinstance(input_spec, mlflow.types.ColSpec):
             name = input_spec.name
             if name is None:
                 name = feature_name
-            return FeatureSpec(name=name, dtype=DataType.from_numpy_type(input_spec.type.to_numpy()))
+            return _convert_mlflow_col_type(name, input_spec.type)
         elif isinstance(input_spec, mlflow.types.TensorSpec):
             if len(input_spec.shape) == 1:
                 shape = None
@@ -577,6 +577,72 @@ class FeatureGroupSpec(BaseFeatureSpec):
         if shape:
             shape = tuple(shape)
         return FeatureGroupSpec(name=input_dict["name"], specs=specs, shape=shape)
+
+
+def _convert_mlflow_col_type(
+    name: str,
+    mlflow_type: Any,
+) -> BaseFeatureSpec:
+    """Convert an MLflow column type to a Snowflake BaseFeatureSpec.
+
+    Handles MLflow DataType (scalars), Array (nested lists/arrays), and Object (dicts).
+
+    Args:
+        name: The feature name.
+        mlflow_type: The MLflow type from a ColSpec (DataType, Array, or Object).
+
+    Returns:
+        A FeatureSpec for scalar/array types, or FeatureGroupSpec for object types.
+
+    Raises:
+        SnowflakeMLException: If the MLflow column type is not supported.
+    """
+    import mlflow
+
+    if isinstance(mlflow_type, mlflow.types.schema.DataType):
+        return FeatureSpec(name=name, dtype=DataType.from_numpy_type(mlflow_type.to_numpy()))
+
+    if isinstance(mlflow_type, mlflow.types.schema.Array):
+        depth = 0
+        inner = mlflow_type
+        while isinstance(inner, mlflow.types.schema.Array):
+            depth += 1
+            inner = inner.dtype
+
+        if isinstance(inner, mlflow.types.schema.Object):
+            group = _convert_mlflow_object(name, inner)
+            group._shape = (-1,) * depth
+            return group
+
+        return FeatureSpec(
+            name=name,
+            dtype=DataType.from_numpy_type(inner.to_numpy()),
+            shape=(-1,) * depth,
+        )
+
+    if isinstance(mlflow_type, mlflow.types.schema.Object):
+        return _convert_mlflow_object(name, mlflow_type)
+
+    raise snowml_exceptions.SnowflakeMLException(
+        error_code=error_codes.NOT_IMPLEMENTED,
+        original_exception=NotImplementedError(f"MLflow column type {type(mlflow_type)} is not supported."),
+    )
+
+
+def _convert_mlflow_object(name: str, mlflow_obj: Any) -> FeatureGroupSpec:
+    """Convert an MLflow Object type to a FeatureGroupSpec.
+
+    Args:
+        name: The feature name.
+        mlflow_obj: An mlflow.types.schema.Object instance.
+
+    Returns:
+        A FeatureGroupSpec with child specs for each property.
+    """
+    specs: list[BaseFeatureSpec] = []
+    for prop in mlflow_obj.properties:
+        specs.append(_convert_mlflow_col_type(prop.name, prop.dtype))
+    return FeatureGroupSpec(name=name, specs=specs)
 
 
 class BaseParamSpec(ABC):

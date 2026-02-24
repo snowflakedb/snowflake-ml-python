@@ -4,6 +4,7 @@ from snowflake.ml._internal import init_utils
 
 from .access_manager import setup_feature_store
 from .feature import Feature
+from .stream_source import StreamSource
 
 pkg_dir = os.path.dirname(__file__)
 pkg_name = __name__
@@ -14,4 +15,5 @@ for k, v in exportable_classes.items():
 __all__ = list(exportable_classes.keys()) + [
     "setup_feature_store",
     "Feature",
+    "StreamSource",
 ]

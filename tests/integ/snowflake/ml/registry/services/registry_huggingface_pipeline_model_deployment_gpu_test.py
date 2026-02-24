@@ -133,7 +133,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
-            use_model_logging=True,
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(
                 inference_engine,
                 base_inference_engine_options,
@@ -410,7 +409,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 self.assertIn("content", row[0]["message"])
                 self.assertGreater(len(row[0]["message"]["content"]), 0)
 
-        # Test with use_model_logging=False and OPENAI_CHAT_SIGNATURE
         self._test_registry_model_deployment(
             model=model,
             prediction_assert_fns={
@@ -421,7 +419,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
-            use_model_logging=False,
             inference_engine_options=self._get_inference_engine_options_for_inference_engine("vLLM"),
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )

@@ -49,6 +49,24 @@ def format_param_value_for_sql(value: Any) -> str:
     return str(value)
 
 
+def format_param_value_for_table_function_sql(value: Any) -> str:
+    """Format a parameter value for table function SQL invocation with explicit type casts.
+
+    Table functions enforce strict argument type matching. Snowflake infers bare float
+    literals like ``1.0`` as ``NUMBER``, not ``FLOAT``, causing type mismatch errors.
+
+    Args:
+        value: The parameter value to format.
+
+    Returns:
+        A string representation suitable for table function SQL invocation.
+    """
+    base = format_param_value_for_sql(value)
+    if isinstance(value, float):
+        return f"{base}::FLOAT"
+    return base
+
+
 def validate_params(
     params: Optional[dict[str, Any]],
     signature_params: Optional[Sequence[core.BaseParamSpec]],

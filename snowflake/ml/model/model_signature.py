@@ -144,6 +144,18 @@ def _rename_signature_with_snowflake_identifiers(
     return signature
 
 
+def _shape_matches(actual_shape: tuple[int, ...], spec_shape: tuple[int, ...]) -> bool:
+    """Check if an actual data shape satisfies a spec shape, where -1 means any size."""
+    if len(actual_shape) != len(spec_shape):
+        return False
+    return all(s == -1 or s == a for a, s in zip(actual_shape, spec_shape))
+
+
+def _has_fixed_dimensions(shape: tuple[int, ...]) -> bool:
+    """Return True if shape has at least one fixed (non-variable) dimension."""
+    return any(d != -1 for d in shape)
+
+
 def _validate_array_or_series_type(
     arr: Union[type_hints._SupportedNumpyArray, pd.Series], feature_type: core.DataType, strict: bool = False
 ) -> bool:
@@ -301,8 +313,10 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                         ),
                     )
 
-                if ft_shape and ft_shape != (-1,):
-                    if not all(np.shape(converted_data) == ft_shape for converted_data in converted_data_list):
+                if ft_shape and _has_fixed_dimensions(ft_shape):
+                    if not all(
+                        _shape_matches(np.shape(converted_data), ft_shape) for converted_data in converted_data_list
+                    ):
                         raise snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INVALID_DATA,
                             original_exception=ValueError(
@@ -331,9 +345,8 @@ def _validate_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureS
                     )
 
                 ft_shape = feature._shape
-                if ft_shape and ft_shape != (-1,):
-                    if not all(np.shape(data_row) == ft_shape for data_row in data_col):
-                        ft_shape = (-1,)
+                if ft_shape and _has_fixed_dimensions(ft_shape):
+                    if not all(_shape_matches(np.shape(data_row), ft_shape) for data_row in data_col):
                         raise snowml_exceptions.SnowflakeMLException(
                             error_code=error_codes.INVALID_DATA,
                             original_exception=ValueError(

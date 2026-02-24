@@ -48,6 +48,12 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
     FeatureStoreMetadataManager,
+    MetadataObjectType,
+    MetadataType,
+)
+from snowflake.ml.feature_store.stream_source import (
+    _LIST_STREAM_SOURCE_SCHEMA,
+    StreamSource,
 )
 from snowflake.ml.feature_store.tile_sql_generator import MergingSqlGenerator
 from snowflake.ml.utils import sql_client
@@ -150,6 +156,7 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("storage_config", StringType()),
     ]
 )
+
 
 # Default storage config JSON strings for list_feature_views output
 _DEFAULT_STORAGE_CONFIG_JSON = StorageConfig().to_json()  # {"format": "snowflake"}
@@ -1657,6 +1664,255 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Failed to delete entity: {e}."),
             ) from e
         logger.info(f"Deleted Entity {name}.")
+
+    # =========================================================================
+    # Stream Source APIs
+    # =========================================================================
+
+    @dispatch_decorator()
+    def register_stream_source(self, stream_source: StreamSource) -> StreamSource:
+        """
+        Register a StreamSource in the FeatureStore.
+
+        Args:
+            stream_source: StreamSource object to be registered.
+
+        Returns:
+            A registered StreamSource object with owner populated.
+
+        Raises:
+            SnowflakeMLException: [RuntimeError] Failed to save stream source metadata.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> from snowflake.snowpark.types import (
+            ...     StructType, StructField, StringType, FloatType, TimestampType,
+            ... )
+            >>> txn_source = StreamSource(
+            ...     name="transaction_events",
+            ...     schema=StructType([
+            ...         StructField("user_id", StringType()),
+            ...         StructField("amount", FloatType()),
+            ...         StructField("event_time", TimestampType()),
+            ...     ]),
+            ...     desc="Real-time transaction events",
+            ... )
+            >>> fs.register_stream_source(txn_source)
+            >>> fs.list_stream_sources().show()
+            -------------------------------------------------------------------------------------...
+            |"NAME"                |"SCHEMA"  |"DESC"                    |"OWNER"     |
+            -------------------------------------------------------------------------------------...
+            |TRANSACTION_EVENTS    |[...]     |Real-time transaction...  |REGTEST_RL  |
+            -------------------------------------------------------------------------------------...
+
+        """
+        logging.warning("'StreamSource' is in private preview since 1.8.5. Do not use it in production.")
+
+        if self._metadata_manager.stream_source_exists(stream_source.name.resolved()):
+            warnings.warn(
+                f"StreamSource {stream_source.name} already exists. Skip registration.",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return self.get_stream_source(stream_source.name)
+
+        owner = self._session.get_current_role()
+        stream_source.owner = owner
+
+        metadata = stream_source._to_dict()
+        try:
+            self._metadata_manager.save_stream_source(
+                name=stream_source.name.resolved(),
+                metadata=metadata,
+            )
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to register stream source `{stream_source.name}`: {e}."),
+            ) from e
+
+        logger.info(f"Registered StreamSource {stream_source}.")
+
+        return self.get_stream_source(stream_source.name)
+
+    @dispatch_decorator()
+    def get_stream_source(self, name: str) -> StreamSource:
+        """
+        Retrieve a previously registered StreamSource object.
+
+        Args:
+            name: StreamSource name.
+
+        Returns:
+            StreamSource object.
+
+        Raises:
+            SnowflakeMLException: [ValueError] StreamSource is not found.
+            SnowflakeMLException: [RuntimeError] Failed to retrieve stream source metadata.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> ss = fs.get_stream_source("transaction_events")
+            >>> print(ss)
+            StreamSource(name=TRANSACTION_EVENTS, ...)
+
+        """
+        name_id = SqlIdentifier(name)
+        try:
+            metadata = self._metadata_manager.get_stream_source_metadata(name_id.resolved())
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to retrieve stream source: {e}"),
+            ) from e
+
+        if metadata is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"Cannot find StreamSource with name: {name_id}."),
+            )
+
+        return StreamSource._from_dict(metadata)
+
+    @dispatch_decorator()
+    def list_stream_sources(self) -> DataFrame:
+        """
+        List all StreamSources in the FeatureStore.
+
+        Returns:
+            Snowpark DataFrame containing the results with columns:
+            NAME, SCHEMA, DESC, OWNER.
+
+        Raises:
+            SnowflakeMLException: If the metadata query fails.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> fs.list_stream_sources().show()
+            -------------------------------------------------------------------------------------...
+            |"NAME"                |"SCHEMA"  |"DESC"                    |"OWNER"     |
+            -------------------------------------------------------------------------------------...
+            |TRANSACTION_EVENTS    |[...]     |Real-time transaction...  |REGTEST_RL  |
+            -------------------------------------------------------------------------------------...
+
+        """
+        if not self._metadata_manager.table_exists():
+            return self._session.create_dataframe([], schema=_LIST_STREAM_SOURCE_SCHEMA)
+
+        try:
+            return self._session.sql(
+                f"""
+                    SELECT
+                        METADATA:name::VARCHAR AS "NAME",
+                        METADATA:schema::VARCHAR AS "SCHEMA",
+                        METADATA:desc::VARCHAR AS "DESC",
+                        METADATA:owner::VARCHAR AS "OWNER"
+                    FROM {self._metadata_manager.table_path}
+                    WHERE OBJECT_TYPE = '{MetadataObjectType.STREAM_SOURCE.value}'
+                    AND METADATA_TYPE = '{MetadataType.STREAM_SOURCE_CONFIG.value}'
+                    ORDER BY "NAME"
+                    """
+            )
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to list stream sources: {e}"),
+            ) from e
+
+    @dispatch_decorator()
+    def delete_stream_source(self, name: str) -> None:
+        """
+        Delete a previously registered StreamSource.
+
+        The StreamSource can only be deleted if no active FeatureViews reference it.
+
+        Args:
+            name: Name of the StreamSource to be deleted.
+
+        Raises:
+            SnowflakeMLException: [ValueError] StreamSource with given name not found.
+            SnowflakeMLException: [ValueError] Cannot delete due to active references.
+            SnowflakeMLException: [RuntimeError] Failed to delete stream source.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> fs.delete_stream_source("transaction_events")
+
+        """
+        name_id = SqlIdentifier(name)
+
+        if not self._metadata_manager.stream_source_exists(name_id.resolved()):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_FOUND,
+                original_exception=ValueError(f"StreamSource {name_id} does not exist."),
+            )
+
+        # Check for active feature view references
+        ref_count = self._metadata_manager.get_stream_source_ref_count(name_id.resolved())
+        if ref_count > 0:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.SNOWML_DELETE_FAILED,
+                original_exception=ValueError(
+                    f"Cannot delete StreamSource {name_id}: has {ref_count} active reference(s)."
+                ),
+            )
+
+        try:
+            self._metadata_manager.delete_stream_source_metadata(name_id.resolved())
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Failed to delete stream source: {e}."),
+            ) from e
+        logger.info(f"Deleted StreamSource {name_id}.")
+
+    @dispatch_decorator()
+    def update_stream_source(self, name: str, *, desc: Optional[str] = None) -> Optional[StreamSource]:
+        """Update a registered StreamSource description.
+
+        Args:
+            name: Name of the StreamSource to update.
+            desc: New description to apply. Default to None (no change).
+
+        Returns:
+            Updated StreamSource object, or None if the StreamSource doesn't exist.
+
+        Raises:
+            SnowflakeMLException: [RuntimeError] Failed to update stream source.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> fs.update_stream_source("transaction_events", desc="Updated description")
+            >>> fs.get_stream_source("transaction_events").desc
+            'Updated description'
+
+        """
+        name_id = SqlIdentifier(name)
+
+        if not self._metadata_manager.stream_source_exists(name_id.resolved()):
+            warnings.warn(
+                f"StreamSource {name_id} does not exist.",
+                stacklevel=2,
+                category=UserWarning,
+            )
+            return None
+
+        if desc is not None:
+            try:
+                self._metadata_manager.update_stream_source_desc(name_id.resolved(), desc)
+            except Exception as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                    original_exception=RuntimeError(f"Failed to update stream source `{name_id}`: {e}."),
+                ) from e
+
+        logger.info(f"Successfully updated StreamSource {name_id}.")
+        return self.get_stream_source(name_id)
 
     @dispatch_decorator()
     def retrieve_feature_values(
@@ -4450,7 +4706,7 @@ FROM SPINE{' '.join(join_clauses)}
                         f"{col} in exclude_columns not exists in dataframe columns: {df_cols}"
                     ),
                 )
-        return cast(DataFrame, df.drop(exclude_columns))
+        return cast(DataFrame, df.drop(exclude_columns))  # type: ignore[redundant-cast]
 
     def _is_dataset_enabled(self) -> bool:
         try:

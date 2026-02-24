@@ -1,8 +1,9 @@
 import os
 import pathlib
 import tempfile
-from typing import TYPE_CHECKING, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
 
+import numpy as np
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
@@ -21,6 +22,38 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import mlflow
+
+
+def _to_native_python(obj: Any) -> Any:
+    """Recursively convert numpy types to native Python types for JSON serialization.
+
+    MLflow's schema enforcement can inject numpy scalar types (e.g. numpy.int64)
+    into lists and dicts. These aren't JSON-serializable and must be converted
+    before returning results from a Snowflake UDF.
+
+    Args:
+        obj: The object to convert. Can be a numpy scalar, ndarray, list, dict, or any other type.
+
+    Returns:
+        The object with all numpy types replaced by their native Python equivalents.
+    """
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return [_to_native_python(x) for x in obj]
+    if isinstance(obj, list):
+        return [_to_native_python(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _to_native_python(v) for k, v in obj.items()}
+    return obj
+
+
+def _ensure_serializable_objects(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure object-dtype columns in a DataFrame contain JSON-serializable values."""
+    for col in df.columns:
+        if df[col].dtype == np.dtype("O"):
+            df[col] = df[col].map(_to_native_python)
+    return df
 
 
 def _parse_mlflow_env(model_uri: str, env: model_env.ModelEnv) -> model_env.ModelEnv:
@@ -217,10 +250,18 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model.inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                    # Convert pd.StringDtype columns to object dtype for MLflow compatibility.
+                    # MLflow's internal schema validation doesn't handle pd.StringDtype correctly
+                    # and fails with "Can not safely convert string to <U0" errors.
+                    for col in X.columns:
+                        if isinstance(X[col].dtype, pd.StringDtype):
+                            X[col] = X[col].astype(object)
+
                     res = raw_model.predict(X)
-                    return model_signature_utils.rename_pandas_df(
+                    result_df = model_signature_utils.rename_pandas_df(
                         model_signature._convert_local_data_to_df(res), features=signature.outputs
                     )
+                    return _ensure_serializable_objects(result_df)
 
                 return fn
 

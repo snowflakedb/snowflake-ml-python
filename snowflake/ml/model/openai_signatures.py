@@ -289,6 +289,16 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING = core.ModelS
 )
 
 
+# Centralized collection of all OpenAI chat signature specs for easy membership testing
+# NEW SIGNATURES SHOULD BE ADDED TO THIS TUPLE
+# Note: Using tuple instead of frozenset because ModelSignature is not hashable (has __eq__ but no __hash__)
+_OPENAI_CHAT_SIGNATURE_SPECS = (
+    _OPENAI_CHAT_SIGNATURE_SPEC,
+    _OPENAI_CHAT_SIGNATURE_SPEC_WITH_CONTENT_FORMAT_STRING,
+    _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC,
+    _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING,
+)
+
 # Refer vLLM documentation: https://docs.vllm.ai/en/stable/serving/openai_compatible_server/#chat-template
 
 # Use this if you prefer to use the content format string instead of the default ChatML template.

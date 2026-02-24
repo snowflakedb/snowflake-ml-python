@@ -87,12 +87,6 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         """Creates Snowpark and Snowflake environments for testing."""
         super().setUp()
 
-        # Enable model method signature parameters feature
-        try:
-            self.session.sql("ALTER SESSION SET ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = TRUE").collect()
-        except sp_exceptions.SnowparkSQLException:
-            self.skipTest("ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS is not available in this environment.")
-
         self._run_id = uuid.uuid4().hex
         self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
         self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
@@ -368,6 +362,334 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         # Verify the error message mentions the param validation
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
+
+
+class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase):
+    """Integration tests for table function inference with model parameters.
+
+    These tests verify that models registered as TABLE_FUNCTION work correctly
+    with ParamSpec parameters.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        self._run_id = uuid.uuid4().hex
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        super().tearDown()
+
+    def _log_table_function_model_with_params(self) -> "registry.ModelVersion":
+        model = DemoModelWithParams(custom_model.ModelContext())
+
+        sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        sample_output = model.predict(sample_input, temperature=1.5)
+
+        params = [
+            model_signature.ParamSpec(
+                name="temperature",
+                dtype=model_signature.DataType.FLOAT,
+                default_value=1.5,
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_tf_params_test_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"embed_local_ml_library": True, "function_type": "TABLE_FUNCTION"},
+        )
+
+        return mv
+
+    def test_table_function_inference_with_constant_params(self) -> None:
+        """Test that table function inference works correctly when params are constant."""
+        mv = self._log_table_function_model_with_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
+
+        result = mv.run(input_df, function_name="predict", params={"temperature": 2.0})
+
+        self.assertEqual(len(result), 4)
+        pd.testing.assert_series_equal(
+            result["output"].reset_index(drop=True),
+            pd.Series([2.0, 4.0, 6.0, 8.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result["temperature_used"] == 2.0))
+
+    def test_table_function_inference_with_varying_params_raises_error(self) -> None:
+        """Test that table function inference raises error when params differ across rows."""
+        mv = self._log_table_function_model_with_params()
+
+        model_name = mv.model_name
+        version_name = mv.version_name
+
+        sql = f"""
+            WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
+            test_data AS (
+                SELECT
+                    SEQ4() + 1 AS id,
+                    (SEQ4() + 1)::FLOAT AS feature
+                FROM TABLE(GENERATOR(ROWCOUNT => 1000))
+            )
+            SELECT *
+            FROM test_data,
+                TABLE(MODEL_VERSION_ALIAS!PREDICT(feature, id::FLOAT) OVER (PARTITION BY 1))
+        """
+
+        with self.assertRaises(sp_exceptions.SnowparkSQLException) as context:
+            self.session.sql(sql).collect()
+
+        error_message = str(context.exception)
+        self.assertIn("must be equal", error_message.lower())
+
+    def test_table_function_inference_with_null_params_uses_default(self) -> None:
+        """Test that NULL param values correctly fall back to defaults for table functions."""
+        mv = self._log_table_function_model_with_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        result = mv.run(input_df, function_name="predict")
+
+        self.assertEqual(len(result), 3)
+        pd.testing.assert_series_equal(
+            result["output"].reset_index(drop=True),
+            pd.Series([1.5, 3.0, 4.5], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result["temperature_used"] == 1.5))
+
+    def test_table_function_inference_with_explicit_sql_null_uses_default(self) -> None:
+        """Test that explicit SQL NULL param values fall back to defaults for table functions."""
+        mv = self._log_table_function_model_with_params()
+
+        model_name = mv.model_name
+        version_name = mv.version_name
+
+        sql = f"""
+            WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
+            test_data AS (
+                SELECT 1.0::FLOAT AS feature UNION ALL
+                SELECT 2.0::FLOAT AS feature UNION ALL
+                SELECT 3.0::FLOAT AS feature
+            )
+            SELECT
+                feature,
+                tf.output::FLOAT AS output,
+                tf.temperature_used::FLOAT AS temperature_used
+            FROM test_data,
+                TABLE(MODEL_VERSION_ALIAS!PREDICT(feature, NULL::FLOAT) OVER (PARTITION BY 1)) AS tf
+            ORDER BY feature
+        """
+
+        result = self.session.sql(sql).collect()
+
+        self.assertEqual(len(result), 3)
+        for i, row in enumerate(result):
+            expected_feature = float(i + 1)
+            self.assertAlmostEqual(row["OUTPUT"], expected_feature * 1.5, places=5)
+            self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.5, places=5)
+
+
+class DemoPartitionedModelWithParams(custom_model.CustomModel):
+    """Custom partitioned model that accepts inference parameters."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.partitioned_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        temperature: float = 1.5,
+    ) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "output": input_df["feature"] * temperature,
+                "temperature_used": [temperature] * len(input_df),
+            }
+        )
+
+
+class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
+    """Integration tests for partitioned inference with model parameters.
+
+    These tests verify that models using @partitioned_api work correctly
+    with ParamSpec parameters.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+
+        self._run_id = uuid.uuid4().hex
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        super().tearDown()
+
+    def _log_partitioned_model_with_params(self) -> "registry.ModelVersion":
+        model = DemoPartitionedModelWithParams(custom_model.ModelContext())
+
+        sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        sample_output = model.predict(sample_input, temperature=1.5)
+
+        params = [
+            model_signature.ParamSpec(
+                name="temperature",
+                dtype=model_signature.DataType.FLOAT,
+                default_value=1.5,
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_part_params_test_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={
+                "embed_local_ml_library": True,
+                "method_options": {"predict": {"function_type": "TABLE_FUNCTION"}},
+            },
+        )
+
+        return mv
+
+    def test_partitioned_inference_with_constant_params(self) -> None:
+        """Test that partitioned inference works correctly when params are constant."""
+        mv = self._log_partitioned_model_with_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
+
+        result = mv.run(input_df, function_name="predict", params={"temperature": 2.0})
+
+        self.assertEqual(len(result), 4)
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        pd.testing.assert_series_equal(
+            result_sorted["output"],
+            pd.Series([2.0, 4.0, 6.0, 8.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result_sorted["temperature_used"] == 2.0))
+
+    def test_partitioned_inference_with_varying_params_raises_error(self) -> None:
+        """Test that partitioned inference raises error when params differ across rows."""
+        mv = self._log_partitioned_model_with_params()
+
+        model_name = mv.model_name
+        version_name = mv.version_name
+
+        sql = f"""
+            WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
+            test_data AS (
+                SELECT
+                    SEQ4() + 1 AS id,
+                    (SEQ4() + 1)::FLOAT AS feature
+                FROM TABLE(GENERATOR(ROWCOUNT => 1000))
+            )
+            SELECT *
+            FROM test_data,
+                TABLE(MODEL_VERSION_ALIAS!PREDICT(feature, id::FLOAT) OVER (PARTITION BY 1))
+        """
+
+        with self.assertRaises(sp_exceptions.SnowparkSQLException) as context:
+            self.session.sql(sql).collect()
+
+        error_message = str(context.exception)
+        self.assertIn("must be equal", error_message.lower())
+
+    def test_partitioned_inference_with_null_params_uses_default(self) -> None:
+        """Test that NULL param values correctly fall back to defaults for partitioned models."""
+        mv = self._log_partitioned_model_with_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        result = mv.run(input_df, function_name="predict")
+
+        self.assertEqual(len(result), 3)
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        pd.testing.assert_series_equal(
+            result_sorted["output"],
+            pd.Series([1.5, 3.0, 4.5], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result_sorted["temperature_used"] == 1.5))
+
+    def test_partitioned_inference_with_explicit_sql_null_uses_default(self) -> None:
+        """Test that explicit SQL NULL param values fall back to defaults for partitioned models."""
+        mv = self._log_partitioned_model_with_params()
+
+        model_name = mv.model_name
+        version_name = mv.version_name
+
+        sql = f"""
+            WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
+            test_data AS (
+                SELECT 1.0::FLOAT AS feature UNION ALL
+                SELECT 2.0::FLOAT AS feature UNION ALL
+                SELECT 3.0::FLOAT AS feature
+            )
+            SELECT
+                feature,
+                tf.output::FLOAT AS output,
+                tf.temperature_used::FLOAT AS temperature_used
+            FROM test_data,
+                TABLE(MODEL_VERSION_ALIAS!PREDICT(feature, NULL::FLOAT) OVER (PARTITION BY 1)) AS tf
+            ORDER BY feature
+        """
+
+        result = self.session.sql(sql).collect()
+
+        self.assertEqual(len(result), 3)
+        for i, row in enumerate(result):
+            expected_feature = float(i + 1)
+            self.assertAlmostEqual(row["OUTPUT"], expected_feature * 1.5, places=5)
+            self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.5, places=5)
 
 
 if __name__ == "__main__":

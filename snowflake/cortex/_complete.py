@@ -7,7 +7,6 @@ from typing import Any, Callable, Iterator, Optional, TypedDict, Union, cast
 from urllib.parse import urlunparse
 
 import requests
-from snowflake.core.rest import RESTResponse
 from typing_extensions import NotRequired, deprecated
 
 from snowflake import snowpark
@@ -80,7 +79,7 @@ class MidStreamException(Exception):
     def __init__(
         self,
         reason: typing.Optional[str] = None,
-        http_resp: typing.Optional["RESTResponse"] = None,
+        http_resp: typing.Optional[Any] = None,
         request_id: typing.Optional[str] = None,
     ) -> None:
         message = ""

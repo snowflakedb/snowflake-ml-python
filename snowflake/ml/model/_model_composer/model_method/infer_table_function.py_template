@@ -5,6 +5,7 @@ import os
 import sys
 
 import anyio
+import numpy as np
 import pandas as pd
 from _snowflake import vectorized
 

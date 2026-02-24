@@ -30,6 +30,7 @@ py_library(
         "feature_store.py",
         "feature_view.py",
         "metadata_manager.py",
+        "stream_source.py",
         "tile_sql_generator.py",
     ],
     deps = [
@@ -67,6 +68,24 @@ py_test(
 py_test(
     name = "aggregation_test",
     srcs = ["aggregation_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "stream_source_test",
+    srcs = ["stream_source_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_stream_source_test",
+    srcs = ["feature_store_stream_source_test.py"],
     tags = ["feature:feature_store"],
     deps = [
         ":feature_store_lib",
