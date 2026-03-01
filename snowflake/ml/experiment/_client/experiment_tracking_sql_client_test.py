@@ -50,6 +50,21 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
 
         self.client.create_experiment(experiment_name, creation_mode=sql_client_utils.CreationMode(if_not_exists=True))
 
+    def test_get_experiment_id(self) -> None:
+        # Test getting experiment ID
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        # Mock result with experiment ID
+        mock_result = [row.Row(123)]
+
+        self.m_session.add_mock_sql(
+            "CALL SYSTEM$RESOLVE_EXPERIMENT_ID('TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT')",
+            self._create_mock_df(result=mock_result),
+        )
+
+        exp_id = self.client.get_experiment_id(experiment_name=experiment_name)
+        self.assertEqual(exp_id, 123)
+
     def test_drop_experiment(self) -> None:
         # Test dropping an experiment
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -80,6 +95,22 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         )
 
         self.client.commit_run(experiment_name=experiment_name, run_name=run_name)
+
+    def test_get_run_id(self) -> None:
+        # Test getting run ID
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        # Mock result with run ID
+        mock_result = [row.Row(456)]
+
+        self.m_session.add_mock_sql(
+            "CALL SYSTEM$RESOLVE_EXPERIMENT_RUN_ID('TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT', 'TEST_RUN')",
+            self._create_mock_df(result=mock_result),
+        )
+
+        run_id = self.client.get_run_id(experiment_name=experiment_name, run_name=run_name)
+        self.assertEqual(run_id, 456)
 
     def test_drop_run(self) -> None:
         # Test dropping a run from an experiment

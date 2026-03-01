@@ -28,8 +28,10 @@ py_library(
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:tee",
         "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
         "//snowflake/ml/experiment/_entities:entities",
+        "//snowflake/ml/experiment/_logging:logging",
         "//snowflake/ml/registry",
     ],
 )

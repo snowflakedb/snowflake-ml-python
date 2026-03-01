@@ -1,4 +1,5 @@
 import collections
+import re
 
 from absl.testing import absltest
 
@@ -8,6 +9,12 @@ from snowflake.ml._internal.exceptions import fileset_errors
 from snowflake.ml.fileset import fileset
 from snowflake.ml.test_utils import mock_data_frame
 from snowflake.snowpark import types
+
+
+def _normalize_whitespace(s: str) -> str:
+    """Collapse all whitespace sequences in `s` into a single space."""
+    return re.sub(r"\s+", " ", s).strip()
+
 
 MockResultMetaData = collections.namedtuple("MockResultMetaData", ["name", "type_code", "precision", "scale"])
 
@@ -121,16 +128,15 @@ class FileSetTest(absltest.TestCase):
                     expected_query = (
                         f" COPY  INTO '{stage_location}' FROM ("
                         f' SELECT  CAST ("{col_name.upper()}" AS {expected_type}) AS "{col_name.upper()}" FROM'
-                        f" (SELECT {col_name} FROM Mytable))"
+                        f" ( SELECT {col_name} FROM Mytable ))"
                         f" PARTITION BY '{fileset_name}'"
                         " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                         "  HEADER  = True"
                     )
-                    mock_cursor.execute.assert_called_with(
-                        expected_query,
-                        params=absltest.mock.ANY,
-                        _statement_params=absltest.mock.ANY,
-                        _dataframe_ast=absltest.mock.ANY,
+                    actual_query = mock_cursor.execute.call_args[0][0]
+                    self.assertEqual(
+                        _normalize_whitespace(expected_query),
+                        _normalize_whitespace(actual_query),
                     )
 
                     # FileSet.make() will shuffle rows by random if shuffle is true
@@ -143,16 +149,15 @@ class FileSetTest(absltest.TestCase):
                         expected_query = (
                             f" COPY  INTO '{stage_location}' FROM ("
                             f' SELECT  CAST ("{col_name.upper()}" AS {expected_type}) AS "{col_name.upper()}" FROM'
-                            f" (SELECT {col_name} FROM Mytable) ORDER BY random(1) ASC NULLS FIRST)"
+                            f" ( SELECT {col_name} FROM Mytable ) ORDER BY random(1) ASC NULLS FIRST)"
                             f" PARTITION BY '{fileset_name}'"
                             " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                             "  HEADER  = True"
                         )
-                        mock_cursor.execute.assert_called_with(
-                            expected_query,
-                            params=absltest.mock.ANY,
-                            _statement_params=absltest.mock.ANY,
-                            _dataframe_ast=absltest.mock.ANY,
+                        actual_query = mock_cursor.execute.call_args[0][0]
+                        self.assertEqual(
+                            _normalize_whitespace(expected_query),
+                            _normalize_whitespace(actual_query),
                         )
 
     def test_make_and_no_cast(self) -> None:
@@ -197,16 +202,15 @@ class FileSetTest(absltest.TestCase):
                     fileset.FileSet.make(target_stage_loc=stage_location, name=fileset_name, snowpark_dataframe=df)
                     expected_query = (
                         f" COPY  INTO '{stage_location}' FROM ( SELECT \"{col_name.upper()}\""
-                        f" FROM (SELECT {col_name} FROM Mytable))"
+                        f" FROM ( SELECT {col_name} FROM Mytable ))"
                         f" PARTITION BY '{fileset_name}'"
                         " FILE_FORMAT  = (  TYPE  = parquet )  max_file_size = 33554432 detailed_output = True "
                         "  HEADER  = True"
                     )
-                    mock_cursor.execute.assert_called_with(
-                        expected_query,
-                        params=absltest.mock.ANY,
-                        _statement_params=absltest.mock.ANY,
-                        _dataframe_ast=absltest.mock.ANY,
+                    actual_query = mock_cursor.execute.call_args[0][0]
+                    self.assertEqual(
+                        _normalize_whitespace(expected_query),
+                        _normalize_whitespace(actual_query),
                     )
 
     def test_make_fail_by_files_from_different_query(self) -> None:

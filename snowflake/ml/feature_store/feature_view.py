@@ -23,6 +23,7 @@ from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.aggregation import AggregationSpec
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
+from snowflake.ml.feature_store.tile_sql_generator import _TILE_START_COL
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -73,6 +74,69 @@ class OnlineConfig:
     def from_json(cls, json_str: str) -> OnlineConfig:
         data = json.loads(json_str)
         return cls(**data)
+
+
+@dataclass
+class RollupConfig:
+    """Configuration for rolling up a tiled FeatureView to a coarser entity level.
+
+    This enables creating subscriber-level features from visitor-level tiles,
+    or any similar hierarchical entity rollup. The rollup uses the same aggregation
+    logic as tile merging - mathematically identical operations applied across
+    entities instead of time.
+
+    Example::
+
+        >>> visitor_fv = fs.get_feature_view("visitor_events", "v1")
+        >>> subscriber_fv = FeatureView(
+        ...     name="subscriber_events",
+        ...     entities=[subscriber_entity],
+        ...     rollup_config=RollupConfig(
+        ...         source=visitor_fv,
+        ...         mapping_df=session.table("VISITOR_SUBSCRIBER_MAPPING"),
+        ...     ),
+        ... )
+
+    Args:
+        source: The parent tiled FeatureView to roll up from. Must be registered and tiled.
+        mapping_df: DataFrame containing the entity mapping (e.g., visitor_id → subscriber_id).
+            Must contain all join keys from source entity and target entity.
+            Expected to be a many-to-one mapping (many source keys → one target key).
+    """
+
+    source: FeatureView
+    mapping_df: DataFrame
+
+    def validate(self, target_entity_keys: list[str]) -> None:
+        """Validate the rollup configuration.
+
+        Args:
+            target_entity_keys: Join keys of the target (new) entity.
+
+        Raises:
+            ValueError: If validation fails.
+        """
+        # Source must be tiled
+        if not self.source.is_tiled:
+            raise ValueError("RollupConfig source must be a tiled FeatureView")
+
+        # Source must be registered
+        if self.source.status == FeatureViewStatus.DRAFT:
+            raise ValueError("RollupConfig source must be registered")
+
+        # Get column names from mapping
+        mapping_cols = {f.name.upper() for f in self.mapping_df.schema.fields}
+
+        # Source entity keys must exist in mapping
+        source_keys = [str(k).upper() for e in self.source.entities for k in e.join_keys]
+        for key in source_keys:
+            if key not in mapping_cols:
+                raise ValueError(f"Mapping must contain source join key '{key}'")
+
+        # Target entity keys must exist in mapping
+        for key in target_entity_keys:
+            if key.upper() not in mapping_cols:
+                raise ValueError(f"Mapping must contain target join key '{key}'")
 
 
 class StoreType(Enum):
@@ -298,7 +362,7 @@ class FeatureView(lineage_node.LineageNode):
         self,
         name: str,
         entities: list[Entity],
-        feature_df: DataFrame,
+        feature_df: Optional[DataFrame] = None,
         *,
         timestamp_col: Optional[str] = None,
         refresh_freq: Optional[str] = None,
@@ -310,6 +374,7 @@ class FeatureView(lineage_node.LineageNode):
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         features: Optional[list[Feature]] = None,
+        rollup_config: Optional[RollupConfig] = None,
         storage_config: Optional[StorageConfig] = None,
         **_kwargs: Any,
     ) -> None:
@@ -361,6 +426,10 @@ class FeatureView(lineage_node.LineageNode):
             features: List of aggregation feature definitions using the ``Feature`` class.
                 Required when ``feature_granularity`` is specified. Defines the aggregations
                 to compute (e.g., SUM, COUNT, LAST_N) with their windows.
+            rollup_config: Configuration for rolling up a tiled FeatureView to a coarser entity
+                level. When specified, this FeatureView will aggregate features from the source
+                FeatureView using the provided entity mapping. Cannot be used together with
+                ``feature_df``. See ``RollupConfig`` for details.
             storage_config: Configuration for storage format using ``StorageConfig``.
                 Supports Snowflake native format (default) or Iceberg format.
                 When using Iceberg, specify ``external_volume`` and optionally ``base_location``.
@@ -422,23 +491,72 @@ class FeatureView(lineage_node.LineageNode):
 
         # noqa: DAR401
         """
+        # Validate mutual exclusion of feature_df and rollup_config
+        if rollup_config is not None and feature_df is not None:
+            raise ValueError("Cannot specify both feature_df and rollup_config")
+        if rollup_config is None and feature_df is None:
+            raise ValueError("Must specify either feature_df or rollup_config")
+
+        # Validate that feature_granularity and features are not provided with rollup_config
+        if rollup_config is not None:
+            if feature_granularity is not None:
+                raise ValueError(
+                    "Cannot specify feature_granularity with rollup_config. "
+                    "Rollup feature views inherit feature_granularity from the source feature view."
+                )
+            if features is not None:
+                raise ValueError(
+                    "Cannot specify features with rollup_config. "
+                    "Rollup feature views inherit features from the source feature view."
+                )
 
         self._name: SqlIdentifier = SqlIdentifier(name)
         self._entities: list[Entity] = entities
-        self._feature_df: DataFrame = feature_df
-        self._timestamp_col: Optional[SqlIdentifier] = (
-            SqlIdentifier(timestamp_col) if timestamp_col is not None else None
-        )
+        self._rollup_config: Optional[RollupConfig] = rollup_config
+
+        # Declare types before branching so mypy can track them
+        self._feature_df: Optional[DataFrame] = None
+        self._timestamp_col: Optional[SqlIdentifier] = None
+        self._feature_granularity: Optional[str] = None
+        self._aggregation_specs: Optional[list[AggregationSpec]] = None
+
+        # Handle rollup initialization
+        if rollup_config is not None:
+            # Validate rollup config
+            target_keys = [str(k) for e in entities for k in e.join_keys]
+            rollup_config.validate(target_keys)
+
+            parent = rollup_config.source
+            self._timestamp_col = SqlIdentifier(_TILE_START_COL)
+            self._feature_granularity = parent.feature_granularity
+            self._aggregation_specs = parent.aggregation_specs
+            self._refresh_freq = refresh_freq or parent.refresh_freq
+            self._infer_schema_df = self._build_rollup_schema_df(rollup_config, entities)
+            self._query = ""  # Will be generated during registration
+        else:
+            self._feature_df = feature_df
+            self._timestamp_col = SqlIdentifier(timestamp_col) if timestamp_col is not None else None
+            self._feature_granularity = feature_granularity
+            self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
+            if features is not None:
+                self._aggregation_specs = [f.to_spec() for f in features]
+            self._refresh_freq = refresh_freq
+            self._infer_schema_df = _kwargs.pop("_infer_schema_df", self._feature_df)
+            self._query = self._get_query()
+
         self._desc: str = desc
-        self._infer_schema_df: DataFrame = _kwargs.pop("_infer_schema_df", self._feature_df)
-        self._query: str = self._get_query()
         self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
-        feature_names = self._get_feature_names()
-        self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = (
-            OrderedDict((f, "") for f in feature_names) if feature_names is not None else None
-        )
-        self._refresh_freq: Optional[str] = refresh_freq
+
+        # Feature names handling for rollup vs normal
+        self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = None
+        if rollup_config is not None:
+            # Inherit feature names from parent
+            self._feature_desc = rollup_config.source._feature_desc
+        else:
+            feature_names = self._get_feature_names()
+            self._feature_desc = OrderedDict((f, "") for f in feature_names) if feature_names is not None else None
+
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
         self._initialize: str = initialize
@@ -446,16 +564,20 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_mode: Optional[str] = refresh_mode
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
-        self._cluster_by: list[SqlIdentifier] = (
-            [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
-        )
-        self._online_config: Optional[OnlineConfig] = online_config
 
-        # Tile-based aggregation fields
-        self._feature_granularity: Optional[str] = feature_granularity
-        self._aggregation_specs: Optional[list[AggregationSpec]] = _kwargs.pop("_aggregation_specs", None)
-        if features is not None:
-            self._aggregation_specs = [f.to_spec() for f in features]
+        # Cluster by handling
+        if rollup_config is not None:
+            if cluster_by is not None:
+                self._cluster_by = [SqlIdentifier(col) for col in cluster_by]
+            else:
+                # Default cluster by for rollup: new entity keys + TILE_START
+                self._cluster_by = [k for e in entities for k in e.join_keys] + [SqlIdentifier(_TILE_START_COL)]
+        else:
+            self._cluster_by = (
+                [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
+            )
+
+        self._online_config: Optional[OnlineConfig] = online_config
 
         # For tiled FVs, re-initialize feature_descs with output column names (not source column names)
         # This ensures descriptions are keyed by the output columns users will see in datasets
@@ -472,7 +594,9 @@ class FeatureView(lineage_node.LineageNode):
         if _kwargs:
             raise TypeError(f"FeatureView.__init__ got an unexpected keyword argument: '{next(iter(_kwargs.keys()))}'")
 
-        self._validate()
+        # Skip validation for rollup FVs (they have different requirements)
+        if rollup_config is None:
+            self._validate()
 
     def slice(self, names: list[str]) -> FeatureViewSlice:
         """
@@ -674,7 +798,7 @@ class FeatureView(lineage_node.LineageNode):
         return self._entities
 
     @property
-    def feature_df(self) -> DataFrame:
+    def feature_df(self) -> Optional[DataFrame]:
         return self._feature_df
 
     @property
@@ -767,9 +891,28 @@ class FeatureView(lineage_node.LineageNode):
         """Check if this feature view uses tile-based aggregation.
 
         Returns:
-            True if feature_granularity and features are configured.
+            True if feature_granularity and features are configured,
+            or if this is a rollup feature view.
         """
         return self._feature_granularity is not None and self._aggregation_specs is not None
+
+    @property
+    def is_rollup(self) -> bool:
+        """Check if this feature view is a rollup of another tiled feature view.
+
+        Returns:
+            True if this feature view was created with rollup_config.
+        """
+        return self._rollup_config is not None
+
+    @property
+    def rollup_config(self) -> Optional[RollupConfig]:
+        """Get the rollup configuration if this is a rollup feature view.
+
+        Returns:
+            The RollupConfig used to create this feature view, or None.
+        """
+        return self._rollup_config
 
     @property
     def feature_granularity(self) -> Optional[str]:
@@ -814,6 +957,9 @@ class FeatureView(lineage_node.LineageNode):
         Returns:
             A Snowpark DataFrame contains feature information.
 
+        Raises:
+            ValueError: if the FeatureView has no feature DataFrame (e.g. unregistered rollup).
+
         Example::
 
             >>> fs = FeatureStore(...)
@@ -840,6 +986,8 @@ class FeatureView(lineage_node.LineageNode):
             --------------------------------------------------
 
         """
+        if self._feature_df is None:
+            raise ValueError("list_columns is not supported for rollup feature views without a feature DataFrame.")
         session = self._feature_df.session
         rows = []  # type: ignore[var-annotated]
 
@@ -980,6 +1128,7 @@ class FeatureView(lineage_node.LineageNode):
         return _FeatureViewMetadata(entity_names, ts_col, is_tiled=self.is_tiled, is_iceberg=is_iceberg)
 
     def _get_query(self) -> str:
+        assert self._feature_df is not None, "_get_query called without feature_df"
         if len(self._feature_df.queries["queries"]) != 1:
             raise ValueError(
                 f"""feature_df dataframe must contain only 1 query.
@@ -987,6 +1136,62 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 """
             )
         return str(self._feature_df.queries["queries"][0])
+
+    def _build_rollup_schema_df(
+        self,
+        rollup_config: RollupConfig,
+        entities: list[Entity],
+    ) -> DataFrame:
+        """Build a DataFrame for schema inference of rollup feature views.
+
+        Constructs a query that represents the rollup output schema by selecting
+        from the parent's tile table joined with the mapping table.
+
+        Args:
+            rollup_config: The rollup configuration.
+            entities: The target entities for the rollup FV.
+
+        Returns:
+            A DataFrame with the correct schema for the rollup output.
+        """
+        from snowflake.ml.feature_store.tile_sql_generator import RollupSqlGenerator
+
+        parent = rollup_config.source
+        mapping_df = rollup_config.mapping_df
+
+        assert parent.version is not None, "RollupConfig source must be registered (version required)"
+        assert parent.aggregation_specs is not None, "RollupConfig source must be tiled (aggregation_specs required)"
+
+        # Get session from mapping_df
+        session = mapping_df._session
+        assert session is not None, "mapping_df must have an active session"
+
+        # Build parent tile table path
+        parent_tile_table = (
+            f"{parent.database}.{parent.schema}." f"{FeatureView._get_physical_name(parent.name, parent.version)}"
+        )
+
+        # Get join keys
+        parent_join_keys = [str(k) for e in parent.entities for k in e.join_keys]
+        new_join_keys = [str(k) for e in entities for k in e.join_keys]
+
+        # Get mapping query
+        mapping_query = mapping_df.queries["queries"][0]
+
+        # Generate rollup SQL using the generator
+        generator = RollupSqlGenerator(
+            parent_tile_table=parent_tile_table,
+            parent_join_keys=parent_join_keys,
+            new_join_keys=new_join_keys,
+            mapping_query=mapping_query,
+            aggregation_specs=parent.aggregation_specs,
+        )
+        rollup_query = generator.generate()
+
+        # Wrap in a schema-only query (LIMIT 0 for no data, just schema)
+        schema_query = f"SELECT * FROM ({rollup_query}) WHERE 1=0"
+
+        return session.sql(schema_query)
 
     def _validate(self) -> None:
         if _FEATURE_VIEW_NAME_DELIMITER in self._name:
@@ -1175,7 +1380,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             fv_dict.pop("_feature_df")
         if "_infer_schema_df" in fv_dict:
             infer_schema_df = fv_dict.pop("_infer_schema_df")
-            fv_dict["_infer_schema_query"] = infer_schema_df.queries["queries"][0]
+            if infer_schema_df is not None:
+                fv_dict["_infer_schema_query"] = infer_schema_df.queries["queries"][0]
         fv_dict["_entities"] = [e._to_dict() for e in self._entities]
         fv_dict["_status"] = str(self._status)
         fv_dict["_name"] = str(self._name) if self._name is not None else None
@@ -1247,6 +1453,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             |        |]                         |                 |        |
             ----------------------------------------------------------------...
         """
+        assert self._feature_df is not None, "to_df requires feature_df"
         values = list(self._to_dict().values())
         schema = [x.lstrip("_") for x in list(self._to_dict().keys())]
         values.append(str(FeatureView._get_physical_name(self._name, self._version)))  # type: ignore[arg-type]

@@ -48,11 +48,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         pip_requirements: Optional[list[str]],
     ) -> None:
 
-        # TODO: Remove this once the proxy image that can handle content parts protocol
-        # is available in system repository.
-        if not self._has_image_override():
-            self.skipTest("Skipping test: image override environment variables not set.")
-
         import transformers
 
         model = transformers.pipeline(

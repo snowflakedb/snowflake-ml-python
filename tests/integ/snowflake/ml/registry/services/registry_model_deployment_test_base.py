@@ -40,19 +40,17 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     _BASE_GPU_IMAGE_SESSION_PARAM = "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL"
 
     def _get_image_override_session_params(self) -> dict[str, str]:
-        overrides: dict[str, str] = {
+        overrides: dict[str, Optional[str]] = {
             self._MODEL_LOGGER_SESSION_PARAM: self.MODEL_LOGGER_PATH,
             self._BASE_GPU_IMAGE_SESSION_PARAM: self.BASE_GPU_IMAGE_PATH,
             self._BASE_CPU_IMAGE_SESSION_PARAM: self.BASE_CPU_IMAGE_PATH,
             self._PROXY_SESSION_PARAM: self.PROXY_IMAGE_PATH,
             self._BUILDER_SESSION_PARAM: self.BUILDER_IMAGE_PATH,
+            self._INFERENCE_ENGINE_SESSION_PARAM: (
+                f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}' if self.VLLM_IMAGE_PATH is not None else None
+            ),
         }
-        result = {k: v for k, v in overrides.items() if v is not None}
-
-        if self.VLLM_IMAGE_PATH is not None:
-            result[self._INFERENCE_ENGINE_SESSION_PARAM] = f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}'
-
-        return result
+        return {k: v for k, v in overrides.items() if v is not None}
 
     def setUp(self) -> None:
         super().setUp()

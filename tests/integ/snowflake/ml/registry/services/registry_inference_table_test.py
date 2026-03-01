@@ -306,6 +306,11 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
     def test_autocapture_records_format_with_partial_params(self):
         """Test that autocapture only captures explicitly provided params, not defaults."""
+        # TODO: Remove this once the proxy image that can handle partial parameter autocapture
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         service_name = f"autocapture_params_test_{self._run_id}"
 
         try:
@@ -409,6 +414,11 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         """Test autocapture with split format and complex param types (list, nested list, bool).
         Only some params are provided; defaults should be excluded from capture.
         """
+        # TODO: Remove this once the proxy image that can handle partial parameter autocapture
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         service_name = f"autocapture_split_complex_test_{self._run_id}"
 
         try:

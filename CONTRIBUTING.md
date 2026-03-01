@@ -495,6 +495,19 @@ will be unstaged changes.
 
 If you are developing on Cloud Workspaces, install and use `pre-commit` in a conda environment with Python >=3.10.
 
+**Important**: The repository requires `pre-commit` version `>=3.4.0,<4`. If you have `pre-commit` 4.x installed,
+you'll encounter configuration errors due to incompatible stage names. Install the correct version with:
+
+```bash
+pip install 'pre-commit>=3.4.0,<4'
+```
+
+If you experience errors even after installing the correct version, clean the pre-commit cache and reinstall hooks:
+
+```bash
+pre-commit clean && pre-commit install --install-hooks
+```
+
 ### Darglint
 
 The [darglint](https://github.com/terrencepreilly/darglint) pre-commit hook lints docstrings to make sure they

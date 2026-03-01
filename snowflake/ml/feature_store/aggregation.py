@@ -77,6 +77,11 @@ class AggregationType(Enum):
 # Special window value for lifetime aggregations
 LIFETIME_WINDOW = "lifetime"
 
+# Internal column name prefixes used in tile tables.
+# WARNING: Changing these will break existing registered tiled feature views.
+_PARTIAL_COL_PREFIX = "_PARTIAL_"
+_CUMULATIVE_COL_PREFIX = "_CUM_"
+
 # Regex pattern for interval parsing: "1h", "24 hours", "30 minutes", etc.
 _INTERVAL_PATTERN = re.compile(
     r"^\s*(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\s*$",
@@ -312,7 +317,7 @@ class AggregationSpec:
         Returns:
             Column name used in the tile table (prefixed with _CUM_).
         """
-        return f"_CUM_{partial_type}_{self.source_column.upper()}"
+        return f"{_CUMULATIVE_COL_PREFIX}{partial_type}_{self.source_column.upper()}"
 
     def get_tile_column_name(self, partial_type: str) -> str:
         """Get the internal tile column name for a base partial aggregate.
@@ -332,7 +337,7 @@ class AggregationSpec:
         Returns:
             Column name used in the tile table (prefixed with _PARTIAL_).
         """
-        return f"_PARTIAL_{partial_type}_{self.source_column.upper()}"
+        return f"{_PARTIAL_COL_PREFIX}{partial_type}_{self.source_column.upper()}"
 
     def get_sql_column_name(self) -> str:
         """Get the output column name formatted for SQL.

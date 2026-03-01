@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import warnings
 from io import StringIO
@@ -8,7 +9,11 @@ from urllib.parse import quote
 from absl.testing import absltest
 
 from snowflake.ml._internal.utils import sql_identifier
-from snowflake.ml.experiment import _entities as entities, experiment_tracking
+from snowflake.ml.experiment import (
+    _entities as entities,
+    _logging as experiment_logging,
+    experiment_tracking,
+)
 from snowflake.ml.experiment._client import artifact
 from snowflake.snowpark import exceptions, session
 
@@ -38,6 +43,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.mock_registry_class.return_value = self.mock_registry
 
         experiment_tracking.ExperimentTracking._instance = None  # Reset singleton for test
+        experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY = "/tmp/experiment_tracking"
 
     def tearDown(self) -> None:
         self.sql_client_patcher.stop()
@@ -260,7 +266,6 @@ class ExperimentTrackingTest(absltest.TestCase):
     def test_delete_run(self) -> None:
         """Test deleting a run"""
         exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
-
         # Set up existing experiment
         experiment = exp.set_experiment("TEST_EXPERIMENT")
         run = exp.start_run("TEST_RUN")
@@ -653,6 +658,70 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertEqual(call_kwargs["run_name"].identifier(), "RUN2")
             self.assertEqual(call_kwargs["artifact_path"], rel_path)
             self.assertEqual(call_kwargs["target_path"], local_dir)
+
+    def test_set_live_logging_status(self) -> None:
+        # WARNING: This is the only unit test that should have live_logging_status set to True.
+        # Otherwise, the stdout/stderr patching from simultaneously running tests will interfere with this test.
+        """Test setting live logging status."""
+        stdout_message = "This is a test message to stdout."
+        stderr_message = "This is a test message to stderr."
+        stdout_message2 = "This is a second test message to stdout."
+        unpatched_message = "This message should not be logged."
+
+        self.mock_sql_client.get_experiment_id.return_value = 123
+        self.mock_sql_client.get_run_id.return_value = 456
+        stdout_logfile_path = os.path.join(
+            experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY, "123", "456", "STDOUT.log"
+        )
+        stderr_logfile_path = os.path.join(
+            experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY, "123", "456", "STDERR.log"
+        )
+
+        # Clean up the log files from previous test runs
+        if os.path.exists(stdout_logfile_path):
+            os.remove(stdout_logfile_path)
+        if os.path.exists(stderr_logfile_path):
+            os.remove(stderr_logfile_path)
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.start_run()
+        with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="EXTERNAL"):
+            with self.assertRaises(RuntimeError) as ctx:
+                exp.set_live_logging_status(True)
+            self.assertIn("Live logging is only supported in Snowpark Container Services (SPCS)", str(ctx.exception))
+
+        with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
+            exp.set_live_logging_status(True)
+            self.assertIsNotNone(exp._logging_context)
+            assert exp._logging_context is not None  # for mypy
+            self.assertEqual(exp._logging_context.stdout_logger.file.name, stdout_logfile_path)
+            self.assertEqual(exp._logging_context.stderr_logger.file.name, stderr_logfile_path)
+
+            print(stdout_message)  # noqa: T201
+            print(stderr_message, file=sys.stderr)  # noqa: T201
+
+            # Disable live logging
+            exp.set_live_logging_status(False)
+            self.assertIsNone(exp._logging_context)
+            print(unpatched_message)  # noqa: T201
+
+            # Re-enable live logging
+            exp.set_live_logging_status(True)
+            self.assertIsNotNone(exp._logging_context)
+            print(stdout_message2)  # noqa: T201
+
+        with open(stdout_logfile_path) as f:
+            log_contents = f.read()
+            self.assertIn(stdout_message, log_contents)
+            self.assertNotIn(stderr_message, log_contents)
+            self.assertIn(stdout_message2, log_contents)
+            self.assertNotIn(unpatched_message, log_contents)
+        with open(stderr_logfile_path) as f:
+            log_contents = f.read()
+            self.assertNotIn(stdout_message, log_contents)
+            self.assertIn(stderr_message, log_contents)
+            self.assertNotIn(stdout_message2, log_contents)
+            self.assertNotIn(unpatched_message, log_contents)
 
 
 if __name__ == "__main__":

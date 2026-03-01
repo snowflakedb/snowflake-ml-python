@@ -1,6 +1,19 @@
 # Release History
 
-## 1.29.0
+## 1.30.0
+
+### New Features
+
+* Experiment Tracking live logging (PrPr): In SPCS, call `set_live_logging_status(True)` to automatically capture and
+  persist outputs to stdout and stderr while a run is active. The captured logs can be viewed from the Experiments UI.
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.29.0 (2026-02-24)
 
 ### New Features
 
