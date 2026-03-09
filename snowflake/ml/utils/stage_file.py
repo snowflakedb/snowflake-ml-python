@@ -90,11 +90,22 @@ def list_stage_files(
         name = row_dict.get("name")
         if not name:
             raise RuntimeError(f"Unexpected LIST result format, missing 'name' column: {row_dict}")
-        # name looks like "<stage>/<relative_path>"
-        try:
-            _, relative_path = name.split("/", 1)
-        except ValueError:
-            raise RuntimeError(f"Unexpected LIST result format, invalid 'name' value: {name}")
+        # For external stages, name is a cloud URL like "s3://bucket/path/file.txt".
+        # For internal stages, name is like "stage_name/path/file.txt".
+        # We need the relative path after the stage root in both cases.
+        if "://" in name:
+            # External stage: strip scheme + bucket, e.g. "s3://bucket/path/file" -> "path/file"
+            after_scheme = name.split("://", 1)[1]
+            slash_idx = after_scheme.find("/")
+            if slash_idx == -1 or slash_idx == len(after_scheme) - 1:
+                raise RuntimeError(f"Unexpected LIST result format, invalid 'name' value: {name}")
+            relative_path = after_scheme[slash_idx + 1 :]
+        else:
+            # Internal stage: strip stage name prefix
+            try:
+                _, relative_path = name.split("/", 1)
+            except ValueError:
+                raise RuntimeError(f"Unexpected LIST result format, invalid 'name' value: {name}")
         fully_qualified = f"{fully_qualified_stage}/{relative_path}"
         file_paths.append((fully_qualified,))
 

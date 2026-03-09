@@ -71,17 +71,20 @@ class MLJobDefinitionTest(parameterized.TestCase):
         with patch(
             "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
             return_value=MagicMock(upload=MagicMock(return_value=self.uploaded_payload)),
-        ), patch("snowflake.ml.jobs.job_definition.payload_utils.get_payload_name", return_value="entry"):
+        ), patch("snowflake.ml.jobs.job_definition.payload_utils.get_payload_name", return_value="entry"), patch(
+            "snowflake.ml.jobs.job_definition.runtime_env_utils.get_runtime_image",
+            return_value="/snowflake/image/image_repo/test_image:test_flag",
+        ):
             result: job_definition.MLJobDefinition[[Any], Any] = job_definition.MLJobDefinition.register(
                 source="entry.py",
                 entrypoint="entry.py",
                 compute_pool="E2E_TEST_POOL",
                 stage_name="payload_stage",
                 session=self.session,
-                runtime_environment="test_flag",
+                runtime_environment="/snowflake/image/image_repo/test_image:test_flag",
                 generate_suffix=False,
             )
-            expected = self._expected_definition("test_flag")
+            expected = self._expected_definition("/snowflake/image/image_repo/test_image:test_flag")
             self.assertEqual(result.job_options, expected.job_options)
             self.assertEqual(result.spec_options, expected.spec_options)
             self.assertEqual(result.job_definition_id, expected.job_definition_id)

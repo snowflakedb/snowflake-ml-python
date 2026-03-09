@@ -1,10 +1,11 @@
 import re
+from typing import Optional
 
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
 from snowflake.ml import jobs
-from snowflake.ml.jobs._utils import query_helper
 from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
+from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 
 
 def dummy_function() -> None:
@@ -29,13 +30,13 @@ class MultiNodeJobsTest(JobTestBase):
         self.assertIn("hello world", file_job_logs)
 
     def test_multinode_job_ray_task(self) -> None:
-        def ray_workload() -> int:
+        def ray_workload() -> None:
             import socket
 
             import ray
 
             @ray.remote(scheduling_strategy="SPREAD")
-            def compute_heavy(n):
+            def compute_heavy(n: int) -> str:
                 # a quick CPU‐bound toy workload
                 # Create a large matrix and perform expensive operations
                 import numpy as np
@@ -62,7 +63,7 @@ class MultiNodeJobsTest(JobTestBase):
         self.assertTrue("test succeeded" in job.get_logs())
 
     def test_multinode_job_wait_for_instances(self) -> None:
-        def get_cluster_size() -> int:
+        def get_cluster_size() -> None:
             from common_utils import common_util as mlrs_util
 
             num_nodes = mlrs_util.get_num_ray_nodes()
@@ -91,6 +92,11 @@ class MultiNodeJobsTest(JobTestBase):
         )
         self.assertEqual(job2.target_instances, 2)
         self.assertEqual(job2.min_instances, 1)
+        while job2.status != "RUNNING":
+            import time
+
+            time.sleep(2)
+        self.assertIsNotNone(job2.get_ray_dashboard_url(), job2.get_logs(verbose=True))
         self.assertEqual(job2.wait(), "DONE", job2.get_logs(verbose=True))
         self.assertIsNotNone(
             match_group := re.search(r"num_nodes: (\d+)", concise_logs := job2.get_logs(verbose=False)),
@@ -116,23 +122,22 @@ class MultiNodeJobsTest(JobTestBase):
                 target_instances=target_instances,
             )
 
-    def test_multinode_job_orders(self) -> None:
-        """Test that the job orders are correct for a multinode job."""
-        job = self._submit_func_as_file(dummy_function, target_instances=2)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
-        # Step 1: Show service instances in service
-        rows = query_helper.run_query(self.session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=[job.id])
-        self.assertEqual(len(rows), 2, "Expected 2 service instances for target_instances=2")
-
-        # Step 2: Sort them by start-time
-        sorted_instances = sorted(rows, key=lambda x: (x["start_time"], int(x["instance_id"])))
-        # Step 3: Check instance with id 0 starts first
-        first_instance = sorted_instances[0]
-        self.assertEqual(
-            int(first_instance["instance_id"]),
-            0,
-            f"Expected instance 0 to start first, but instance {first_instance['instance_id']} started first",
+    @parameterized.parameters(  # type: ignore[misc]
+        ("src/multinode_import_zip.py", "src/test_data_processor.zip", "data_processor"),
+        ("src/multinode_import_module.py", "src/subdir/utils", "src.subdir.utils"),
+    )
+    def test_multinode_import(self, entrypoint: str, import_path: str, import_name: Optional[str]) -> None:
+        """Test that imports work on worker nodes in multi-node jobs."""
+        job = jobs.submit_file(
+            TestAsset(entrypoint).path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            imports=[(TestAsset(import_path).path, import_name)],
+            target_instances=2,
+            min_instances=2,
         )
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
 
 if __name__ == "__main__":

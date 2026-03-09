@@ -290,6 +290,15 @@ class ParamGroupSpecTest(absltest.TestCase):
         self.assertEqual(len(pg_training.specs), 2)
         self.assertIsInstance(pg_training.specs[1], core.ParamGroupSpec)
 
+        # Verify default_value: pg_optimizer has no shape (returns dict),
+        # pg_training has shape=(2,) (returns array of 2 dicts)
+        self.assertEqual(pg_optimizer.default_value, {"lr": 0.01, "momentum": 0.9})
+        expected_training_default = [
+            {"epochs": 10, "optimizer": {"lr": 0.01, "momentum": 0.9}},
+            {"epochs": 10, "optimizer": {"lr": 0.01, "momentum": 0.9}},
+        ]
+        self.assertEqual(pg_training.default_value, expected_training_default)
+
         # Serialization round-trip
         self.assertEqual(pg_training, core.ParamGroupSpec.from_dict(pg_training.to_dict()))
         self.assertEqual(pg_training, eval(repr(pg_training), core.__dict__))
@@ -307,6 +316,229 @@ class ParamGroupSpecTest(absltest.TestCase):
             self, expected_original_error_type=ValueError, expected_regex="No children param specs."
         ):
             core.ParamGroupSpec(name="empty", specs=[])
+
+    def test_param_group_spec_default_value(self) -> None:
+        """Test that default_value property returns a dictionary with child defaults."""
+        # Simple group with flat specs
+        p1 = core.ParamSpec(name="learning_rate", dtype=core.DataType.FLOAT, default_value=0.01)
+        p2 = core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9)
+        pg = core.ParamGroupSpec(name="optimizer", specs=[p1, p2])
+
+        self.assertEqual(pg.default_value, {"learning_rate": 0.01, "momentum": 0.9})
+
+        # Nested group
+        p3 = core.ParamSpec(name="epochs", dtype=core.DataType.INT64, default_value=10)
+        pg_nested = core.ParamGroupSpec(name="training", specs=[p3, pg])
+
+        expected = {"epochs": 10, "optimizer": {"learning_rate": 0.01, "momentum": 0.9}}
+        self.assertEqual(pg_nested.default_value, expected)
+
+        # Deeply nested group
+        p4 = core.ParamSpec(name="batch_size", dtype=core.DataType.INT64, default_value=32)
+        pg_deep = core.ParamGroupSpec(name="config", specs=[p4, pg_nested])
+
+        expected_deep = {
+            "batch_size": 32,
+            "training": {"epochs": 10, "optimizer": {"learning_rate": 0.01, "momentum": 0.9}},
+        }
+        self.assertEqual(pg_deep.default_value, expected_deep)
+
+    def test_param_group_spec_as_snowpark_type(self) -> None:
+        """Test that as_snowpark_type returns MapType for OBJECT representation."""
+        p1 = core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)
+        p2 = core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9)
+
+        # Without shape - returns MapType
+        pg = core.ParamGroupSpec(name="optimizer", specs=[p1, p2])
+        self.assertEqual(pg.as_snowpark_type(), spt.MapType(spt.StringType(), spt.VariantType()))
+
+        # With shape - returns ArrayType wrapping MapType
+        pg_with_shape = core.ParamGroupSpec(name="optimizers", specs=[p1, p2], shape=(-1,))
+        self.assertEqual(
+            pg_with_shape.as_snowpark_type(), spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType()))
+        )
+
+        # With 2D shape
+        pg_2d = core.ParamGroupSpec(name="configs", specs=[p1, p2], shape=(-1, -1))
+        self.assertEqual(
+            pg_2d.as_snowpark_type(),
+            spt.ArrayType(spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType()))),
+        )
+
+    def test_param_group_spec_default_value_with_none(self) -> None:
+        """Test default_value when child ParamSpec has None default."""
+        p1 = core.ParamSpec(name="required_param", dtype=core.DataType.STRING, default_value=None)
+        p2 = core.ParamSpec(name="optional_param", dtype=core.DataType.INT64, default_value=100)
+        pg = core.ParamGroupSpec(name="config", specs=[p1, p2])
+
+        self.assertEqual(pg.default_value, {"required_param": None, "optional_param": 100})
+
+    def test_wrap_value_in_shape(self) -> None:
+        """Test _wrap_value_in_shape helper directly for various shape configurations."""
+        wrap = core.ParamGroupSpec._wrap_value_in_shape
+        val = {"x": 1}
+
+        # Empty shape (base case) - returns value unchanged
+        self.assertEqual(wrap(val, ()), val)
+
+        # Fixed 1D - replicates value
+        self.assertEqual(wrap(val, (2,)), [val, val])
+        self.assertEqual(wrap(val, (3,)), [val, val, val])
+
+        # Variable 1D - returns empty (user provides at runtime)
+        self.assertEqual(wrap(val, (-1,)), [])
+
+        # Fixed 2D - nested replication
+        self.assertEqual(wrap(val, (2, 2)), [[val, val], [val, val]])
+
+        # Variable 2D - empty at outermost variable dimension
+        self.assertEqual(wrap(val, (-1, -1)), [])
+        self.assertEqual(wrap(val, (-1, 2)), [])  # Variable outer stops early
+
+        # Mixed: fixed outer, variable inner
+        self.assertEqual(wrap(val, (2, -1)), [[], []])
+        self.assertEqual(wrap(val, (3, -1)), [[], [], []])
+
+        # Mixed: fixed outer, fixed middle, variable inner
+        self.assertEqual(wrap(val, (2, 2, -1)), [[[], []], [[], []]])
+
+    def test_param_group_spec_mixed_types(self) -> None:
+        """Test ParamGroupSpec with various ParamSpec types (int, float, string, bool, array)."""
+        pg = core.ParamGroupSpec(
+            name="llm_config",
+            specs=[
+                core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=0.7),
+                core.ParamSpec(name="max_tokens", dtype=core.DataType.INT64, default_value=1024),
+                core.ParamSpec(name="model_name", dtype=core.DataType.STRING, default_value="gpt-4"),
+                core.ParamSpec(name="stream", dtype=core.DataType.BOOL, default_value=False),
+                core.ParamSpec(
+                    name="stop_sequences",
+                    dtype=core.DataType.STRING,
+                    default_value=["</s>", "\n\n"],
+                    shape=(-1,),  # Array of strings
+                ),
+            ],
+        )
+
+        expected = {
+            "temperature": 0.7,
+            "max_tokens": 1024,
+            "model_name": "gpt-4",
+            "stream": False,
+            "stop_sequences": ["</s>", "\n\n"],
+        }
+        self.assertEqual(pg.default_value, expected)
+
+        # Still returns MapType regardless of internal types
+        self.assertEqual(pg.as_snowpark_type(), spt.MapType(spt.StringType(), spt.VariantType()))
+
+    def test_param_group_spec_nested_with_shape(self) -> None:
+        """Test nested ParamGroupSpec where inner group has shape (array of dicts inside a dict)."""
+        # Case 1: Variable length inner shape
+        layer_var = core.ParamGroupSpec(
+            name="layers",
+            specs=[
+                core.ParamSpec(name="units", dtype=core.DataType.INT64, default_value=128),
+                core.ParamSpec(name="activation", dtype=core.DataType.STRING, default_value="relu"),
+            ],
+            shape=(-1,),
+        )
+        model_var = core.ParamGroupSpec(
+            name="model",
+            specs=[core.ParamSpec(name="name", dtype=core.DataType.STRING, default_value="mlp"), layer_var],
+        )
+
+        self.assertEqual(layer_var.as_snowpark_type(), spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType())))
+        self.assertEqual(layer_var.default_value, [])
+        self.assertEqual(model_var.default_value, {"name": "mlp", "layers": []})
+
+        # Case 2: Fixed length inner shape
+        layer_fixed = core.ParamGroupSpec(
+            name="layers",
+            specs=[
+                core.ParamSpec(name="units", dtype=core.DataType.INT64, default_value=128),
+                core.ParamSpec(name="activation", dtype=core.DataType.STRING, default_value="relu"),
+            ],
+            shape=(2,),
+        )
+        model_fixed = core.ParamGroupSpec(
+            name="model",
+            specs=[core.ParamSpec(name="name", dtype=core.DataType.STRING, default_value="mlp"), layer_fixed],
+        )
+
+        self.assertEqual(
+            layer_fixed.default_value,
+            [{"units": 128, "activation": "relu"}, {"units": 128, "activation": "relu"}],
+        )
+        self.assertEqual(
+            model_fixed.default_value,
+            {"name": "mlp", "layers": [{"units": 128, "activation": "relu"}, {"units": 128, "activation": "relu"}]},
+        )
+
+    def test_param_group_spec_sibling_groups(self) -> None:
+        """Test ParamGroupSpec with multiple sibling ParamGroupSpecs at the same level."""
+        optimizer_config = core.ParamGroupSpec(
+            name="optimizer",
+            specs=[
+                core.ParamSpec(name="type", dtype=core.DataType.STRING, default_value="adam"),
+                core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.001),
+            ],
+        )
+
+        scheduler_config = core.ParamGroupSpec(
+            name="scheduler",
+            specs=[
+                core.ParamSpec(name="type", dtype=core.DataType.STRING, default_value="cosine"),
+                core.ParamSpec(name="warmup_steps", dtype=core.DataType.INT64, default_value=100),
+            ],
+        )
+
+        # Parent with two sibling groups
+        training_config = core.ParamGroupSpec(
+            name="training",
+            specs=[
+                core.ParamSpec(name="epochs", dtype=core.DataType.INT64, default_value=10),
+                optimizer_config,
+                scheduler_config,
+            ],
+        )
+
+        expected = {
+            "epochs": 10,
+            "optimizer": {"type": "adam", "lr": 0.001},
+            "scheduler": {"type": "cosine", "warmup_steps": 100},
+        }
+        self.assertEqual(training_config.default_value, expected)
+
+        # Serialization round-trip
+        self.assertEqual(training_config, core.ParamGroupSpec.from_dict(training_config.to_dict()))
+
+    def test_param_group_spec_shape_variations(self) -> None:
+        """Test ParamGroupSpec with various shape configurations."""
+        base_specs: list[core.BaseParamSpec] = [
+            core.ParamSpec(name="value", dtype=core.DataType.INT64, default_value=1),
+            core.ParamSpec(name="enabled", dtype=core.DataType.BOOL, default_value=True),
+        ]
+        map_type = spt.MapType(spt.StringType(), spt.VariantType())
+
+        # Case 1: Variable 1D shape (-1,) → empty default, ArrayType(MapType)
+        var_1d = core.ParamGroupSpec(name="configs", specs=base_specs, shape=(-1,))
+        self.assertEqual(var_1d.default_value, [])
+        self.assertEqual(var_1d.as_snowpark_type(), spt.ArrayType(map_type))
+
+        # Case 2: Fixed 1D shape (3,) → 3 replicated dicts
+        fixed_1d = core.ParamGroupSpec(name="configs", specs=base_specs, shape=(3,))
+        self.assertEqual(fixed_1d.default_value, [{"value": 1, "enabled": True}] * 3)
+        self.assertEqual(fixed_1d.as_snowpark_type(), spt.ArrayType(map_type))
+
+        # Case 3: Variable 2D shape (-1, -1) → empty default, ArrayType(ArrayType(MapType))
+        var_2d = core.ParamGroupSpec(name="configs", specs=base_specs, shape=(-1, -1))
+        self.assertEqual(var_2d.default_value, [])
+        self.assertEqual(var_2d.as_snowpark_type(), spt.ArrayType(spt.ArrayType(map_type)))
+
+        # Case 4: Mixed shape (2, -1) → 2 empty arrays
+        mixed = core.ParamGroupSpec(name="configs", specs=base_specs, shape=(2, -1))
+        self.assertEqual(mixed.default_value, [[], []])
 
 
 class ModelSignatureTest(absltest.TestCase):

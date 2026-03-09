@@ -72,6 +72,7 @@ def patch_dataframe(
     # Instance-level monkey-patches
     funcs = [
         "_with_plan",
+        "_copy_without_ast",
         "_lateral",
         "group_by",
         "group_by_grouping_sets",

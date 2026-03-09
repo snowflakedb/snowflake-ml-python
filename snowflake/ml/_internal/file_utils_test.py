@@ -1,5 +1,6 @@
 import importlib
 import os
+import pathlib
 import shutil
 import sys
 import tempfile
@@ -202,6 +203,53 @@ class FileUtilsTest(absltest.TestCase):
         self.assertNotEqual(hash_0, hash_1)
         self.assertNotEqual(hash_0, hash_0_ignore_hidden)
         self.assertEqual(hash_0_ignore_hidden, hash_1_ignore_hidden)
+
+    def test_resolve_stage_dir_path_with_pure_posix(self) -> None:
+        stage = pathlib.PurePosixPath("@my_db.my_schema.my_stage/models/v1")
+
+        result = file_utils._resolve_stage_dir_path(stage, pathlib.PurePosixPath("weights.bin"))
+        self.assertEqual(result, "@my_db.my_schema.my_stage/models/v1")
+
+        result = file_utils._resolve_stage_dir_path(stage, pathlib.PurePosixPath("subdir/weights.bin"))
+        self.assertEqual(result, "@my_db.my_schema.my_stage/models/v1/subdir")
+
+        result = file_utils._resolve_stage_dir_path(stage, pathlib.PurePosixPath("a/b/c/model.bin"))
+        self.assertEqual(result, "@my_db.my_schema.my_stage/models/v1/a/b/c")
+
+    def test_resolve_stage_dir_path_with_parsed_url(self) -> None:
+        from urllib import parse
+
+        stage_url = parse.urlparse("snow://my_db.my_schema.my_stage/models/v1")
+
+        result = file_utils._resolve_stage_dir_path(stage_url, pathlib.PurePosixPath("weights.bin"))
+        self.assertEqual(result, "snow://my_db.my_schema.my_stage/models/v1")
+
+        result = file_utils._resolve_stage_dir_path(stage_url, pathlib.PurePosixPath("subdir/weights.bin"))
+        self.assertEqual(result, "snow://my_db.my_schema.my_stage/models/v1/subdir")
+
+        result = file_utils._resolve_stage_dir_path(stage_url, pathlib.PurePosixPath("a/b/c/model.bin"))
+        self.assertEqual(result, "snow://my_db.my_schema.my_stage/models/v1/a/b/c")
+
+    def test_resolve_stage_dir_path_with_windows_relative_path(self) -> None:
+        """Windows backslash paths are correctly converted via .as_posix() before resolution."""
+        from urllib import parse
+
+        local_path = pathlib.PureWindowsPath(r"C:\Users\user\models")
+        local_file = pathlib.PureWindowsPath(r"C:\Users\user\models\subdir\weights.bin")
+        relative_posix = pathlib.PurePosixPath(local_file.relative_to(local_path).as_posix())
+
+        stage_url = parse.urlparse("snow://my_db.my_schema.my_stage/models/v1")
+        result = file_utils._resolve_stage_dir_path(stage_url, relative_posix)
+        self.assertEqual(result, "snow://my_db.my_schema.my_stage/models/v1/subdir")
+
+        stage_pure = pathlib.PurePosixPath("@my_db.my_schema.my_stage/models/v1")
+        result = file_utils._resolve_stage_dir_path(stage_pure, relative_posix)
+        self.assertEqual(result, "@my_db.my_schema.my_stage/models/v1/subdir")
+
+        local_deep = pathlib.PureWindowsPath(r"C:\Users\user\models\a\b\c\model.bin")
+        relative_deep = pathlib.PurePosixPath(local_deep.relative_to(local_path).as_posix())
+        result = file_utils._resolve_stage_dir_path(stage_url, relative_deep)
+        self.assertEqual(result, "snow://my_db.my_schema.my_stage/models/v1/a/b/c")
 
     def test_able_ascii_encode(self) -> None:
         self.assertTrue(file_utils._able_ascii_encode("abc"))

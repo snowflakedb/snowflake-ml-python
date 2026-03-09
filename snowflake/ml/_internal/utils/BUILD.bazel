@@ -313,3 +313,17 @@ py_library(
     srcs = ["mixins.py"],
     deps = [],
 )
+
+py_library(
+    name = "tee",
+    srcs = ["tee.py"],
+)
+
+py_test(
+    name = "tee_test",
+    srcs = ["tee_test.py"],
+    tags = ["feature:core"],
+    deps = [
+        ":tee",
+    ],
+)

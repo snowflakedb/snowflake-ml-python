@@ -41,6 +41,23 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def get_experiment_id(
+        self,
+        experiment_name: sql_identifier.SqlIdentifier,
+    ) -> int:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+
+        result = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"CALL SYSTEM$RESOLVE_EXPERIMENT_ID('{experiment_fqn}')",
+            )
+            .has_dimensions(expected_rows=1, expected_cols=1)
+            .validate()
+        )
+        return int(result[0][0])
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
     def drop_experiment(
         self,
         *,
@@ -71,6 +88,23 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         query_result_checker.SqlResultValidator(
             self._session, f"ALTER EXPERIMENT {experiment_fqn} COMMIT RUN {run_name}"
         ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+
+    def get_run_id(
+        self,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: sql_identifier.SqlIdentifier,
+    ) -> int:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+
+        result = (
+            query_result_checker.SqlResultValidator(
+                self._session,
+                f"CALL SYSTEM$RESOLVE_EXPERIMENT_RUN_ID('{experiment_fqn}', '{run_name}')",
+            )
+            .has_dimensions(expected_rows=1, expected_cols=1)
+            .validate()
+        )
+        return int(result[0][0])
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
     def drop_run(

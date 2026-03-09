@@ -205,6 +205,9 @@ class JobDefinitionsTest(JobTestBase):
 
     def test_job_definition_concurrent_invocations(self) -> None:
         job_def = self._register_definition()
+        self.assertIsNotNone(job_def.spec_options.runtime)
+        self.assertNotEqual(job_def.spec_options.runtime, "")
+        runtime = job_def.spec_options.runtime
         try:
             with futures.ThreadPoolExecutor(max_workers=2) as executor:
                 futures_list = [executor.submit(job_def, "foo", "--delay", "1") for _ in range(2)]
@@ -212,6 +215,7 @@ class JobDefinitionsTest(JobTestBase):
 
             for job in jobs_submitted:
                 self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+                self.assertIn(runtime, job._container_spec["image"])
         finally:
             job_def.delete()
 
@@ -297,6 +301,16 @@ class JobDefinitionsTest(JobTestBase):
 
         result = job_sproc(self.session, test_constants._TEST_COMPUTE_POOL)
         self.assertEqual("Hello from remote function!", result)
+
+    def test_job_definition_runtime_image_negative(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"image .* is not a valid runtime image"):
+            jobs.MLJobDefinition.register(
+                TestAsset("src/main.py").path,
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+                runtime_environment="@test",
+            )
 
 
 if __name__ == "__main__":

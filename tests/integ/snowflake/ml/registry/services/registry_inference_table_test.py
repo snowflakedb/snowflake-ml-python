@@ -67,6 +67,23 @@ class ModelWithComplexParams(custom_model.CustomModel):
         )
 
 
+class ModelWithNullableFeatures(custom_model.CustomModel):
+    """Custom model that accepts nullable string features for testing null value autocapture."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        results = []
+        for _, row in input_df.iterrows():
+            a = row["feature_a"]
+            b = row["feature_b"]
+            label = f"{a}_{b}" if b is not None and pd.notna(b) else f"{a}_missing"
+            results.append({"output": label})
+        return pd.DataFrame(results)
+
+
 @pytest.mark.spcs_deployment_image
 class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
     """Integration tests for inference request/response data capture to inference table."""
@@ -214,6 +231,48 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
             "Actual autocapture_enabled value does not match with expected",
         )
 
+    def _create_payload_for_protocol(self, input_data: pd.DataFrame, protocol: str) -> dict[str, Any]:
+        """Create a payload for the specified protocol format.
+
+        Args:
+            input_data: Input dataframe
+            protocol: Protocol format ('dataframe_split' or 'dataframe_records')
+
+        Returns:
+            Dict with protocol as key and JSON data as value
+        """
+        # Extract orient by removing 'dataframe_' prefix
+        orient = protocol.replace("dataframe_", "")
+        # Convert dataframe to JSON using the appropriate orient
+        json_data = input_data.to_json(orient=orient)
+        # Return dict with protocol as key
+        return {protocol: json.loads(json_data)}
+
+    def _create_payload_for_protocol_with_extra_columns(
+        self, input_data: pd.DataFrame, protocol: str
+    ) -> dict[str, Any]:
+        """Create a payload with extra columns for the specified protocol format.
+
+        Args:
+            input_data: Input dataframe
+            protocol: Protocol format ('dataframe_split' or 'dataframe_records')
+
+        Returns:
+            Dict with protocol data and extra_columns list
+        """
+        # Copy input_data and add extra columns
+        data_with_extras = input_data.copy()
+        data_with_extras["extra_string_col"] = "test_value"
+        data_with_extras["extra_timestamp_col"] = pd.Timestamp("2024-01-01 12:00:00")
+
+        # Get base payload
+        payload = self._create_payload_for_protocol(data_with_extras, protocol)
+
+        # Add extra_columns list
+        payload["extra_columns"] = ["extra_string_col", "extra_timestamp_col"]
+
+        return payload
+
     def test_inference_table_autocapture(self):
         """Test basic inference data capture to INFERENCE_TABLE."""
         # Generate unique service name for this test
@@ -306,6 +365,11 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
     def test_autocapture_records_format_with_partial_params(self):
         """Test that autocapture only captures explicitly provided params, not defaults."""
+        # TODO: Remove this once the proxy image that can handle partial parameter autocapture
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         service_name = f"autocapture_params_test_{self._run_id}"
 
         try:
@@ -409,6 +473,11 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         """Test autocapture with split format and complex param types (list, nested list, bool).
         Only some params are provided; defaults should be excluded from capture.
         """
+        # TODO: Remove this once the proxy image that can handle partial parameter autocapture
+        # is available in system repository.
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
         service_name = f"autocapture_split_complex_test_{self._run_id}"
 
         try:
@@ -537,6 +606,203 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         self.assertIn("snow.model_serving.response.timestamp", record_attributes)
         self.assertIn("snow.model_serving.response.code", record_attributes)
         self.assertIn("snow.model_serving.function.name", record_attributes)
+
+    def test_autocapture_with_null_values(self):
+        """Test that rows with null feature values are captured in the inference table, not dropped."""
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
+        service_name = f"autocapture_null_test_{self._run_id}"
+
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        model = ModelWithNullableFeatures(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"feature_a": [1.0, 2.0], "feature_b": ["hello", "world"]})
+        sample_output = model.predict(sample_input)
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+        )
+
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
+        )
+
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # Send two rows: one with all values present, one with a null feature_b
+        records_payload = {
+            "dataframe_records": [
+                {"feature_a": 1.0, "feature_b": "hello"},
+                {"feature_a": 2.0, "feature_b": None},
+            ],
+        }
+
+        result_df = self._inference_using_rest_api(records_payload, endpoint=endpoint, target_method="predict")
+        self.assertEqual(len(result_df), 2, "Response should contain 2 rows")
+
+        # Both rows should be captured -- null values must not cause rows to be dropped
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=2, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+        self.assertEqual(len(inference_table_df), 2, "Both rows (including null) should be captured")
+
+        # Verify both records have standard metadata keys
+        for i in range(len(inference_table_df)):
+            record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[i])
+            self.assertIn("snow.model_serving.request.data.feature_a", record_attributes)
+            self.assertIn("snow.model_serving.request.timestamp", record_attributes)
+            self.assertIn("snow.model_serving.response.timestamp", record_attributes)
+            self.assertIn("snow.model_serving.response.code", record_attributes)
+            self.assertIn("snow.model_serving.function.name", record_attributes)
+
+    def test_autocapture_with_extra_columns(self):
+        """Test that extra_columns are captured correctly in autocapture for both split and records formats."""
+        # Enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE session parameter
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        # Create unique service name with run_id
+        service_name = f"autocapture_extra_cols_test_{self._run_id}"
+
+        # Deploy ModelWithScalarParams with autocapture=True
+        model = ModelWithScalarParams(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
+        sample_output = model.predict(sample_input, temperature=0.7, max_tokens=100)
+
+        # Create signature with ParamSpec for temperature and max_tokens
+        params = [
+            model_signature.ParamSpec(
+                name="temperature",
+                dtype=model_signature.DataType.FLOAT,
+                default_value=0.7,
+            ),
+            model_signature.ParamSpec(
+                name="max_tokens",
+                dtype=model_signature.DataType.INT64,
+                default_value=100,
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
+        )
+
+        # Get endpoint and verify autocapture enabled
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # Send dataframe_split request with extra_columns
+        input_data_split = pd.DataFrame({"value": [10.0]})
+        split_payload = self._create_payload_for_protocol_with_extra_columns(input_data_split, "dataframe_split")
+        result_split = self._inference_using_rest_api(split_payload, endpoint=endpoint, target_method="predict")
+        self.assertIsNotNone(result_split, "Split format request should return a result")
+
+        # Send dataframe_records request with extra_columns
+        input_data_records = pd.DataFrame({"value": [20.0]})
+        records_payload = self._create_payload_for_protocol_with_extra_columns(input_data_records, "dataframe_records")
+        result_records = self._inference_using_rest_api(records_payload, endpoint=endpoint, target_method="predict")
+        self.assertIsNotNone(result_records, "Records format request should return a result")
+
+        # Query inference table expecting 2 records
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=2, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+        self.assertEqual(len(inference_table_df), 2, "Should have exactly 2 records in inference table")
+
+        # Parse RECORD_ATTRIBUTES JSON for both records and verify extra_columns
+        for idx in range(2):
+            record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[idx])
+
+            # Verify extra_columns captured correctly
+            self.assertIn(
+                "snow.model_serving.request.extra_columns.extra_string_col",
+                record_attributes,
+                f"Record {idx}: Expected extra_string_col to be captured in extra_columns",
+            )
+            self.assertEqual(
+                record_attributes["snow.model_serving.request.extra_columns.extra_string_col"],
+                "test_value",
+                f"Record {idx}: Extra string column value should match",
+            )
+
+            self.assertIn(
+                "snow.model_serving.request.extra_columns.extra_timestamp_col",
+                record_attributes,
+                f"Record {idx}: Expected extra_timestamp_col to be captured in extra_columns",
+            )
+            # Verify timestamp is captured (exact format may vary, just check it exists and is non-empty)
+            timestamp_value = record_attributes["snow.model_serving.request.extra_columns.extra_timestamp_col"]
+            self.assertIsNotNone(timestamp_value, f"Record {idx}: Timestamp value should not be None")
+            self.assertTrue(len(str(timestamp_value)) > 0, f"Record {idx}: Timestamp value should not be empty")
+
+            # Verify standard keys are present
+            self.assertIn(
+                "snow.model_serving.request.data.value",
+                record_attributes,
+                f"Record {idx}: Expected data.value to be captured",
+            )
+            self.assertIn(
+                "snow.model_serving.request.timestamp",
+                record_attributes,
+                f"Record {idx}: Expected request.timestamp to be present",
+            )
+            self.assertIn(
+                "snow.model_serving.response.timestamp",
+                record_attributes,
+                f"Record {idx}: Expected response.timestamp to be present",
+            )
+            self.assertIn(
+                "snow.model_serving.response.code",
+                record_attributes,
+                f"Record {idx}: Expected response.code to be present",
+            )
+            self.assertIn(
+                "snow.model_serving.function.name",
+                record_attributes,
+                f"Record {idx}: Expected function.name to be present",
+            )
+
+        # Verify the input values are correct for each record
+        record_0_attrs = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
+        record_1_attrs = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[1])
+
+        # The records may not be in order, so we need to check both possibilities
+        values = {
+            record_0_attrs["snow.model_serving.request.data.value"],
+            record_1_attrs["snow.model_serving.request.data.value"],
+        }
+        expected_values = {10.0, 20.0}
+        self.assertEqual(values, expected_values, "Should have captured both input values (10.0 and 20.0)")
 
 
 if __name__ == "__main__":

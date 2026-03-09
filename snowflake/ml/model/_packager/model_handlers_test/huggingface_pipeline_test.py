@@ -107,6 +107,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         check_udf_res_fn: Callable[[pd.DataFrame], None],
         signature: Optional[model_signature.ModelSignature] = None,
         check_gpu: bool = True,
+        has_chat_template: bool = False,
     ) -> None:
         import transformers
 
@@ -120,6 +121,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_udf_res_fn=check_udf_res_fn,
             signature=signature,
             check_gpu=check_gpu,
+            has_chat_template=has_chat_template,
         )
 
     def _basic_test_case_with_transformers_pipeline(
@@ -133,6 +135,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         model_id: Optional[str] = None,
         signature: Optional[model_signature.ModelSignature] = None,
         check_gpu: bool = True,
+        has_chat_template: bool = False,
     ) -> None:
         import transformers
 
@@ -140,6 +143,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         signature = signature or utils.huggingface_pipeline_signature_auto_infer(
             task=task,
             params=options,
+            has_chat_template=has_chat_template,
         )
         assert signature is not None
 
@@ -758,7 +762,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             signature=signature,
         )
 
-    def test_text_generation_chat_template_pipeline(
+    def test_text_generation_with_chat_template_pipeline(
         self,
     ) -> None:
         x = [
@@ -803,6 +807,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
             signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            has_chat_template=True,
         )
 
         with self.assertRaisesRegex(
@@ -817,6 +822,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                 check_pipeline_fn=check_pipeline,
                 check_udf_res_fn=check_udf_res,
                 check_gpu=False,
+                has_chat_template=True,
             )
 
         self._basic_test_case(
@@ -828,6 +834,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
             signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            has_chat_template=True,
         )
 
         self._basic_test_case(
@@ -839,27 +846,18 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
             signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            has_chat_template=True,
         )
 
     def test_text_generation_without_chat_template_pipeline(
         self,
     ) -> None:
-        x = [
-            [
-                {"role": "system", "content": "Complete the sentence."},
-                {
-                    "role": "user",
-                    "content": "A descendant of the Lost City of Atlantis, who swam to Earth while saying, ",
-                },
-            ],
-            250,
-        ]
+        x = ["Hello, how are you?"]
 
-        x_df = pd.DataFrame([x], columns=["messages", "max_completion_tokens"])
+        x_df = pd.DataFrame([x], columns=["inputs"])
 
         def check_pipeline(original: "transformers.Pipeline", loaded: "transformers.Pipeline") -> None:
-            self.assertIsNotNone(loaded.tokenizer.chat_template)
-            self.assertEqual(loaded.tokenizer.chat_template, hf_pipeline_handler.DEFAULT_CHAT_TEMPLATE)
+            self.assertIsNone(loaded.tokenizer.chat_template)
             original_res = original(x[0], max_length=60, num_return_sequences=1)
             loaded_res = loaded(x[0], max_length=60, num_return_sequences=1)
             self.assertEqual(len(original_res), len(loaded_res))
@@ -867,14 +865,12 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         def check_udf_res(res: pd.DataFrame) -> None:
             pd.testing.assert_index_equal(
                 res.columns,
-                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
-                check_order=False,
+                pd.Index(["outputs"], dtype="object"),
             )
 
-            for row in res["choices"]:
+            for row in res["outputs"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("message", row[0])
-                self.assertIn("content", row[0]["message"])
+                self.assertIn("generated_text", row[0])
 
         import transformers
 
@@ -916,7 +912,7 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
-            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            has_chat_template=getattr(tokenizer, "chat_template", None) is not None,
         )
 
     def test_text2text_generation_pipeline(

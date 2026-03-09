@@ -87,10 +87,17 @@ class FeatureStoreLargeScaleTest(FeatureStoreIntegTestBase, parameterized.TestCa
             self._session, self._session.get_current_database(), self._session.get_current_schema(), cloned_wine_data
         )
         generator.trigger(batch_size=10, num_batches=10, freq=1)
+        generator._trigger_thread.join()  # Ensure all inserts are committed
 
-        # wait for 90s so feature view will be refreshed at least once
-        time.sleep(90)
-        self.assertEqual(len(fs.read_feature_view(fv).collect()), initial_count + 100)
+        # Poll for cron-scheduled refresh to pick up all new data (up to 180s)
+        deadline = time.time() + 180
+        actual = 0
+        while time.time() < deadline:
+            actual = len(fs.read_feature_view(fv).collect())
+            if actual == initial_count + 100:
+                break
+            time.sleep(15)
+        self.assertEqual(actual, initial_count + 100)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"join_method": "cte"},

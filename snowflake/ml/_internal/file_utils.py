@@ -281,6 +281,38 @@ def _retry_on_sql_error(exception: Exception) -> bool:
     return isinstance(exception, snowpark_exceptions.SnowparkSQLException)
 
 
+def _resolve_stage_dir_path(
+    stage_path: Union[pathlib.PurePosixPath, parse.ParseResult],
+    relative_path: pathlib.PurePosixPath,
+) -> str:
+    """Resolve the stage directory path for a file upload.
+
+    Combines the base stage path with the relative file path and returns the
+    parent directory. Uses PurePosixPath for cross-platform compatibility
+    (PosixPath cannot be instantiated on Windows).
+
+    Args:
+        stage_path: Base stage path, either a PurePosixPath or a parsed URL.
+        relative_path: POSIX-style relative path of the file within the local directory.
+
+    Returns:
+        The resolved stage directory path as a string (or unparsed URL).
+    """
+    if isinstance(stage_path, parse.ParseResult):
+        relative_stage_path = (pathlib.PurePosixPath(stage_path.path) / relative_path).parent
+        new_url = parse.ParseResult(
+            scheme=stage_path.scheme,
+            netloc=stage_path.netloc,
+            path=str(relative_stage_path),
+            params=stage_path.params,
+            query=stage_path.query,
+            fragment=stage_path.fragment,
+        )
+        return parse.urlunparse(new_url)
+    else:
+        return str((stage_path / relative_path).parent)
+
+
 def upload_directory_to_stage(
     session: snowpark.Session,
     local_path: pathlib.Path,
@@ -305,20 +337,7 @@ def upload_directory_to_stage(
         for filename in filenames:
             local_file_path = root_path / filename
             relative_path = pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix())
-
-            if isinstance(stage_path, parse.ParseResult):
-                relative_stage_path = (pathlib.PosixPath(stage_path.path) / relative_path).parent
-                new_url = parse.ParseResult(
-                    scheme=stage_path.scheme,
-                    netloc=stage_path.netloc,
-                    path=str(relative_stage_path),
-                    params=stage_path.params,
-                    query=stage_path.query,
-                    fragment=stage_path.fragment,
-                )
-                stage_dir_path = parse.urlunparse(new_url)
-            else:
-                stage_dir_path = str((stage_path / relative_path).parent)
+            stage_dir_path = _resolve_stage_dir_path(stage_path, relative_path)
 
             retrying.retry(
                 retry_on_exception=_retry_on_sql_error,

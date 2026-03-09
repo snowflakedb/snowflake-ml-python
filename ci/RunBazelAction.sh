@@ -295,9 +295,10 @@ perf)
 
     ;;
 targeted)
-    # Targeted mode: run specific Bazel targets directly
     cache_test_results="--cache_test_results=no"
-    query_expr=""
+    targeted_patterns_file="${working_dir}/targeted_patterns"
+    printf "%s\n" "${TARGET_ARRAY[@]}" > "${targeted_patterns_file}"
+    query_expr='kind(".*_test rule", set('"$(<"${targeted_patterns_file}")"'))'
     ;;
 *)
     help 1
@@ -310,20 +311,14 @@ if [[ -n "${TEST_FILTER}" ]]; then
     test_filter_flag="--test_filter=${TEST_FILTER}"
 fi
 
-# For targeted mode: write targets directly to file; for other modes: run query
+# Query all test targets
 all_test_targets_file=${working_dir}/all_test_targets
-if [[ "${mode}" = "targeted" ]]; then
-    # Write validated targets to file (TARGET_ARRAY was populated during validation)
-    printf "%s\n" "${TARGET_ARRAY[@]}" > "${all_test_targets_file}"
-else
-    # Query all targets
-    all_test_targets_query_file=${working_dir}/all_test_targets_query
-    printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
-    "${bazel}" query --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
+all_test_targets_query_file=${working_dir}/all_test_targets_query
+printf "%s" "${query_expr}" >"${all_test_targets_query_file}"
+"${bazel}" query --query_file="${all_test_targets_query_file}" >"${all_test_targets_file}"
 
-    if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
-        exit 0
-    fi
+if [[ ! -s "${all_test_targets_file}" && "${mode}" = "merge_gate" ]]; then
+    exit 0
 fi
 
 # Read groups from optional_dependency_groups.bzl

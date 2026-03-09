@@ -370,3 +370,18 @@ py_test(
         ":registry_batch_inference_test_base",
     ],
 )
+
+py_test(
+    name = "registry_batch_inference_external_stage_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_external_stage_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+    ],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)

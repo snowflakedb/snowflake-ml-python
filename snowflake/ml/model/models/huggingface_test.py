@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -25,57 +26,17 @@ class TransformersPipelineTest(absltest.TestCase):
             del os.environ["HF_HOME"]
         self.cache_dir.cleanup()
 
-    def test_remote_logging_does_not_call_from_pretrained(self) -> None:
-        """Test that verifies the correct behavior: AutoConfig.from_pretrained is not called
-        even when using remote logging.
-
-        When using remote logging, we should not be accessing HuggingFace hosts.
-        The model artifacts should be downloaded during deployment on the compute pool,
-        not during the TransformersPipeline constructor.
-        """
-        with absltest.mock.patch("transformers.AutoConfig.from_pretrained") as mock_from_pretrained:
-            mock_config = absltest.mock.Mock()
-            mock_config._commit_hash = "fake_commit_hash"
-            mock_config.custom_pipelines = {}
-            mock_from_pretrained.return_value = mock_config
-
-            # Using the default compute pool (DEFAULT_CPU_COMPUTE_POOL) should NOT
-            # call AutoConfig.from_pretrained, but due to the bug, it does.
-            huggingface.TransformersPipeline(
-                task="text-generation",
-                model="facebook/opt-125m",
-                # compute_pool_for_log uses default value (DEFAULT_CPU_COMPUTE_POOL)
-            )
-
-            # BUG: This assertion passes because AutoConfig.from_pretrained IS called
-            # even though we're using a compute pool. This should NOT happen.
-            mock_from_pretrained.assert_not_called()
-
-    def test_wrapper(self) -> None:
-
-        from transformers import testing_utils
-
-        is_hf_hub_available = False
-        try:
-            import huggingface_hub as _hf_hub  # noqa: F401
-
-            is_hf_hub_available = True
-
-        except ImportError:
-            pass
-
-        with self.assertWarnsRegex(
-            UserWarning,
-            "Using a pipeline without specifying a model name and revision in production is not recommended.",
-        ):
-            huggingface.TransformersPipeline(task="text-generation", compute_pool_for_log=None)
-        huggingface.TransformersPipeline(
+    def test_remote_logging_basic(self) -> None:
+        """Test that remote logging creates a pipeline correctly without requiring transformers."""
+        pipeline = huggingface.TransformersPipeline(
             task="text-generation",
             model="facebook/opt-125m",
-            compute_pool_for_log=None,
+            # compute_pool_for_log uses default value (DEFAULT_CPU_COMPUTE_POOL)
         )
-        # without task - task is inferred when using CONFIG_ONLY mode (no huggingface_hub)
-        # but when huggingface_hub is available, task must be explicitly provided
+        self.assertEqual(pipeline.model, "facebook/opt-125m")
+        self.assertEqual(pipeline.task, "text-generation")
+
+    def test_wrapper(self) -> None:
         huggingface.TransformersPipeline(
             task="text-generation",
             model="facebook/opt-125m",
@@ -83,51 +44,9 @@ class TransformersPipelineTest(absltest.TestCase):
         )
         huggingface.TransformersPipeline(
             task="fill-mask",
-            model=testing_utils.DUMMY_UNKNOWN_IDENTIFIER,
+            model="google-bert/bert-base-uncased",
             compute_pool_for_log=None,
         )
-
-        with absltest.mock.patch("transformers.AutoConfig.from_pretrained") as mock_from_pretrained:
-            mock_config = absltest.mock.Mock()
-            mock_config._commit_hash = "fake_commit_hash"
-            mock_config.custom_pipelines = {}
-            mock_from_pretrained.return_value = mock_config
-            huggingface.TransformersPipeline(
-                task="fill-mask",
-                model=testing_utils.SMALL_MODEL_IDENTIFIER,
-                token=testing_utils.TOKEN,
-                compute_pool_for_log=None,
-            )
-            if not is_hf_hub_available:
-                mock_from_pretrained.assert_called_once_with(
-                    testing_utils.SMALL_MODEL_IDENTIFIER,
-                    _from_pipeline="fill-mask",
-                    revision=None,
-                    token=testing_utils.TOKEN,
-                    trust_remote_code=None,
-                    _commit_hash=None,
-                )
-
-        if not is_hf_hub_available:
-            with self.assertRaisesRegex(
-                ValueError,
-                "Loading this pipeline requires you to execute the code in the pipeline file",
-            ):
-                huggingface.TransformersPipeline(
-                    model="lysandre/test-dynamic-pipeline",
-                    compute_pool_for_log=None,
-                )
-
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Impossible to use non-string config as input for class TransformersPipeline.",
-            ):
-                huggingface.TransformersPipeline(
-                    task="text-generation",
-                    model="facebook/opt-125m",
-                    config=1,
-                    compute_pool_for_log=None,
-                )
 
         huggingface.TransformersPipeline(
             task="new-task",
@@ -141,26 +60,18 @@ class TransformersPipelineTest(absltest.TestCase):
             trust_remote_code=True,
             download_snapshot=True,
         )
+
+        # Both task and model are required positional arguments
+        with self.assertRaises(TypeError):
+            huggingface.TransformersPipeline(model="facebook/opt-125m")  # type: ignore[call-arg]
+        with self.assertRaises(TypeError):
+            huggingface.TransformersPipeline(task="text-generation")  # type: ignore[call-arg]
         with self.assertRaisesRegex(
             RuntimeError,
-            "Impossible to instantiate a pipeline without either a task or a model being specified.",
+            "Impossible to instantiate a pipeline without a model being specified.",
         ):
-            huggingface.TransformersPipeline()
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "Impossible to instantiate a pipeline without either a task or a model being specified.",
-        ):
-            huggingface.TransformersPipeline(config="facebook/opt-125m", compute_pool_for_log=None)
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "Impossible to instantiate a pipeline with tokenizer specified but not the model as the provided",
-        ):
-            huggingface.TransformersPipeline(task="text-generation", tokenizer="tokenizer", compute_pool_for_log=None)
-        with self.assertRaisesRegex(
-            RuntimeError,
-            "Impossible to instantiate a pipeline with feature_extractor specified but not the model as the provided",
-        ):
-            huggingface.TransformersPipeline(task="text-generation", feature_extractor="feature_extractor")
+            huggingface.TransformersPipeline(task="text-generation", model=None)  # type: ignore[arg-type]
+
         with self.assertRaisesRegex(
             RuntimeError,
             "Impossible to use non-string model as input for class TransformersPipeline.",
@@ -189,11 +100,9 @@ class TransformersPipelineTest(absltest.TestCase):
                 device=0,
             )
 
-    def test_remote_logging_skips_config_and_snapshot_download(self) -> None:
-        """Test that when compute_pool_for_log is set, we don't download from huggingface_hub or load config."""
-        with absltest.mock.patch(
-            "transformers.AutoConfig.from_pretrained"
-        ) as mock_from_pretrained, absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
+    def test_remote_logging_skips_snapshot_download(self) -> None:
+        """Test that when compute_pool_for_log is set, we don't download from huggingface_hub."""
+        with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
 
             # Create a pipeline with compute_pool_for_log set (remote logging mode)
             pipeline = huggingface.TransformersPipeline(
@@ -201,9 +110,6 @@ class TransformersPipelineTest(absltest.TestCase):
                 model="facebook/opt-125m",
                 compute_pool_for_log="test_compute_pool",
             )
-
-            # Verify that AutoConfig.from_pretrained was NOT called
-            mock_from_pretrained.assert_not_called()
 
             # Verify that snapshot_download was NOT called
             mock_snapshot_download.assert_not_called()
@@ -214,32 +120,162 @@ class TransformersPipelineTest(absltest.TestCase):
             self.assertEqual(pipeline.compute_pool_for_log, "test_compute_pool")
             self.assertIsNone(pipeline.repo_snapshot_dir)
 
-    def test_remote_logging_with_default_model_skips_config(self) -> None:
-        """Test that remote logging with default model also skips config lookup."""
-        with absltest.mock.patch(
-            "transformers.AutoConfig.from_pretrained"
-        ) as mock_from_pretrained, absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
+    def test_detect_chat_template_with_jinja_file(self) -> None:
+        """Test _detect_chat_template returns True when chat_template.jinja file exists."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            jinja_path = os.path.join(repo_dir, "chat_template.jinja")
+            with open(jinja_path, "w") as f:
+                f.write("{{ messages }}")
 
-            # Create a pipeline with only task (model will be defaulted) and compute_pool_for_log set
-            with self.assertWarnsRegex(
-                UserWarning,
-                "Using a pipeline without specifying a model name and revision in production is not recommended.",
-            ):
+            self.assertTrue(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_in_tokenizer_config(self) -> None:
+        """Test _detect_chat_template returns True when tokenizer_config.json contains chat_template."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": "{% for msg in messages %}{{ msg }}{% endfor %}"}, f)
+
+            self.assertTrue(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_none_value_in_tokenizer_config(self) -> None:
+        """Test _detect_chat_template returns False when chat_template is explicitly None."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": None}, f)
+
+            self.assertFalse(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_missing_from_tokenizer_config(self) -> None:
+        """Test _detect_chat_template returns False when tokenizer_config.json has no chat_template key."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"model_max_length": 512, "padding_side": "right"}, f)
+
+            self.assertFalse(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_no_config_files(self) -> None:
+        """Test _detect_chat_template returns False when no config files exist."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            self.assertFalse(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_invalid_json(self) -> None:
+        """Test _detect_chat_template returns False when tokenizer_config.json is invalid JSON."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                f.write("not valid json {{{")
+
+            self.assertFalse(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_jinja_takes_priority(self) -> None:
+        """Test _detect_chat_template returns True from jinja file even if tokenizer_config has no template."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"model_max_length": 512}, f)
+
+            jinja_path = os.path.join(repo_dir, "chat_template.jinja")
+            with open(jinja_path, "w") as f:
+                f.write("{{ messages }}")
+
+            self.assertTrue(huggingface.TransformersPipeline._detect_chat_template(repo_dir))
+
+    def test_detect_chat_template_set_for_text_generation_snapshot_download(self) -> None:
+        """Test that has_chat_template is set when using SNAPSHOT_DOWNLOAD mode with text-generation task."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": "{% for msg in messages %}{{ msg }}{% endfor %}"}, f)
+
+            with absltest.mock.patch("huggingface_hub.snapshot_download", return_value=repo_dir):
                 pipeline = huggingface.TransformersPipeline(
                     task="text-generation",
-                    compute_pool_for_log="test_compute_pool",
+                    model="some-model/with-chat-template",
+                    compute_pool_for_log=None,
                 )
+                self.assertTrue(pipeline.has_chat_template)
 
-            # Verify that AutoConfig.from_pretrained was NOT called
-            mock_from_pretrained.assert_not_called()
+    def test_detect_chat_template_false_for_non_text_generation_task(self) -> None:
+        """Test that has_chat_template is False when the task is not text-generation."""
+        with absltest.mock.patch("huggingface_hub.snapshot_download", return_value="/some/path"):
+            pipeline = huggingface.TransformersPipeline(
+                task="fill-mask",
+                model="some-model/fill-mask",
+                compute_pool_for_log=None,
+            )
+            self.assertFalse(pipeline.has_chat_template)
 
-            # Verify that snapshot_download was NOT called
-            mock_snapshot_download.assert_not_called()
+    def test_detect_chat_template_false_for_remote_logging_mode(self) -> None:
+        """Test that has_chat_template is False when using remote logging mode."""
+        pipeline = huggingface.TransformersPipeline(
+            task="text-generation",
+            model="some-model/text-gen",
+            compute_pool_for_log="some_compute_pool",
+        )
+        self.assertFalse(pipeline.has_chat_template)
 
-            # Verify the pipeline was created with a default model
-            self.assertIsNotNone(pipeline.model)
-            self.assertEqual(pipeline.task, "text-generation")
-            self.assertEqual(pipeline.compute_pool_for_log, "test_compute_pool")
+    def test_detect_chat_template_for_image_text_to_text_task(self) -> None:
+        """Test that has_chat_template is detected for image-text-to-text task."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": "{% for msg in messages %}{{ msg }}{% endfor %}"}, f)
+
+            with absltest.mock.patch("huggingface_hub.snapshot_download", return_value=repo_dir):
+                pipeline = huggingface.TransformersPipeline(
+                    task="image-text-to-text",
+                    model="some-model/vision-llm",
+                    compute_pool_for_log=None,
+                )
+                self.assertTrue(pipeline.has_chat_template)
+
+    def test_detect_chat_template_for_video_text_to_text_task(self) -> None:
+        """Test that has_chat_template is detected for video-text-to-text task."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": "{% for msg in messages %}{{ msg }}{% endfor %}"}, f)
+
+            with absltest.mock.patch("huggingface_hub.snapshot_download", return_value=repo_dir):
+                pipeline = huggingface.TransformersPipeline(
+                    task="video-text-to-text",
+                    model="some-model/video-llm",
+                    compute_pool_for_log=None,
+                )
+                self.assertTrue(pipeline.has_chat_template)
+
+    def test_detect_chat_template_for_audio_text_to_text_task(self) -> None:
+        """Test that has_chat_template is detected for audio-text-to-text task."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            jinja_path = os.path.join(repo_dir, "chat_template.jinja")
+            with open(jinja_path, "w") as f:
+                f.write("{{ messages }}")
+
+            with absltest.mock.patch("huggingface_hub.snapshot_download", return_value=repo_dir):
+                pipeline = huggingface.TransformersPipeline(
+                    task="audio-text-to-text",
+                    model="some-model/audio-llm",
+                    compute_pool_for_log=None,
+                )
+                self.assertTrue(pipeline.has_chat_template)
+
+    def test_detect_chat_template_false_for_multimodal_without_template(self) -> None:
+        """Test that has_chat_template is False for multimodal tasks when no template exists."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"model_max_length": 2048}, f)
+
+            with absltest.mock.patch("huggingface_hub.snapshot_download", return_value=repo_dir):
+                pipeline = huggingface.TransformersPipeline(
+                    task="image-text-to-text",
+                    model="some-model/vision-no-template",
+                    compute_pool_for_log=None,
+                )
+                self.assertFalse(pipeline.has_chat_template)
 
     def test_create_service(self) -> None:
         """Test the create_service function with mocked ServiceOperator."""

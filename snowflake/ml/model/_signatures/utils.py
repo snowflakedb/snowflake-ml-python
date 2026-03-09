@@ -117,6 +117,7 @@ def rename_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec
 def huggingface_pipeline_signature_auto_infer(
     task: str,
     params: dict[str, Any],
+    has_chat_template: Optional[bool] = True,
 ) -> Optional[core.ModelSignature]:
     # Text
 
@@ -321,7 +322,7 @@ def huggingface_pipeline_signature_auto_infer(
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TextGenerationPipeline
-    if task == "text-generation":
+    if task == "text-generation" and has_chat_template:
         if params.get("return_tensors", False):
             raise NotImplementedError(
                 f"Auto deployment for HuggingFace pipeline {task} "
@@ -345,6 +346,24 @@ def huggingface_pipeline_signature_auto_infer(
                     specs=[
                         core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING),
                     ],
+                    shape=(-1,),
+                )
+            ],
+        )
+
+    if task == "text-generation" and not has_chat_template:
+        if params.get("return_tensors", False):
+            raise NotImplementedError(
+                f"Auto deployment for HuggingFace pipeline {task} "
+                "when `return_tensors` set to `True` has not been supported yet."
+            )
+        # Always generate a list of dict per input
+        return core.ModelSignature(
+            inputs=[core.FeatureSpec(name="inputs", dtype=core.DataType.STRING)],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING)],
                     shape=(-1,),
                 )
             ],

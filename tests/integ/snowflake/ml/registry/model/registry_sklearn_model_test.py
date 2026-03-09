@@ -600,6 +600,97 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
 
         self.registry.delete_model(model_name=name)
 
+    def test_explain_function_uses_canonical_sf_types(self) -> None:
+        """Regression test: EXPLAIN function must use canonical Snowflake types.
+
+        When a model with mixed dtypes (int, float, categorical string) is registered
+        with enable_explainability=True, the EXPLAIN function's signature must use
+        canonical Snowflake types (NUMBER, FLOAT) instead of the Snowpark-specific
+        types (BIGINT, DOUBLE) that cause strict type matching failures.
+        """
+        data = {
+            "color": ["red", "blue", "green", "red", "blue", "green"],
+            "size": [1, 2, 2, 4, 3, 1],
+            "price": [10.5, 15.2, 20.1, 25.3, 18.0, 12.7],
+            "target": [0, 1, 1, 0, 1, 0],
+        }
+        df = pd.DataFrame(data)
+        df["color"] = df["color"].astype("category")
+        input_features = ["color", "size", "price"]
+
+        preprocessor = compose.ColumnTransformer(
+            transformers=[
+                ("cat", preprocessing.OneHotEncoder(), ["color"]),
+            ],
+            remainder="passthrough",
+        )
+        pipeline = SK_pipeline.Pipeline(
+            [
+                ("preprocessor", preprocessor),
+                ("classifier", linear_model.LogisticRegression(max_iter=1000)),
+            ]
+        )
+        pipeline.fit(df[input_features], df["target"])
+
+        name = "model_test_explain_canonical_sf_types"
+        version = f"ver_{self._run_id}"
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=pipeline,
+            model_name=name,
+            version_name=version,
+            sample_input_data=df[input_features],
+            conda_dependencies=conda_dependencies,
+            options={"enable_explainability": True},
+        )
+
+        predict_result = mv.run(df[input_features], function_name="predict")
+        self.assertIsInstance(predict_result, pd.DataFrame)
+        self.assertTrue(len(predict_result) > 0)
+
+        explain_result = mv.run(df[input_features], function_name="explain")
+        self.assertIsInstance(explain_result, pd.DataFrame)
+        self.assertTrue(len(explain_result) > 0)
+
+        # Verify explain works via raw SQL against a table with Snowflake-native types.
+        # Before the fix, this failed because the MANIFEST declared BIGINT/DOUBLE but
+        # a table with NUMBER/FLOAT columns causes strict type matching failure.
+        tmp_table = f"{self._test_db}.{self._test_schema}.EXPLAIN_TEST_INPUT_{self._run_id}"
+        self.session.sql(
+            f"""
+            CREATE TEMPORARY TABLE {tmp_table} (
+                COLOR VARCHAR,
+                SIZE NUMBER,
+                PRICE FLOAT
+            )
+        """
+        ).collect()
+        self.session.sql(
+            f"""
+            INSERT INTO {tmp_table} VALUES
+            ('red', 1, 10.5),
+            ('blue', 2, 15.2),
+            ('green', 3, 20.1)
+        """
+        ).collect()
+
+        fq_model_name = f"{self._test_db}.{self._test_schema}.{name}"
+        explain_sql = f"""
+            SELECT *
+            FROM {tmp_table},
+            TABLE({fq_model_name}!EXPLAIN(COLOR, SIZE, PRICE));
+        """
+        sql_result = self.session.sql(explain_sql).to_pandas()
+        self.assertIsInstance(sql_result, pd.DataFrame)
+        self.assertEqual(len(sql_result), 3)
+
+        self.registry.delete_model(model_name=name)
+        self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
+
 
 if __name__ == "__main__":
     absltest.main()

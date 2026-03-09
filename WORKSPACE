@@ -1,7 +1,7 @@
 workspace(name = "SnowML")
 
-load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
 load("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive", "http_jar")
 
 http_jar(
     name = "bazel_diff",
@@ -77,6 +77,14 @@ local_repository(
 local_repository(
     name = "rules_mypy",
     path = "./third_party/rules_mypy",
+)
+
+# Firstpass tools (pr, jira) for CI/CD automation
+git_repository(
+    name = "firstpass",
+    build_file = "//third_party/firstpass:firstpass.BUILD",
+    commit = "2d5a0a51cc77524303cec7c9e644d7a69664344f",
+    remote = "git@github.com:snowflake-eng/firstpass.git",
 )
 
 # Below two conda environments (toolchains) are created and they require different

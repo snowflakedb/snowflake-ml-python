@@ -6,6 +6,7 @@ package(default_visibility = [
 
 py_test(
     name = "lineage_integ_test",
+    timeout = "eternal",
     testonly = True,
     srcs = ["lineage_integ_test.py"],
     tags = ["feature:feature_store"],

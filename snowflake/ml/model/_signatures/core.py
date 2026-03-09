@@ -366,8 +366,7 @@ class FeatureSpec(BaseFeatureSpec):
         if not self._shape:
             return result_type
         for _ in range(len(self._shape)):
-            # Add ArrayType for each dimension using recursion
-            # e.g. (2,) -> ArrayType(ArrayType(LongType))
+            # e.g. (2,) -> ArrayType(base), (2,3) -> ArrayType(ArrayType(base))
             result_type = spt.ArrayType(result_type)
         return result_type
 
@@ -777,8 +776,7 @@ class ParamSpec(BaseParamSpec):
         if not self._shape:
             return result_type
         for _ in range(len(self._shape)):
-            # Add ArrayType for each dimension using recursion
-            # e.g. (2,) -> ArrayType(ArrayType(LongType))
+            # e.g. (2,) -> ArrayType(base), (2,3) -> ArrayType(ArrayType(base))
             result_type = spt.ArrayType(result_type)
         return result_type
 
@@ -877,6 +875,70 @@ class ParamGroupSpec(BaseParamSpec):
     def specs(self) -> list[BaseParamSpec]:
         """List of parameter specifications in the group."""
         return self._specs
+
+    @staticmethod
+    def _wrap_value_in_shape(value: Any, shape: tuple[int, ...]) -> Any:
+        """Wrap a value in nested lists according to shape. Processes one dimension per call.
+
+        Args:
+            value: The base value to wrap.
+            shape: The shape tuple. -1 means variable length (returns empty list).
+
+        Returns:
+            The value wrapped in nested lists, or empty list for variable dimensions.
+
+        Examples:
+            _wrap_value_in_shape({"x": 1}, (2,)) -> [{"x": 1}, {"x": 1}]
+            _wrap_value_in_shape({"x": 1}, (-1,)) -> []
+            _wrap_value_in_shape({"x": 1}, (2, -1)) -> [[], []]
+        """
+        if not shape:
+            return value
+        size = shape[0]
+        if size == -1:
+            return []
+        return [ParamGroupSpec._wrap_value_in_shape(value, shape[1:]) for _ in range(size)]
+
+    @property
+    def default_value(self) -> Any:
+        """Default value of the parameter group.
+
+        Without shape: returns a dict mapping parameter names to their default values.
+        With shape: returns a nested list structure where each leaf is the default dict.
+        Variable-length dimensions (-1) result in empty arrays.
+        Nested ParamGroupSpecs produce nested dicts (or arrays if they have shape).
+
+        Returns:
+            A dict or nested list of dicts depending on shape.
+        """
+        base_dict: dict[str, Any] = {}
+        for spec in self._specs:
+            if isinstance(spec, ParamSpec):
+                base_dict[spec.name] = spec.default_value
+            elif isinstance(spec, ParamGroupSpec):
+                base_dict[spec.name] = spec.default_value
+
+        if not self._shape:
+            return base_dict
+
+        return self._wrap_value_in_shape(base_dict, self._shape)
+
+    def as_snowpark_type(self) -> spt.DataType:
+        """Convert to corresponding Snowpark Type, accounting for shape.
+
+        Returns:
+            A Snowpark MapType representing an OBJECT in Snowflake.
+            If shape is specified, wraps the base type in ArrayType.
+        """
+        # MapType(StringType, VariantType) represents OBJECT in SQL.
+        # VariantType allows heterogeneous value types, unlike FeatureGroupSpec's StructType.
+        base_type: spt.DataType = spt.MapType(spt.StringType(), spt.VariantType())
+        if not self._shape:
+            return base_type
+        for _ in range(len(self._shape)):
+            # e.g. (2,) -> ArrayType(base), (2,3) -> ArrayType(ArrayType(base))
+            base_type = spt.ArrayType(base_type)
+        return base_type
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, ParamGroupSpec):

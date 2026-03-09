@@ -19,6 +19,8 @@ from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _PROJECT = "MLJob"
 TERMINAL_JOB_STATUSES = {"FAILED", "DONE", "CANCELLED", "INTERNAL_ERROR", "DELETED"}
+RAY_DASHBOARD_ENDPOINT_NAME = "ray-dashboard-endpoint"
+JOB_RUNNING_STATUS = "RUNNING"
 
 T = TypeVar("T")
 
@@ -275,6 +277,21 @@ class MLJob(Generic[T], SerializableSessionMixin):
             time.sleep(delay)
             delay = min(delay * 1.2, constants.JOB_POLL_MAX_DELAY_SECONDS)  # Exponential backoff
         return self.status
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def get_ray_dashboard_url(self) -> Optional[str]:
+        """
+        Get the Ray dashboard URL for the job.
+        """
+        if self.status != JOB_RUNNING_STATUS:
+            logger.warning("Ray dashboard is not available for non-running jobs")
+            return None
+        rows = self._session.sql(f"show endpoints in service {self.id}").collect()
+        for row in rows:
+            if row["name"] == RAY_DASHBOARD_ENDPOINT_NAME:
+                ingress_url = row["ingress_url"]
+                return str(ingress_url) if ingress_url is not None else None
+        return None
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
     def result(self, timeout: float = -1) -> T:

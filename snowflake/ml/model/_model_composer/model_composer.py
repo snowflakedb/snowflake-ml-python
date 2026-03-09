@@ -95,23 +95,6 @@ class ModelComposer:
         return self._packager_workspace_path
 
     @property
-    def model_stage_path(self) -> str:
-        if isinstance(self.stage_path, parse.ParseResult):
-            model_file_path = (pathlib.PosixPath(self.stage_path.path) / self.model_file_rel_path).as_posix()
-            new_url = parse.ParseResult(
-                scheme=self.stage_path.scheme,
-                netloc=self.stage_path.netloc,
-                path=str(model_file_path),
-                params=self.stage_path.params,
-                query=self.stage_path.query,
-                fragment=self.stage_path.fragment,
-            )
-            return str(parse.urlunparse(new_url))
-        else:
-            assert isinstance(self.stage_path, pathlib.PurePosixPath)
-            return (self.stage_path / self.model_file_rel_path).as_posix()
-
-    @property
     def model_local_path(self) -> str:
         return str(self.workspace_path / self.model_file_rel_path)
 

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     # This module can't actually depend on dataset to avoid a circular dependency
     # Dataset -> DatasetReader -> DataConnector -!-> Dataset
-    from snowflake.ml import dataset
+    from snowflake.ml import dataset  # type: ignore[attr-defined, unused-ignore]
 
 _PROJECT = "DataConnector"
 

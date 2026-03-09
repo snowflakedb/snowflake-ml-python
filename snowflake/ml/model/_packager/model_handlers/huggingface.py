@@ -45,8 +45,6 @@ if TYPE_CHECKING:
     import torch
     import transformers
 
-DEFAULT_CHAT_TEMPLATE = "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"  # noqa: E501
-
 
 def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model_env.ModelDependency]:
     # Text
@@ -164,8 +162,13 @@ class TransformersPipelineHandler(
             raise NotImplementedError("Explainability is not supported for huggingface model.")
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             task = model.task  # type:ignore[attr-defined]
-            framework = model.framework  # type:ignore[attr-defined]
-            batch_size = model._batch_size  # type:ignore[attr-defined]
+            framework = getattr(model, "framework", None)
+            batch_size = getattr(model, "_batch_size", None) or getattr(model, "batch_size", None)
+            tokenizer = getattr(model, "tokenizer", None)
+            if tokenizer:
+                has_chat_template = bool(getattr(tokenizer, "chat_template", None))
+            else:
+                has_chat_template = False
         else:
             assert isinstance(model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
                 model, huggingface_base.TransformersPipeline
@@ -173,6 +176,7 @@ class TransformersPipelineHandler(
             task = model.task
             framework = getattr(model, "framework", None)
             batch_size = getattr(model, "batch_size", None)
+            has_chat_template = getattr(model, "has_chat_template", False)
 
         has_tokenizer = getattr(model, "tokenizer", None) is not None
         has_feature_extractor = getattr(model, "feature_extractor", None) is not None
@@ -193,6 +197,7 @@ class TransformersPipelineHandler(
         inferred_pipe_sig = model_signature_utils.huggingface_pipeline_signature_auto_infer(
             task,
             params=params,
+            has_chat_template=has_chat_template,
         )
 
         if not is_sub_model:
@@ -414,23 +419,6 @@ class TransformersPipelineHandler(
                 **additional_pipeline_params,
                 **device_config,
             )
-
-            # If the task is text-generation, and the tokenizer does not have a chat_template,
-            # set the default chat template.
-            if (
-                hasattr(m, "task")
-                and m.task == "text-generation"
-                and hasattr(m.tokenizer, "chat_template")
-                and not m.tokenizer.chat_template
-            ):
-                warnings.warn(
-                    "The tokenizer does not have default chat_template. "
-                    "Setting the chat_template to default ChatML template.",
-                    UserWarning,
-                    stacklevel=1,
-                )
-                logger.info(DEFAULT_CHAT_TEMPLATE)
-                m.tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
             m.__dict__.update(pipeline_params)
             return m
@@ -746,12 +734,6 @@ class HuggingFaceOpenAICompatibleModel:
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-
-        # Ensure the tokenizer has a chat template.
-        # If not, we inject the default ChatML template which supports prompt generation.
-        if not getattr(self.tokenizer, "chat_template", None):
-            logger.warning(f"No chat template found for {self.model_name}. Using default ChatML template.")
-            self.tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
 
     def _apply_chat_template(self, messages: list[dict[str, Any]]) -> str:
         """

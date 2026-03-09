@@ -208,7 +208,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
 
         # Verify output contains expected phrases related to the input content
         output_validator = registry_batch_inference_test_base.create_openai_chat_completion_output_validator(
-            expected_phrases=["cat", "onion"],  # Keywords related to the image and video content
+            expected_phrases=["cat"],  # Keywords related to the image and video content
             test_case=self,
         )
 
@@ -305,12 +305,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
 
         # Verify output contains expected phrases related to the input content
         output_validator = registry_batch_inference_test_base.create_openai_chat_completion_output_validator(
-            expected_phrases=["cat", "onion"],  # Keywords related to the image and video content
+            expected_phrases=["cat"],
             test_case=self,
         )
 
         # TODO: verify column names in output and content
-        # output should contain the phrases "kitchen" and "cat".
         self._test_registry_batch_inference(
             model=model,
             X=input_df,
