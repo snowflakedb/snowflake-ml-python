@@ -377,6 +377,7 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
             options=options if options else {},
         )
         model_meta.models[name] = base_meta
+        model_meta.function_properties["predict"] = {model_meta_schema.FunctionProperties.PARTITIONED.value: True}
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
         # Add Prophet dependencies

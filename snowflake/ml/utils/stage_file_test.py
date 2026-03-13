@@ -104,6 +104,72 @@ class ListStageFilesTest(parameterized.TestCase):
             with self.assertRaisesRegex(RuntimeError, "invalid 'name' value"):
                 stage_file.list_stage_files(self.session, "@DB.SCHEMA.STAGE")
 
+    def test_external_s3_stage(self) -> None:
+        mock_rows = [
+            Row(name="s3://my-bucket/kitty.jpeg"),
+            Row(name="s3://my-bucket/subdir/data.parquet"),
+        ]
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = mock_rows
+            with mock.patch.object(
+                self.session, "create_dataframe", create=True, side_effect=self._mock_create_dataframe
+            ):
+                result = stage_file.list_stage_files(self.session, "@DB.SCHEMA.MY_EXT_STAGE")
+                paths = [row["FILE_PATH"] for row in result.collect()]
+                self.assertEqual(
+                    paths,
+                    [
+                        "@DB.SCHEMA.MY_EXT_STAGE/kitty.jpeg",
+                        "@DB.SCHEMA.MY_EXT_STAGE/subdir/data.parquet",
+                    ],
+                )
+
+    def test_external_s3_stage_with_subdir(self) -> None:
+        mock_rows = [
+            Row(name="s3://my-bucket/prefix/file1.jpg"),
+        ]
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = mock_rows
+            with mock.patch.object(
+                self.session, "create_dataframe", create=True, side_effect=self._mock_create_dataframe
+            ):
+                result = stage_file.list_stage_files(self.session, "@DB.SCHEMA.MY_EXT_STAGE/subdir")
+                paths = [row["FILE_PATH"] for row in result.collect()]
+                self.assertEqual(paths, ["@DB.SCHEMA.MY_EXT_STAGE/prefix/file1.jpg"])
+
+    def test_external_gcs_stage(self) -> None:
+        mock_rows = [
+            Row(name="gcs://my-gcs-bucket/file.csv"),
+        ]
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = mock_rows
+            with mock.patch.object(
+                self.session, "create_dataframe", create=True, side_effect=self._mock_create_dataframe
+            ):
+                result = stage_file.list_stage_files(self.session, "@DB.SCHEMA.GCS_STAGE")
+                paths = [row["FILE_PATH"] for row in result.collect()]
+                self.assertEqual(paths, ["@DB.SCHEMA.GCS_STAGE/file.csv"])
+
+    def test_external_azure_stage(self) -> None:
+        mock_rows = [
+            Row(name="azure://myaccount.blob.core.windows.net/container/file.txt"),
+        ]
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = mock_rows
+            with mock.patch.object(
+                self.session, "create_dataframe", create=True, side_effect=self._mock_create_dataframe
+            ):
+                result = stage_file.list_stage_files(self.session, "@DB.SCHEMA.AZURE_STAGE")
+                paths = [row["FILE_PATH"] for row in result.collect()]
+                self.assertEqual(paths, ["@DB.SCHEMA.AZURE_STAGE/container/file.txt"])
+
+    def test_external_stage_invalid_url(self) -> None:
+        mock_rows = [Row(name="s3://bucket-only")]
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            mock_sql.return_value.collect.return_value = mock_rows
+            with self.assertRaisesRegex(RuntimeError, "invalid 'name' value"):
+                stage_file.list_stage_files(self.session, "@DB.SCHEMA.STAGE")
+
 
 if __name__ == "__main__":
     absltest.main()

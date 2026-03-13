@@ -49,6 +49,8 @@ def remote(
             runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
                 e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
                 it should contain image repository, image name and image tag.
+            name (str): The name of the job. If not specified, a name will be generated based on the
+                entrypoint file name or function name. A unique suffix is appended to the final name.
 
     Returns:
         Decorator that dispatches invocations of the decorated function as remote jobs.

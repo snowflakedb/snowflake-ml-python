@@ -62,8 +62,8 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
         """
         logger.warning("HuggingFacePipelineModel is deprecated. Please use TransformersPipeline instead.")
         super().__init__(
-            task=task,
-            model=model,
+            task=task,  # type: ignore[arg-type]
+            model=model,  # type: ignore[arg-type]
             revision=revision,
             token_or_secret=token,
             trust_remote_code=trust_remote_code,

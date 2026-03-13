@@ -20,10 +20,6 @@ from snowflake.ml.utils import authentication
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
-# Builder type constants for parameterized tests
-KANIKO_BUILDER = "kaniko"
-INFERENCE_IMAGE_BUILDER = "inference_image_builder"
-
 
 class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
 
@@ -40,19 +36,17 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     _BASE_GPU_IMAGE_SESSION_PARAM = "SPCS_MODEL_BASE_GPU_INFERENCE_CONTAINER_URL"
 
     def _get_image_override_session_params(self) -> dict[str, str]:
-        overrides: dict[str, str] = {
+        overrides: dict[str, Optional[str]] = {
             self._MODEL_LOGGER_SESSION_PARAM: self.MODEL_LOGGER_PATH,
             self._BASE_GPU_IMAGE_SESSION_PARAM: self.BASE_GPU_IMAGE_PATH,
             self._BASE_CPU_IMAGE_SESSION_PARAM: self.BASE_CPU_IMAGE_PATH,
             self._PROXY_SESSION_PARAM: self.PROXY_IMAGE_PATH,
             self._BUILDER_SESSION_PARAM: self.BUILDER_IMAGE_PATH,
+            self._INFERENCE_ENGINE_SESSION_PARAM: (
+                f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}' if self.VLLM_IMAGE_PATH is not None else None
+            ),
         }
-        result = {k: v for k, v in overrides.items() if v is not None}
-
-        if self.VLLM_IMAGE_PATH is not None:
-            result[self._INFERENCE_ENGINE_SESSION_PARAM] = f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}'
-
-        return result
+        return {k: v for k, v in overrides.items() if v is not None}
 
     def setUp(self) -> None:
         super().setUp()
@@ -118,7 +112,6 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
-        use_inference_image_builder: bool = False,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -164,7 +157,6 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             experimental_options=experimental_options,
             params=params,
             skip_rest_api_test=skip_rest_api_test,
-            use_inference_image_builder=use_inference_image_builder,
         )
 
     def _deploy_model_service(
@@ -186,23 +178,12 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
-        use_inference_image_builder: bool = False,
     ) -> ModelVersion:
 
         if service_name is None:
             service_name = f"service_{inspect.stack()[1].function}_{self._run_id}"
         if service_compute_pool is None:
             service_compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
-
-        builder_swapped = False
-        if use_inference_image_builder and self._has_image_override():
-            assert (
-                self.INFERENCE_IMAGE_BUILDER_PATH is not None
-            ), "INFERENCE_IMAGE_BUILDER_PATH must be set when use_inference_image_builder=True"
-            self.session.sql(
-                f"ALTER SESSION SET {self._BUILDER_SESSION_PARAM} = '{self.INFERENCE_IMAGE_BUILDER_PATH}'"
-            ).collect()
-            builder_swapped = True
 
         mv.create_service(
             service_name=service_name,
@@ -274,9 +255,6 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                 target_method=target_method,
             )
             check_func(res_df)
-
-        if builder_swapped:
-            self.session.sql(f"ALTER SESSION SET {self._BUILDER_SESSION_PARAM} = '{self.BUILDER_IMAGE_PATH}'").collect()
 
         return mv
 

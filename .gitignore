@@ -411,3 +411,6 @@ CLAUDE.local.md
 
 # MCP server configuration
 .mcp.json
+
+# Claude tasks
+tasks/todo.md

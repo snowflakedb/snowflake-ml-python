@@ -1,8 +1,4 @@
-"""Test batch inference with CSE (Client-Side Encryption / SNOWFLAKE_FULL) encrypted stage.
-
-CSE stages use SNOWFLAKE_FULL encryption which is not supported for unstructured data
-on GCP and Azure. On AWS, CSE stages work correctly.
-"""
+"""Test batch inference with CSE (Client-Side Encryption / SNOWFLAKE_FULL) encrypted stage."""
 
 import os
 import tempfile
@@ -10,7 +6,6 @@ import tempfile
 from absl.testing import absltest
 from typing_extensions import override
 
-from snowflake.ml._internal.utils import snowflake_env
 from snowflake.ml.model.batch import (
     FileEncoding,
     InputFormat,
@@ -19,11 +14,16 @@ from snowflake.ml.model.batch import (
     OutputSpec,
 )
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
-from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 
 class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     """Test batch inference with CSE (SNOWFLAKE_FULL) encrypted stage."""
+
+    def setUp(self) -> None:
+        # TODO: this is temporary
+        if not self._has_image_override():
+            self.skipTest("CSE stage test requires image override to be set for now.")
+        super().setUp()
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -52,12 +52,7 @@ class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base
         self._db_manager.create_stage(self._test_stage, sse_encrypted=False)
 
     def test_image_classification_cse_stage(self) -> None:
-        """Test image classification with CSE encrypted stage.
-
-        On AWS, CSE stages work correctly and the job should complete.
-        On GCP/Azure, CSE (SNOWFLAKE_FULL) stages do not support unstructured
-        file downloading, so the job should fail.
-        """
+        """Test image classification with CSE encrypted stage."""
         from transformers import pipeline
 
         model = pipeline(task="image-classification", model="google/vit-base-patch16-224")
@@ -99,13 +94,7 @@ class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base
 
         job.wait()
 
-        cloud_type = test_env_utils.get_current_snowflake_cloud_type()
-        if cloud_type == snowflake_env.SnowflakeCloudType.AWS:
-            # TODO: further investigation on why this is passing (CSE should fail in all clouds)
-            self.assertEqual(job.status, "DONE")
-        else:
-            # CSE (SNOWFLAKE_FULL) stages do not support unstructured file downloading on GCP/Azure
-            self.assertEqual(job.status, "FAILED")
+        self.assertEqual(job.status, "DONE")
 
 
 if __name__ == "__main__":

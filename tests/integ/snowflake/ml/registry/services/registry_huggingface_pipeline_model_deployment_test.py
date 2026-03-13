@@ -10,10 +10,6 @@ from snowflake.ml.model.models import huggingface, huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
-from tests.integ.snowflake.ml.registry.services.registry_model_deployment_test_base import (
-    INFERENCE_IMAGE_BUILDER,
-    KANIKO_BUILDER,
-)
 
 
 class TestRegistryHuggingFacePipelineDeploymentModelInteg(
@@ -47,11 +43,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
-
-        # TODO: Remove this once the proxy image that can handle content parts protocol
-        # is available in system repository.
-        if not self._has_image_override():
-            self.skipTest("Skipping test: image override environment variables not set.")
 
         import transformers
 
@@ -123,17 +114,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )
 
-    @parameterized.parameters(  # type: ignore[misc]
-        {"builder_type": KANIKO_BUILDER},
-        {"builder_type": INFERENCE_IMAGE_BUILDER},
-    )
-    def test_token_classification_with_model_logging(self, builder_type: str) -> None:
-        # inference_image_builder tests only run when image override is enabled
-        if builder_type == INFERENCE_IMAGE_BUILDER and not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
-
-        use_inference_image_builder = builder_type == INFERENCE_IMAGE_BUILDER
-
+    def test_token_classification_with_model_logging(self) -> None:
         model = huggingface_pipeline.HuggingFacePipelineModel(
             task="token-classification",
             model="dslim/bert-base-NER",
@@ -167,7 +148,6 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                     check_res,
                 ),
             },
-            use_inference_image_builder=use_inference_image_builder,
         )
 
     @parameterized.product(  # type: ignore[misc]

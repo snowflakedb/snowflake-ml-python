@@ -1,0 +1,26 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "logging",
+    srcs = [
+        "__init__.py",
+        "experiment_logger.py",
+        "experiment_logging_context.py",
+    ],
+    deps = [
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/_internal/utils:tee",
+    ],
+)
+
+py_test(
+    name = "experiment_logger_test",
+    srcs = ["experiment_logger_test.py"],
+    tags = ["feature:experiment_tracking"],
+    deps = [
+        ":logging",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)

@@ -121,7 +121,7 @@ class AggregationSpecTest(absltest.TestCase):
             output_column="amount_sum_24h",
         )
         self.assertEqual(spec.function, AggregationType.SUM)
-        self.assertEqual(spec.source_column, "amount")
+        self.assertEqual(spec.source_column, "AMOUNT")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
         self.assertEqual(spec.output_column, "amount_sum_24h")
         self.assertEqual(spec.get_window_seconds(), 86400)
@@ -205,7 +205,7 @@ class AggregationSpecTest(absltest.TestCase):
         )
         spec_dict = spec.to_dict()
         self.assertEqual(spec_dict["function"], "last_n")
-        self.assertEqual(spec_dict["source_column"], "page_id")
+        self.assertEqual(spec_dict["source_column"], "PAGE_ID")  # normalized to uppercase
         self.assertEqual(spec_dict["window"], "1h")
         self.assertEqual(spec_dict["output_column"], "recent_pages")
         self.assertEqual(spec_dict["params"], {"n": 10})
@@ -213,6 +213,91 @@ class AggregationSpecTest(absltest.TestCase):
         # Round-trip
         spec2 = AggregationSpec.from_dict(spec_dict)
         self.assertEqual(spec, spec2)
+
+    def test_source_column_normalized_on_construction(self) -> None:
+        """Test that source_column is normalized to SQL identifier form.
+
+        Unquoted identifiers are uppercased; quoted identifiers preserve quotes.
+        The identifier form is stored so that it survives JSON round-trips.
+        """
+        # Unquoted: lowercase -> UPPERCASE
+        spec = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column="amount",
+            window="24h",
+            output_column="amount_sum_24h",
+        )
+        self.assertEqual(spec.source_column, "AMOUNT")
+
+        # Unquoted: mixed case -> UPPERCASE
+        spec_mixed = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column="Amount",
+            window="24h",
+            output_column="amount_sum_24h",
+        )
+        self.assertEqual(spec_mixed.source_column, "AMOUNT")
+
+        # Quoted: case-sensitive identifier preserves quotes
+        spec_quoted = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column='"myCol"',
+            window="24h",
+            output_column="my_col_sum_24h",
+        )
+        self.assertEqual(spec_quoted.source_column, '"myCol"')
+
+    def test_source_column_normalized_from_dict(self) -> None:
+        """Test that source_column is normalized when deserializing from dict.
+
+        This ensures backward compatibility: old persisted metadata with
+        unresolved source_column values (e.g., 'amount') are normalized on load.
+        """
+        # Simulate old persisted metadata with unresolved source_column
+        old_metadata = {
+            "function": "sum",
+            "source_column": "amount",  # old format: not normalized
+            "window": "24h",
+            "output_column": "amount_sum_24h",
+        }
+        spec = AggregationSpec.from_dict(old_metadata)
+        self.assertEqual(spec.source_column, "AMOUNT")
+        self.assertEqual(spec.get_tile_column_name("SUM"), "_PARTIAL_SUM_AMOUNT")
+
+    def test_source_column_case_sensitive_round_trip(self) -> None:
+        """Test that case-sensitive source columns survive JSON round-trip.
+
+        Quoted identifiers must preserve their quotes through to_dict/from_dict
+        so that resolved() at usage time correctly preserves case.
+        """
+        spec = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column='"myAmount"',
+            window="24h",
+            output_column="my_amount_sum",
+        )
+        # Stored in identifier form (with quotes)
+        self.assertEqual(spec.source_column, '"myAmount"')
+
+        # Round-trip through JSON
+        spec_dict = spec.to_dict()
+        self.assertEqual(spec_dict["source_column"], '"myAmount"')
+        spec2 = AggregationSpec.from_dict(spec_dict)
+        self.assertEqual(spec2.source_column, '"myAmount"')
+
+        # Tile column names resolve correctly
+        self.assertEqual(spec2.get_tile_column_name("SUM"), "_PARTIAL_SUM_myAmount")
+
+    def test_tile_column_name_case_sensitive(self) -> None:
+        """Test tile column names with case-sensitive (quoted) source columns."""
+        spec = AggregationSpec(
+            function=AggregationType.SUM,
+            source_column='"myAmount"',
+            window="24h",
+            output_column="my_amount_sum",
+        )
+        self.assertEqual(spec.get_tile_column_name("SUM"), "_PARTIAL_SUM_myAmount")
+        self.assertEqual(spec.get_cumulative_column_name("SUM"), "_CUM_SUM_myAmount")
 
 
 class FeatureTest(absltest.TestCase):
@@ -223,7 +308,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.sum("amount", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.SUM)
-        self.assertEqual(spec.source_column, "amount")
+        self.assertEqual(spec.source_column, "AMOUNT")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
         # Default output name
         self.assertEqual(spec.output_column, "AMOUNT_SUM_24H")
@@ -233,7 +318,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.count("transaction_id", "7d")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.COUNT)
-        self.assertEqual(spec.source_column, "transaction_id")
+        self.assertEqual(spec.source_column, "TRANSACTION_ID")  # resolved to uppercase
         self.assertEqual(spec.window, "7d")
 
     def test_avg(self) -> None:
@@ -241,7 +326,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.avg("price", "1h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.AVG)
-        self.assertEqual(spec.source_column, "price")
+        self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "1h")
 
     def test_min(self) -> None:
@@ -249,7 +334,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.min("price", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.MIN)
-        self.assertEqual(spec.source_column, "price")
+        self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
         self.assertEqual(spec.output_column, "PRICE_MIN_24H")
 
@@ -258,7 +343,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.max("price", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.MAX)
-        self.assertEqual(spec.source_column, "price")
+        self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
         self.assertEqual(spec.output_column, "PRICE_MAX_24H")
 
@@ -267,7 +352,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.stddev("price", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.STD)
-        self.assertEqual(spec.source_column, "price")
+        self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
 
     def test_var(self) -> None:
@@ -275,7 +360,7 @@ class FeatureTest(absltest.TestCase):
         feature = Feature.var("price", "24h")
         spec = feature.to_spec()
         self.assertEqual(spec.function, AggregationType.VAR)
-        self.assertEqual(spec.source_column, "price")
+        self.assertEqual(spec.source_column, "PRICE")  # resolved to uppercase
         self.assertEqual(spec.window, "24h")
 
     def test_last_n(self) -> None:

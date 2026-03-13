@@ -28,7 +28,6 @@ from snowflake.ml.jobs._utils import (
     payload_utils,
     query_helper,
     runtime_env_utils,
-    spec_utils,
     types,
 )
 from snowflake.snowpark import exceptions as sp_exceptions, functions as F
@@ -1246,11 +1245,9 @@ class JobManagerTest(JobTestBase):
         if not rows or rows[0]["value"] == "false":
             self.skipTest("ENABLE_NOTEBOOK_CONTAINER_RUNTIME_SELECTION is not enabled")
         target_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-        resources = spec_utils._get_node_resources(self.session, self.compute_pool)
-        hardware = "GPU" if resources.gpu > 0 else "CPU"
         try:
-            expected_runtime_image = runtime_env_utils.find_runtime_image(
-                self.session, hardware, f"{sys.version_info.major}.{sys.version_info.minor}"
+            expected_runtime_image = runtime_env_utils.get_runtime_image(
+                self.session, self.compute_pool, f"{sys.version_info.major}.{sys.version_info.minor}"
             )
         except Exception:
             expected_runtime_image = None
@@ -1399,27 +1396,45 @@ class JobManagerTest(JobTestBase):
             )
             self.assertEqual(job.wait(), "DONE", job.get_logs())
 
-    @mock.patch.dict(os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: "true"})
-    def test_job_stage_mount_v2(self) -> None:
-        try:
-            self.session.sql("ALTER SESSION SET ENABLE_STAGE_MOUNT_V2_ML_JOB = true").collect()
-        except Exception:
-            self.skipTest("Stage mount v2 is not enabled")
-
+    @parameterized.parameters(  # type: ignore[misc]
+        (True,),
+        (False,),
+    )
+    def test_job_stage_mount(self, enable_stage_mount_v2: bool) -> None:
         @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
         def test_function() -> str:
             return "hello world"
 
-        job = test_function()
+        with mock.patch.dict(
+            os.environ, {feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.value: str(enable_stage_mount_v2)}
+        ):
+            job = test_function()
 
-        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
-        self.assertEqual(job.result(), "hello world")
+            self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+            self.assertEqual(job.result(), "hello world")
 
     def test_job_with_runtime_image_tag_notebook(self) -> None:
         with mock.patch.dict(os.environ, {constants.RUNTIME_IMAGE_TAG_ENV_VAR: "1.8.0"}):
             job = self._submit_func_as_file(dummy_function)
             self.assertEqual(job.wait(), "DONE", job.get_logs())
             self.assertIn("1.8.0", job._container_spec["image"])
+
+    def test_job_managed_service(self) -> None:
+        table_name = f"test_table_{uuid4().hex}"
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)
+        def test_function(session: snowpark.Session, table_name: str) -> None:
+            session.sql(f"create or replace table {table_name} (id int, name string)").collect()
+            session.sql(f"insert into {table_name} (id, name) values (1, 'test')").collect()
+
+        try:
+            job = test_function(self.session, table_name)
+            self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
+            rows = self.session.sql(f"show tables like '{table_name}'").collect()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["owner"], identifier.get_unescaped_names(self.session.get_current_role()))
+        finally:
+            self.session.sql(f"drop table if exists {table_name}").collect()
 
 
 if __name__ == "__main__":

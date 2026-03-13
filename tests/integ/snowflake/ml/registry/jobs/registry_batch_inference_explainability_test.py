@@ -11,7 +11,6 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @absltest.skip("Skipping test until vLLM PrPr")
     def test_xgb_booster_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -29,8 +28,7 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
 
         cal_X_test = pd.DataFrame(cal_X_test)
         expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
-        # Create DataFrame with string column names to avoid sorting issues with mixed types
-        explanation_columns = [f"explanation_{i}" for i in range(expected_explanations.shape[1])]
+        explanation_columns = [f"{col}_explanation" for col in cal_X_test.columns]
         expected_explanations_df = pd.DataFrame(expected_explanations, columns=explanation_columns)
         input_df, expected_predictions = self._prepare_batch_inference_data(cal_X_test, expected_explanations_df)
 
@@ -42,8 +40,11 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             options={"enable_explainability": True},
             signatures=sig,
             X=input_df,
+            expected_predictions=expected_predictions,
             output_spec=OutputSpec(stage_location=output_stage_location),
             job_spec=JobSpec(job_name=job_name, function_name="explain"),
+            # TODO(hayu): Remove target_platforms once explainability is supported with SPCS-only logging.
+            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
 

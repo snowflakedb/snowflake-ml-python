@@ -563,7 +563,12 @@ def main(
     try:
         import ray
 
-        ray.init(address="auto")
+        ray.init(
+            address="auto",
+            runtime_env={
+                "env_vars": {"PYTHONPATH": os.pathsep.join(sys.path)},
+            },
+        )
     except ModuleNotFoundError:
         logger.debug("Ray is not installed, skipping Ray initialization")
 

@@ -1,32 +1,36 @@
 import json
 import os
 import pickle
+import sys
 import tempfile
 import uuid
 
 import pandas as pd
 import xgboost as xgb
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
 
-from snowflake.ml.experiment import ExperimentTracking
+from snowflake.ml._internal import env as snowml_env
+from snowflake.ml.experiment import ExperimentTracking, _logging as experiment_logging
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, session as snowpark_session
 from tests.integ.snowflake.ml.test_utils import db_manager
 
 
-class ExperimentTrackingIntegrationTest(absltest.TestCase):
+class ExperimentTrackingIntegrationTest(parameterized.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
         cls._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
+        experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY = "/tmp/experiment_tracking"
+        snowml_env.IN_ML_RUNTIME = "True"  # Pretend we're in SPCS for testing live logging
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
-        self.run_id = uuid.uuid4().hex
+        self.test_id = uuid.uuid4().hex
         self._db_manager = db_manager.DBManager(self._session)
         self._schema_name = "PUBLIC"
         self._db_name = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-            self.run_id, "TEST_EXPERIMENT_TRACKING"
+            self.test_id, "TEST_EXPERIMENT_TRACKING"
         ).upper()
         self._db_manager.create_database(self._db_name, data_retention_time_in_days=1)
         self._db_manager.cleanup_databases(expire_hours=6)
@@ -52,10 +56,19 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
         self.assertEqual(exp1._sql_client, exp2._sql_client)
         # The session doesn't have an __eq__ method, so we just check for existence
         self.assertEqual(exp1._session is None, exp2._session is None)
-        # The experiment and run do not have __eq__ methods, so we check their attributes manually
-        self.assertEqual(exp1._experiment.name, exp2._experiment.name)
-        self.assertEqual(exp1._run.experiment_name, exp2._run.experiment_name)
-        self.assertEqual(exp1._run.name, exp2._run.name)
+        # The experiment, run, and logging context do not have __eq__ methods, so we check their attributes manually
+        self.assertEqual(exp1._experiment is None, exp2._experiment is None)
+        if exp1._experiment is not None and exp2._experiment is not None:
+            self.assertEqual(exp1._experiment.name, exp2._experiment.name)
+        self.assertEqual(exp1._run is None, exp2._run is None)
+        if exp1._run is not None and exp2._run is not None:
+            self.assertEqual(exp1._run.experiment_name, exp2._run.experiment_name)
+            self.assertEqual(exp1._run.name, exp2._run.name)
+        self.assertEqual(exp1._logging_context is None, exp2._logging_context is None)
+        if exp1._logging_context is not None and exp2._logging_context is not None:
+            self.assertEqual(exp1._logging_context.logger.exp_id, exp2._logging_context.logger.exp_id)
+            self.assertEqual(exp1._logging_context.logger.run_id, exp2._logging_context.logger.run_id)
+            self.assertEqual(exp1._logging_context.logger.file.name, exp2._logging_context.logger.file.name)
         # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
         self.assertEqual(exp1._registry is None, exp2._registry is None)
         if exp1._registry is not None and exp2._registry is not None:
@@ -417,6 +430,7 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
                 model,
                 model_name=model_name,
                 sample_input_data=X,
+                target_platforms=["WAREHOUSE"],
             )
 
         # Test that model exists
@@ -505,6 +519,58 @@ class ExperimentTrackingIntegrationTest(absltest.TestCase):
                 open(os.path.join(local_path, "nested_dir/artifact3.md")) as original_file,
             ):
                 self.assertEqual(uploaded_file.read(), original_file.read())
+
+    @parameterized.parameters(True, False)
+    def test_patch_stdout_and_stderr(self, live_logging_status: bool) -> None:
+        """Test that stdout and stderr are patched to log to ExperimentLogger when a run is active."""
+        experiment_name = "TEST_EXPERIMENT_STDOUT_STDERR"
+        run_name = "TEST_RUN_STDOUT_STDERR"
+        stdout_message = "This is a test message to stdout"
+        stderr_message = "This is a test message to stderr"
+        unpatched_message = "No run in context; this should not be logged."
+
+        self.exp.set_live_logging_status(live_logging_status)
+        self.exp.set_experiment(experiment_name=experiment_name)
+        self.assertIsNone(self.exp._logging_context)
+        print(unpatched_message)
+        print(unpatched_message, file=sys.stderr)
+
+        with self.exp.start_run(run_name=run_name):
+            self.assertEqual(live_logging_status, self.exp._logging_context is not None)
+            print(stdout_message)
+            print(stderr_message, file=sys.stderr)
+
+        self.assertIsNone(self.exp._logging_context)
+        print(unpatched_message)
+        print(unpatched_message, file=sys.stderr)
+
+        # Verify that the log messages were written to the ExperimentLogger file
+        experiment_fqn = f"{self._db_name}.{self._schema_name}.{experiment_name}"
+        exp_id = self._session.sql(f"CALL SYSTEM$RESOLVE_EXPERIMENT_ID('{experiment_fqn}')").collect()[0][0]
+        run_id = self._session.sql(
+            f"CALL SYSTEM$RESOLVE_EXPERIMENT_RUN_ID('{experiment_fqn}', '{run_name}')"
+        ).collect()[0][0]
+        stdout_logfile_path = os.path.join(
+            experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY, str(exp_id), str(run_id), "STDOUT.log"
+        )
+        stderr_logfile_path = os.path.join(
+            experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY, str(exp_id), str(run_id), "STDERR.log"
+        )
+        # Log file should have been written if and only if live logging was enabled
+        self.assertEqual(os.path.exists(stdout_logfile_path), live_logging_status)
+        self.assertEqual(os.path.exists(stderr_logfile_path), live_logging_status)
+
+        if live_logging_status:
+            with open(stdout_logfile_path) as f:
+                log_contents = f.read()
+                self.assertIn(stdout_message, log_contents)
+                self.assertNotIn(stderr_message, log_contents)
+                self.assertNotIn(unpatched_message, log_contents)
+            with open(stderr_logfile_path) as f:
+                log_contents = f.read()
+                self.assertNotIn(stdout_message, log_contents)
+                self.assertIn(stderr_message, log_contents)
+                self.assertNotIn(unpatched_message, log_contents)
 
 
 if __name__ == "__main__":

@@ -351,7 +351,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["aD", "PRODUCT", "USER"],
-                "JOIN_KEYS": ['["AID"]', '["pid,CID"]', '["uid"]'],
+                "JOIN_KEYS": ['["AID"]', '["pid", "CID"]', '["uid"]'],
                 "DESC": ["", "", ""],
             },
             sort_cols=["NAME"],
@@ -375,7 +375,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["PRODUCT", "USER"],
-                "JOIN_KEYS": ['["pid,CID"]', '["uid"]'],
+                "JOIN_KEYS": ['["pid", "CID"]', '["uid"]'],
                 "DESC": ["", ""],
             },
             sort_cols=["NAME"],
@@ -425,7 +425,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             actual_df=actual_result.drop(columns="OWNER"),
             target_data={
                 "NAME": ["FOO", "BAR"],
-                "JOIN_KEYS": ['["A,B"]', '["C"]'],
+                "JOIN_KEYS": ['["A", "B"]', '["C"]'],
                 "DESC": ["my foo", ""],
             },
             sort_cols=["NAME"],

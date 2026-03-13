@@ -36,7 +36,6 @@ py_library(
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
-        "//snowflake/ml/jobs/_utils:spec_utils",
         "//snowflake/ml/jobs/_utils:types",
     ],
 )
@@ -70,6 +69,7 @@ py_library(
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:runtime_env_utils",
         "//snowflake/ml/jobs/_utils:types",
     ],
 )
@@ -81,6 +81,9 @@ py_test(
     deps = [
         "//snowflake/ml/jobs:job_definition",
         "//snowflake/ml/jobs/_interop:utils",
+        "//snowflake/ml/jobs/_utils:arg_protocol",
+        "//snowflake/ml/jobs/_utils:feature_flags",
+        "//snowflake/ml/jobs/_utils:types",
     ],
 )
 

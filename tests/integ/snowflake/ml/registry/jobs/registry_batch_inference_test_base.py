@@ -1,6 +1,7 @@
 import ast
 import inspect
 import json
+import logging
 import uuid
 from typing import Any, Callable, Optional
 
@@ -8,13 +9,13 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake import snowpark
-from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import ModelVersion, model_signature, type_hints as model_types
-from snowflake.ml.model._client.ops.service_ops import ServiceOperator
 from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
+
+logger = logging.getLogger(__name__)
 
 
 def create_openai_chat_completion_output_validator(
@@ -82,6 +83,31 @@ def create_openai_chat_completion_output_validator(
 class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
     _INDEX_COL = "INDEX"
 
+    def _get_batch_image_override_session_params(self) -> dict[str, str]:
+        overrides: dict[str, Optional[str]] = {
+            "SPCS_MODEL_BUILD_CONTAINER_URL": self.BUILDER_IMAGE_PATH,
+            "SPCS_MODEL_BASE_CPU_BATCH_INFERENCE_CONTAINER_URL": self.BASE_BATCH_CPU_IMAGE_PATH,
+            "SPCS_MODEL_BASE_GPU_BATCH_INFERENCE_CONTAINER_URL": self.BASE_BATCH_GPU_IMAGE_PATH,
+            "SPCS_MODEL_RAY_ORCHESTRATOR_CONTAINER_URL": self.RAY_ORCHESTRATOR_PATH,
+            "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,
+            "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS": (
+                f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}' if self.VLLM_IMAGE_PATH is not None else None
+            ),
+        }
+        return {k: v for k, v in overrides.items() if v is not None}
+
+    def setUp(self) -> None:
+        super().setUp()
+        if self._has_image_override():
+            for key, value in self._get_batch_image_override_session_params().items():
+                self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
+
+    def tearDown(self) -> None:
+        if self._has_image_override():
+            for key in self._get_batch_image_override_session_params():
+                self.session.sql(f"ALTER SESSION UNSET {key}").collect()
+        super().tearDown()
+
     def _create_stage(self) -> None:
         self._db_manager.create_stage(self._test_stage, sse_encrypted=True)  # SSE encryption for Azure
 
@@ -104,6 +130,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         prediction_assert_fn: Optional[Any] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         assert_container_count: Optional[int] = None,
+        target_platforms: Optional[list[str]] = None,
     ) -> job.MLJob[Any]:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -123,7 +150,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             sample_input_data=sample_input_data,
             conda_dependencies=conda_dependencies,
             pip_requirements=pip_requirements,
-            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            target_platforms=target_platforms or ["SNOWPARK_CONTAINER_SERVICES"],
             options=options,
             signatures=signatures,
         )
@@ -142,128 +169,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             assert_container_count=assert_container_count,
         )
 
-    def _deploy_batch_inference_with_image_override(
-        self,
-        mv: ModelVersion,
-        *,
-        X: snowpark.DataFrame,
-        compute_pool: str,
-        input_spec: Optional[InputSpec] = None,
-        output_spec: OutputSpec,
-        job_spec: Optional[JobSpec] = None,
-        inference_engine_options: Optional[dict[str, Any]] = None,
-    ) -> job.MLJob[Any]:
-        """Deploy batch inference job with image override."""
-        job_spec = job_spec or JobSpec()
-        input_spec = input_spec or InputSpec()
-        output_stage_location = output_spec.stage_location
-
-        # Determine if we're using GPU based on gpu_requests
-        is_gpu = job_spec.gpu_requests is not None
-        image_path = self.BASE_BATCH_GPU_IMAGE_PATH if is_gpu else self.BASE_BATCH_CPU_IMAGE_PATH
-        assert image_path is not None, "Base image path must be set for batch inference image override deployment."
-        assert (
-            self.BUILDER_IMAGE_PATH is not None
-        ), "Builder image path must be set for batch inference image override deployment."
-        assert (
-            self.PROXY_IMAGE_PATH is not None
-        ), "Proxy image path must be set for batch inference image override deployment."
-        assert (
-            self.VLLM_IMAGE_PATH is not None
-        ), "vLLM image path must be set for batch inference image override deployment."
-        assert (
-            self.RAY_ORCHESTRATOR_PATH is not None
-        ), "Ray orchestrator image path must be set for batch inference image override deployment."
-
-        job_name = job_spec.job_name or f"BATCH_INFERENCE_{str(uuid.uuid4()).replace('-', '_').upper()}"
-        database, schema, job_id = self._get_fully_qualified_service_or_job_name(job_name)
-        compute_pool_id = sql_identifier.SqlIdentifier(compute_pool)
-        mv._service_ops._model_deployment_spec.clear()
-
-        self._add_common_model_deployment_spec_options(
-            mv=mv,
-            database=database,
-            schema=schema,
-            force_rebuild=job_spec.force_rebuild,
-        )
-
-        # Prepare input data
-        input_stage_location = f"{output_stage_location.rstrip('/')}/_temporary/"
-        try:
-            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
-        except Exception as e:
-            raise RuntimeError(f"Failed to process input data: {e}")
-
-        # Add job spec
-        mv._service_ops._model_deployment_spec.add_job_spec(
-            job_database_name=database,
-            job_schema_name=schema,
-            job_name=job_id,
-            inference_compute_pool_name=compute_pool_id,
-            num_workers=job_spec.num_workers,
-            max_batch_rows=None,
-            input_stage_location=input_stage_location,
-            input_file_pattern="*",
-            output_stage_location=output_stage_location,
-            completion_filename="_SUCCESS",
-            function_name=mv._get_function_info(function_name=job_spec.function_name)["target_method"],
-            warehouse=sql_identifier.SqlIdentifier(self._TEST_SPCS_WH),
-            cpu=job_spec.cpu_requests,
-            memory=job_spec.memory_requests,
-            gpu=job_spec.gpu_requests,
-            replicas=job_spec.replicas or 1,
-            column_handling=ServiceOperator._encode_column_handling(input_spec.column_handling),
-            params=ServiceOperator._encode_params(input_spec.params),
-        )
-
-        # Add inference engine spec if options are provided
-        if inference_engine_options is not None:
-            if "engine" not in inference_engine_options:
-                raise ValueError("'engine' field is required in inference_engine_options")
-            mv._service_ops._model_deployment_spec.add_inference_engine_spec(
-                inference_engine=inference_engine_options["engine"],
-                inference_engine_args=inference_engine_options.get("engine_args_override"),
-            )
-
-        # TODO: set batch inference base image here too as session parameter
-        # instead of in the spec (in _deploy_override_model)
-
-        # Set session parameters for batch inference image overrides
-        batch_image_overrides: dict[str, Optional[str]] = {
-            "SPCS_MODEL_RAY_ORCHESTRATOR_CONTAINER_URL": self.RAY_ORCHESTRATOR_PATH,
-            "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,
-            "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS": f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}',
-            "SPCS_MODEL_INFERENCE_ENGINE_SUPPORTED_TASKS": (
-                '{"vllm": ["text-generation", "image-text-to-text", ' '"video-text-to-text", "audio-text-to-text"]}'
-            ),
-        }
-
-        for key, value in batch_image_overrides.items():
-            self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
-
-        try:
-            _, async_job = self._deploy_override_model(
-                mv=mv,
-                database=database,
-                schema=schema,
-                inference_image=image_path,
-                is_batch_inference=True,
-            )
-
-            # Wait for deployment to complete
-            async_job.result()
-        finally:
-            # Unset session parameters after deployment
-            for key in batch_image_overrides:
-                self.session.sql(f"ALTER SESSION UNSET {key}").collect()
-
-        # Return the job object
-        return job.MLJob(
-            id=sql_identifier.get_fully_qualified_name(database, schema, job_id),
-            session=self.session,
-        )
-
-    def _with_image_override(self) -> bool:
+    def _has_image_override(self) -> bool:
         image_paths = [
             self.BUILDER_IMAGE_PATH,
             self.BASE_BATCH_CPU_IMAGE_PATH,
@@ -300,54 +206,54 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         inference_engine_options: Optional[dict[str, Any]] = None,
         assert_container_count: Optional[int] = None,
     ) -> job.MLJob[Any]:
-
-        with_image_override = self._with_image_override()
-
         # Resolve compute pool if not provided
         job_spec = job_spec or JobSpec()
         if compute_pool is None:
             compute_pool = self._TEST_CPU_COMPUTE_POOL if job_spec.gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
-        if with_image_override:
-            # Use image override deployment
-            batch_job = self._deploy_batch_inference_with_image_override(
-                mv,
-                X=X,
-                compute_pool=compute_pool,
-                input_spec=input_spec,
-                output_spec=output_spec,
-                job_spec=job_spec,
-                inference_engine_options=inference_engine_options,
+        # Merge image_repo into job_spec if not already set
+        if job_spec.image_repo is None:
+            job_spec = JobSpec(
+                **{
+                    **job_spec.model_dump(),
+                    "image_repo": ".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                }
             )
-        else:
-            # Use normal deployment
-            # Merge image_repo into job_spec if not already set
-            if job_spec.image_repo is None:
-                job_spec = JobSpec(
-                    **{
-                        **job_spec.model_dump(),
-                        "image_repo": ".".join([self._test_db, self._test_schema, self._test_image_repo]),
-                    }
-                )
 
-            batch_job = mv.run_batch(
-                X,
-                compute_pool=compute_pool,
-                input_spec=input_spec,
-                output_spec=output_spec,
-                job_spec=job_spec,
-                inference_engine_options=inference_engine_options,
-            )
+        batch_job = mv.run_batch(
+            X,
+            compute_pool=compute_pool,
+            input_spec=input_spec,
+            output_spec=output_spec,
+            job_spec=job_spec,
+            inference_engine_options=inference_engine_options,
+        )
 
         if not blocking:
             return batch_job
 
         output_stage_location = output_spec.stage_location
 
-        batch_job.wait()
+        try:
+            batch_job.wait(timeout=1800)
+        except TimeoutError:
+            logger.warning(f"Batch job timed out after 30 minutes. Status: {batch_job.status}")
         if batch_job.status != "DONE":
             logs = batch_job.get_logs(limit=100)
             msg = f"Job status is {batch_job.status}, expected DONE.\n\nLast 100 lines of job logs:\n{logs}"
+
+            # Also fetch logs from proxy and model-inference containers if there are multiple containers
+            containers = batch_job._service_spec.get("spec", {}).get("containers", [])
+            container_names = {c["name"] for c in containers}
+            for container_name in ("proxy", "model-inference"):
+                if len(containers) > 1 and container_name in container_names:
+                    try:
+                        from snowflake.ml.jobs.job import _get_logs
+
+                        container_logs = _get_logs(self.session, batch_job.id, limit=100, container_name=container_name)
+                        msg += f"\n\nLast 100 lines of {container_name} logs:\n{container_logs}"
+                    except Exception as e:
+                        msg += f"\n\nFailed to get {container_name} logs: {e}"
         else:
             msg = None
         self.assertEqual(batch_job.status, "DONE", msg)

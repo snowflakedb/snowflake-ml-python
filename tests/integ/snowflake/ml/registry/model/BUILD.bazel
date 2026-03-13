@@ -273,6 +273,8 @@ py_test(
     ],
 )
 
+# registry_keras_tensorflow_model_test and registry_keras_torch_model_test are identical tests,
+# except for shard_counts. TODO: merge them into a single test.
 py_test(
     name = "registry_keras_tensorflow_model_test",
     timeout = "long",

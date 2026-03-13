@@ -1,6 +1,36 @@
 # Release History
 
-## 1.29.0
+## 1.30.0
+
+### New Features
+
+* Experiment Tracking live logging (PrPr): In SPCS, call `set_live_logging_status(True)` to automatically capture and
+  persist outputs to stdout and stderr while a run is active. The captured logs can be viewed from the Experiments UI.
+* Registry: Support logging MLflow models created via `mlflow.*.save_model()` to the Snowflake Model
+  Registry. Previously, only models logged through `mlflow.*.log_model()` were supported. This also
+  enables logging custom `mlflow.pyfunc.PythonModel` subclasses saved locally.
+
+### Bug Fixes
+
+* Registry: Fixed Prophet model handler to correctly mark the `predict` method as partitioned, ensuring it
+  uses a partitioned `TABLE_FUNCTION` when deployed to Snowflake.
+* Registry: Support `text-generation` models without chat template. The model will have signatures to automatically take
+  plain strings as input without needing to specify the signatures in `log_model`.
+  The signature can be overridden if the user chooses to.
+
+### Behavior Changes
+
+* Registry: Huggingface models with task `text-generation` that do not have chat templates will be logged with signature
+  that supports plain text (string) as input.
+
+### Deprecations
+
+* Registry: Removed support for logging Hugging Face Pipelines in config-only mode. Config-only
+  models could not run in warehouse and required an External Access Integration (EAI) with egress
+  to Hugging Face hosts. Use remote logging or local download instead — these approaches support
+  warehouse execution and store model weights at log time, enabling fully air-gapped services.
+
+## 1.29.0 (2026-02-24)
 
 ### New Features
 

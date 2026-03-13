@@ -8,7 +8,11 @@ from absl.testing import absltest, parameterized
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import prophet as prophet_handler
-from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta
+from snowflake.ml.model._packager.model_meta import (
+    model_blob_meta,
+    model_meta,
+    model_meta_schema,
+)
 
 
 class ProphetHandlerTest(parameterized.TestCase):
@@ -185,12 +189,11 @@ class ProphetHandlerTest(parameterized.TestCase):
                 self.assertIn("test_prophet", meta.models)
                 self.assertEqual(meta.models["test_prophet"].model_type, "prophet")
 
-                # Verify dependencies were added (note: in actual usage via ModelPackager,
-                # dependencies are added but in isolated handler tests the env may not reflect this)
-                # The dependency addition logic exists in the handler and is covered by integration tests
-
-                # Note: Function type configuration is now handled through options parameter
-                # when calling registry.log_model(), not directly in the handler
+                # Verify function_properties marks predict as partitioned
+                self.assertEqual(
+                    meta.function_properties,
+                    {"predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}},
+                )
 
     @mock.patch("cloudpickle.load")
     @mock.patch("builtins.open", mock.mock_open())
@@ -208,7 +211,6 @@ class ProphetHandlerTest(parameterized.TestCase):
                 mock.patch("prophet.Prophet"),
                 mock.patch("snowflake.ml.model._packager.model_handlers.prophet.isinstance", return_value=True),
             ):
-
                 # Load model
                 loaded_model = prophet_handler.ProphetHandler.load_model(
                     name="test_prophet",
@@ -242,7 +244,6 @@ class ProphetHandlerTest(parameterized.TestCase):
             mock.patch("prophet.Prophet"),
             mock.patch("snowflake.ml.model._packager.model_handlers.prophet.isinstance", return_value=True),
         ):
-
             # Convert to custom model
             custom_model = prophet_handler.ProphetHandler.convert_as_custom_model(
                 raw_model=self.prophet_model,
@@ -294,10 +295,14 @@ class ProphetHandlerTest(parameterized.TestCase):
                 )
 
                 # Verify the handler completed successfully
-                # Note: TABLE_FUNCTION configuration is now handled via options parameter
-                # in registry.log_model(), not directly in the handler
                 self.assertIsNotNone(meta.signatures)
                 self.assertIn("predict", meta.signatures)
+
+                # Verify that function_properties marks predict as partitioned
+                self.assertEqual(
+                    meta.function_properties,
+                    {"predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}},
+                )
 
     def test_cast_model(self) -> None:
         """Test model casting functionality."""
@@ -549,7 +554,6 @@ class ProphetHandlerTest(parameterized.TestCase):
             mock.patch("prophet.Prophet"),
             mock.patch("snowflake.ml.model._packager.model_handlers.prophet.isinstance", return_value=True),
         ):
-
             # Convert to custom model
             custom_model = prophet_handler.ProphetHandler.convert_as_custom_model(
                 raw_model=self.prophet_model,

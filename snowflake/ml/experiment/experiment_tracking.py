@@ -1,3 +1,4 @@
+import contextlib
 import functools
 import json
 import sys
@@ -5,13 +6,16 @@ import warnings
 from typing import Any, Optional, Union
 from urllib.parse import quote
 
+import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.ml import model as ml_model, registry
+from snowflake.ml._internal import env_utils
 from snowflake.ml._internal.human_readable_id import hrid_generator
-from snowflake.ml._internal.utils import connection_params, sql_identifier
+from snowflake.ml._internal.utils import connection_params, sql_identifier, tee
 from snowflake.ml.experiment import (
     _entities as entities,
     _experiment_info as experiment_info,
+    _logging as experiment_logging,
 )
 from snowflake.ml.experiment._client import (
     artifact,
@@ -28,7 +32,7 @@ class ExperimentTracking:
     Class to manage experiments in Snowflake.
     """
 
-    _instance = None
+    _instance: Optional["ExperimentTracking"] = None
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "ExperimentTracking":
         if cls._instance is None:
@@ -101,6 +105,9 @@ class ExperimentTracking:
         self._experiment: Optional[entities.Experiment] = None
         # The run in context
         self._run: Optional[entities.Run] = None
+        # The logging context used for patching stdout and stderr.
+        self._logging_context: Optional[experiment_logging.ExperimentLoggingContext] = None
+        self._live_logging_enabled = False
 
         self._initialized = True
 
@@ -121,6 +128,7 @@ class ExperimentTracking:
         state["_session"] = None
         state["_sql_client"] = None
         state["_registry"] = None
+        state["_logging_context"] = None
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
@@ -143,6 +151,8 @@ class ExperimentTracking:
             database_name=self._database_name,
             schema_name=self._schema_name,
         )
+        if self._run:
+            self._patch_stdout_and_stderr()
 
     def set_experiment(
         self,
@@ -186,7 +196,7 @@ class ExperimentTracking:
             creation_mode=sql_client_utils.CreationMode(if_not_exists=True),
         )
         self._experiment = entities.Experiment(experiment_name=experiment_name)
-        self._run = None
+        self._unset_run()
         return self._experiment
 
     def delete_experiment(
@@ -229,7 +239,7 @@ class ExperimentTracking:
             and self._schema_name == schema_name
         ):
             self._experiment = None
-            self._run = None
+            self._unset_run()
 
     @functools.wraps(registry.Registry.log_model)
     def log_model(
@@ -269,11 +279,14 @@ class ExperimentTracking:
             if "RUNNING" != json.loads(runs[0][sql_client.RUN_METADATA_COL_NAME])["status"]:
                 raise RuntimeError(f"Run {run_name} exists but cannot be resumed as it is no longer running.")
             else:
-                self._run = entities.Run(
-                    experiment_tracking=self,
-                    experiment_name=experiment.name,
-                    run_name=sql_identifier.SqlIdentifier(run_name),
+                self._set_run(
+                    entities.Run(
+                        experiment_tracking=self,
+                        experiment_name=experiment.name,
+                        run_name=sql_identifier.SqlIdentifier(run_name),
+                    )
                 )
+                assert self._run is not None  # for mypy
                 return self._run
 
         run_name = sql_identifier.SqlIdentifier(run_name)
@@ -281,7 +294,8 @@ class ExperimentTracking:
             experiment_name=experiment.name,
             run_name=run_name,
         )
-        self._run = entities.Run(experiment_tracking=self, experiment_name=experiment.name, run_name=run_name)
+        self._set_run(entities.Run(experiment_tracking=self, experiment_name=experiment.name, run_name=run_name))
+        assert self._run is not None  # for mypy
         return self._run
 
     def end_run(self, run_name: Optional[str] = None) -> None:
@@ -310,7 +324,7 @@ class ExperimentTracking:
             run_name=run_name,
         )
         if self._run and run_name == self._run.name:
-            self._run = None
+            self._unset_run()
         self._print_urls(experiment_name=experiment_name, run_name=run_name)
 
     def delete_run(
@@ -333,7 +347,7 @@ class ExperimentTracking:
             run_name=sql_identifier.SqlIdentifier(run_name),
         )
         if self._run and self._run.name == run_name:
-            self._run = None
+            self._unset_run()
 
     def log_metric(
         self,
@@ -510,6 +524,26 @@ class ExperimentTracking:
                 target_path=local_dir,
             )
 
+    @snowpark_utils.private_preview(version="1.30.0")
+    def set_live_logging_status(self, enabled: bool) -> None:
+        """
+        Enable or disable live logging. When enabled, stdout and stderr are captured and logged to persistent storage.
+
+        Args:
+            enabled: If True, enables live logging. If False, disables it.
+
+        Raises:
+            RuntimeError: If called from outside of Snowpark Container Services (SPCS).
+        """
+        if env_utils.get_execution_context() != "SPCS":
+            raise RuntimeError("Live logging is only supported in Snowpark Container Services (SPCS).")
+
+        self._live_logging_enabled = enabled
+        if enabled and self._run:
+            self._patch_stdout_and_stderr()
+        if not enabled:
+            self._unpatch_stdout_and_stderr()
+
     def _get_or_set_experiment(self) -> entities.Experiment:
         if self._experiment:
             return self._experiment
@@ -563,3 +597,61 @@ class ExperimentTracking:
         run_url = experiment_url + f"/runs/{quote(str(run_name))}"
         sys.stdout.write(f"🏃 View run {run_name} at: {run_url}\n")
         sys.stdout.write(f"🧪 View experiment at: {experiment_url}\n")
+
+    def _set_run(self, run: entities.Run) -> None:
+        self._run = run
+        self._patch_stdout_and_stderr()
+
+    def _unset_run(self) -> None:
+        self._run = None
+        self._unpatch_stdout_and_stderr()
+
+    def _patch_stdout_and_stderr(self) -> None:
+        if not self._live_logging_enabled:
+            return
+
+        if self._logging_context:
+            return  # already patched
+
+        assert self._experiment is not None and self._run is not None  # for mypy
+        stdout_logger, stderr_logger, stdout_ctx, stderr_ctx = None, None, None, None  # for exception handling
+        try:
+            exp_id = self._sql_client.get_experiment_id(self._experiment.name)
+            run_id = self._sql_client.get_run_id(
+                experiment_name=self._experiment.name,
+                run_name=self._run.name,
+            )
+            stdout_logger = experiment_logging.ExperimentLogger(exp_id=exp_id, run_id=run_id, stream="STDOUT")
+            stderr_logger = experiment_logging.ExperimentLogger(exp_id=exp_id, run_id=run_id, stream="STDERR")
+            stdout_ctx = contextlib.redirect_stdout(tee.OutputTee(sys.stdout, stdout_logger))
+            stderr_ctx = contextlib.redirect_stderr(tee.OutputTee(sys.stderr, stderr_logger))
+            self._logging_context = experiment_logging.ExperimentLoggingContext(
+                stdout_logger=stdout_logger,
+                stderr_logger=stderr_logger,
+                stdout_ctx=stdout_ctx,
+                stderr_ctx=stderr_ctx,
+            )
+            stdout_ctx.__enter__()
+            stderr_ctx.__enter__()
+        except Exception as e:
+            if stdout_ctx:
+                stdout_ctx.__exit__(None, None, None)
+            if stderr_ctx:
+                stderr_ctx.__exit__(None, None, None)
+            if stdout_logger:
+                stdout_logger.close()
+            if stderr_logger:
+                stderr_logger.close()
+            self._logging_context = None
+            raise RuntimeError(
+                "Failed to patch stdout and stderr for experiment logging. "
+                "To disable live logging, call experiment.set_live_logging_status(False)."
+            ) from e
+
+    def _unpatch_stdout_and_stderr(self) -> None:
+        if self._logging_context:
+            self._logging_context.stdout_ctx.__exit__(None, None, None)
+            self._logging_context.stderr_ctx.__exit__(None, None, None)
+            self._logging_context.stdout_logger.close()
+            self._logging_context.stderr_logger.close()
+            self._logging_context = None

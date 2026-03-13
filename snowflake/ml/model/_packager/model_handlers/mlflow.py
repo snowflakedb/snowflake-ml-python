@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 import tempfile
@@ -22,6 +23,8 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import mlflow
+
+logger = logging.getLogger(__name__)
 
 
 def _to_native_python(obj: Any) -> Any:
@@ -54,6 +57,72 @@ def _ensure_serializable_objects(df: pd.DataFrame) -> pd.DataFrame:
         if df[col].dtype == np.dtype("O"):
             df[col] = df[col].map(_to_native_python)
     return df
+
+
+def _re_log_to_mlflow_run(
+    model: "mlflow.pyfunc.PyFuncModel",
+) -> "mlflow.pyfunc.PyFuncModel":
+    """Re-log a locally-saved MLflow model into a proper MLflow tracking run.
+
+    Models created with ``mlflow.*.save_model()`` and loaded from a local path
+    lack a backing tracking run: their ``Model`` metadata has no ``artifact_path``
+    or ``run_id``, so ``get_model_info()`` fails and artifact download cannot
+    resolve the URI. This function uses the flavor-specific ``log_model`` to
+    persist the underlying model implementation into a new MLflow run so that
+    all metadata and artifact operations succeed.
+
+    Args:
+        model: An mlflow.pyfunc.PyFuncModel whose metadata is missing tracking
+            run information (no ``artifact_path`` or ``run_id``).
+
+    Returns:
+        A new mlflow.pyfunc.PyFuncModel backed by a real MLflow tracking run.
+
+    Raises:
+        ValueError: If the model's flavor loader module cannot be determined or imported.
+    """
+    import importlib
+
+    import mlflow
+
+    pyfunc_flavor = model.metadata.flavors.get(mlflow.pyfunc.FLAVOR_NAME)
+    if pyfunc_flavor is None:
+        raise ValueError("Cannot re-log an MLflow model without a PyFunc flavor.")
+
+    loader_module_name = pyfunc_flavor.get("loader_module")
+    if loader_module_name is None:
+        raise ValueError(
+            "Cannot determine the MLflow flavor loader module from the model metadata. "
+            "The model's pyfunc flavor is missing the 'loader_module' field."
+        )
+
+    loader_module = importlib.import_module(loader_module_name)
+
+    artifact_path = "model"
+    with mlflow.start_run() as run:
+        logger.warning(
+            "Model was created with save_model() and lacks tracking metadata. Auto re-logging the model",
+        )
+        if loader_module_name == "mlflow.pyfunc.model":
+            python_model = getattr(model._model_impl, "python_model", model._model_impl)
+            if python_model is None:
+                raise ValueError("The PyFunc model has no python_model attribute.")
+            mlflow.pyfunc.log_model(
+                artifact_path=artifact_path,
+                python_model=python_model,
+                signature=model.metadata.signature,
+            )
+        elif hasattr(loader_module, "log_model"):
+            loader_module.log_model(
+                model._model_impl,
+                artifact_path=artifact_path,
+                signature=model.metadata.signature,
+            )
+        else:
+            raise ValueError(f"The MLflow flavor module '{loader_module_name}' does not have a log_model function.")
+        new_model = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/{artifact_path}")
+
+    return new_model
 
 
 def _parse_mlflow_env(model_uri: str, env: model_env.ModelEnv) -> model_env.ModelEnv:
@@ -138,8 +207,33 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
         assert isinstance(model, mlflow.pyfunc.PyFuncModel)
 
-        model_info = model.metadata.get_model_info()
-        model_uri = kwargs.get("model_uri", model_info.model_uri)
+        needs_re_log = False
+        try:
+            model_info = model.metadata.get_model_info()
+            # MLflow 3.x: save_model models may have run_id=None, causing
+            # downstream operations like download_artifacts to fail.
+            if model_info.run_id is None:
+                needs_re_log = True
+        except AttributeError:
+            # MLflow 2.x: save_model models lack the artifact_path attribute
+            # entirely, so get_model_info() raises AttributeError.
+            needs_re_log = True
+
+        if needs_re_log:
+            model = _re_log_to_mlflow_run(model)
+            model_info = model.metadata.get_model_info()
+
+        user_model_uri = kwargs.get("model_uri")
+        # For artifact download, always use the tracked model_info URI when re-logged
+        # (it has the correct MLflow artifact structure). Fall back to user-supplied URI
+        # or model_info URI for non-re-logged models.
+        if needs_re_log:
+            artifact_uri = model_info.model_uri
+        else:
+            artifact_uri = user_model_uri or model_info.model_uri
+        # For dependency parsing, prefer user-supplied URI since re-logged models
+        # may not preserve the original conda environment.
+        deps_uri = user_model_uri or model_info.model_uri
 
         pyfunc_flavor_info = model_info.flavors.get(mlflow.pyfunc.FLAVOR_NAME, None)
         if pyfunc_flavor_info is None:
@@ -168,14 +262,14 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
                 [model_env.ModelDependency(requirement="mlflow", pip_name="mlflow")], check_local_version=True
             )
         else:
-            model_meta.env = _parse_mlflow_env(model_uri, model_meta.env)
+            model_meta.env = _parse_mlflow_env(deps_uri, model_meta.env)
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
 
         os.makedirs(model_blob_path, exist_ok=True)
         with tempfile.TemporaryDirectory() as tmpdir:
             try:
-                local_path = mlflow.artifacts.download_artifacts(model_uri, dst_path=tmpdir)
+                local_path = mlflow.artifacts.download_artifacts(artifact_uri, dst_path=tmpdir)
             except (mlflow.MlflowException, OSError):
                 raise ValueError("Cannot load MLFlow model artifacts.")
 

@@ -81,6 +81,9 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
     These tests verify that:
     1. Constant param values work correctly
     2. Varying param values across rows raise an appropriate error
+    3. NULL/missing params fall back to defaults
+    4. Explicit SQL NULL falls back to defaults
+    5. List (unhashable) params work via the slow path
     """
 
     def setUp(self) -> None:
@@ -141,11 +144,45 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
 
         return mv
 
-    def test_warehouse_inference_with_constant_params(self) -> None:
-        """Test that warehouse inference works correctly when params are constant."""
-        mv = self._log_model_with_params()
+    def _log_model_with_list_param(self) -> "registry.ModelVersion":
+        """Log a model with list param and return the model version."""
+        model = DemoModelWithListParam(custom_model.ModelContext())
 
-        # Create test input
+        sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        sample_output = model.predict(sample_input, stop_words=["the", "a"])
+
+        params = [
+            model_signature.ParamSpec(
+                name="stop_words",
+                dtype=model_signature.DataType.STRING,
+                default_value=[],
+                shape=(-1,),
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_list_param_test_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"embed_local_ml_library": True},
+        )
+
+        return mv
+
+    def _assert_constant_params(self, mv: "registry.ModelVersion") -> None:
+        """Verify that warehouse inference works correctly when params are constant."""
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
 
         # Run with constant param value
@@ -162,8 +199,8 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         # temperature_used should all be 2.0
         self.assertTrue(all(result["temperature_used"] == 2.0))
 
-    def test_warehouse_inference_with_varying_params_raises_error(self) -> None:
-        """Test that warehouse inference raises error when params differ across rows.
+    def _assert_varying_params_raises_error(self, mv: "registry.ModelVersion") -> None:
+        """Verify that warehouse inference raises error when params differ across rows.
 
         This test calls the model function directly via SQL with varying param values
         to verify that the validation catches the inconsistency.
@@ -171,8 +208,6 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         We use UNIQUE param values for every row (temperature = id) so that ANY batch
         containing more than one row will have different param values.
         """
-        mv = self._log_model_with_params()
-
         model_name = mv.model_name
         version_name = mv.version_name
 
@@ -205,11 +240,8 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
 
-    def test_warehouse_inference_with_null_params_uses_default(self) -> None:
-        """Test that NULL param values correctly fall back to defaults."""
-        mv = self._log_model_with_params()
-
-        # Create test input
+    def _assert_null_params_uses_default(self, mv: "registry.ModelVersion") -> None:
+        """Verify that NULL param values correctly fall back to defaults."""
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
 
         # Run without specifying params (should use default temperature=1.0)
@@ -224,14 +256,12 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         )
         self.assertTrue(all(result["temperature_used"] == 1.0))
 
-    def test_warehouse_inference_with_explicit_sql_null_uses_default(self) -> None:
-        """Test that explicit SQL NULL param values are detected and fall back to defaults.
+    def _assert_explicit_sql_null_uses_default(self, mv: "registry.ModelVersion") -> None:
+        """Verify that explicit SQL NULL param values are detected and fall back to defaults.
 
         This exercises _is_null_param_value to ensure it correctly identifies NULL values
         passed via SQL and uses the default parameter value instead.
         """
-        mv = self._log_model_with_params()
-
         model_name = mv.model_name
         version_name = mv.version_name
 
@@ -268,56 +298,33 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
             # temperature_used should be the default 1.0
             self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.0, places=5)
 
-    def _log_model_with_list_param(self) -> "registry.ModelVersion":
-        """Log a model with list param and return the model version."""
-        model = DemoModelWithListParam(custom_model.ModelContext())
+    def test_warehouse_inference_with_params(self) -> None:
+        """Test warehouse inference with DemoModelWithParams across all param scenarios.
 
-        # Sample data for signature inference
-        sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
-        sample_output = model.predict(sample_input, stop_words=["the", "a"])
+        Logs a single model and validates:
+        - Constant params work correctly
+        - Varying params across rows raise an appropriate error
+        - NULL/missing params fall back to defaults
+        - Explicit SQL NULL falls back to defaults
+        """
+        mv = self._log_model_with_params()
 
-        # Define ParamSpec for the list parameter
-        params = [
-            model_signature.ParamSpec(
-                name="stop_words",
-                dtype=model_signature.DataType.STRING,
-                default_value=[],
-                shape=(-1,),  # Variable length array
-            ),
-        ]
+        self._assert_constant_params(mv)
+        self._assert_varying_params_raises_error(mv)
+        self._assert_null_params_uses_default(mv)
+        self._assert_explicit_sql_null_uses_default(mv)
 
-        sig = model_signature.infer_signature(
-            input_data=sample_input,
-            output_data=sample_output,
-            params=params,
-        )
+    def test_warehouse_inference_with_list_params(self) -> None:
+        """Test warehouse inference with DemoModelWithListParam (unhashable type).
 
-        conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
-        ]
-
-        mv = self.registry.log_model(
-            model=model,
-            model_name=f"model_list_param_test_{self._run_id}",
-            version_name=f"v_{self._run_id}",
-            conda_dependencies=conda_dependencies,
-            signatures={"predict": sig},
-            options={"embed_local_ml_library": True},
-        )
-
-        return mv
-
-    def test_warehouse_inference_with_constant_list_param(self) -> None:
-        """Test that warehouse inference works correctly with constant list params.
-
-        This exercises the slow path (JSON serialization) for unhashable types.
+        Logs a single model and validates:
+        - Constant list params work correctly (slow path via JSON serialization)
+        - Varying list params across rows raise an appropriate error
         """
         mv = self._log_model_with_list_param()
 
-        # Create test input
+        # Constant list param
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
-
-        # Run with constant list param value
         result = mv.run(input_df, function_name="predict", params={"stop_words": ["the", "a", "an"]})
 
         # Verify results
@@ -325,13 +332,7 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         # stop_words_count should all be 3 (length of the list)
         self.assertTrue(all(result["stop_words_count"] == 3))
 
-    def test_warehouse_inference_with_varying_list_params_raises_error(self) -> None:
-        """Test that warehouse inference raises error when list params differ across rows.
-
-        This exercises the slow path (JSON serialization) validation for unhashable types.
-        """
-        mv = self._log_model_with_list_param()
-
+        # Varying list params raise error
         model_name = mv.model_name
         version_name = mv.version_name
 
@@ -391,6 +392,7 @@ class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase)
         super().tearDown()
 
     def _log_table_function_model_with_params(self) -> "registry.ModelVersion":
+        """Log a table function model with params and return the model version."""
         model = DemoModelWithParams(custom_model.ModelContext())
 
         sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
@@ -425,14 +427,20 @@ class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase)
 
         return mv
 
-    def test_table_function_inference_with_constant_params(self) -> None:
-        """Test that table function inference works correctly when params are constant."""
+    def test_table_function_inference_with_params(self) -> None:
+        """Test table function inference across all param scenarios.
+
+        Logs a single TABLE_FUNCTION model and validates:
+        - Constant params work correctly
+        - Varying params across rows raise an appropriate error
+        - NULL/missing params fall back to defaults
+        - Explicit SQL NULL falls back to defaults
+        """
         mv = self._log_table_function_model_with_params()
 
+        # Constant params
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
-
         result = mv.run(input_df, function_name="predict", params={"temperature": 2.0})
-
         self.assertEqual(len(result), 4)
         pd.testing.assert_series_equal(
             result["output"].reset_index(drop=True),
@@ -441,10 +449,7 @@ class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase)
         )
         self.assertTrue(all(result["temperature_used"] == 2.0))
 
-    def test_table_function_inference_with_varying_params_raises_error(self) -> None:
-        """Test that table function inference raises error when params differ across rows."""
-        mv = self._log_table_function_model_with_params()
-
+        # Varying params raise error
         model_name = mv.model_name
         version_name = mv.version_name
 
@@ -467,14 +472,9 @@ class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase)
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
 
-    def test_table_function_inference_with_null_params_uses_default(self) -> None:
-        """Test that NULL param values correctly fall back to defaults for table functions."""
-        mv = self._log_table_function_model_with_params()
-
+        # NULL params use default
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
-
         result = mv.run(input_df, function_name="predict")
-
         self.assertEqual(len(result), 3)
         pd.testing.assert_series_equal(
             result["output"].reset_index(drop=True),
@@ -483,13 +483,7 @@ class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase)
         )
         self.assertTrue(all(result["temperature_used"] == 1.5))
 
-    def test_table_function_inference_with_explicit_sql_null_uses_default(self) -> None:
-        """Test that explicit SQL NULL param values fall back to defaults for table functions."""
-        mv = self._log_table_function_model_with_params()
-
-        model_name = mv.model_name
-        version_name = mv.version_name
-
+        # Explicit SQL NULL uses default
         sql = f"""
             WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
             test_data AS (
@@ -563,6 +557,7 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
         super().tearDown()
 
     def _log_partitioned_model_with_params(self) -> "registry.ModelVersion":
+        """Log a partitioned model with params and return the model version."""
         model = DemoPartitionedModelWithParams(custom_model.ModelContext())
 
         sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
@@ -600,14 +595,20 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
 
         return mv
 
-    def test_partitioned_inference_with_constant_params(self) -> None:
-        """Test that partitioned inference works correctly when params are constant."""
+    def test_partitioned_inference_with_params(self) -> None:
+        """Test partitioned inference across all param scenarios.
+
+        Logs a single partitioned model and validates:
+        - Constant params work correctly
+        - Varying params across rows raise an appropriate error
+        - NULL/missing params fall back to defaults
+        - Explicit SQL NULL falls back to defaults
+        """
         mv = self._log_partitioned_model_with_params()
 
+        # Constant params
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0, 4.0]})
-
         result = mv.run(input_df, function_name="predict", params={"temperature": 2.0})
-
         self.assertEqual(len(result), 4)
         result_sorted = result.sort_values("output").reset_index(drop=True)
         pd.testing.assert_series_equal(
@@ -617,10 +618,7 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
         )
         self.assertTrue(all(result_sorted["temperature_used"] == 2.0))
 
-    def test_partitioned_inference_with_varying_params_raises_error(self) -> None:
-        """Test that partitioned inference raises error when params differ across rows."""
-        mv = self._log_partitioned_model_with_params()
-
+        # Varying params raise error
         model_name = mv.model_name
         version_name = mv.version_name
 
@@ -643,12 +641,8 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
 
-    def test_partitioned_inference_with_null_params_uses_default(self) -> None:
-        """Test that NULL param values correctly fall back to defaults for partitioned models."""
-        mv = self._log_partitioned_model_with_params()
-
+        # NULL params use default
         input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
-
         result = mv.run(input_df, function_name="predict")
 
         self.assertEqual(len(result), 3)
@@ -660,13 +654,7 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
         )
         self.assertTrue(all(result_sorted["temperature_used"] == 1.5))
 
-    def test_partitioned_inference_with_explicit_sql_null_uses_default(self) -> None:
-        """Test that explicit SQL NULL param values fall back to defaults for partitioned models."""
-        mv = self._log_partitioned_model_with_params()
-
-        model_name = mv.model_name
-        version_name = mv.version_name
-
+        # Explicit SQL NULL uses default
         sql = f"""
             WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
             test_data AS (
@@ -675,20 +663,20 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
                 SELECT 3.0::FLOAT AS feature
             )
             SELECT
-                feature,
                 tf.output::FLOAT AS output,
                 tf.temperature_used::FLOAT AS temperature_used
             FROM test_data,
                 TABLE(MODEL_VERSION_ALIAS!PREDICT(feature, NULL::FLOAT) OVER (PARTITION BY 1)) AS tf
-            ORDER BY feature
         """
 
         result = self.session.sql(sql).collect()
 
         self.assertEqual(len(result), 3)
-        for i, row in enumerate(result):
-            expected_feature = float(i + 1)
-            self.assertAlmostEqual(row["OUTPUT"], expected_feature * 1.5, places=5)
+        outputs = sorted(row["OUTPUT"] for row in result)
+        expected_outputs = [1.5, 3.0, 4.5]
+        for actual, expected in zip(outputs, expected_outputs):
+            self.assertAlmostEqual(actual, expected, places=5)
+        for row in result:
             self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.5, places=5)
 
 

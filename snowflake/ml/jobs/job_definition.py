@@ -21,6 +21,7 @@ from snowflake.ml.jobs._utils import (
     feature_flags,
     payload_utils,
     query_helper,
+    runtime_env_utils,
     types,
 )
 from snowflake.snowpark import context as sp_context
@@ -134,6 +135,10 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             self.runtime_environment = json.dumps(
                 {"pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}"}
             )
+
+        self.runtime_environment = runtime_env_utils.get_runtime_image(
+            self.session, self.compute_pool, self.runtime_environment
+        )
 
         combined_env_vars = {**uploaded_payload.env_vars, **(self.env_vars or {})}
         self.entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]

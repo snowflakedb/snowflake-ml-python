@@ -279,6 +279,129 @@ class MLFlowHandlerTest(absltest.TestCase):
             assert callable(predict_method)
             np.testing.assert_allclose(np.expand_dims(predictions, axis=1), predict_method(X_test).to_numpy())
 
+    def test_mlflow_model_from_save_model(self) -> None:
+        """Models created via mlflow.*.save_model() and loaded from a local path should
+        be automatically re-logged and packagable without needing model_uri."""
+        db = datasets.load_diabetes(as_frame=True)
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
+        rf = ensemble.RandomForestRegressor(n_estimators=100, max_depth=6, max_features=3)
+        rf.fit(X_train, y_train)
+        predictions = rf.predict(X_test)
+        signature = mlflow.models.signature.infer_signature(X_test, predictions)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "saved_model")
+            mlflow.sklearn.save_model(rf, save_path, signature=signature)
+
+            saved_model = mlflow.pyfunc.load_model(save_path)
+
+            # Without model_uri, packaging should succeed via automatic re-logging.
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_no_uri"))
+            pk.save(
+                name="pkg_no_uri",
+                model=saved_model,
+                options={"ignore_mlflow_dependencies": True, "relax_version": False},
+            )
+            assert pk.model
+            assert pk.meta
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_no_uri"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
+
+            np.testing.assert_allclose(predictions, pk.model.predict(X_test))
+
+            # With model_uri pointing to the local directory, packaging should also succeed.
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_with_uri"))
+            pk.save(
+                name="pkg_with_uri",
+                model=saved_model,
+                options={
+                    "model_uri": save_path,
+                    "ignore_mlflow_dependencies": True,
+                    "relax_version": False,
+                },
+            )
+            assert pk.model
+            assert pk.meta
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_with_uri"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
+
+            np.testing.assert_allclose(predictions, pk.model.predict(X_test))
+
+    def test_mlflow_python_model_from_save_model(self) -> None:
+        """PythonModel subclasses saved via mlflow.pyfunc.save_model() and loaded
+        from a local path should be automatically re-logged and packagable."""
+
+        class EchoModel(mlflow.pyfunc.PythonModel):
+            def predict(self, context, model_input):  # type: ignore[no-untyped-def]
+                return model_input
+
+        input_df = pd.DataFrame(
+            {
+                "col_str": ["hello", "world"],
+                "col_int": [1, 2],
+                "col_float": [1.5, 2.5],
+            }
+        )
+        signature = mlflow.models.infer_signature(model_input=input_df, model_output=input_df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = os.path.join(tmpdir, "saved_echo_model")
+            mlflow.pyfunc.save_model(
+                path=save_path,
+                python_model=EchoModel(),
+                signature=signature,
+            )
+
+            saved_model = mlflow.pyfunc.load_model(save_path)
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_no_uri"))
+            pk.save(
+                name="pkg_no_uri",
+                model=saved_model,
+                options={"ignore_mlflow_dependencies": True, "relax_version": False},
+            )
+            assert pk.model
+            assert pk.meta
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_no_uri"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
+
+            result = pk.model.predict(input_df)
+            pd.testing.assert_frame_equal(result, input_df, check_dtype=False)
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_with_uri"))
+            pk.save(
+                name="pkg_with_uri",
+                model=saved_model,
+                options={
+                    "model_uri": save_path,
+                    "ignore_mlflow_dependencies": True,
+                    "relax_version": False,
+                },
+            )
+            assert pk.model
+            assert pk.meta
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "pkg_with_uri"))
+            pk.load()
+            assert pk.model
+            assert pk.meta
+            assert isinstance(pk.model, mlflow.pyfunc.PyFuncModel)
+
+            result = pk.model.predict(input_df)
+            pd.testing.assert_frame_equal(result, input_df, check_dtype=False)
+
     def test_mlflow_model_pytorch(self) -> None:
         net = torch.nn.Linear(6, 1)
         loss_function = torch.nn.L1Loss()

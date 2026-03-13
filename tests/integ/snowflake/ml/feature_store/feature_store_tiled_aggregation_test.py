@@ -195,12 +195,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
     # =========================================================================
 
     def test_get_tiled_feature_view(self) -> None:
-        """Test that get_feature_view works correctly for tiled feature views.
-
-        This test verifies that a tiled FV can be retrieved after registration.
-        Previously, this would fail with "timestamp_col X is not found in input dataframe"
-        due to name quoting inconsistency in metadata lookup.
-        """
+        """Test that get_feature_view works correctly for tiled feature views."""
         fs = self._create_feature_store()
 
         e = Entity("user", ["user_id"])

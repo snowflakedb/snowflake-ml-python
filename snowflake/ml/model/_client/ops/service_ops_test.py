@@ -1249,7 +1249,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 gpu="2",
                 num_workers=1,
                 max_batch_rows=1024,
-                autocapture=False,
+                autocapture=None,
             )
 
             # Key assertion: verify add_inference_engine_spec was called with PYTHON_GENERIC

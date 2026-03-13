@@ -205,7 +205,7 @@ py_test(
 
 py_test(
     name = "feature_store_online_read_refresh_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_online_read_refresh_test.py",
     ],
@@ -237,11 +237,11 @@ py_test(
 
 py_test(
     name = "feature_store_stream_source_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = [
         "feature_store_stream_source_test.py",
     ],
-    shard_count = 1,
+    shard_count = 4,
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
@@ -256,6 +256,22 @@ py_test(
     timeout = "eternal",
     srcs = [
         "feature_store_tiled_aggregation_test.py",
+    ],
+    shard_count = 4,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_rollup_test",
+    timeout = "eternal",
+    srcs = [
+        "feature_store_rollup_test.py",
     ],
     shard_count = 4,
     tags = ["feature:feature_store"],

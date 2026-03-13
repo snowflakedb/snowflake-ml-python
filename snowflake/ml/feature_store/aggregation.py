@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+
 
 class AggregationType(Enum):
     """Supported aggregation functions for tiled feature views.
@@ -76,6 +78,11 @@ class AggregationType(Enum):
 
 # Special window value for lifetime aggregations
 LIFETIME_WINDOW = "lifetime"
+
+# Internal column name prefixes used in tile tables.
+# WARNING: Changing these will break existing registered tiled feature views.
+_PARTIAL_COL_PREFIX = "_PARTIAL_"
+_CUMULATIVE_COL_PREFIX = "_CUM_"
 
 # Regex pattern for interval parsing: "1h", "24 hours", "30 minutes", etc.
 _INTERVAL_PATTERN = re.compile(
@@ -216,6 +223,12 @@ class AggregationSpec:
 
     def __post_init__(self) -> None:
         """Validate the aggregation spec after initialization."""
+        # Normalize source_column to its SQL identifier form. This ensures consistent
+        # storage: unquoted names are uppercased (e.g., 'amount' -> 'AMOUNT'), while
+        # quoted/case-sensitive names preserve their quotes (e.g., '"myCol"' -> '"myCol"').
+        # The identifier form is safe for JSON round-trips since quotes are preserved.
+        object.__setattr__(self, "source_column", SqlIdentifier(self.source_column).identifier())
+
         # Validate window format (allow "lifetime" as special case)
         if not is_lifetime_window(self.window):
             try:
@@ -312,7 +325,8 @@ class AggregationSpec:
         Returns:
             Column name used in the tile table (prefixed with _CUM_).
         """
-        return f"_CUM_{partial_type}_{self.source_column.upper()}"
+        resolved = SqlIdentifier(self.source_column).resolved()
+        return f"{_CUMULATIVE_COL_PREFIX}{partial_type}_{resolved}"
 
     def get_tile_column_name(self, partial_type: str) -> str:
         """Get the internal tile column name for a base partial aggregate.
@@ -332,7 +346,8 @@ class AggregationSpec:
         Returns:
             Column name used in the tile table (prefixed with _PARTIAL_).
         """
-        return f"_PARTIAL_{partial_type}_{self.source_column.upper()}"
+        resolved = SqlIdentifier(self.source_column).resolved()
+        return f"{_PARTIAL_COL_PREFIX}{partial_type}_{resolved}"
 
     def get_sql_column_name(self) -> str:
         """Get the output column name formatted for SQL.

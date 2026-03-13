@@ -10,33 +10,20 @@ from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
-from tests.integ.snowflake.ml.registry.services.registry_model_deployment_test_base import (
-    INFERENCE_IMAGE_BUILDER,
-    KANIKO_BUILDER,
-)
 
 
 class TestRegistryModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
     @parameterized.parameters(  # type: ignore[misc]
-        {"gpu_requests": None, "cpu_requests": None, "memory_requests": None, "builder_type": KANIKO_BUILDER},
-        {"gpu_requests": None, "cpu_requests": None, "memory_requests": None, "builder_type": INFERENCE_IMAGE_BUILDER},
-        {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None, "builder_type": KANIKO_BUILDER},
-        {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None, "builder_type": INFERENCE_IMAGE_BUILDER},
-        {"gpu_requests": None, "cpu_requests": "1", "memory_requests": "8Gi", "builder_type": KANIKO_BUILDER},
+        {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
+        {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},
+        {"gpu_requests": None, "cpu_requests": "1", "memory_requests": "8Gi"},
     )
     def test_end_to_end_pipeline(
         self,
         gpu_requests: Optional[str],
         cpu_requests: Optional[str],
         memory_requests: Optional[str],
-        builder_type: str,
     ) -> None:
-        # inference_image_builder tests only run when image override is enabled
-        if builder_type == INFERENCE_IMAGE_BUILDER and not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
-
-        use_inference_image_builder = builder_type == INFERENCE_IMAGE_BUILDER
-
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -68,7 +55,6 @@ class TestRegistryModelDeploymentInteg(registry_model_deployment_test_base.Regis
             gpu_requests=gpu_requests,
             cpu_requests=cpu_requests,
             memory_requests=memory_requests,
-            use_inference_image_builder=use_inference_image_builder,
         )
 
         services_df = mv.list_services()

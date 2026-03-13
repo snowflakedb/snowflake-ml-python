@@ -44,6 +44,7 @@ from snowflake.ml.feature_store.feature_view import (
     StorageConfig,
     StorageFormat,
     _FeatureViewMetadata,
+    _FeatureViewSchemaNotReadyWarning,
 )
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
@@ -55,7 +56,11 @@ from snowflake.ml.feature_store.stream_source import (
     _LIST_STREAM_SOURCE_SCHEMA,
     StreamSource,
 )
-from snowflake.ml.feature_store.tile_sql_generator import MergingSqlGenerator
+from snowflake.ml.feature_store.tile_sql_generator import (
+    _TILE_START_COL,
+    MergingSqlGenerator,
+    RollupSqlGenerator,
+)
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import DataFrame, Row, Session, functions as F
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -634,17 +639,28 @@ class FeatureStore:
                 )
 
             # Step 1: Create offline feature view (Dynamic Table or View)
-            created_resources.extend(
-                self._create_offline_feature_view(
-                    feature_view=feature_view,
-                    feature_view_name=feature_view_name,
-                    fully_qualified_name=fully_qualified_name,
-                    column_descs=column_descs,
-                    tagging_clause_str=tagging_clause_str,
-                    block=block,
-                    overwrite=overwrite,
+            if feature_view.is_rollup:
+                created_resources.extend(
+                    self._create_rollup_feature_view(
+                        feature_view=feature_view,
+                        feature_view_name=feature_view_name,
+                        fully_qualified_name=fully_qualified_name,
+                        tagging_clause_str=tagging_clause_str,
+                        overwrite=overwrite,
+                    )
                 )
-            )
+            else:
+                created_resources.extend(
+                    self._create_offline_feature_view(
+                        feature_view=feature_view,
+                        feature_view_name=feature_view_name,
+                        fully_qualified_name=fully_qualified_name,
+                        column_descs=column_descs,
+                        tagging_clause_str=tagging_clause_str,
+                        block=block,
+                        overwrite=overwrite,
+                    )
+                )
 
             # Step 2: Create online feature table if requested
             if feature_view.online:
@@ -691,7 +707,11 @@ class FeatureStore:
             ) from e
 
         logger.info(f"Registered FeatureView {feature_view.name}/{version} successfully.")
-        return self.get_feature_view(feature_view.name, str(version))
+        # Suppress the warning that fires when the just-created dynamic table hasn't had
+        # its first refresh yet.
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=_FeatureViewSchemaNotReadyWarning)
+            return self.get_feature_view(feature_view.name, str(version))
 
     @overload
     def update_feature_view(
@@ -1542,7 +1562,7 @@ class FeatureStore:
                 f"SHOW TAGS LIKE '{_ENTITY_TAG_PREFIX}%' IN SCHEMA {self._config.full_schema_path}"
             ).select(
                 F.col('"name"').substr(prefix_len, _ENTITY_NAME_LENGTH_LIMIT).alias("NAME"),
-                F.col('"allowed_values"').alias("JOIN_KEYS"),
+                F.call_builtin("REPLACE", F.col('"allowed_values"'), F.lit(","), F.lit('", "')).alias("JOIN_KEYS"),
                 F.col('"comment"').alias("DESC"),
                 F.col('"owner"').alias("OWNER"),
             ),
@@ -1595,7 +1615,7 @@ class FeatureStore:
                 original_exception=ValueError(f"Cannot find Entity with name: {name}."),
             )
 
-        join_keys = self._recompose_join_keys(result[0]["JOIN_KEYS"])
+        join_keys = [f'"{k}"' for k in json.loads(result[0]["JOIN_KEYS"])]
 
         return Entity._construct_entity(
             name=SqlIdentifier(result[0]["NAME"], case_sensitive=True).identifier(),
@@ -2389,6 +2409,7 @@ class FeatureStore:
         assert base_fv.version is not None
         assert base_fv.database is not None
         assert base_fv.schema is not None
+        assert base_fv.feature_df is not None
 
         feature_descs_str: Optional[dict[str, str]] = (
             {k.identifier(): v for k, v in base_fv.feature_descs.items()} if base_fv.feature_descs is not None else None
@@ -3051,7 +3072,7 @@ class FeatureStore:
             if feature_view.is_tiled and feature_view.timestamp_col:
                 ts_col_upper = feature_view.timestamp_col.upper()
                 cluster_by_cols = [
-                    "TILE_START" if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
+                    _TILE_START_COL if col.upper() == ts_col_upper else col for col in feature_view.cluster_by
                 ]
             else:
                 cluster_by_cols = [str(col) for col in feature_view.cluster_by]
@@ -3117,6 +3138,120 @@ class FeatureStore:
                 statement_params=self._telemetry_stmp
             )
             raise
+
+    def _create_rollup_feature_view(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        tagging_clause_str: str,
+        overwrite: bool,
+    ) -> list[tuple[_FeatureStoreObjTypes, str]]:
+        """Create a rollup feature view Dynamic Table.
+
+        Rollup feature views aggregate tiles from a parent tiled FV to a coarser
+        entity level using a mapping table.
+
+        Args:
+            feature_view: The rollup feature view definition.
+            feature_view_name: The physical name for the feature view.
+            fully_qualified_name: Fully qualified name for the created DT.
+            tagging_clause_str: Tagging clause for the CREATE statement.
+            overwrite: Whether to replace existing objects.
+
+        Returns:
+            A list of tuples of created object types and their names for rollback.
+
+        Raises:
+            SnowflakeMLException: If rollup_config is invalid or DT creation fails.
+        """
+        created: list[tuple[_FeatureStoreObjTypes, str]] = []
+
+        rollup_config = feature_view.rollup_config
+        if rollup_config is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("Rollup feature view must have rollup_config"),
+            )
+
+        parent_fv = rollup_config.source
+
+        # Get parent tile table name
+        physical_name = FeatureView._get_physical_name(parent_fv.name, parent_fv.version)  # type: ignore[arg-type]
+        parent_tile_table = f"{parent_fv.database}.{parent_fv.schema}.{physical_name}"
+
+        # Get join keys
+        parent_join_keys = [str(k) for e in parent_fv.entities for k in e.join_keys]
+        new_join_keys = [str(k) for e in feature_view.entities for k in e.join_keys]
+
+        # Get mapping query from DataFrame
+        mapping_query = rollup_config.mapping_df.queries["queries"][-1]
+
+        # Generate rollup SQL
+        generator = RollupSqlGenerator(
+            parent_tile_table=parent_tile_table,
+            parent_join_keys=parent_join_keys,
+            new_join_keys=new_join_keys,
+            mapping_query=mapping_query,
+            aggregation_specs=feature_view.aggregation_specs or [],
+        )
+        rollup_sql = generator.generate()
+
+        # Create the Dynamic Table
+        warehouse = feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse
+        refresh_freq = feature_view.refresh_freq or "DOWNSTREAM"
+        overwrite_clause = " OR REPLACE" if overwrite else ""
+
+        # Detect if refresh_freq is a cron expression (not a duration like '5m' or '1h')
+        # If it's a cron, we need to set TARGET_LAG = 'DOWNSTREAM' and create a Task
+        schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
+        target_lag = "DOWNSTREAM" if schedule_task else refresh_freq
+
+        try:
+            query = f"""CREATE{overwrite_clause} DYNAMIC TABLE {fully_qualified_name}
+                TARGET_LAG = '{target_lag}'
+                COMMENT = '{feature_view.desc}'
+                TAG (
+                    {tagging_clause_str}
+                )
+                WAREHOUSE = {warehouse}
+                REFRESH_MODE = {feature_view.refresh_mode}
+                INITIALIZE = {feature_view.initialize}
+            """
+            if feature_view.cluster_by:
+                cluster_by_clause = f"CLUSTER BY ({', '.join(str(c) for c in feature_view.cluster_by)})"
+                query += f"{cluster_by_clause}"
+
+            query += f"""
+                AS {rollup_sql}
+            """
+            self._session.sql(query).collect(statement_params=self._telemetry_stmp)
+            created.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
+
+            # Create scheduled task after DT creation for cron-based refresh
+            if schedule_task:
+                task_overwrite_clause = " OR REPLACE" if overwrite else ""
+                self._create_scheduled_refresh_task(
+                    task_overwrite_clause,
+                    feature_view,
+                    fully_qualified_name,
+                    warehouse,
+                )
+                created.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
+            elif overwrite:
+                # Clean up any existing task when overwriting with a non-CRON feature view.
+                # This handles the case: CRON rollup DT → duration/DOWNSTREAM rollup DT
+                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+
+        except Exception as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(f"Create rollup dynamic table [\n{query}\n] failed: {e}."),
+            ) from e
+
+        return created
 
     def _create_offline_feature_view(
         self,
@@ -3779,6 +3914,7 @@ FROM SPINE{' '.join(join_clauses)}
                             ON {' AND '.join([f'l_{layer}.{k} = r_{layer}.{k}' for k in join_keys])}
                         """
                     else:
+                        assert feature.feature_df is not None
                         query = self._composed_union_window_join_query(
                             layer=layer,
                             s_query=query,
@@ -4381,7 +4517,7 @@ FROM SPINE{' '.join(join_clauses)}
                 if e["NAME"] == name:
                     return Entity(
                         name=SqlIdentifier(e["NAME"], case_sensitive=True).identifier(),
-                        join_keys=self._recompose_join_keys(e["JOIN_KEYS"]),
+                        join_keys=[f'"{k}"' for k in json.loads(e["JOIN_KEYS"])],
                         desc=e["DESC"],
                     )
             raise RuntimeError(f"Cannot find entity {name} from retrieved entity list: {entity_list}")

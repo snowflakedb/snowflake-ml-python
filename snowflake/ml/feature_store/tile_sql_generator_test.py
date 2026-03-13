@@ -5,6 +5,7 @@ from absl.testing import absltest
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.tile_sql_generator import (
     MergingSqlGenerator,
+    RollupSqlGenerator,
     TilingSqlGenerator,
 )
 
@@ -158,6 +159,8 @@ class TilingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("ORDER BY", sql)
         self.assertIn("DESC", sql)
         self.assertIn("ARRAY_SLICE", sql)
+        # Companion timestamp array for rollup ordering
+        self.assertIn("_PARTIAL_LAST_TS_PAGE_ID", sql)
 
     def test_first_n_aggregation(self) -> None:
         """Test generating tiling SQL for FIRST_N aggregation."""
@@ -182,6 +185,35 @@ class TilingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("ARRAY_AGG", sql)
         self.assertIn("ORDER BY", sql)
         self.assertIn("ASC", sql)
+        # Companion timestamp array for rollup ordering
+        self.assertIn("_PARTIAL_FIRST_TS_PAGE_ID", sql)
+
+    def test_last_n_companion_ts_array(self) -> None:
+        """Test that LAST_N tile generation includes a companion timestamp array."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+        )
+        sql = generator.generate()
+
+        # Value array
+        self.assertIn("_PARTIAL_LAST_ORDER_VALUE", sql)
+        # Companion TS array — aligned with value array for rollup ordering
+        self.assertIn("_PARTIAL_LAST_TS_ORDER_VALUE", sql)
+        # Both should use ARRAY_AGG with ORDER BY DESC
+        self.assertEqual(sql.count("ORDER BY EVENT_TS DESC"), 2)
 
     def test_multiple_join_keys(self) -> None:
         """Test generating tiling SQL with multiple join keys."""
@@ -493,6 +525,262 @@ class MergingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("TILES_JOINED_FV2", cte_names)
         self.assertIn("SIMPLE_MERGED_FV2", cte_names)
         self.assertIn("FV002", cte_names)
+
+
+class RollupSqlGeneratorTest(absltest.TestCase):
+    """Unit tests for RollupSqlGenerator class."""
+
+    def test_simple_rollup_no_cte(self) -> None:
+        """Test that simple aggregations use direct SELECT...GROUP BY (no CTE)."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_TOTAL",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Should NOT use CTEs for simple-only aggregations
+        self.assertNotIn("WITH", sql)
+        self.assertIn("SUM(t._PARTIAL_COUNT_VISITOR_ID)", sql)
+        self.assertIn("SUM(t._PARTIAL_SUM_ORDER_VALUE)", sql)
+        self.assertIn("GROUP BY", sql)
+        self.assertIn("m.SUBSCRIBER_ID", sql)
+
+    def test_list_rollup_uses_cte_with_lateral_flatten(self) -> None:
+        """Test that list aggregations use CTE + LATERAL FLATTEN for ordering."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Should use CTE-based approach
+        self.assertIn("WITH", sql)
+        self.assertIn("base AS", sql)
+        self.assertIn("list_rollup_0 AS", sql)
+        # Should use LATERAL FLATTEN instead of ARRAY_UNION_AGG
+        self.assertIn("LATERAL FLATTEN", sql)
+        self.assertNotIn("ARRAY_UNION_AGG", sql)
+        # Should order by companion TS column
+        self.assertIn("_PARTIAL_LAST_TS_ORDER_VALUE", sql)
+        self.assertIn("ORDER BY", sql)
+        self.assertIn("DESC", sql)
+
+    def test_first_n_rollup_uses_asc_ordering(self) -> None:
+        """Test that FIRST_N rollup uses ASC ordering."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.FIRST_N,
+                source_column="PRODUCT_ID",
+                window="24h",
+                output_column="FIRST_PRODUCTS",
+                params={"n": 3},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertIn("LATERAL FLATTEN", sql)
+        self.assertIn("_PARTIAL_FIRST_TS_PRODUCT_ID", sql)
+        self.assertIn("ASC", sql)
+
+    def test_mixed_simple_and_list_rollup(self) -> None:
+        """Test rollup with both simple and list aggregations."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_TOTAL",
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Should use CTE approach (due to list features)
+        self.assertIn("WITH", sql)
+        self.assertIn("base AS", sql)
+        self.assertIn("simple_rollup AS", sql)
+        self.assertIn("list_rollup_0 AS", sql)
+        # Simple aggs use GROUP BY in simple_rollup CTE
+        self.assertIn("SUM(_PARTIAL_COUNT_VISITOR_ID)", sql)
+        self.assertIn("SUM(_PARTIAL_SUM_ORDER_VALUE)", sql)
+        # List aggs use LATERAL FLATTEN
+        self.assertIn("LATERAL FLATTEN", sql)
+        self.assertNotIn("ARRAY_UNION_AGG", sql)
+        # Final SELECT joins simple_rollup with list_rollup
+        self.assertIn("LEFT JOIN list_rollup_0", sql)
+
+    def test_multiple_list_columns_rollup(self) -> None:
+        """Test rollup with multiple distinct list features on different columns."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+            AggregationSpec(
+                function=AggregationType.FIRST_N,
+                source_column="PRODUCT_ID",
+                window="24h",
+                output_column="FIRST_PRODUCTS",
+                params={"n": 3},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Should have two separate list_rollup CTEs
+        self.assertIn("list_rollup_0 AS", sql)
+        self.assertIn("list_rollup_1 AS", sql)
+        # Both should use LATERAL FLATTEN
+        self.assertEqual(sql.count("LATERAL FLATTEN"), 2)
+        # One DESC for LAST_N, one ASC for FIRST_N
+        self.assertIn("DESC", sql)
+        self.assertIn("ASC", sql)
+
+    def test_dedup_shared_tile_columns_in_rollup(self) -> None:
+        """Test that LAST_N and LAST_DISTINCT_N on same column share one CTE."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_DISTINCT_ORDERS",
+                params={"n": 3},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Both share _PARTIAL_LAST_ORDER_VALUE, so only one list_rollup CTE
+        self.assertIn("list_rollup_0 AS", sql)
+        self.assertNotIn("list_rollup_1", sql)
+        # Only one LATERAL FLATTEN
+        self.assertEqual(sql.count("LATERAL FLATTEN"), 1)
+
+    def test_rollup_base_cte_includes_ts_columns(self) -> None:
+        """Test that the base CTE selects companion TS columns."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # base CTE should select both value and TS columns from tile table
+        self.assertIn("t._PARTIAL_LAST_ORDER_VALUE", sql)
+        self.assertIn("t._PARTIAL_LAST_TS_ORDER_VALUE", sql)
+
+    def test_rollup_output_includes_ts_columns(self) -> None:
+        """Test that rollup output preserves TS columns for downstream use."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        # Final SELECT should include both value and TS columns
+        # Find the final SELECT (after all CTEs)
+        self.assertIn("l0._PARTIAL_LAST_ORDER_VALUE", sql)
+        self.assertIn("l0._PARTIAL_LAST_TS_ORDER_VALUE", sql)
 
 
 if __name__ == "__main__":
