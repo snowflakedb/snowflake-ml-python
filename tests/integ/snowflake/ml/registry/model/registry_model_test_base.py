@@ -47,6 +47,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
         function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        is_partitioned_assert: Optional[dict[str, bool]] = None,
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
@@ -90,6 +91,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             for f in res:
                 if f["target_method"] in function_type_assert.keys():
                     self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
+
+        if is_partitioned_assert:
+            res = mv.show_functions()
+            for f in res:
+                if f["target_method"] in is_partitioned_assert:
+                    self.assertEqual(f["is_partitioned"], is_partitioned_assert[f["target_method"]])
 
         self.registry.show_models()
 
@@ -174,6 +181,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         signatures: Optional[dict[str, model_signature.ModelSignature]] = None,
         additional_version_suffix: Optional[str] = None,
         function_type_assert: Optional[dict[str, model_manifest_schema.ModelMethodFunctionTypes]] = None,
+        is_partitioned_assert: Optional[dict[str, bool]] = None,
         pip_requirements: Optional[list[str]] = None,
         artifact_repository_map: Optional[dict[str, str]] = None,
         resource_constraint: Optional[dict[str, str]] = None,
@@ -223,6 +231,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
                 if f["target_method"] in function_type_assert.keys():
                     self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
 
+        if is_partitioned_assert:
+            res = mv.show_functions()
+            for f in res:
+                if f["target_method"] in is_partitioned_assert:
+                    self.assertEqual(f["is_partitioned"], is_partitioned_assert[f["target_method"]])
+
         self.registry.show_models()
 
         # Add a version when the model exists
@@ -242,6 +256,12 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
             for f in res:
                 if f["target_method"] in function_type_assert.keys():
                     self.assertEqual(f["target_method_function_type"], function_type_assert[f["target_method"]].value)
+
+        if is_partitioned_assert:
+            res = mv2.show_functions()
+            for f in res:
+                if f["target_method"] in is_partitioned_assert:
+                    self.assertEqual(f["is_partitioned"], is_partitioned_assert[f["target_method"]])
 
         self.registry.show_models()
         self.registry.delete_model(model_name=name)

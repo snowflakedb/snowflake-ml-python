@@ -86,12 +86,10 @@ def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.A
 class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTestBase):
     @parameterized.product(  # type: ignore[misc]
         model_fn=[_prepare_keras_subclass_model, _prepare_keras_sequential_model, _prepare_keras_functional_model],
-        registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
     def test_keras_tensor_as_sample(
         self,
         model_fn: Callable[[], tuple[keras.Model, npt.ArrayLike, npt.ArrayLike]],
-        registry_test_fn: str,
     ) -> None:
         model, data_x, data_y = model_fn()
         y_pred = model.predict(data_x)
@@ -100,7 +98,7 @@ class TestRegistryTensorflowModelInteg(registry_model_test_base.RegistryModelTes
             y_pred_df = pd.DataFrame(y_pred, columns=res.columns)
             pd.testing.assert_frame_equal(res, y_pred_df, check_dtype=False)
 
-        getattr(self, registry_test_fn)(
+        self._test_registry_model(
             model=model,
             sample_input_data=data_x,
             prediction_assert_fns={

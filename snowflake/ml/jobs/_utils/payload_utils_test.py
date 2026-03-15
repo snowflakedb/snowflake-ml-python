@@ -10,7 +10,7 @@ from typing import Any, Callable, Generator, Optional
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import payload_utils, stage_utils, types
+from snowflake.ml.jobs._utils import payload_utils, stage_utils, type_utils
 from snowflake.ml.jobs._utils.payload_utils_test_helper import dummy_function
 from snowflake.ml.jobs._utils.test_file_helper import resolve_path
 
@@ -129,7 +129,7 @@ class PayloadUtilsTests(parameterized.TestCase):
             resolved_source = payload_utils.resolve_source(payload.source)
             resolved_entrypoint = payload_utils.resolve_entrypoint(payload.source, payload.entrypoint)
             assert not callable(resolved_source)
-            assert isinstance(resolved_entrypoint, types.PayloadEntrypoint)
+            assert isinstance(resolved_entrypoint, type_utils.PayloadEntrypoint)
             self.assertEqual(resolved_source.as_posix(), stage_utils.resolve_path(source).absolute().as_posix())
             self.assertEqual(resolved_entrypoint.file_path.as_posix(), expected_entrypoint)
 

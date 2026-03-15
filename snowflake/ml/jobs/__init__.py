@@ -1,5 +1,5 @@
 from snowflake.ml.jobs._interop.exception_utils import install_exception_display_hooks
-from snowflake.ml.jobs._utils.types import JOB_STATUS
+from snowflake.ml.jobs._utils.type_utils import JOB_STATUS
 from snowflake.ml.jobs.decorators import remote
 from snowflake.ml.jobs.job import MLJob
 from snowflake.ml.jobs.job_definition import MLJobDefinition

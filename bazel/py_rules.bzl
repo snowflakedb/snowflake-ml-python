@@ -136,6 +136,12 @@ def py_test(optional_dependencies = None, **attrs):
     # * https://bazel.build/reference/be/python#py_test.legacy_create_init
     # * https://github.com/bazelbuild/rules_python/issues/55
     attrs["legacy_create_init"] = 0
+
+    # Add the test's package directory to PYTHONPATH. Python 3.11+ with PYTHONSAFEPATH=1
+    # no longer adds the script's directory to sys.path[0], breaking bare imports of
+    # sibling modules (e.g. `import _test_util`). This restores that behavior for tests.
+    attrs["imports"] = attrs.get("imports", []) + ["."]
+
     native_py_test(**attrs)
 
 def _validate_feature_area_tag(attrs):

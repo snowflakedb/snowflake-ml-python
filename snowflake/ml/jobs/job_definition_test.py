@@ -8,11 +8,11 @@ from absl.testing import absltest, parameterized
 from snowflake import snowpark
 from snowflake.ml.jobs import job_definition
 from snowflake.ml.jobs._interop import utils as interop_utils
-from snowflake.ml.jobs._utils import arg_protocol, feature_flags, types
+from snowflake.ml.jobs._utils import arg_protocol, feature_flags, type_utils
 
 
-def _make_uploaded_payload() -> types.UploadedPayload:
-    return types.UploadedPayload(
+def _make_uploaded_payload() -> type_utils.UploadedPayload:
+    return type_utils.UploadedPayload(
         stage_path=PurePosixPath("@payload_stage/entry"),
         entrypoint=[PurePath("/mnt/job_stage/app/launcher.py"), PurePath("/mnt/job_stage/app/entry.py")],
     )
@@ -28,7 +28,7 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.uploaded_payload = _make_uploaded_payload()
 
     def _expected_definition(self, runtime_value: str | None) -> job_definition.MLJobDefinition[[Any], Any]:
-        spec_options = types.SpecOptions(
+        spec_options = type_utils.SpecOptions(
             stage_path=self.uploaded_payload.stage_path.as_posix(),
             args=None,
             enable_metrics=True,
@@ -36,11 +36,10 @@ class MLJobDefinitionTest(parameterized.TestCase):
             env_vars={},
             enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
         )
-        job_options = types.JobOptions(
+        job_options = type_utils.JobOptions(
             query_warehouse="TEST_WH",
             target_instances=1,
             min_instances=1,
-            generate_suffix=False,
         )
         job_def: job_definition.MLJobDefinition[[Any], Any] = job_definition.MLJobDefinition(
             source="entry.py",
@@ -53,7 +52,6 @@ class MLJobDefinitionTest(parameterized.TestCase):
         job_def.schema = "TEST_SCHEMA"
         job_def.name = "entry"
         job_def.runtime_environment = runtime_value
-        job_def.generate_suffix = False
         job_def.job_definition_id = "TEST_DB.TEST_SCHEMA.entry"
         job_def.entrypoint_args = [
             v.as_posix() if isinstance(v, PurePath) else v for v in self.uploaded_payload.entrypoint
@@ -82,7 +80,6 @@ class MLJobDefinitionTest(parameterized.TestCase):
                 stage_name="payload_stage",
                 session=self.session,
                 runtime_environment="/snowflake/image/image_repo/test_image:test_flag",
-                generate_suffix=False,
             )
             expected = self._expected_definition("/snowflake/image/image_repo/test_image:test_flag")
             self.assertEqual(result.job_options, expected.job_options)
@@ -90,7 +87,6 @@ class MLJobDefinitionTest(parameterized.TestCase):
             self.assertEqual(result.job_definition_id, expected.job_definition_id)
             self.assertEqual(result.runtime_environment, expected.runtime_environment)
             self.assertEqual(result.name, expected.name)
-            self.assertEqual(result.generate_suffix, expected.generate_suffix)
 
     def _create_job_definition_with_arg_protocol(
         self,

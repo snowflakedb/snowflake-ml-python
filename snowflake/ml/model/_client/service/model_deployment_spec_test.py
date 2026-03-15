@@ -889,6 +889,49 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
         self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_name"], "vllm")
         self.assertEqual(result["job"]["inference_engine_spec"]["inference_engine_args"], [])
 
+    def test_job_with_partition_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                force_rebuild=True,
+            )
+            mds.add_job_spec(
+                job_database_name=sql_identifier.SqlIdentifier("job_db"),
+                job_schema_name=sql_identifier.SqlIdentifier("job_schema"),
+                job_name=sql_identifier.SqlIdentifier("job"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
+                cpu="1",
+                memory="1GiB",
+                gpu="1",
+                num_workers=10,
+                max_batch_rows=1024,
+                warehouse=sql_identifier.SqlIdentifier("warehouse"),
+                function_name="function_name",
+                input_stage_location="input_stage_location",
+                output_stage_location="output_stage_location",
+                completion_filename="completion_filename",
+                input_file_pattern="*",
+                column_handling=None,
+                params=None,
+                partition_columns=["PARTITION_COL"],
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                # Verify partition_columns appears under job.input
+                self.assertEqual(result["job"]["input"]["partition_columns"], ["PARTITION_COL"])
+
 
 if __name__ == "__main__":
     absltest.main()

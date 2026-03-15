@@ -60,12 +60,55 @@ class FormatParamValueForSqlTest(absltest.TestCase):
         self.assertEqual(param_utils.format_param_value_for_sql(-42), "-42")
         self.assertEqual(param_utils.format_param_value_for_sql(3.14159), "3.14159")
 
+    def test_format_dict_values(self) -> None:
+        """Test that dict values are formatted as OBJECT_CONSTRUCT_KEEP_NULL."""
+        self.assertEqual(
+            param_utils.format_param_value_for_sql({"temperature": 0.5}),
+            "OBJECT_CONSTRUCT_KEEP_NULL('temperature', 0.5)",
+        )
+        self.assertEqual(
+            param_utils.format_param_value_for_sql({"key": "value"}),
+            "OBJECT_CONSTRUCT_KEEP_NULL('key', 'value')",
+        )
+        self.assertEqual(
+            param_utils.format_param_value_for_sql({}),
+            "OBJECT_CONSTRUCT_KEEP_NULL()",
+        )
+
+    def test_format_dict_with_none_value(self) -> None:
+        """Test that dict values with None are preserved as NULL."""
+        self.assertEqual(
+            param_utils.format_param_value_for_sql({"key": None}),
+            "OBJECT_CONSTRUCT_KEEP_NULL('key', NULL)",
+        )
+
+    def test_format_dict_with_mixed_types(self) -> None:
+        """Test dict with heterogeneous value types."""
+        result = param_utils.format_param_value_for_sql({"temp": 0.5, "name": "gpt", "on": True})
+        self.assertEqual(
+            result,
+            "OBJECT_CONSTRUCT_KEEP_NULL('temp', 0.5, 'name', 'gpt', 'on', true)",
+        )
+
+    def test_format_nested_dict(self) -> None:
+        """Test that nested dicts produce nested OBJECT_CONSTRUCT_KEEP_NULL."""
+        result = param_utils.format_param_value_for_sql({"config": {"lr": 0.01}})
+        self.assertEqual(
+            result,
+            "OBJECT_CONSTRUCT_KEEP_NULL('config', OBJECT_CONSTRUCT_KEEP_NULL('lr', 0.01))",
+        )
+
     def test_format_float_for_table_function(self) -> None:
         """Test that float values get explicit ::FLOAT cast for table function invocation."""
         self.assertEqual(param_utils.format_param_value_for_table_function_sql(0.5), "0.5::FLOAT")
         self.assertEqual(param_utils.format_param_value_for_table_function_sql(3.14159), "3.14159::FLOAT")
         self.assertEqual(param_utils.format_param_value_for_table_function_sql(100), "100")
         self.assertEqual(param_utils.format_param_value_for_table_function_sql("hello"), "'hello'")
+
+    def test_format_dict_for_table_function(self) -> None:
+        """Test that dict values are formatted correctly for table functions."""
+        result = param_utils.format_param_value_for_table_function_sql({"temp": 0.5})
+        self.assertEqual(result, "OBJECT_CONSTRUCT_KEEP_NULL('temp', 0.5)")
 
 
 class ValidateParamsTest(absltest.TestCase):
@@ -144,6 +187,170 @@ class ValidateParamsTest(absltest.TestCase):
             param_utils.validate_params({"max_tokens": "not_an_int"}, signature_params)
         self.assertIn("not compatible with dtype", str(ctx.exception))
 
+    def test_rejects_string_for_int_param(self) -> None:
+        """Test that numeric string values are rejected for INT params."""
+        signature_params = [
+            core.ParamSpec(name="max_tokens", dtype=core.DataType.INT32, default_value=100),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"max_tokens": "10"}, signature_params)
+        self.assertIn("not compatible with dtype", str(ctx.exception))
+
+    def test_rejects_string_for_float_param(self) -> None:
+        """Test that numeric string values are rejected for FLOAT params."""
+        signature_params = [
+            core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=0.7),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"temperature": "0.7"}, signature_params)
+        self.assertIn("not compatible with dtype", str(ctx.exception))
+
+    def test_rejects_float_for_int_param(self) -> None:
+        """Test that float values are rejected for INT params."""
+        signature_params = [
+            core.ParamSpec(name="max_tokens", dtype=core.DataType.INT32, default_value=100),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"max_tokens": 0.1}, signature_params)
+        self.assertIn("not compatible with dtype", str(ctx.exception))
+
+    def test_valid_param_group_spec(self) -> None:
+        """Test validation passes for valid dict params matching ParamGroupSpec."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[
+                    core.ParamSpec(name="temperature", dtype=core.DataType.FLOAT, default_value=0.7),
+                    core.ParamSpec(name="top_k", dtype=core.DataType.INT32, default_value=50),
+                ],
+            ),
+        ]
+        param_utils.validate_params({"config": {"temperature": 0.5}}, signature_params)
+        param_utils.validate_params({"config": {"temperature": 0.5, "top_k": 10}}, signature_params)
+
+    def test_param_group_spec_none_value(self) -> None:
+        """Test that None is valid for a ParamGroupSpec param."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        param_utils.validate_params({"config": None}, signature_params)
+
+    def test_param_group_spec_non_dict_value(self) -> None:
+        """Test error when a non-dict value is provided for a ParamGroupSpec param."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"config": "not_a_dict"}, signature_params)
+        self.assertIn("expected a dict", str(ctx.exception))
+
+    def test_param_group_spec_unknown_key(self) -> None:
+        """Test error when dict contains unknown keys."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"config": {"lr": 0.01, "unknown": 42}}, signature_params)
+        self.assertIn("Unknown key(s)", str(ctx.exception))
+        self.assertIn("unknown", str(ctx.exception))
+
+    def test_param_group_spec_invalid_child_type(self) -> None:
+        """Test error when a child value has an invalid type."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"config": {"lr": "not_a_float"}}, signature_params)
+        self.assertIn("not compatible with dtype", str(ctx.exception))
+
+    def test_param_group_spec_nested_validation(self) -> None:
+        """Test recursive validation of nested ParamGroupSpec (up to 3 levels)."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="training",
+                specs=[
+                    core.ParamSpec(name="epochs", dtype=core.DataType.INT32, default_value=10),
+                    core.ParamGroupSpec(
+                        name="optimizer",
+                        specs=[
+                            core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                            core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                            core.ParamGroupSpec(
+                                name="schedule",
+                                specs=[
+                                    core.ParamSpec(name="warmup_steps", dtype=core.DataType.INT32, default_value=100),
+                                    core.ParamSpec(name="decay_rate", dtype=core.DataType.FLOAT, default_value=0.99),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        # Valid 2-level nested dict
+        param_utils.validate_params({"training": {"optimizer": {"lr": 0.001}}}, signature_params)
+        # Valid 3-level nested dict
+        param_utils.validate_params({"training": {"optimizer": {"schedule": {"warmup_steps": 200}}}}, signature_params)
+        # Full override at all levels
+        param_utils.validate_params(
+            {
+                "training": {
+                    "epochs": 5,
+                    "optimizer": {
+                        "lr": 0.002,
+                        "schedule": {"warmup_steps": 50, "decay_rate": 0.95},
+                    },
+                }
+            },
+            signature_params,
+        )
+        # Invalid key at level 2
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"training": {"optimizer": {"bad_key": 1}}}, signature_params)
+        self.assertIn("Unknown key(s)", str(ctx.exception))
+        self.assertIn("training.optimizer", str(ctx.exception))
+        # Invalid key at level 3
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"training": {"optimizer": {"schedule": {"bad_key": 1}}}}, signature_params)
+        self.assertIn("Unknown key(s)", str(ctx.exception))
+        self.assertIn("training.optimizer.schedule", str(ctx.exception))
+
+    def test_param_group_spec_non_string_keys(self) -> None:
+        """Test error when dict has non-string keys."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"config": {1: "value"}}, signature_params)
+        self.assertIn("non-string key", str(ctx.exception))
+
+    def test_param_group_spec_duplicate_case_insensitive_keys(self) -> None:
+        """Test error when nested dict has keys that collide case-insensitively."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"config": {"lr": 0.1, "LR": 0.2}}, signature_params)
+        self.assertIn("duplicate case-insensitive key", str(ctx.exception))
+
 
 class ResolveParamsTest(absltest.TestCase):
     """Tests for resolve_params function."""
@@ -208,6 +415,207 @@ class ResolveParamsTest(absltest.TestCase):
         self.assertEqual(len(result), 1)
         name, value = result[0]
         self.assertIsInstance(name, sql_identifier.SqlIdentifier)
+
+    def test_resolve_coerces_int_to_float_for_override(self) -> None:
+        """Test that int override values are coerced to float for DOUBLE params."""
+        signature_params = [
+            core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=0.7),
+        ]
+        result = param_utils.resolve_params({"temperature": 1}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertIsInstance(result_dict["TEMPERATURE"], float)
+        self.assertEqual(result_dict["TEMPERATURE"], 1.0)
+
+    def test_resolve_coerces_int_default_to_float(self) -> None:
+        """Test that int default values are coerced to float for DOUBLE params."""
+        signature_params = [
+            core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=1),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertIsInstance(result_dict["TEMPERATURE"], float)
+        self.assertEqual(result_dict["TEMPERATURE"], 1.0)
+
+    def test_resolve_coerces_int_array_to_float(self) -> None:
+        """Test that int elements in arrays are coerced to float for FLOAT params."""
+        signature_params = [
+            core.ParamSpec(name="weights", dtype=core.DataType.FLOAT, default_value=[1, 2, 3], shape=(-1,)),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["WEIGHTS"], [1.0, 2.0, 3.0])
+        for v in result_dict["WEIGHTS"]:
+            self.assertIsInstance(v, float)
+
+    def test_resolve_coerces_int_tuple_to_float(self) -> None:
+        """Test that int elements in tuples are coerced to float for FLOAT params."""
+        signature_params = [
+            core.ParamSpec(name="weights", dtype=core.DataType.FLOAT, default_value=(1, 2, 3), shape=(-1,)),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["WEIGHTS"], (1.0, 2.0, 3.0))
+        for v in result_dict["WEIGHTS"]:
+            self.assertIsInstance(v, float)
+
+    def test_resolve_coerces_nested_int_arrays_to_float(self) -> None:
+        """Test that int elements in nested lists and mixed list/tuple structures are coerced to float."""
+        signature_params = [
+            core.ParamSpec(name="matrix", dtype=core.DataType.FLOAT, default_value=[[1, 2], [3, 4]], shape=(-1, -1)),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["MATRIX"], [[1.0, 2.0], [3.0, 4.0]])
+        for row in result_dict["MATRIX"]:
+            for v in row:
+                self.assertIsInstance(v, float)
+
+        signature_params = [
+            core.ParamSpec(name="matrix", dtype=core.DataType.FLOAT, default_value=[(1, 2), (3, 4)], shape=(-1, -1)),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["MATRIX"], [(1.0, 2.0), (3.0, 4.0)])
+        for row in result_dict["MATRIX"]:
+            for v in row:
+                self.assertIsInstance(v, float)
+
+    def test_resolve_preserves_correct_types(self) -> None:
+        """Test that already-correct types are preserved without modification."""
+        signature_params = [
+            core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=0.7),
+            core.ParamSpec(name="max_tokens", dtype=core.DataType.INT32, default_value=100),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertIsInstance(result_dict["TEMPERATURE"], float)
+        self.assertEqual(result_dict["TEMPERATURE"], 0.7)
+        self.assertIsInstance(result_dict["MAX_TOKENS"], int)
+        self.assertEqual(result_dict["MAX_TOKENS"], 100)
+
+    def test_param_group_spec_defaults(self) -> None:
+        """Test that ParamGroupSpec defaults are resolved as dicts."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[
+                    core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                    core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                ],
+            ),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["CONFIG"], {"lr": 0.01, "momentum": 0.9})
+
+    def test_param_group_spec_partial_override(self) -> None:
+        """Test that partial dict overrides are deep-merged with defaults."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[
+                    core.ParamSpec(name="temperature", dtype=core.DataType.FLOAT, default_value=0.7),
+                    core.ParamSpec(name="top_k", dtype=core.DataType.INT32, default_value=50),
+                ],
+            ),
+        ]
+        result = param_utils.resolve_params({"config": {"temperature": 0.5}}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["CONFIG"], {"temperature": 0.5, "top_k": 50})
+
+    def test_param_group_spec_full_override(self) -> None:
+        """Test that a full dict override replaces all defaults."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[
+                    core.ParamSpec(name="temperature", dtype=core.DataType.FLOAT, default_value=0.7),
+                    core.ParamSpec(name="top_k", dtype=core.DataType.INT32, default_value=50),
+                ],
+            ),
+        ]
+        result = param_utils.resolve_params({"config": {"temperature": 0.1, "top_k": 10}}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["CONFIG"], {"temperature": 0.1, "top_k": 10})
+
+    def test_param_group_spec_none_override(self) -> None:
+        """Test that None override replaces the entire group default."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="config",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+            ),
+        ]
+        result = param_utils.resolve_params({"config": None}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertIsNone(result_dict["CONFIG"])
+
+    def test_param_group_spec_deep_merge_nested(self) -> None:
+        """Test deep merge with nested ParamGroupSpec (up to 3 levels)."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="training",
+                specs=[
+                    core.ParamSpec(name="epochs", dtype=core.DataType.INT32, default_value=10),
+                    core.ParamGroupSpec(
+                        name="optimizer",
+                        specs=[
+                            core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                            core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                            core.ParamGroupSpec(
+                                name="schedule",
+                                specs=[
+                                    core.ParamSpec(name="warmup_steps", dtype=core.DataType.INT32, default_value=100),
+                                    core.ParamSpec(name="decay_rate", dtype=core.DataType.FLOAT, default_value=0.99),
+                                ],
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+        # Override only a level-2 leaf, keeping everything else default
+        result = param_utils.resolve_params({"training": {"optimizer": {"lr": 0.001}}}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(
+            result_dict["TRAINING"],
+            {
+                "epochs": 10,
+                "optimizer": {"lr": 0.001, "momentum": 0.9, "schedule": {"warmup_steps": 100, "decay_rate": 0.99}},
+            },
+        )
+        # Override only the deepest field, keeping all other defaults
+        result = param_utils.resolve_params(
+            {"training": {"optimizer": {"schedule": {"warmup_steps": 200}}}}, signature_params
+        )
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(
+            result_dict["TRAINING"],
+            {
+                "epochs": 10,
+                "optimizer": {
+                    "lr": 0.01,
+                    "momentum": 0.9,
+                    "schedule": {"warmup_steps": 200, "decay_rate": 0.99},
+                },
+            },
+        )
+
+    def test_param_group_spec_mixed_with_scalar_params(self) -> None:
+        """Test resolution with both ParamGroupSpec and scalar ParamSpec."""
+        signature_params = [
+            core.ParamSpec(name="temperature", dtype=core.DataType.FLOAT, default_value=0.7),
+            core.ParamGroupSpec(
+                name="config",
+                specs=[
+                    core.ParamSpec(name="top_k", dtype=core.DataType.INT32, default_value=50),
+                ],
+            ),
+        ]
+        result = param_utils.resolve_params({"temperature": 0.5, "config": {"top_k": 10}}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["TEMPERATURE"], 0.5)
+        self.assertEqual(result_dict["CONFIG"], {"top_k": 10})
 
 
 class ValidateAndResolveParamsTest(absltest.TestCase):

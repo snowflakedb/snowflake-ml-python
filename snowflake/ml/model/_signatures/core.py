@@ -679,6 +679,106 @@ class BaseParamSpec(ABC):
         """Deserialization"""
 
 
+_PARAM_INT_DTYPES = frozenset(
+    {
+        DataType.INT8,
+        DataType.INT16,
+        DataType.INT32,
+        DataType.INT64,
+        DataType.UINT8,
+        DataType.UINT16,
+        DataType.UINT32,
+        DataType.UINT64,
+    }
+)
+
+_PARAM_FLOAT_DTYPES = frozenset({DataType.FLOAT, DataType.DOUBLE})
+
+
+def _get_leaf_values(value: Any) -> list[Any]:
+    """Extract leaf values from potentially nested lists/tuples."""
+    if isinstance(value, (list, tuple)):
+        result: list[Any] = []
+        for item in value:
+            result.extend(_get_leaf_values(item))
+        return result
+    return [value]
+
+
+def _validate_param_python_types(dtype: DataType, value: Any, is_array: bool) -> None:
+    """Validate that Python types of value elements are compatible with dtype.
+
+    Prevents silent type coercions (e.g. str->int, float->int) that numpy allows.
+
+    Args:
+        dtype: The expected DataType.
+        value: The value to validate.
+        is_array: Whether the value is an array (True) or scalar (False).
+
+    Raises:
+        SnowflakeMLException: ValueError when types are incompatible.
+    """
+    if is_array:
+        elements = _get_leaf_values(value)
+    else:
+        # For scalar params, skip type check if value is a collection —
+        # shape validation will catch the scalar-vs-array mismatch instead.
+        if isinstance(value, (list, tuple)):
+            return
+        elements = [value]
+
+    for elem in elements:
+        if dtype in _PARAM_INT_DTYPES:
+            if isinstance(elem, bool) or not isinstance(elem, (int, np.integer)):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Value {repr(elem)} (type: {type(elem).__name__}) is not compatible with "
+                        f"dtype {dtype}. Expected int."
+                    ),
+                )
+        elif dtype in _PARAM_FLOAT_DTYPES:
+            if isinstance(elem, bool) or not isinstance(elem, (int, float, np.integer, np.floating)):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Value {repr(elem)} (type: {type(elem).__name__}) is not compatible with "
+                        f"dtype {dtype}. Expected int or float."
+                    ),
+                )
+
+
+def coerce_param_value(param_spec: "ParamSpec", value: Any) -> Any:
+    """Coerce a parameter value to match the param spec's dtype.
+
+    Converts int values to float when dtype is FLOAT/DOUBLE to ensure
+    resolved values have correct Python types.
+
+    Args:
+        param_spec: The parameter specification.
+        value: The value to coerce.
+
+    Returns:
+        The coerced value.
+    """
+    if value is None:
+        return None
+    if param_spec.dtype in _PARAM_FLOAT_DTYPES:
+        return _coerce_int_to_float(value)
+    return value
+
+
+def _coerce_int_to_float(value: Any) -> Any:
+    """Recursively convert int values to float in nested structures."""
+    if isinstance(value, list):
+        return [_coerce_int_to_float(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_coerce_int_to_float(v) for v in value)
+    if isinstance(value, (int, np.integer)) and not isinstance(value, bool):
+        return float(value)
+    return value
+
+
 class ParamSpec(BaseParamSpec):
     """Specification of a parameter in Snowflake native model packaging."""
 
@@ -718,6 +818,8 @@ class ParamSpec(BaseParamSpec):
         """
         if default_value is None:
             return
+
+        _validate_param_python_types(dtype, default_value, is_array=shape is not None)
 
         try:
             arr = np.array(default_value, dtype=dtype._numpy_type)

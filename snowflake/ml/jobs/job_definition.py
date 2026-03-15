@@ -22,7 +22,7 @@ from snowflake.ml.jobs._utils import (
     payload_utils,
     query_helper,
     runtime_env_utils,
-    types,
+    type_utils,
 )
 from snowflake.snowpark import context as sp_context
 from snowflake.snowpark._internal import utils
@@ -45,7 +45,6 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         name: Optional[str] = None,
         target_instances: int = 1,
         min_instances: Optional[int] = None,
-        generate_suffix: bool = True,
         external_access_integrations: Optional[list[str]] = None,
         env_vars: Optional[dict[str, str]] = None,
         spec_overrides: Optional[dict[str, Any]] = None,
@@ -71,7 +70,6 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         self.name = name
         self.target_instances = target_instances
         self.min_instances = min_instances or target_instances
-        self.generate_suffix = generate_suffix
         self.external_access_integrations = external_access_integrations
         self.env_vars = env_vars
         self.spec_overrides = spec_overrides
@@ -112,11 +110,10 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
 
         assert self.name is not None
         self.job_definition_id = identifier.get_schema_level_object_identifier(self.database, self.schema, self.name)
-        stage_path_name = self.name if not self.generate_suffix else self.name + _generate_suffix()
 
         stage_path_parts = identifier.parse_snowflake_stage_path(self.stage_name.lstrip("@"))
         stage_name_prefix = f"@{'.'.join(filter(None, stage_path_parts[:3]))}"
-        stage_path = PurePosixPath(f"{stage_name_prefix}{stage_path_parts[-1].rstrip('/')}/{stage_path_name}")
+        stage_path = PurePosixPath(f"{stage_name_prefix}{stage_path_parts[-1].rstrip('/')}/{self.name}")
         self.stage_name = stage_path.as_posix()
 
         try:
@@ -142,7 +139,7 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
 
         combined_env_vars = {**uploaded_payload.env_vars, **(self.env_vars or {})}
         self.entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]
-        self.spec_options = types.SpecOptions(
+        self.spec_options = type_utils.SpecOptions(
             stage_path=stage_path.as_posix(),
             # the args will be set at runtime
             args=None,
@@ -153,12 +150,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
         )
 
-        self.job_options = types.JobOptions(
+        self.job_options = type_utils.JobOptions(
             external_access_integrations=self.external_access_integrations,
             query_warehouse=self.query_warehouse or self.session.get_current_warehouse(),
             target_instances=self.target_instances,
             min_instances=self.min_instances,
-            generate_suffix=self.generate_suffix,
         )
 
         self._is_registered = True
@@ -251,7 +247,6 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         # Extract and validate parameters on the client side
         entrypoint = kwargs.pop("entrypoint", None)
         target_instances = kwargs.pop("target_instances", 1)
-        generate_suffix = kwargs.pop("generate_suffix", True)
         min_instances = kwargs.pop("min_instances", target_instances)
         pip_requirements = kwargs.pop("pip_requirements", None)
         external_access_integrations = kwargs.pop("external_access_integrations", None)
@@ -304,7 +299,6 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             name=name,
             target_instances=target_instances,
             min_instances=min_instances,
-            generate_suffix=generate_suffix,
             external_access_integrations=external_access_integrations,
             env_vars=env_vars,
             spec_overrides=spec_overrides,
@@ -343,16 +337,51 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
     ) -> "MLJobDefinition[_Args, _ReturnValue]":
         """
         Create and register a new MLJobDefinition instance eagerly.
+
+        Args:
+            source: The source for the job definition. Can be:
+                - A string path to a local directory or file or stage directory path containing Python script(s).
+                - A callable (function) to be executed as the job.
+            compute_pool: The compute pool to use for the job.
+            stage_name: The name of the stage where the job payload will be uploaded.
+            session: The Snowpark session to use. If none specified, uses active session.
+            kwargs: Additional keyword arguments. Supported arguments:
+                entrypoint (str): The entry point for job execution. Can be:
+                    - A string path to the entry point script inside the source directory.
+                      Required when source is a directory with multiple entry points.
+                    - A list of strings representing a custom command (e.g., ["arctic_training"])
+                      which is passed through as-is without local resolution or validation.
+                      This is useful for entrypoints that are installed via pip_requirements.
+                target_instances (int): The number of nodes in the job. Defaults to 1.
+                min_instances (int): The minimum number of nodes required to start the job.
+                    If none specified, defaults to target_instances.
+                pip_requirements (list[str]): A list of pip requirements for the job.
+                external_access_integrations (list[str]): A list of external access integrations.
+                env_vars (dict): Environment variables to set in container.
+                enable_metrics (bool): Whether to enable metrics publishing for the job. Defaults to True.
+                query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
+                spec_overrides (dict): A dictionary of overrides for the service spec.
+                imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
+                runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
+                    e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
+                    it should contain image repository, image name and image tag.
+                name (str): The name of the job definition. If not specified, a name will be generated
+                    based on the entrypoint file name or function name.
+                overwrite (bool): Whether to overwrite an existing job definition with the same name.
+                    Defaults to False.
+                database (str): The database to use for the job definition.
+                schema (str): The schema to use for the job definition.
+                default_args (list): Default arguments to pass to the job on each invocation.
+                arg_protocol (ArgProtocol): The argument protocol to use for passing arguments.
+
+        Returns:
+            An MLJobDefinition instance representing the registered job definition.
         """
         job_definition = cls._create(
             source=source, compute_pool=compute_pool, stage_name=stage_name, session=session, **kwargs
         )
         job_definition._register()
         return job_definition
-
-
-def _generate_suffix() -> str:
-    return str(uuid4().hex)[:8]
 
 
 def _combine_runtime_arguments(

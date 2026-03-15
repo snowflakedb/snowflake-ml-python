@@ -75,7 +75,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
             if df_col_data.isnull().any():
                 warnings.warn(
                     (
-                        f"Null value detected in column {df_col}, model signature inference might not accurate, "
+                        f"Null value detected in column {df_col}, model signature inference might not be accurate, "
                         "or your prediction might fail if your model does not support null input. If this is not "
                         "expected, please check your input dataframe."
                     ),
@@ -83,6 +83,12 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                     stacklevel=2,
                 )
 
+                # try_convert_dtypes=True (default) is intentional here: validation
+                # needs convert_dtypes() to narrow float64→Int64 so that INT64
+                # features pass when the user supplies data containing None.
+                # In contrast, infer_signature() uses try_convert_dtypes=False
+                # to preserve the original pandas dtype and avoid position-dependent
+                # type inference.
                 df_col_data = utils.series_dropna(df_col_data)
                 df_col_dtype = df_col_data.dtype
 
@@ -111,7 +117,7 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                                 + f"Inconsistent type of element in object found in column data {df_col_data}."
                             ),
                         )
-                elif not isinstance(df_col_data.iloc[0], (str, bytes, dict, list)):
+                elif not isinstance(df_col_data.iloc[0], (str, bytes, dict, list, bool, np.bool_)):
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INVALID_DATA,
                         original_exception=ValueError(
@@ -151,7 +157,17 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                     ),
                 )
             if df_col_data.isnull().any():
-                df_col_data = utils.series_dropna(df_col_data)
+                warnings.warn(
+                    (
+                        f"Null value detected in column {df_col}, the column's original pandas dtype will be "
+                        "used for signature inference. If your model does not support null input, prediction may "
+                        "fail. If this is not expected, please check your input dataframe or specify signatures "
+                        "explicitly via the `signatures` parameter."
+                    ),
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+                df_col_data = utils.series_dropna(df_col_data, try_convert_dtypes=False)
             df_col_dtype = df_col_data.dtype
 
             if df_col_dtype == np.dtype("O"):
@@ -185,6 +201,10 @@ class PandasDataFrameHandler(base_handler.BaseDataHandler[pd.DataFrame]):
                     specs.append(core.FeatureSpec(dtype=core.DataType.STRING, name=ft_name))
                 elif isinstance(df_col_data.iloc[0], bytes):
                     specs.append(core.FeatureSpec(dtype=core.DataType.BYTES, name=ft_name))
+                elif isinstance(df_col_data.iloc[0], (bool, np.bool_)):
+                    # Must come after str/bytes checks and before any future int
+                    # check, because bool is a subclass of int in Python.
+                    specs.append(core.FeatureSpec(dtype=core.DataType.BOOL, name=ft_name))
             elif isinstance(df_col_dtype, pd.CategoricalDtype):
                 category_dtype = df_col_dtype.categories.dtype
                 if category_dtype == np.dtype("O"):

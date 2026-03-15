@@ -777,6 +777,7 @@ class ModelVersion(lineage_node.LineageNode):
 
         params = input_spec.params
         column_handling = input_spec.column_handling
+        partition_columns = [input_spec.partition_column] if input_spec.partition_column is not None else None
 
         if job_spec is None:
             job_spec = batch_inference_specs.JobSpec()
@@ -816,12 +817,6 @@ class ModelVersion(lineage_node.LineageNode):
 
         target_function_info = self._get_function_info(function_name=job_spec.function_name)
 
-        # Validate that the function is not partitioned
-        if target_function_info["is_partitioned"]:
-            raise ValueError(
-                f"Function '{target_function_info['name']}' is a partitioned model function which is not supported."
-            )
-
         return self._service_ops.invoke_batch_job_method(
             # model version info
             model_name=self._model_name,
@@ -844,6 +839,7 @@ class ModelVersion(lineage_node.LineageNode):
             input_file_pattern="*",
             column_handling=column_handling,
             params=params,
+            partition_columns=partition_columns,
             signature_params=target_function_info["signature"].params,
             output_stage_location=output_stage_location,
             completion_filename="_SUCCESS",

@@ -43,39 +43,8 @@ class DemoModel(custom_model.CustomModel):
             }
         )
 
-    @custom_model.partitioned_api
-    def predict_partitioned(self, input: pd.DataFrame) -> pd.DataFrame:
-        return pd.DataFrame({"output": input["C1"]})
-
 
 class TestBatchInferenceFailureModeInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    def test_run_batch_partitioned_model_raises_error(self) -> None:
-        """Test that run_batch raises ValueError for partitioned models."""
-        model = DemoModel(custom_model.ModelContext())
-        input_df = self.session.create_dataframe([[0, 1]], schema=["C0", "C1"])
-
-        mv = self.registry.log_model(
-            model=model,
-            model_name="model_test_run_batch_partitioned_model_raises_error",
-            version_name=f"ver_{self._run_id}",
-            sample_input_data=input_df,
-            options={
-                "embed_local_ml_library": True,
-                "method_options": {"predict_partitioned": {"function_type": "TABLE_FUNCTION"}},
-            },
-            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
-        )
-
-        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
-
-        with self.assertRaisesRegex(ValueError, r"partitioned model function.*not supported"):
-            mv.run_batch(
-                input_df,
-                compute_pool=self._TEST_CPU_COMPUTE_POOL,
-                output_spec=OutputSpec(stage_location=output_stage_location),
-                job_spec=JobSpec(job_name=job_name, function_name="predict_partitioned"),
-            )
-
     def test_run_batch_unknown_param_raises_error(self) -> None:
         """Test that run_batch raises ValueError for unknown param names."""
         model = DemoModel(custom_model.ModelContext())

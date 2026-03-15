@@ -17,6 +17,7 @@ from typing import Any, Optional
 import pandas as pd
 import pytest
 import requests
+import retrying
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature, openai_signatures
@@ -140,7 +141,14 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
             self.assertIn("content", row[0]["message"], f"{tag}Missing 'content' in message")
 
     def _rest_post(self, endpoint: str, payload: dict[str, Any]) -> requests.Response:
-        return requests.post(
+        return retrying.retry(
+            wait_exponential_multiplier=1000,
+            wait_exponential_max=10000,
+            stop_max_attempt_number=3,
+            retry_on_result=(
+                registry_model_deployment_test_base.RegistryModelDeploymentTestBase.retry_if_result_status_retriable
+            ),
+        )(requests.post)(
             f"https://{endpoint}/__call__",
             json=payload,
             auth=self._get_auth_for_inference(endpoint),

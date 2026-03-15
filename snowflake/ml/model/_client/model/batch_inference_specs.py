@@ -52,6 +52,9 @@ class InputSpec(BaseModel):
         column_handling (Optional[dict[str, ColumnHandlingOptions]]): Optional dictionary
             specifying how to handle specific columns during file I/O. Maps column names to their
             input format and file encoding configuration.
+        partition_column (Optional[str]): Optional column name to use for partitioning the input
+            data. When set, the batch inference job will partition the data by this column.
+            Defaults to None.
 
     Example:
         >>> input_spec = InputSpec(
@@ -67,6 +70,7 @@ class InputSpec(BaseModel):
 
     params: Optional[dict[str, Any]] = None
     column_handling: Optional[dict[str, ColumnHandlingOptions]] = None
+    partition_column: Optional[str] = None
 
 
 class OutputSpec(BaseModel):

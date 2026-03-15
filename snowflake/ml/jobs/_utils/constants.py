@@ -1,5 +1,5 @@
 from snowflake.ml._internal.utils.snowflake_env import SnowflakeCloudType
-from snowflake.ml.jobs._utils.types import ComputeResources
+from snowflake.ml.jobs._utils.type_utils import ComputeResources
 
 # SPCS specification constants
 DEFAULT_CONTAINER_NAME = "main"

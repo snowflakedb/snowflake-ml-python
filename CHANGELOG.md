@@ -1,5 +1,36 @@
 # Release History
 
+## 1.31.0
+
+### New Features
+
+### Bug Fixes
+
+* Registry: Fixed custom model handler to explicitly persist `PARTITIONED=False` in model metadata for
+  `@inference_api` methods. Previously, custom models using `@inference_api` with `TABLE_FUNCTION` type
+  were incorrectly reported as partitioned.
+* Registry: Fixed sklearn and SnowML model handlers to explicitly persist `PARTITIONED=False` metadata for
+  the `explain` method, preventing it from being incorrectly reported as partitioned at read time.
+* Registry: Fixed inconsistent `infer_signature` for columns containing NaN values. Previously,
+  the inferred dtype (`DOUBLE` vs `INT64`) depended on whether NaN rows survived truncation, causing
+  downstream validation failures. Now, the original pandas column dtype is respected during `infer_signature`,
+  so columns with mix of integer and `np.nan` or `None` are consistently inferred as `DOUBLE` regardless of NaN position.
+* Registry: Fixed a bug where invalid parameter types (e.g., passing a string to an integer parameter)
+  were silently coerced instead of raising an error. Parameters are now strictly validated against their
+  declared types before inference. This may break code that relied on the silent coercion behavior
+  (e.g., `model.run(max_tokens="100")` or `model.run(some_int_param=True)`).
+* ML Job: Fixed explicitly named `MLJobDefinition` objects so they can be overwritten in place and invoked
+  repeatedly without job name collisions; the `generate_suffix` argument has been removed.
+* Experiment Tracking live logging (PrPr): Fixed a bug that generated too many lines of log that consist entirely of
+  whitespace.
+
+### Behavior Changes
+
+* Registry: Warehouse partitioned model inference no longer includes non-partition input columns (which were always
+  NULL) in the output. The output now contains only the model's output columns and the partition column.
+
+### Deprecations
+
 ## 1.30.0
 
 ### New Features
@@ -318,6 +349,10 @@ mv = registry.log_model(
 
 * Registry: Added support for `image-text-to-text` task type in `huggingface.TransformersPipeline`.
   Note: Requires vLLM inference engine while creating the service.
+
+* ML Job: Added support for custom command entrypoints. The `entrypoint` parameter now accepts a
+  `list[str]` (e.g., `["arctic_training", "run_causal.yml"]`), which is executed directly as a
+  command rather than being treated as a Python script.
 
 ### Bug Fixes
 

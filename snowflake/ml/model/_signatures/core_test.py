@@ -247,6 +247,65 @@ class ParamSpecTest(absltest.TestCase):
         param_with_none = core.ParamSpec(name="optional", dtype=core.DataType.INT64, default_value=None)
         self.assertIsNone(param_with_none.default_value)
 
+    def test_param_spec_rejects_string_for_int(self) -> None:
+        """Test that string values are rejected for INT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.INT32, default_value="10")
+
+    def test_param_spec_rejects_string_for_float(self) -> None:
+        """Test that string values are rejected for FLOAT/DOUBLE types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.DOUBLE, default_value="0.7")
+
+    def test_param_spec_rejects_float_for_int(self) -> None:
+        """Test that float values are rejected for INT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.INT32, default_value=0.1)
+
+    def test_param_spec_rejects_bool_for_int(self) -> None:
+        """Test that bool values are rejected for INT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.INT32, default_value=True)
+
+    def test_param_spec_rejects_bool_for_float(self) -> None:
+        """Test that bool values are rejected for FLOAT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.DOUBLE, default_value=False)
+
+    def test_param_spec_accepts_int_for_float(self) -> None:
+        """Test that int values are accepted for FLOAT/DOUBLE types (widening)."""
+        param = core.ParamSpec(name="x", dtype=core.DataType.DOUBLE, default_value=1)
+        self.assertEqual(param.default_value, 1)
+
+    def test_param_spec_rejects_string_in_int_array(self) -> None:
+        """Test that string elements in arrays are rejected for INT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.INT64, default_value=["1", "2"], shape=(-1,))
+
+    def test_param_spec_rejects_float_in_int_array(self) -> None:
+        """Test that float elements in arrays are rejected for INT types."""
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=ValueError, expected_regex="not compatible with dtype"
+        ):
+            core.ParamSpec(name="x", dtype=core.DataType.INT64, default_value=[1.0, 2.0], shape=(-1,))
+
+    def test_param_spec_accepts_int_in_float_array(self) -> None:
+        """Test that int elements in FLOAT arrays are accepted (widening)."""
+        param = core.ParamSpec(name="x", dtype=core.DataType.FLOAT, default_value=[1, 2, 3], shape=(-1,))
+        self.assertEqual(param.default_value, [1, 2, 3])
+
     def test_param_spec_as_snowpark_type(self) -> None:
         """Test ParamSpec.as_snowpark_type() handles scalar and array types correctly."""
         # Scalar param (no shape) - should return base type

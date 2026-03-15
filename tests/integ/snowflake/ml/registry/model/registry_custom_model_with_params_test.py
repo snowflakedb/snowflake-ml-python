@@ -75,6 +75,29 @@ class DemoModelWithListParam(custom_model.CustomModel):
         )
 
 
+class DemoModelWithDictParam(custom_model.CustomModel):
+    """Custom model that accepts a dict parameter (structured config)."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        config: dict = {"temperature": 1.0, "top_k": 50},  # noqa: B006
+    ) -> pd.DataFrame:
+        temperature = config.get("temperature", 1.0)
+        top_k = config.get("top_k", 50)
+        return pd.DataFrame(
+            {
+                "output": input_df["feature"] * temperature,
+                "top_k_used": [top_k] * len(input_df),
+            }
+        )
+
+
 class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
     """Integration tests for warehouse inference with model parameters.
 
@@ -363,6 +386,17 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         # Verify the error message mentions the param validation
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
+
+    def test_warehouse_inference_with_dict_params_fails(self) -> None:
+        """Demonstrate that dict parameters in predict signature do not work yet.
+
+        CustomModel.__init__ validates parameter type annotations via _validate_parameter,
+        which rejects dict as an unsupported type. The model cannot even be instantiated.
+        """
+        with self.assertRaises(TypeError) as context:
+            DemoModelWithDictParam(custom_model.ModelContext())
+
+        self.assertIn("unsupported type annotation", str(context.exception).lower())
 
 
 class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase):

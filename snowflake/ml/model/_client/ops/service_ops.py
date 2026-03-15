@@ -9,7 +9,8 @@ import tempfile
 import threading
 import time
 import warnings
-from typing import Any, Optional, Sequence, Union, cast
+from collections.abc import Sequence
+from typing import Any, Optional, Union, cast
 
 from pydantic import TypeAdapter
 
@@ -197,7 +198,6 @@ class ServiceOperator:
         # inference table
         autocapture: Optional[bool] = None,
     ) -> Union[str, async_job.AsyncJob]:
-
         # Generate operation ID for this deployment
         operation_id = service_logger.get_operation_id()
 
@@ -988,6 +988,7 @@ class ServiceOperator:
         input_file_pattern: str,
         column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
         params: Optional[dict[str, Any]],
+        partition_columns: Optional[list[str]],
         signature_params: Optional[Sequence[core.BaseParamSpec]],
         output_stage_location: str,
         completion_filename: str,
@@ -1033,6 +1034,7 @@ class ServiceOperator:
             input_file_pattern=input_file_pattern,
             column_handling=column_handling_encoded,
             params=params_encoded,
+            partition_columns=partition_columns,
             output_stage_location=output_stage_location,
             completion_filename=completion_filename,
             function_name=function_name,

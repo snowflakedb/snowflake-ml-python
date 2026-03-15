@@ -13,7 +13,7 @@ from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml._internal.utils.mixins import SerializableSessionMixin
 from snowflake.ml.jobs._interop import results as interop_result, utils as interop_utils
-from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, types
+from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, type_utils
 from snowflake.snowpark import Row, context as sp_context
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
@@ -38,11 +38,11 @@ class MLJob(Generic[T], SerializableSessionMixin):
         self._service_spec_cached: Optional[dict[str, Any]] = service_spec
         self._session = session or sp_context.get_active_session()
 
-        self._status: types.JOB_STATUS = "PENDING"
+        self._status: type_utils.JOB_STATUS = "PENDING"
         self._result: Optional[interop_result.ExecutionResult] = None
 
     @cached_property
-    def _service_info(self) -> types.ServiceInfo:
+    def _service_info(self) -> type_utils.ServiceInfo:
         """Get the job's service info."""
         return _resolve_service_info(self.id, self._session)
 
@@ -67,7 +67,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         return self._id
 
     @property
-    def status(self) -> types.JOB_STATUS:
+    def status(self) -> type_utils.JOB_STATUS:
         """Get the job's execution status."""
         if self._status not in TERMINAL_JOB_STATUSES:
             # Query backend for job status if not in terminal state
@@ -232,7 +232,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
         print(self.get_logs(limit, instance_id, as_list=False, verbose=verbose))  # noqa: T201: we need to print here.
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["timeout"])
-    def wait(self, timeout: float = -1) -> types.JOB_STATUS:
+    def wait(self, timeout: float = -1) -> type_utils.JOB_STATUS:
         """
         Block until completion. Returns completion status.
 
@@ -282,6 +282,10 @@ class MLJob(Generic[T], SerializableSessionMixin):
     def get_ray_dashboard_url(self) -> Optional[str]:
         """
         Get the Ray dashboard URL for the job.
+
+        Returns:
+            Optional[str]: The Ray dashboard URL if the job is running and has a Ray dashboard endpoint,
+                None otherwise.
         """
         if self.status != JOB_RUNNING_STATUS:
             logger.warning("Ray dashboard is not available for non-running jobs")
@@ -334,7 +338,7 @@ class MLJob(Generic[T], SerializableSessionMixin):
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT, func_params_to_log=["job_id", "instance_id"])
-def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[int] = None) -> types.JOB_STATUS:
+def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[int] = None) -> type_utils.JOB_STATUS:
     """Retrieve job or job instance execution status."""
     try:
         if instance_id is not None:
@@ -342,15 +346,15 @@ def _get_status(session: snowpark.Session, job_id: str, instance_id: Optional[in
             rows = query_helper.run_query(session, "SHOW SERVICE INSTANCES IN SERVICE IDENTIFIER(?)", params=(job_id,))
             for row in rows:
                 if row["instance_id"] == str(instance_id):
-                    return cast(types.JOB_STATUS, row["status"])
+                    return cast(type_utils.JOB_STATUS, row["status"])
             raise ValueError(f"Instance {instance_id} not found in job {job_id}")
         else:
             row = _get_service_info(session, job_id)
-            return cast(types.JOB_STATUS, row["status"])
+            return cast(type_utils.JOB_STATUS, row["status"])
     except SnowparkSQLException as e:
         if e.sql_error_code == 2003:
             row = _get_service_info_spcs(session, job_id)
-            return cast(types.JOB_STATUS, row["STATUS"])
+            return cast(type_utils.JOB_STATUS, row["STATUS"])
         raise
 
 
@@ -708,7 +712,7 @@ def _get_service_info_spcs(session: snowpark.Session, job_id: str) -> Any:
         raise SnowparkSQLException(f"Job {job_id} does not exist or could not be retrieved", sql_error_code=2003)
 
 
-def _resolve_service_info(id: str, session: snowpark.Session) -> types.ServiceInfo:
+def _resolve_service_info(id: str, session: snowpark.Session) -> type_utils.ServiceInfo:
     try:
         row = _get_service_info(session, id)
     except SnowparkSQLException as e:
@@ -751,10 +755,10 @@ def _resolve_service_info(id: str, session: snowpark.Session) -> types.ServiceIn
     database_name = row["database_name"] if "database_name" in row else row["DATABASE_NAME"]
     schema_name = row["schema_name"] if "schema_name" in row else row["SCHEMA_NAME"]
 
-    return types.ServiceInfo(
+    return type_utils.ServiceInfo(
         database_name=database_name,
         schema_name=schema_name,
-        status=cast(types.JOB_STATUS, status),
+        status=cast(type_utils.JOB_STATUS, status),
         compute_pool=cast(str, compute_pool),
         target_instances=target_instances,
     )

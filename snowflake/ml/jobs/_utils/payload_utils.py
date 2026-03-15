@@ -17,7 +17,7 @@ import cloudpickle as cp
 from packaging import version
 
 from snowflake import snowpark
-from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, types
+from snowflake.ml.jobs._utils import constants, query_helper, stage_utils, type_utils
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark._internal import code_generation
 from snowflake.snowpark._internal.utils import zip_file_or_directory_to_stream
@@ -87,7 +87,7 @@ def _upload_directory(
 
 
 def upload_payloads(
-    session: snowpark.Session, stage_path: PurePath, *payload_specs: types.PayloadSpec, overwrite: bool = True
+    session: snowpark.Session, stage_path: PurePath, *payload_specs: type_utils.PayloadSpec, overwrite: bool = True
 ) -> None:
     for spec in payload_specs:
         source_path = spec.source_path
@@ -156,11 +156,11 @@ def upload_system_resources(session: snowpark.Session, stage_path: PurePath) -> 
 
 
 def resolve_source(
-    source: Union[types.PayloadPath, Callable[..., Any]]
-) -> Union[types.PayloadPath, Callable[..., Any]]:
+    source: Union[type_utils.PayloadPath, Callable[..., Any]]
+) -> Union[type_utils.PayloadPath, Callable[..., Any]]:
     if callable(source):
         return source
-    elif isinstance(source, types.PayloadPath):
+    elif isinstance(source, type_utils.PayloadPath):
         if not source.exists():
             raise FileNotFoundError(f"{source} does not exist")
         return source.absolute()
@@ -169,9 +169,9 @@ def resolve_source(
 
 
 def resolve_entrypoint(
-    source: Union[types.PayloadPath, Callable[..., Any]],
-    entrypoint: Optional[Union[types.PayloadPath, list[str]]],
-) -> Union[types.PayloadEntrypoint, list[str]]:
+    source: Union[type_utils.PayloadPath, Callable[..., Any]],
+    entrypoint: Optional[Union[type_utils.PayloadPath, list[str]]],
+) -> Union[type_utils.PayloadEntrypoint, list[str]]:
     """Resolve and validate the entrypoint for a job payload.
 
     Args:
@@ -196,7 +196,7 @@ def resolve_entrypoint(
 
     if callable(source):
         # Entrypoint is generated for callable payloads
-        return types.PayloadEntrypoint(
+        return type_utils.PayloadEntrypoint(
             file_path=entrypoint or Path(constants.DEFAULT_ENTRYPOINT_PATH),
             main_func=_ENTRYPOINT_FUNC_NAME,
         )
@@ -235,13 +235,13 @@ def resolve_entrypoint(
             f" supported={','.join(_SUPPORTED_ENTRYPOINT_EXTENSIONS)} got={entrypoint.suffix}"
         )
 
-    return types.PayloadEntrypoint(
+    return type_utils.PayloadEntrypoint(
         file_path=entrypoint,  # entrypoint is an absolute path at this point
         main_func=None,
     )
 
 
-def get_zip_file_from_path(path: types.PayloadPath) -> types.PayloadPath:
+def get_zip_file_from_path(path: type_utils.PayloadPath) -> type_utils.PayloadPath:
     """Finds the path of the outermost zip archive from a given file path.
 
     Examples:
@@ -269,8 +269,8 @@ def get_zip_file_from_path(path: types.PayloadPath) -> types.PayloadPath:
 
 
 def _finalize_payload_pair(
-    p: types.PayloadPath, base_import_path: Optional[str]
-) -> tuple[types.PayloadPath, Optional[str]]:
+    p: type_utils.PayloadPath, base_import_path: Optional[str]
+) -> tuple[type_utils.PayloadPath, Optional[str]]:
     """Finalize the `(payload_path, import_path)` pair based on source type.
 
     - Zip file: ignore import path (returns `(p, None)`).
@@ -280,11 +280,11 @@ def _finalize_payload_pair(
     - Other files: ignore import path (None).
 
     Args:
-        p (types.PayloadPath): The resolved source path
+        p (type_utils.PayloadPath): The resolved source path
         base_import_path (Optional[str]): Slash-separated import path
 
     Returns:
-        tuple[types.PayloadPath, Optional[str]]: `(p, final_import_path)` where:
+        tuple[type_utils.PayloadPath, Optional[str]]: `(p, final_import_path)` where:
             - `final_import_path` is None for zip archives and non-Python files.
             - `final_import_path` is `base_import_path + ".py"` for Python files when
               `base_import_path` is provided; otherwise None.
@@ -308,14 +308,14 @@ def _finalize_payload_pair(
 
 
 def resolve_import_path(
-    path: Union[types.PayloadPath, ModuleType],
+    path: Union[type_utils.PayloadPath, ModuleType],
     import_path: Optional[str] = None,
-) -> list[tuple[types.PayloadPath, Optional[str]]]:
+) -> list[tuple[type_utils.PayloadPath, Optional[str]]]:
     """
     Resolve and normalize the import path for modules, Python files, or zip payloads.
 
     Args:
-        path (Union[types.PayloadPath, ModuleType]): The source path or module to resolve.
+        path (Union[type_utils.PayloadPath, ModuleType]): The source path or module to resolve.
             - If a directory is provided, it is compressed as a zip archive preserving its structure.
             - If a single Python file is provided, the file itself is zipped.
             - If a module is provided, it is treated as a directory or Python file.
@@ -325,7 +325,7 @@ def resolve_import_path(
             the function infers it from `path`.
 
     Returns:
-        list[tuple[types.PayloadPath, Optional[str]]]: A list of tuples where each tuple
+        list[tuple[type_utils.PayloadPath, Optional[str]]]: A list of tuples where each tuple
         contains the resolved payload path and its corresponding import path (if any).
 
     Raises:
@@ -334,7 +334,7 @@ def resolve_import_path(
         ValueError: If the import path cannot be resolved or is invalid.
     """
     if import_path is None:
-        import_path = path.stem if isinstance(path, types.PayloadPath) else path.__name__
+        import_path = path.stem if isinstance(path, type_utils.PayloadPath) else path.__name__
     import_path = import_path.strip().replace(".", "/") if import_path else None
     if isinstance(path, Path):
         if not path.exists():
@@ -357,7 +357,7 @@ def resolve_import_path(
         raise ValueError(f"Module {path} is not a valid imports")
 
 
-def validate_import_path(source: Union[str, types.PayloadPath], import_path: Optional[str]) -> None:
+def validate_import_path(source: Union[str, type_utils.PayloadPath], import_path: Optional[str]) -> None:
     """Validate the import path for local python file or directory."""
     if import_path is None:
         return
@@ -425,7 +425,7 @@ def upload_imports(
                 remote = None
                 compress = False
 
-            upload_payloads(session, stage_path, types.PayloadSpec(source_path, remote, compress=compress))
+            upload_payloads(session, stage_path, type_utils.PayloadSpec(source_path, remote, compress=compress))
 
 
 class JobPayload:
@@ -453,7 +453,7 @@ class JobPayload:
         # for stage path like snow://domain....., Path(path) will remove duplicate /, it will become snow:/ domain...
         self.source = stage_utils.resolve_path(source) if isinstance(source, str) else source
         if isinstance(entrypoint, list):
-            self.entrypoint: Optional[Union[types.PayloadPath, list[str]]] = entrypoint
+            self.entrypoint: Optional[Union[type_utils.PayloadPath, list[str]]] = entrypoint
         else:
             self.entrypoint = stage_utils.resolve_path(entrypoint) if isinstance(entrypoint, str) else entrypoint
         self.pip_requirements = pip_requirements
@@ -461,7 +461,7 @@ class JobPayload:
 
     def upload(
         self, session: snowpark.Session, stage_path: Union[str, PurePath], overwrite: bool = False
-    ) -> types.UploadedPayload:
+    ) -> type_utils.UploadedPayload:
         # Prepare local variables
         stage_path = PurePath(stage_path) if isinstance(stage_path, str) else stage_path
         source = resolve_source(self.source)
@@ -490,13 +490,13 @@ class JobPayload:
         if isinstance(entrypoint, (list, tuple)):
             # For list entrypoints, still upload source if it's a path
             if isinstance(source, Path):
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
+                upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None))
             elif isinstance(source, stage_utils.StagePath):
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None))
+                upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None))
             python_entrypoint: list[Union[str, PurePath]] = list(entrypoint)
         else:
             # Standard file-based entrypoint handling
-            if not isinstance(source, types.PayloadPath):
+            if not isinstance(source, type_utils.PayloadPath):
                 source_code = generate_python_code(source, source_code_display=True)
                 _ = session.file.put_stream(
                     io.BytesIO(source_code.encode()),
@@ -510,10 +510,10 @@ class JobPayload:
                 # copy payload to stage
                 if source == entrypoint.file_path:
                     source = source.parent
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None), overwrite=overwrite)
+                upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None), overwrite=overwrite)
 
             elif isinstance(source, Path):
-                upload_payloads(session, app_stage_path, types.PayloadSpec(source, None), overwrite=overwrite)
+                upload_payloads(session, app_stage_path, type_utils.PayloadSpec(source, None), overwrite=overwrite)
                 if source.is_file():
                     source = source.parent
 
@@ -555,7 +555,7 @@ class JobPayload:
             constants.PAYLOAD_DIR_ENV_VAR: constants.APP_STAGE_SUBPATH,
         }
 
-        return types.UploadedPayload(
+        return type_utils.UploadedPayload(
             stage_path=stage_path,
             entrypoint=[
                 "bash",
@@ -733,15 +733,20 @@ if __name__ == '__main__':
 """
 
 
-def get_payload_name(source: Union[str, Callable[..., Any]], entrypoint: Optional[Union[str, list[str]]] = None) -> str:
+def get_payload_name(
+    source: Union[str, Callable[..., Any]],
+    entrypoint: Optional[Union[str, list[str]]] = None,
+    generate_suffix: bool = True,
+) -> str:
+    suffix = f"_{str(uuid4().hex)[:8]}" if generate_suffix else ""
 
     if entrypoint and isinstance(entrypoint, (list, tuple)):
-        return entrypoint[0]
+        return entrypoint[0] + suffix
     elif entrypoint and isinstance(entrypoint, str):
-        return f"{PurePath(entrypoint).stem}"
+        return PurePath(entrypoint).stem + suffix
     elif source and not callable(source):
-        return f"{PurePath(source).stem}"
+        return PurePath(source).stem + suffix
     elif callable(source):
-        return f"{source.__name__}"
+        return source.__name__ + suffix
     else:
-        return f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"
+        return f"{JOB_ID_PREFIX}{str(uuid4()).replace('-', '_').upper()}"  # NOTE: Already includes a suffix

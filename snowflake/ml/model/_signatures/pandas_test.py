@@ -137,7 +137,14 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
         df = pd.DataFrame([1, 2, 3, None], columns=["a"])
         self.assertListEqual(
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
-            [core.FeatureSpec("a", core.DataType.INT64)],
+            [core.FeatureSpec("a", core.DataType.DOUBLE)],
+        )
+
+        nan_in_front_of_100_values = [None] + list(range(1, 101))
+        df = pd.DataFrame(nan_in_front_of_100_values, columns=["a"])
+        self.assertListEqual(
+            pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
+            [core.FeatureSpec("a", core.DataType.DOUBLE)],
         )
 
         df = pd.DataFrame(["a", "b", "c", "d"], columns=["a"])
@@ -178,7 +185,7 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
             pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input"),
             [
                 core.FeatureSpec("input_feature_0", core.DataType.INT64),
-                core.FeatureSpec("input_feature_1", core.DataType.INT64),
+                core.FeatureSpec("input_feature_1", core.DataType.DOUBLE),
             ],
         )
 
@@ -439,6 +446,54 @@ class PandasDataFrameHandlerTest(absltest.TestCase):
                 core.FeatureSpec("a", core.DataType.STRING, shape=(-1,)),
             ],
         )
+
+    def test_infer_signature_nan_position_does_not_affect_dtype(self) -> None:
+        """NaN position in a float64 column must not change the inferred type."""
+        rng = np.random.default_rng(42)
+        n_ints = 100
+        n_nans = 5
+        int_vals = rng.integers(20, 80, size=n_ints)
+        nan_vals: list[float] = [np.nan] * n_nans
+
+        df_nans_bottom = pd.DataFrame({"age": list(int_vals) + nan_vals})
+        df_nans_top = pd.DataFrame({"age": nan_vals + list(int_vals)})
+
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            sig_bottom = pandas_handler.PandasDataFrameHandler.infer_signature(df_nans_bottom, role="input")
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            sig_top = pandas_handler.PandasDataFrameHandler.infer_signature(df_nans_top, role="input")
+
+        expected = [core.FeatureSpec("age", core.DataType.DOUBLE)]
+        self.assertListEqual(sig_bottom, expected)
+        self.assertListEqual(sig_top, expected)
+
+        df_no_nans_int = pd.DataFrame({"age": rng.integers(20, 80, size=n_ints)})
+        sig_pure_int = pandas_handler.PandasDataFrameHandler.infer_signature(df_no_nans_int, role="input")
+        self.assertListEqual(sig_pure_int, [core.FeatureSpec("age", core.DataType.INT64)])
+
+    def test_infer_signature_boolean_column_with_nulls(self) -> None:
+        """Boolean columns with null values must infer as BOOL, not be silently omitted."""
+        df = pd.DataFrame({"flag": [True, False, None]})
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            sig = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+        self.assertListEqual(sig, [core.FeatureSpec("flag", core.DataType.BOOL)])
+
+        df = pd.DataFrame({"a": [1, 2, 3], "flag": [True, None, False]})
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            sig = pandas_handler.PandasDataFrameHandler.infer_signature(df, role="input")
+        self.assertListEqual(
+            sig,
+            [
+                core.FeatureSpec("a", core.DataType.INT64),
+                core.FeatureSpec("flag", core.DataType.BOOL),
+            ],
+        )
+
+    def test_validate_boolean_column_with_nulls(self) -> None:
+        """Validation should pass for boolean columns containing null values."""
+        df = pd.DataFrame({"flag": [True, False, None]})
+        with self.assertWarnsRegex(UserWarning, "Null value detected in column"):
+            pandas_handler.PandasDataFrameHandler.validate(df)
 
     def test_convert_to_df_pd_DataFrame(self) -> None:
         a = np.array([[2, 5], [6, 8]])

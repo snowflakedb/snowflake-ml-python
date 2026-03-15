@@ -24,12 +24,12 @@ class StatelessPartitionedModel(custom_model.CustomModel):
         from sklearn.linear_model import LinearRegression
 
         model = LinearRegression()
-        model.fit(input_df[["FEATURE"]], input_df["TARGET"])
-        feat_min, feat_max = input_df["FEATURE"].min(), input_df["FEATURE"].max()
-        new_feature_values = np.linspace(feat_min, feat_max, _OUTPUT_SIZE_EXPAND)
-        new_features = pd.DataFrame({"FEATURE": new_feature_values})
-        preds = model.predict(new_features[["FEATURE"]])
-        return pd.DataFrame({"NEW_FEATURE": new_features["FEATURE"], "PREDICTION": preds})
+        model.fit(input_df[["INPUT_COL1"]], input_df["INPUT_COL2"])
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        output_col1_values = np.linspace(col1_min, col1_max, _OUTPUT_SIZE_EXPAND)
+        output_col1_df = pd.DataFrame({"INPUT_COL1": output_col1_values})
+        preds = model.predict(output_col1_df[["INPUT_COL1"]])
+        return pd.DataFrame({"OUTPUT_COL1": output_col1_df["INPUT_COL1"], "OUTPUT_COL2": preds})
 
 
 class StatefulPartitionedModelExpand(custom_model.CustomModel):
@@ -39,11 +39,11 @@ class StatefulPartitionedModelExpand(custom_model.CustomModel):
     def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
         partition_id = str(int(input_df["PARTITION_COL"].iloc[0]))
         model = self.context.model_ref(partition_id)
-        feat_min, feat_max = input_df["FEATURE"].min(), input_df["FEATURE"].max()
-        new_feature_values = np.linspace(feat_min, feat_max, _OUTPUT_SIZE_EXPAND)
-        new_features = pd.DataFrame({"FEATURE": new_feature_values})
-        preds = model.predict(new_features[["FEATURE"]])
-        return pd.DataFrame({"NEW_FEATURE": new_features["FEATURE"], "PREDICTION": preds})
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        output_col1_values = np.linspace(col1_min, col1_max, _OUTPUT_SIZE_EXPAND)
+        output_col1_df = pd.DataFrame({"INPUT_COL1": output_col1_values})
+        preds = model.predict(output_col1_df[["INPUT_COL1"]])
+        return pd.DataFrame({"OUTPUT_COL1": output_col1_df["INPUT_COL1"], "OUTPUT_COL2": preds})
 
 
 class StatefulPartitionedModelEqual(custom_model.CustomModel):
@@ -53,11 +53,11 @@ class StatefulPartitionedModelEqual(custom_model.CustomModel):
     def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
         partition_id = str(int(input_df["PARTITION_COL"].iloc[0]))
         model = self.context.model_ref(partition_id)
-        feat_min, feat_max = input_df["FEATURE"].min(), input_df["FEATURE"].max()
-        new_feature_values = np.linspace(feat_min, feat_max, _OUTPUT_SIZE_EQUAL)
-        new_features = pd.DataFrame({"FEATURE": new_feature_values})
-        preds = model.predict(new_features[["FEATURE"]])
-        return pd.DataFrame({"NEW_FEATURE": new_features["FEATURE"], "PREDICTION": preds})
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        output_col1_values = np.linspace(col1_min, col1_max, _OUTPUT_SIZE_EQUAL)
+        output_col1_df = pd.DataFrame({"INPUT_COL1": output_col1_values})
+        preds = model.predict(output_col1_df[["INPUT_COL1"]])
+        return pd.DataFrame({"OUTPUT_COL1": output_col1_df["INPUT_COL1"], "OUTPUT_COL2": preds})
 
 
 class StatefulPartitionedModelCompress(custom_model.CustomModel):
@@ -67,11 +67,11 @@ class StatefulPartitionedModelCompress(custom_model.CustomModel):
     def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
         partition_id = str(int(input_df["PARTITION_COL"].iloc[0]))
         model = self.context.model_ref(partition_id)
-        feat_min, feat_max = input_df["FEATURE"].min(), input_df["FEATURE"].max()
-        new_feature_values = np.linspace(feat_min, feat_max, _OUTPUT_SIZE_COMPRESS)
-        new_features = pd.DataFrame({"FEATURE": new_feature_values})
-        preds = model.predict(new_features[["FEATURE"]])
-        return pd.DataFrame({"NEW_FEATURE": new_features["FEATURE"], "PREDICTION": preds})
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        output_col1_values = np.linspace(col1_min, col1_max, _OUTPUT_SIZE_COMPRESS)
+        output_col1_df = pd.DataFrame({"INPUT_COL1": output_col1_values})
+        preds = model.predict(output_col1_df[["INPUT_COL1"]])
+        return pd.DataFrame({"OUTPUT_COL1": output_col1_df["INPUT_COL1"], "OUTPUT_COL2": preds})
 
 
 def _generate_partitioned_data() -> pd.DataFrame:
@@ -79,10 +79,10 @@ def _generate_partitioned_data() -> pd.DataFrame:
     np.random.seed(42)
     rows = []
     for partition_id in [1, 2]:
-        feature = np.random.rand(_NUM_ROWS_PER_PARTITION) * 10
-        target = partition_id * 2.0 * feature + partition_id * 3.0 + np.random.randn(_NUM_ROWS_PER_PARTITION) * 0.1
-        for f, t in zip(feature, target):
-            rows.append({"PARTITION_COL": partition_id, "FEATURE": f, "TARGET": t})
+        col1 = np.random.rand(_NUM_ROWS_PER_PARTITION) * 10
+        col2 = partition_id * 2.0 * col1 + partition_id * 3.0 + np.random.randn(_NUM_ROWS_PER_PARTITION) * 0.1
+        for c1, c2 in zip(col1, col2):
+            rows.append({"PARTITION_COL": partition_id, "INPUT_COL1": c1, "INPUT_COL2": c2})
     return pd.DataFrame(rows)
 
 
@@ -95,7 +95,7 @@ class TestRegistryPartitionedModelInteg(registry_model_test_base.RegistryModelTe
         for partition_id in [1, 2]:
             partition_data = input_df[input_df["PARTITION_COL"] == partition_id]
             lr = LinearRegression()
-            lr.fit(partition_data[["FEATURE"]], partition_data["TARGET"])
+            lr.fit(partition_data[["INPUT_COL1"]], partition_data["INPUT_COL2"])
             fitted_models[str(partition_id)] = lr
         return fitted_models
 
@@ -109,8 +109,8 @@ class TestRegistryPartitionedModelInteg(registry_model_test_base.RegistryModelTe
 
         def check_res(res: pd.DataFrame) -> None:
             self.assertIsInstance(res, pd.DataFrame)
-            self.assertIn("PREDICTION", res.columns)
-            self.assertIn("NEW_FEATURE", res.columns)
+            # Output should only contain model output columns + partition column.
+            self.assertCountEqual(res.columns.tolist(), ["OUTPUT_COL1", "OUTPUT_COL2", "PARTITION_COL"])
             num_partitions = input_df["PARTITION_COL"].nunique()
             self.assertEqual(len(res), num_partitions * output_size)
             for partition_id in [1, 2]:
@@ -119,11 +119,11 @@ class TestRegistryPartitionedModelInteg(registry_model_test_base.RegistryModelTe
                     lr = fitted_models[str(partition_id)]
                 else:
                     lr = LinearRegression()
-                    lr.fit(partition_data[["FEATURE"]], partition_data["TARGET"])
-                feat_min, feat_max = partition_data["FEATURE"].min(), partition_data["FEATURE"].max()
-                new_feature_values = np.linspace(feat_min, feat_max, output_size)
-                expected = np.sort(lr.predict(new_feature_values.reshape(-1, 1)))
-                actual = np.sort(res[res["PARTITION_COL"] == partition_id]["PREDICTION"].astype(float).values)
+                    lr.fit(partition_data[["INPUT_COL1"]], partition_data["INPUT_COL2"])
+                col1_min, col1_max = partition_data["INPUT_COL1"].min(), partition_data["INPUT_COL1"].max()
+                output_col1_values = np.linspace(col1_min, col1_max, output_size)
+                expected = np.sort(lr.predict(output_col1_values.reshape(-1, 1)))
+                actual = np.sort(res[res["PARTITION_COL"] == partition_id]["OUTPUT_COL2"].astype(float).values)
                 np.testing.assert_allclose(actual, expected, rtol=1e-5)
 
         return check_res

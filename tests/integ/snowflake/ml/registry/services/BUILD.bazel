@@ -25,6 +25,18 @@ py_library(
 )
 
 py_test(
+    name = "registry_model_deployment_privilege_test",
+    timeout = "eternal",
+    srcs = ["registry_model_deployment_privilege_test.py"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/registry",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
+py_test(
     name = "registry_xgboost_model_deployment_pip_test",
     timeout = "eternal",
     srcs = ["registry_xgboost_model_deployment_pip_test.py"],
@@ -112,6 +124,19 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_pip_only_model_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_pip_only_model_deployment_test.py"],
+    shard_count = 1,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
     ],
 )
 

@@ -88,7 +88,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         background_data: Optional[model_types.SupportedDataType],
         enable_explainability: Optional[bool],
     ) -> Any:
-
         tree_methods = ["to_xgboost", "to_lightgbm", "to_sklearn"]
         non_tree_methods = ["to_sklearn"]
         for method_name in tree_methods:
@@ -124,7 +123,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
-
         enable_explainability = kwargs.get("enable_explainability", None)
 
         from snowflake.ml.modeling.framework.base import BaseEstimator
@@ -261,6 +259,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         if enable_explainability:
             model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
+            model_meta.function_properties["explain"] = {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
         model_meta.env.include_if_absent(_include_if_absent_pkgs, check_local_version=True)
 
     @classmethod
@@ -287,7 +286,6 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
     def _build_explain_fn(
         cls, model: "BaseEstimator", background_data: model_types.SupportedDataType
     ) -> Callable[[model_types.SupportedDataType], pd.DataFrame]:
-
         predictor = model
         is_pipeline = type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model)
         if is_pipeline:

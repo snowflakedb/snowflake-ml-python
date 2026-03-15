@@ -28,7 +28,7 @@ from snowflake.ml.jobs._utils import (
     payload_utils,
     query_helper,
     runtime_env_utils,
-    types,
+    type_utils,
 )
 from snowflake.snowpark import exceptions as sp_exceptions, functions as F
 from tests.integ.snowflake.ml.jobs import test_constants
@@ -406,7 +406,7 @@ class JobManagerTest(JobTestBase):
         original_logs = job.get_logs()
         original_result = job.result()
         original_target_instances = job.target_instances
-        cp.register_pickle_by_value(types)
+        cp.register_pickle_by_value(type_utils)
         pickled_data = cp.dumps(job)
         self.assertIsInstance(pickled_data, bytes)
         self.assertGreater(len(pickled_data), 0)
@@ -544,6 +544,7 @@ class JobManagerTest(JobTestBase):
 
     def test_job_result_backcompat(self) -> None:
         """Test that v1 job results can still be loaded correctly."""
+
         # if image is overridden, users must provide args to specify the entrypoint
         @jobs.remote(
             self.compute_pool,
@@ -1016,7 +1017,7 @@ class JobManagerTest(JobTestBase):
         ).collect()
         upload_files = TestAsset("src")
         payload_utils.upload_payloads(
-            self.session, pathlib.PurePath(stage_name), types.PayloadSpec(upload_files.path, None)
+            self.session, pathlib.PurePath(stage_name), type_utils.PayloadSpec(upload_files.path, None)
         )
         test_cases = [
             (f"@{stage_name}/", f"@{stage_name}/subdir/sub_main.py", "DONE"),
@@ -1173,12 +1174,12 @@ class JobManagerTest(JobTestBase):
         upload_files = TestAsset("src")
 
         payload_utils.upload_payloads(
-            self.session, pathlib.PurePath(stage_path), types.PayloadSpec(upload_files.path, None, compress=False)
+            self.session, pathlib.PurePath(stage_path), type_utils.PayloadSpec(upload_files.path, None, compress=False)
         )
         payload_utils.upload_payloads(
             self.session,
             pathlib.PurePath(import_stage_path),
-            types.PayloadSpec(upload_files.path, None, compress=False),
+            type_utils.PayloadSpec(upload_files.path, None, compress=False),
         )
 
         test_cases = [
@@ -1366,6 +1367,42 @@ class JobManagerTest(JobTestBase):
             session=self.session,
         )
         self.assertRegex(job1.name.lower(), r"main_\w+")
+
+    def test_job_definition_explicit_name(self) -> None:
+        job_def_name = "test_job_def"
+
+        @jobs.remote(self.compute_pool, stage_name="payload_stage", name=job_def_name, session=self.session)
+        def job_def() -> None:
+            print("hello world (v1)")
+
+        self.assertEqual(job_def.name, job_def_name)
+
+        job1 = job_def()
+        job2 = job_def()
+
+        self.assertEqual(job1.wait(), "DONE", job1.get_logs(verbose=True))
+        self.assertEqual(job2.wait(), "DONE", job2.get_logs(verbose=True))
+        self.assertNotEqual(job1.id, job2.id)
+        self.assertTrue(job1.name.lower().startswith(job_def_name.lower() + "_"))
+        self.assertTrue(job2.name.lower().startswith(job_def_name.lower() + "_"))
+
+        # Overwrite the existing job definition
+        @jobs.remote(
+            self.compute_pool, stage_name="payload_stage", name=job_def_name, overwrite=True, session=self.session
+        )
+        def job_def_v2() -> None:
+            print("hello world (v2)")
+
+        job_def_v2._ensure_registered()
+        self.assertEqual(job_def_v2.name, job_def_name)
+
+        # The old job definition should still be usable,  e.g. updating
+        # job definitions used by a DAG without recreating the DAG.
+        job3 = job_def()  # Invoke old job definition
+        self.assertEqual(job3.wait(), "DONE", job3.get_logs(verbose=True))
+        self.assertIn("hello world (v2)", job3.get_logs(verbose=True))
+        self.assertNotEqual(job1.id, job3.id)
+        self.assertTrue(job3.name.lower().startswith(job_def_name.lower() + "_"))
 
     @parameterized.parameters(  # type: ignore[misc]
         ("src/", "greeter", "src/modules_file.py", lambda greeter: [(greeter, None)]),

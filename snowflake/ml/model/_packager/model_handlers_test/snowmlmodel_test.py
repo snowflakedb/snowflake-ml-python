@@ -12,6 +12,7 @@ from sklearn.model_selection import RepeatedStratifiedKFold
 from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers import _utils as handlers_utils
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.modeling.impute import SimpleImputer  # type: ignore[attr-defined]
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -184,12 +185,17 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         explanations = shap.TreeExplainer(regr.to_xgboost())(df[INPUT_COLUMNS]).values
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=regr,
                 metadata={"author": "halu", "version": "1"},
                 task=model_types.Task.TABULAR_BINARY_CLASSIFICATION,  # incorrect type but should be inferred properly
                 options=model_types.SNOWModelSaveOptions(enable_explainability=True),
+            )
+
+            self.assertEqual(
+                model_metadata.function_properties["explain"],
+                {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -223,12 +229,17 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         explanations = shap.Explainer(regr.to_sklearn(), df[INPUT_COLUMNS])(df[INPUT_COLUMNS]).values
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=regr,
                 sample_input_data=df[INPUT_COLUMNS],
                 metadata={"author": "halu", "version": "1"},
                 options={"enable_explainability": True},
+            )
+
+            self.assertEqual(
+                model_metadata.function_properties["explain"],
+                {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
             )
             with warnings.catch_warnings():
                 warnings.simplefilter("error")
@@ -339,12 +350,17 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         explainer = shap.Explainer(predictor.predict_proba, transformed_df)
         explanations = handlers_utils.convert_explanations_to_2D_df(predictor, explainer(transformed_df).values)
         with tempfile.TemporaryDirectory() as tmpdir:
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=model_pipeline,
                 sample_input_data=df,
                 metadata={"author": "halu", "version": "1"},
                 options={"enable_explainability": True},
+            )
+
+            self.assertEqual(
+                model_metadata.function_properties["explain"],
+                {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))

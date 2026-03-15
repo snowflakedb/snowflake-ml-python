@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 import pandas as pd
 import requests
+import retrying
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature, openai_signatures
@@ -40,6 +41,12 @@ _FULL_PARAMS: dict[str, Any] = {
     "top_p": 1.0,
     "frequency_penalty": 0.1,
     "presence_penalty": 0.2,
+}
+
+_PARTIAL_PARAMS: dict[str, Any] = {
+    "temperature": 0.5,
+    "max_completion_tokens": 80,
+    "n": 3,
 }
 
 _OBJECT_CONTENT_MESSAGES: list[dict[str, Any]] = [
@@ -144,7 +151,14 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
             self.assertEqual(expected._shape, actual._shape)
 
     def _rest_post(self, endpoint: str, payload: dict[str, Any]) -> requests.Response:
-        return requests.post(
+        return retrying.retry(
+            wait_exponential_multiplier=1000,
+            wait_exponential_max=10000,
+            stop_max_attempt_number=3,
+            retry_on_result=(
+                registry_model_deployment_test_base.RegistryModelDeploymentTestBase.retry_if_result_status_retriable
+            ),
+        )(requests.post)(
             f"https://{endpoint}/__call__",
             json=payload,
             auth=self._get_auth_for_inference(endpoint),
@@ -250,6 +264,9 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
 
         with self.subTest("rest_flat / full"):
             self._assert_rest_ok(endpoint, self._flat_payload(messages, **_FULL_PARAMS), f"{ctx}/flat/full")
+
+        with self.subTest("rest_flat / partial"):
+            self._assert_rest_ok(endpoint, self._flat_payload(messages, **_PARTIAL_PARAMS), f"{ctx}/flat/partial")
 
         with self.subTest("rest_flat / defaults"):
             self._assert_rest_ok(endpoint, self._flat_payload(messages), f"{ctx}/flat/defaults")

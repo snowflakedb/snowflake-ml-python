@@ -1,0 +1,25 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "enable_pip_only_packaging",
+    srcs = [
+        "enable_pip_only_packaging.py",
+    ],
+    deps = [
+        "//snowflake/ml/model/_packager/model_env",
+    ],
+)
+
+py_test(
+    name = "enable_pip_only_packaging_test",
+    srcs = [
+        "enable_pip_only_packaging_test.py",
+    ],
+    tags = ["feature:model_registry"],
+    deps = [
+        ":enable_pip_only_packaging",
+        "//snowflake/ml/model/_packager/model_env",
+    ],
+)

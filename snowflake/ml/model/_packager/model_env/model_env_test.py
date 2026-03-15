@@ -1366,6 +1366,104 @@ class ModelEnvTest(absltest.TestCase):
                 warnings.simplefilter("error")
                 env_with_repo.load_from_dict(pathlib.Path(tmpdir), env_dict_with_repo)
 
+    def test_pip_only_packaging_enabled_no_conda_deps(self) -> None:
+        """Test that pip-only packaging skips conda.yml when enabled and no conda deps."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = model_env.ModelEnv()
+            env.pip_requirements = ["requests>=2.28.0", "pandas>=1.0.0"]
+
+            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
+            try:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = True
+
+                result = env.save_as_dict(pathlib.Path(tmpdir))
+
+                self.assertIn("pip", result)
+                self.assertNotIn("conda", result)
+
+                pip_file = pathlib.Path(tmpdir) / env.pip_requirements_rel_path
+                self.assertTrue(pip_file.exists())
+
+                conda_file = pathlib.Path(tmpdir) / env.conda_env_rel_path
+                self.assertFalse(conda_file.exists())
+
+            finally:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
+
+    def test_pip_only_packaging_with_conda_deps_still_creates_conda_yml(self) -> None:
+        """Test that conda.yml is created when there are conda deps, with pip-only flag."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = model_env.ModelEnv()
+            env.pip_requirements = ["requests>=2.28.0"]
+            env.conda_dependencies = ["numpy>=1.20.0"]  # Has conda deps
+
+            # Enable pip-only packaging
+            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
+            try:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = True
+
+                result = env.save_as_dict(pathlib.Path(tmpdir))
+
+                # BOTH conda and pip
+                self.assertIn("conda", result)
+                self.assertIn("pip", result)
+
+                conda_file = pathlib.Path(tmpdir) / env.conda_env_rel_path
+                pip_file = pathlib.Path(tmpdir) / env.pip_requirements_rel_path
+                self.assertTrue(conda_file.exists())
+                self.assertTrue(pip_file.exists())
+
+            finally:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
+
+    def test_pip_only_packaging_disabled_always_creates_conda_yml(self) -> None:
+        """Test that conda.yml is always created when pip-only packaging is disabled."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env = model_env.ModelEnv()
+            env.pip_requirements = ["requests>=2.28.0"]
+
+            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
+            try:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = False
+
+                result = env.save_as_dict(pathlib.Path(tmpdir))
+
+                # BOTH conda and pip
+                self.assertIn("conda", result)
+                self.assertIn("pip", result)
+
+                conda_file = pathlib.Path(tmpdir) / env.conda_env_rel_path
+                pip_file = pathlib.Path(tmpdir) / env.pip_requirements_rel_path
+                self.assertTrue(conda_file.exists())
+                self.assertTrue(pip_file.exists())
+
+            finally:
+                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
+
+    def test_load_from_dict_pip_only(self) -> None:
+        """Test loading from dict with only pip path (no conda)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create only requirements.txt (no conda.yml)
+            pip_file_path = pathlib.Path(os.path.join(tmpdir, "requirements.txt"))
+            with open(pip_file_path, "w", encoding="utf-8") as f:
+                f.writelines(["requests>=2.28.0\n", "pandas>=1.0.0\n"])
+
+            # Dict without conda key
+            env_dict: model_meta_schema.ModelEnvDict = {
+                "pip": "requirements.txt",
+                "python_version": "3.10",
+                "snowpark_ml_version": "1.1.0",
+            }
+
+            env = model_env.ModelEnv()
+            env.load_from_dict(pathlib.Path(tmpdir), env_dict)
+
+            # Verify pip requirements were loaded
+            self.assertIn("pandas>=1.0.0", env.pip_requirements)
+            self.assertIn("requests>=2.28.0", env.pip_requirements)
+            # Verify no conda deps
+            self.assertEqual(env.conda_dependencies, [])
+
 
 if __name__ == "__main__":
     absltest.main()

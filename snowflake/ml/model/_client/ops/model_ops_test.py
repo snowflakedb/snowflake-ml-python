@@ -589,7 +589,6 @@ class ModelOpsTest(parameterized.TestCase):
                 ],
             ) as mock_describe_service,
         ):
-
             # Test with regular connection - should display the ingress_url
             with mock.patch.object(self.m_ops._session.connection, "host", "account.snowflakecomputing.com"):
                 res = self.m_ops.show_services(
@@ -1011,7 +1010,6 @@ class ModelOpsTest(parameterized.TestCase):
                 ],
             ) as mock_describe_service,
         ):
-
             # Test with regular connection
             with mock.patch.object(self.m_ops._session.connection, "host", "account.snowflakecomputing.com"):
                 res = self.m_ops.show_services(
@@ -1897,7 +1895,8 @@ class ModelOpsTest(parameterized.TestCase):
             )
             mock_convert_to_df.assert_not_called()
 
-    def test_invoke_method_table_function(self) -> None:
+    def test_invoke_method_table_function_pandas_partitioned(self) -> None:
+        """Pandas input, partitioned, no partition_column: should drop input cols."""
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
         m_sig = _DUMMY_SIG["predict_table"]
         m_df = mock_data_frame.MockDataFrame()
@@ -1955,7 +1954,8 @@ class ModelOpsTest(parameterized.TestCase):
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
             )
 
-    def test_invoke_method_table_function_partition_column(self) -> None:
+    def test_invoke_method_table_function_pandas_partitioned_with_partition_column(self) -> None:
+        """Pandas input, partitioned, with partition_column: should drop input cols, keep partition col."""
         pd_df = pd.DataFrame([["1.0"]], columns=["input"], dtype=np.float32)
         m_sig = _DUMMY_SIG["predict_table"]
         m_df = mock_data_frame.MockDataFrame()
@@ -2014,6 +2014,167 @@ class ModelOpsTest(parameterized.TestCase):
             mock_convert_to_df.assert_called_once_with(
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
             )
+
+    def test_invoke_method_table_function_snowpark_partitioned_without_partition_column(self) -> None:
+        """Snowpark input, partitioned, no partition_column: should drop input cols."""
+        m_sig = _DUMMY_SIG["predict_table"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_drop("COL1", "COL2")
+        with (
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ) as mock_validate_snowpark_data,
+            mock.patch.object(
+                self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
+        ):
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                is_partitioned=True,
+                explain_case_sensitive=False,
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=m_df,
+                input_args=["INPUT"],
+                partition_column=None,
+                returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                is_partitioned=True,
+                explain_case_sensitive=False,
+                params=None,
+            )
+            mock_convert_to_df.assert_not_called()
+            m_df.finalize()
+
+    def test_invoke_method_table_function_snowpark_partitioned_with_partition_column(self) -> None:
+        """Snowpark input, partitioned, with partition_column: should drop input cols, keep partition col."""
+        m_sig = _DUMMY_SIG["predict_table"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        m_df.add_mock_drop("COL1", "COL2")
+        partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
+        with (
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ) as mock_validate_snowpark_data,
+            mock.patch.object(
+                self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
+        ):
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                partition_column=partition_column,
+                statement_params=self.m_statement_params,
+                is_partitioned=True,
+                explain_case_sensitive=False,
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=m_df,
+                input_args=["INPUT"],
+                partition_column=partition_column,
+                returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                is_partitioned=True,
+                explain_case_sensitive=False,
+                params=None,
+            )
+            # Snowpark DF input should NOT convert to pandas
+            mock_convert_to_df.assert_not_called()
+            # Verify that the expected drop() was called on the result DataFrame
+            m_df.finalize()
+
+    def test_invoke_method_table_function_snowpark_not_partitioned_with_partition_column(self) -> None:
+        """Snowpark input, not partitioned, with partition_column: should keep input cols."""
+        m_sig = _DUMMY_SIG["predict_table"]
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("_statement_params", None)
+        m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        # No add_mock_drop — input cols should NOT be dropped
+        partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
+        with (
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ) as mock_validate_snowpark_data,
+            mock.patch.object(
+                self.m_ops._model_version_client, "invoke_table_function_method", return_value=m_df
+            ) as mock_invoke_method,
+            mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_to_df") as mock_convert_to_df,
+        ):
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                partition_column=partition_column,
+                statement_params=self.m_statement_params,
+                is_partitioned=False,
+                explain_case_sensitive=False,
+            )
+            mock_convert_from_df.assert_not_called()
+            mock_validate_snowpark_data.assert_called_once_with(m_df, m_sig.inputs, strict=False)
+            mock_invoke_method.assert_called_once_with(
+                method_name=sql_identifier.SqlIdentifier("PREDICT_TABLE"),
+                input_df=m_df,
+                input_args=["INPUT"],
+                partition_column=partition_column,
+                returns=[("output", spt.FloatType(), "OUTPUT")],
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+                is_partitioned=False,
+                explain_case_sensitive=False,
+                params=None,
+            )
+            mock_convert_to_df.assert_not_called()
 
     def test_invoke_method_service(self) -> None:
         m_sig = _DUMMY_SIG["predict"]

@@ -21,7 +21,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         df = pd.DataFrame([1, 2, None, 4])
         self.assertListEqual(
             model_signature._infer_signature(df, role="input"),
-            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.INT64)],
+            [model_signature.FeatureSpec("input_feature_0", model_signature.DataType.DOUBLE)],
         )
 
         arr = np.array([1, 2, 3, 4])
