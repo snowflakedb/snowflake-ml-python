@@ -93,15 +93,21 @@ class ModelRuntime:
             packager_path, default_channel_override=default_channel_override, is_gpu=self.is_gpu
         )
 
+        # Build dependencies dict starting with artifact_repository_map
+        dependencies: model_meta_schema.ModelRuntimeDependenciesDict = {
+            "artifact_repository_map": (
+                env_dict["artifact_repository_map"] if env_dict.get("artifact_repository_map") is not None else {}
+            ),
+        }
+        # Add conda and pip keys only if present in env_dict
+        if "conda" in env_dict:
+            dependencies["conda"] = env_dict["conda"]
+        if "pip" in env_dict:
+            dependencies["pip"] = env_dict["pip"]
+
         return model_meta_schema.ModelRuntimeDict(
             imports=list(map(str, self.imports)),
-            dependencies=model_meta_schema.ModelRuntimeDependenciesDict(
-                conda=env_dict["conda"],
-                pip=env_dict["pip"],
-                artifact_repository_map=(
-                    env_dict["artifact_repository_map"] if env_dict.get("artifact_repository_map") is not None else {}
-                ),
-            ),
+            dependencies=dependencies,
             resource_constraint=env_dict["resource_constraint"],
         )
 
@@ -119,10 +125,15 @@ class ModelRuntime:
         env.artifact_repository_map = meta_env.artifact_repository_map
         env.resource_constraint = meta_env.resource_constraint
 
-        conda_env_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["conda"])
-        pip_requirements_rel_path = pathlib.PurePosixPath(loaded_dict["dependencies"]["pip"])
+        conda_path = loaded_dict["dependencies"].get("conda")
+        pip_path = loaded_dict["dependencies"].get("pip")
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            env.load_from_conda_file(packager_path / conda_env_rel_path)
-            env.load_from_pip_file(packager_path / pip_requirements_rel_path)
+            if conda_path:
+                conda_env_rel_path = pathlib.PurePosixPath(conda_path)
+                env.load_from_conda_file(packager_path / conda_env_rel_path)
+            if pip_path:
+                pip_requirements_rel_path = pathlib.PurePosixPath(pip_path)
+                env.load_from_pip_file(packager_path / pip_requirements_rel_path)
         return ModelRuntime(name=name, env=env, imports=loaded_dict["imports"], loading_from_file=True)

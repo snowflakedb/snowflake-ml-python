@@ -41,6 +41,14 @@ def format_param_value_for_sql(value: Any) -> str:
         # Format as SQL timestamp literal
         iso_str = value.isoformat(sep=" ")
         return f"'{iso_str}'::TIMESTAMP_NTZ"
+    if isinstance(value, dict):
+        # OBJECT_CONSTRUCT_KEEP_NULL preserves NULL values and maintains type fidelity.
+        # Nested dicts recurse into nested OBJECT_CONSTRUCT_KEEP_NULL calls.
+        parts = []
+        for k, v in value.items():
+            parts.append(f"'{k}'")
+            parts.append(format_param_value_for_sql(v))
+        return f"OBJECT_CONSTRUCT_KEEP_NULL({', '.join(parts)})"
     if isinstance(value, list):
         # Use str() for lists - Python's repr uses single quotes for strings,
         # which SQL interprets as string literals (not identifiers like double quotes)
@@ -65,6 +73,121 @@ def format_param_value_for_table_function_sql(value: Any) -> str:
     if isinstance(value, float):
         return f"{base}::FLOAT"
     return base
+
+
+def _validate_param_group_value(
+    group_spec: core.ParamGroupSpec,
+    value: Any,
+    param_path: str,
+) -> None:
+    """Recursively validate a value against a ParamGroupSpec.
+
+    Args:
+        group_spec: The ParamGroupSpec defining the expected structure.
+        value: The user-provided value to validate.
+        param_path: Dot-separated path for error messages (e.g., "config.sampling").
+
+    Raises:
+        SnowflakeMLException: If the value is not a dict, contains unknown keys,
+            or child values fail type validation.
+    """
+    if value is None:
+        return
+
+    if not isinstance(value, dict):
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(f"Parameter '{param_path}' expected a dict, got {type(value).__name__}."),
+        )
+
+    # Case-insensitive key matching
+    spec_lookup = {spec.name.upper(): spec for spec in group_spec.specs}
+
+    # Track seen keys to detect duplicates
+    seen_upper: set[str] = set()
+
+    for key, child_value in value.items():
+        # Validate the key is a string
+        if not isinstance(key, str):
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=TypeError(
+                    f"Parameter '{param_path}' has non-string key: {key}. " "Dict parameter keys must be strings."
+                ),
+            )
+
+        # Reject duplicate keys that differ only by case (e.g., {"foo": 1, "FOO": 2})
+        key_upper = key.upper()
+        if key_upper in seen_upper:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Parameter '{param_path}' has duplicate case-insensitive key '{key}'. "
+                    "Dict parameter keys are case-insensitive."
+                ),
+            )
+        seen_upper.add(key_upper)
+
+        # Reject keys not declared in the spec
+        if key_upper not in spec_lookup:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(f"Unknown key(s) '{key}' in parameter '{param_path}'."),
+            )
+
+        # Validate child value against its spec (recurse for nested groups)
+        child_spec = spec_lookup[key_upper]
+        child_path = f"{param_path}.{key}"
+        if isinstance(child_spec, core.ParamSpec):
+            # Reuse ParamSpec's existing validation for scalar/array type and shape checking
+            core.ParamSpec._validate_default_value(child_spec.dtype, child_value, child_spec.shape)
+        elif isinstance(child_spec, core.ParamGroupSpec):
+            # Recursively validate the child value against the child spec
+            _validate_param_group_value(child_spec, child_value, child_path)
+
+
+def _deep_merge_param_group(
+    group_spec: core.ParamGroupSpec,
+    default: dict[str, Any],
+    override: dict[str, Any],
+) -> dict[str, Any]:
+    """Deep-merge a user-provided partial dict into a ParamGroupSpec's default dict.
+
+    For each key in the group spec:
+    - If the key is in override and its child spec is a ParamGroupSpec, recurse.
+    - If the key is in override and its child spec is a ParamSpec, use the override value.
+    - Otherwise, use the default value.
+
+    Args:
+        group_spec: The ParamGroupSpec defining the structure.
+        default: The full default dict from group_spec.default_value.
+        override: The user-provided partial dict.
+
+    Returns:
+        A merged dict with all keys from the spec.
+    """
+    # Case-insensitive key matching to be forgiving of user key casing
+    override_lookup = {k.upper(): v for k, v in override.items()}
+
+    # Iterate over the spec (not the override) so every declared key appears in the output.
+    # This ensures unspecified keys retain their defaults.
+    merged: dict[str, Any] = {}
+    for spec in group_spec.specs:
+        key_upper = spec.name.upper()
+        if key_upper in override_lookup:
+            # Get the override value for the key
+            override_value = override_lookup[key_upper]
+            if isinstance(spec, core.ParamGroupSpec) and isinstance(override_value, dict):
+                # Nested group: recurse to preserve defaults at deeper levels
+                merged[spec.name] = _deep_merge_param_group(spec, default.get(spec.name, {}), override_value)
+            else:
+                # Use the override value for the key
+                merged[spec.name] = override_value
+        else:
+            # Use the default value for the key
+            merged[spec.name] = default.get(spec.name)
+
+    return merged
 
 
 def validate_params(
@@ -126,10 +249,12 @@ def validate_params(
         )
 
     # Validate types for each provided param
-    for param_name, default_value in params.items():
+    for param_name, param_value in params.items():
         param_spec = param_spec_lookup[param_name.upper()]
         if isinstance(param_spec, core.ParamSpec):
-            core.ParamSpec._validate_default_value(param_spec.dtype, default_value, param_spec.shape)
+            core.ParamSpec._validate_default_value(param_spec.dtype, param_value, param_spec.shape)
+        elif isinstance(param_spec, core.ParamGroupSpec):
+            _validate_param_group_value(param_spec, param_value, param_name)
 
 
 def resolve_params(
@@ -148,17 +273,30 @@ def resolve_params(
     # Case-insensitive lookup: normalized_name -> param_spec
     param_spec_lookup = {ps.name.upper(): ps for ps in signature_params}
 
-    # Start with defaults from signature
+    # Start with defaults from signature, coercing types (e.g. int -> float for DOUBLE)
     final_params: dict[str, Any] = {}
     for param_spec in signature_params:
         if hasattr(param_spec, "default_value"):
-            final_params[param_spec.name] = param_spec.default_value
+            value = param_spec.default_value
+            if isinstance(param_spec, core.ParamSpec):
+                value = core.coerce_param_value(param_spec, value)
+            final_params[param_spec.name] = value
 
     # Override with provided runtime parameters (using signature's original param names)
     if params:
         for param_name, override_value in params.items():
-            canonical_name = param_spec_lookup[param_name.upper()].name
-            final_params[canonical_name] = override_value
+            spec = param_spec_lookup[param_name.upper()]
+            canonical_name = spec.name
+            if isinstance(spec, core.ParamGroupSpec) and isinstance(override_value, dict):
+                default_dict = final_params.get(canonical_name, {})
+                if isinstance(default_dict, dict):
+                    final_params[canonical_name] = _deep_merge_param_group(spec, default_dict, override_value)
+                else:
+                    final_params[canonical_name] = override_value
+            else:
+                if isinstance(spec, core.ParamSpec):
+                    override_value = core.coerce_param_value(spec, override_value)
+                final_params[canonical_name] = override_value
 
     return [(sql_identifier.SqlIdentifier(param_name), param_value) for param_name, param_value in final_params.items()]
 

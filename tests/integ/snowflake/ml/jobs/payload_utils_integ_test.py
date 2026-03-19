@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 
-from snowflake.ml.jobs._utils import constants, payload_utils, types
+from snowflake.ml.jobs._utils import constants, payload_utils, type_utils
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
 
@@ -162,7 +162,7 @@ class PayloadUtilsTests(parameterized.TestCase):
     ) -> None:
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"
         payload_utils.upload_payloads(
-            self.session, pathlib.Path(_TEST_STAGE), types.PayloadSpec(upload_files.path, None)
+            self.session, pathlib.Path(_TEST_STAGE), type_utils.PayloadSpec(upload_files.path, None)
         )
         payload = payload_utils.JobPayload(
             source=source,
@@ -258,7 +258,7 @@ class PayloadUtilsTests(parameterized.TestCase):
     ) -> None:
         upload_files = TestAsset("src")
         payload_utils.upload_payloads(
-            self.session, pathlib.Path(_TEST_STAGE), types.PayloadSpec(upload_files.path, None)
+            self.session, pathlib.Path(_TEST_STAGE), type_utils.PayloadSpec(upload_files.path, None)
         )
 
         stage_path = f"{self.session.get_session_stage()}/{str(uuid4())}"

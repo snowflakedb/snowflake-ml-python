@@ -355,7 +355,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             inference_engine="vLLM",
             base_inference_engine_options={
                 "engine_args_override": [
-                    "--gpu-memory-utilization=0.9",
+                    "--gpu-memory-utilization=0.8",
                     "--max-model-len=1024",
                 ],
             },

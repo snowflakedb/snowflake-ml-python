@@ -20,6 +20,7 @@ from snowflake.ml.model._packager.model_handlers.sklearn import (
     _apply_transforms_up_to_last_step,
     _unpack_container_runtime_pipeline,
 )
+from snowflake.ml.model._packager.model_meta import model_meta_schema
 
 
 class SKLearnHandlerTest(parameterized.TestCase):
@@ -288,12 +289,17 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 )
                 save_background_data.assert_called_once()
 
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1_no_sig",
                 model=regr,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
                 options=model_types.SKLModelSaveOptions(),
+            )
+
+            self.assertEqual(
+                model_metadata.function_properties["explain"],
+                {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
             )
 
             with warnings.catch_warnings():
@@ -318,7 +324,6 @@ class SKLearnHandlerTest(parameterized.TestCase):
 
         explanations = shap.Explainer(regr, iris_X_df)(iris_X_df).values
         with tempfile.TemporaryDirectory() as tmpdir:
-
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1_no_sig",
                 model=regr,

@@ -91,6 +91,17 @@ class DemoModelWithPdSeriesOutPut(custom_model.CustomModel):
         return input["c1"]
 
 
+class DemoModelPassthrough(custom_model.CustomModel):
+    """Returns both input columns as output, coerced to float."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"out_a": input["a"].astype(float), "out_b": input["b"].astype(float)})
+
+
 class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBase):
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
@@ -637,10 +648,12 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
     @parameterized.product(  # type: ignore[misc]
         registry_test_fn=registry_model_test_base.RegistryModelTestBase.REGISTRY_TEST_FN_LIST,
     )
-    def test_table_function_column_names(
+    def test_table_function_with_inference_api(
         self,
         registry_test_fn: str,
     ) -> None:
+        """Test @inference_api with TABLE_FUNCTION: verifies output column names and is_partitioned=False."""
+
         class RowOrderModel(custom_model.CustomModel):
             @custom_model.inference_api
             def predict(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -664,7 +677,111 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
                 ),
             },
             options={"function_type": "TABLE_FUNCTION"},
+            is_partitioned_assert={"predict": False},
         )
+
+    def test_nan_position_consistent_signature_inference(self) -> None:
+        """Signature inferred from sample_input_data with NaN must be DOUBLE for float64 columns
+        and BOOL for boolean columns with None, regardless of NaN/None position. The logged model
+        must accept pure int64, pure double, mixed int/double, and float-with-NaN inputs at
+        prediction time."""
+        from snowflake.ml.model import model_signature as ms
+
+        rng = np.random.default_rng(42)
+        n_rows = 100
+        n_nan_rows = 5
+
+        int_vals_a = rng.integers(20, 80, size=n_rows).tolist()
+        int_vals_b = rng.integers(1, 10, size=n_rows).tolist()
+        bool_vals = [rng.choice([True, False]) for _ in range(n_rows)]
+        nan_vals: list[float] = [np.nan] * n_nan_rows
+        none_vals: list[None] = [None] * n_nan_rows
+
+        # Verify boolean columns with None infer as BOOL regardless of None position
+        bool_nans_back = pd.DataFrame({"flag": bool_vals + none_vals})
+        bool_nans_front = pd.DataFrame({"flag": none_vals + bool_vals})
+
+        sig_bool_back = ms.infer_signature(bool_nans_back, bool_nans_front)
+        sig_bool_front = ms.infer_signature(bool_nans_front, bool_nans_back)
+        for spec in list(sig_bool_back.inputs) + list(sig_bool_front.inputs):
+            self.assertEqual(
+                spec._dtype,
+                ms.DataType.BOOL,
+                f"Expected BOOL for column {spec.name}, got {spec._dtype}",
+            )
+
+        # Verify float64 columns with NaN infer as DOUBLE regardless of NaN position
+        sample_nans_back = pd.DataFrame({"a": int_vals_a + nan_vals, "b": nan_vals + int_vals_b})
+        sample_nans_front = pd.DataFrame({"a": nan_vals + int_vals_a, "b": int_vals_b + nan_vals})
+
+        sig_back = ms.infer_signature(sample_nans_back, sample_nans_front)
+        sig_front = ms.infer_signature(sample_nans_front, sample_nans_back)
+        for spec in list(sig_back.inputs) + list(sig_front.inputs):
+            self.assertEqual(
+                spec._dtype,
+                ms.DataType.DOUBLE,
+                f"Expected DOUBLE for column {spec.name}, got {spec._dtype}",
+            )
+
+        lm = DemoModelPassthrough(custom_model.ModelContext())
+        name = f"model_{self._run_id}_nan_pos"
+        mv = self.registry.log_model(
+            model=lm,
+            model_name=name,
+            sample_input_data=sample_nans_back,
+        )
+
+        def _check(res: pd.DataFrame, expected_input: pd.DataFrame) -> None:
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame(
+                    {
+                        "out_a": expected_input["a"].astype(float),
+                        "out_b": expected_input["b"].astype(float),
+                    },
+                ),
+                check_dtype=False,
+            )
+
+        input_pure_int = pd.DataFrame(
+            {
+                "a": rng.integers(20, 80, size=5).tolist(),
+                "b": rng.integers(1, 10, size=5).tolist(),
+            }
+        )
+        _check(mv.run(input_pure_int, function_name="predict"), input_pure_int)
+
+        input_pure_double = pd.DataFrame(
+            {
+                "a": (rng.random(5) * 100).tolist(),
+                "b": (rng.random(5) * 10).tolist(),
+            }
+        )
+        _check(mv.run(input_pure_double, function_name="predict"), input_pure_double)
+
+        input_int_and_double = pd.DataFrame(
+            {
+                "a": rng.integers(20, 80, size=5).tolist() + [np.nan] * 5 + (rng.random(5) * 10).tolist(),
+                "b": (rng.random(5) * 10).tolist() + [np.nan] * 5 + rng.integers(20, 80, size=5).tolist(),
+            }
+        )
+        _check(mv.run(input_int_and_double, function_name="predict"), input_int_and_double)
+
+        input_with_nans = pd.DataFrame(
+            {
+                "a": [1.0, 2.0, np.nan, 4.0, 5.0],
+                "b": [np.nan, 2.0, 3.0, 4.0, 5.0],
+            }
+        )
+        _check(mv.run(input_with_nans, function_name="predict"), input_with_nans)
+
+        input_with_only_nans = pd.DataFrame(
+            {
+                "a": [np.nan, np.nan, None, None, np.nan],
+                "b": [np.nan, np.nan, np.nan, np.nan, None],
+            }
+        )
+        _check(mv.run(input_with_only_nans, function_name="predict"), input_with_only_nans)
 
 
 if __name__ == "__main__":

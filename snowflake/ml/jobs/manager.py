@@ -485,7 +485,6 @@ def _submit_job(
         session or get_active_session(),
         entrypoint=entrypoint,
         target_instances=target_instances,
-        generate_suffix=True,
         **kwargs,
     )
 

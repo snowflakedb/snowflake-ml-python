@@ -208,6 +208,7 @@ class ModelDeploymentSpec:
         input_file_pattern: str,
         column_handling: Optional[str] = None,
         params: Optional[str] = None,
+        partition_columns: Optional[list[str]] = None,
         warehouse: sql_identifier.SqlIdentifier,
         job_database_name: Optional[sql_identifier.SqlIdentifier] = None,
         job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
@@ -230,6 +231,7 @@ class ModelDeploymentSpec:
             input_file_pattern: Pattern for input files (optional).
             column_handling: Column handling mode for input data.
             params: Additional parameters for the job.
+            partition_columns: Partition columns for the input data.
             warehouse: Warehouse for the job.
             job_database_name: Database name for the job.
             job_schema_name: Schema name for the job.
@@ -271,6 +273,7 @@ class ModelDeploymentSpec:
                 input_file_pattern=input_file_pattern,
                 column_handling=column_handling,
                 params=params,
+                partition_columns=partition_columns,
             ),
             output=model_deployment_spec_schema.Output(
                 output_stage_location=output_stage_location,

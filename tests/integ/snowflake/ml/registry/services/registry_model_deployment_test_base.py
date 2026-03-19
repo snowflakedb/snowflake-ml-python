@@ -291,6 +291,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     @staticmethod
     def retry_if_result_status_retriable(result: requests.Response) -> bool:
         if result.status_code in [
+            http.HTTPStatus.UNAUTHORIZED,
             http.HTTPStatus.SERVICE_UNAVAILABLE,
             http.HTTPStatus.TOO_MANY_REQUESTS,
             http.HTTPStatus.GATEWAY_TIMEOUT,

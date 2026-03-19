@@ -42,6 +42,7 @@ class Input(BaseModel):
     input_file_pattern: str
     column_handling: Optional[str] = None
     params: Optional[str] = None
+    partition_columns: Optional[list[str]] = None
 
 
 class Output(BaseModel):

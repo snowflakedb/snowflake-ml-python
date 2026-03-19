@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from absl.testing import absltest, parameterized
 
 from snowflake.ml.jobs import job_definition
-from snowflake.ml.jobs._utils import types
+from snowflake.ml.jobs._utils import type_utils
 
 
 class ManagerTest(parameterized.TestCase):
@@ -22,7 +22,7 @@ class ManagerTest(parameterized.TestCase):
     def test_job_definition_preserves_windows_absolute_paths(
         self, launcher_script: pathlib.PurePath, entrypoint: pathlib.PurePath
     ) -> None:
-        uploaded_payload = types.UploadedPayload(
+        uploaded_payload = type_utils.UploadedPayload(
             stage_path=pathlib.PurePosixPath("@payload_stage/job_id"),
             entrypoint=[
                 launcher_script,

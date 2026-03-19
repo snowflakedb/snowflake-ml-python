@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Union
 from snowflake.ml._internal.utils import identifier
 
 if TYPE_CHECKING:
-    from snowflake.ml.jobs._utils import types
+    from snowflake.ml.jobs._utils import type_utils
 
 PROTOCOL_NAME = "snow"
 _SNOWURL_PATH_RE = re.compile(
@@ -155,7 +155,7 @@ class StagePath:
         return path
 
 
-def resolve_path(path: Union[str, Path]) -> "types.PayloadPath":
+def resolve_path(path: Union[str, Path]) -> "type_utils.PayloadPath":
     """
     Resolve a path to either a StagePath or a local Path.
 

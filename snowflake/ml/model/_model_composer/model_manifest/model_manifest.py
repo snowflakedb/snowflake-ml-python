@@ -112,10 +112,14 @@ class ModelManifest:
                 "In this case, set case_sensitive as True for those methods to distinguish them."
             )
 
-        dependencies = model_manifest_schema.ModelRuntimeDependenciesDict(conda=runtime_dict["dependencies"]["conda"])
+        dependencies: model_manifest_schema.ModelRuntimeDependenciesDict = {}
+
+        # Only include conda if it exists
+        if "conda" in runtime_dict["dependencies"]:
+            dependencies["conda"] = runtime_dict["dependencies"]["conda"]
 
         # We only want to include pip dependencies file if there are any pip requirements.
-        if len(model_meta.env.pip_requirements) > 0:
+        if len(model_meta.env.pip_requirements) > 0 and "pip" in runtime_dict["dependencies"]:
             dependencies["pip"] = runtime_dict["dependencies"]["pip"]
 
         if model_meta.env.artifact_repository_map:

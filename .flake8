@@ -7,9 +7,9 @@ max_line_length=120
 ;       https://github.com/psf/black/issues/565
 
 ; Python Connector used additional exclusions:
-;       https://github.com/snowflakedb/snowflake/blob/18776c2a3a40403a7f253d6c62e4d9058f2c4202/Python/snowflake/connector/setup.cfg
+;       https://github.com/snowflake-eng/snowflake/blob/18776c2a3a40403a7f253d6c62e4d9058f2c4202/Python/snowflake/connector/setup.cfg
 ; Those exclusions seem to not have been carried over to the current public branch:
-;       https://sourcegraph.c2.us-central1.gcp-dev.app.snowflake.com/github.com/snowflakedb/snowflake-connector-python/-/blob/setup.cfg
+;       https://sourcegraph.c2.us-central1.gcp-dev.app.snowflake.com/github.com/snowflake-eng/snowflake-connector-python/-/blob/setup.cfg
 ; E122: Continuation line missing indentation or outdented (E122) https://www.flake8rules.com/rules/E122.html
 ; E125: Continuation line with same indent as next logical line (E125) https://www.flake8rules.com/rules/E125.html
 ; E126: Continuation line over-indented for hanging indent (E126) https://www.flake8rules.com/rules/E126.html

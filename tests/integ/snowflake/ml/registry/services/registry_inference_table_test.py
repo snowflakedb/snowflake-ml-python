@@ -1,9 +1,12 @@
+import base64
+import datetime
 import json
 import time
 from typing import Any, Optional
 
 import pandas as pd
 import pytest
+import requests
 from absl.testing import absltest, parameterized
 from sklearn.ensemble import RandomForestRegressor
 
@@ -67,14 +70,56 @@ class ModelWithComplexParams(custom_model.CustomModel):
         )
 
 
-class ModelWithNullableFeatures(custom_model.CustomModel):
-    """Custom model that accepts nullable string features for testing null value autocapture."""
+class ModelWithBytesAndDatetimeParams(custom_model.CustomModel):
+    """Custom model with bytes and datetime param types for testing autocapture coverage.
+
+    The inference server passes params as their serialized forms (base64 strings for bytes,
+    ISO strings for datetime), so this model handles conversion internally.
+    """
 
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
 
     @custom_model.inference_api
-    def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        data_bytes: bytes = b"",
+        timestamp: datetime.datetime = datetime.datetime(2020, 1, 1, 0, 0, 0),  # noqa: B008
+    ) -> pd.DataFrame:
+        # Handle bytes: base64 string from inference server
+        if isinstance(data_bytes, str):
+            data_bytes = base64.b64decode(data_bytes)
+
+        # Handle timestamp: ISO string from inference server
+        if isinstance(timestamp, str):
+            timestamp = datetime.datetime.fromisoformat(timestamp)
+
+        input_value = input_df["value"].iloc[0]
+        bytes_len = len(data_bytes) if data_bytes else 0
+        ts_year = timestamp.year if timestamp else 0
+        return pd.DataFrame(
+            {
+                "output": [input_value + bytes_len + ts_year],
+                "received_bytes_length": [bytes_len],
+                "received_timestamp_year": [ts_year],
+                "received_bytes_decoded": [data_bytes.decode("utf-8") if data_bytes else ""],
+                "received_timestamp_iso": [timestamp.isoformat() if timestamp else ""],
+            }
+        )
+
+
+class ModelWithNullableFeatures(custom_model.CustomModel):
+    """Custom model that accepts nullable string features for testing null value autocapture.
+
+    Also exposes predict_proba (API path predict-proba) for testing hyphenated method name autocapture.
+    """
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    def _predict_impl(self, input_df: pd.DataFrame) -> pd.DataFrame:
         results = []
         for _, row in input_df.iterrows():
             a = row["feature_a"]
@@ -82,6 +127,15 @@ class ModelWithNullableFeatures(custom_model.CustomModel):
             label = f"{a}_{b}" if b is not None and pd.notna(b) else f"{a}_missing"
             results.append({"output": label})
         return pd.DataFrame(results)
+
+    @custom_model.inference_api
+    def predict(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        return self._predict_impl(input_df)
+
+    @custom_model.inference_api
+    def predict_proba(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        """Exposed as predict-proba in the API; tests autocapture with hyphenated method name."""
+        return self._predict_impl(input_df)
 
 
 @pytest.mark.spcs_deployment_image
@@ -230,6 +284,68 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
             expected_autocapture,
             "Actual autocapture_enabled value does not match with expected",
         )
+
+    def _assert_autocapture_record(
+        self,
+        record_attributes: dict,
+        expected_request_data: dict[str, Any] | None = None,
+        expected_response_data: dict[str, Any] | None = None,
+        expected_params: dict[str, Any] | None = None,
+        unexpected_params: list[str] | None = None,
+        record_idx: int = 0,
+    ) -> None:
+        """Validate an autocapture record's request data, response data, params, and standard metadata.
+
+        Args:
+            record_attributes: Parsed RECORD_ATTRIBUTES dict from the inference table.
+            expected_request_data: Feature name -> expected value mapping for request data.
+            expected_response_data: Output name -> expected value mapping for response data.
+            expected_params: Param name -> expected value mapping (should be captured).
+            unexpected_params: Param names that should NOT appear in the record.
+            record_idx: Index for error messages.
+        """
+        prefix = f"Record {record_idx}"
+
+        # Standard metadata keys must always be present
+        for key in [
+            "snow.model_serving.request.timestamp",
+            "snow.model_serving.response.timestamp",
+            "snow.model_serving.response.code",
+            "snow.model_serving.function.name",
+        ]:
+            self.assertIn(key, record_attributes, f"{prefix}: Missing {key}")
+
+        if expected_request_data:
+            for name, expected_value in expected_request_data.items():
+                key = f"snow.model_serving.request.data.{name}"
+                self.assertIn(key, record_attributes, f"{prefix}: Expected feature '{name}' to be captured")
+                if isinstance(expected_value, float):
+                    self.assertAlmostEqual(record_attributes[key], expected_value, places=5, msg=f"{prefix}: {name}")
+                else:
+                    self.assertEqual(record_attributes[key], expected_value, f"{prefix}: {name}")
+
+        if expected_response_data:
+            for name, expected_value in expected_response_data.items():
+                key = f"snow.model_serving.response.data.{name}"
+                self.assertIn(key, record_attributes, f"{prefix}: Expected response '{name}' to be captured")
+                if isinstance(expected_value, float):
+                    self.assertAlmostEqual(record_attributes[key], expected_value, places=5, msg=f"{prefix}: {name}")
+                else:
+                    self.assertEqual(record_attributes[key], expected_value, f"{prefix}: {name}")
+
+        if expected_params:
+            for name, expected_value in expected_params.items():
+                key = f"snow.model_serving.request.params.{name}"
+                self.assertIn(key, record_attributes, f"{prefix}: Expected param '{name}' to be captured")
+                if isinstance(expected_value, float):
+                    self.assertAlmostEqual(record_attributes[key], expected_value, places=5, msg=f"{prefix}: {name}")
+                else:
+                    self.assertEqual(record_attributes[key], expected_value, f"{prefix}: {name}")
+
+        if unexpected_params:
+            for name in unexpected_params:
+                key = f"snow.model_serving.request.params.{name}"
+                self.assertNotIn(key, record_attributes, f"{prefix}: Param '{name}' should NOT be captured")
 
     def _create_payload_for_protocol(self, input_data: pd.DataFrame, protocol: str) -> dict[str, Any]:
         """Create a payload for the specified protocol format.
@@ -436,38 +552,12 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
         record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
 
-        # temperature was explicitly provided -- should be captured with the correct value
-        self.assertIn(
-            "snow.model_serving.request.params.temperature",
+        self._assert_autocapture_record(
             record_attributes,
-            "Expected 'temperature' to be captured since it was explicitly provided.",
+            expected_request_data={"value": 10.0},
+            expected_params={"temperature": 0.9},
+            unexpected_params=["max_tokens"],
         )
-        self.assertAlmostEqual(
-            record_attributes["snow.model_serving.request.params.temperature"],
-            0.9,
-            places=5,
-            msg="Captured temperature value should match the request-provided value.",
-        )
-
-        # max_tokens was NOT provided -- should not be captured
-        self.assertNotIn(
-            "snow.model_serving.request.params.max_tokens",
-            record_attributes,
-            "Expected 'max_tokens' to NOT be captured since only the default value was used.",
-        )
-
-        # Validate standard keys are present with correct values
-        self.assertIn("snow.model_serving.request.data.value", record_attributes)
-        self.assertAlmostEqual(
-            record_attributes["snow.model_serving.request.data.value"],
-            10.0,
-            places=5,
-            msg="Captured input feature value should match the request.",
-        )
-        self.assertIn("snow.model_serving.request.timestamp", record_attributes)
-        self.assertIn("snow.model_serving.response.timestamp", record_attributes)
-        self.assertIn("snow.model_serving.response.code", record_attributes)
-        self.assertIn("snow.model_serving.function.name", record_attributes)
 
     def test_autocapture_split_format_with_complex_params(self):
         """Test autocapture with split format and complex param types (list, nested list, bool).
@@ -558,57 +648,270 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
 
         record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
 
-        # Provided list param should be captured with correct value
-        self.assertIn(
-            "snow.model_serving.request.params.weights",
+        self._assert_autocapture_record(
             record_attributes,
-            "Expected list param 'weights' to be captured since it was explicitly provided.",
-        )
-        self.assertEqual(
-            record_attributes["snow.model_serving.request.params.weights"],
-            "[4.5,3.5,2.5]",
-            "Captured weights value should match the request-provided list.",
-        )
-        # Provided bool param should be captured with correct value
-        self.assertIn(
-            "snow.model_serving.request.params.use_gpu",
-            record_attributes,
-            "Expected bool param 'use_gpu' to be captured since it was explicitly provided.",
-        )
-        self.assertEqual(
-            record_attributes["snow.model_serving.request.params.use_gpu"],
-            True,
-            "Captured use_gpu value should be True.",
+            expected_request_data={"value": 10.0},
+            expected_params={"weights": "[4.5,3.5,2.5]", "use_gpu": True},
+            unexpected_params=["learning_rate", "nested_config"],
         )
 
-        # Default scalar param should NOT be captured
-        self.assertNotIn(
-            "snow.model_serving.request.params.learning_rate",
-            record_attributes,
-            "Expected 'learning_rate' to NOT be captured since only the default was used.",
-        )
-        # Default nested list param should NOT be captured
-        self.assertNotIn(
-            "snow.model_serving.request.params.nested_config",
-            record_attributes,
-            "Expected 'nested_config' to NOT be captured since only the default was used.",
+    def test_autocapture_split_format_with_bytes_and_datetime_params(self):
+        """Test autocapture with dataframe_split format using bytes and datetime param types."""
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
+        service_name = f"autocapture_bytes_datetime_test_{self._run_id}"
+
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        model = ModelWithBytesAndDatetimeParams(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
+
+        test_bytes = b"hello"
+        test_timestamp = datetime.datetime(2025, 6, 15, 12, 30, 45)
+        sample_output = model.predict(sample_input, data_bytes=test_bytes, timestamp=test_timestamp)
+
+        params = [
+            model_signature.ParamSpec(
+                name="data_bytes",
+                dtype=model_signature.DataType.BYTES,
+                default_value=b"",
+            ),
+            model_signature.ParamSpec(
+                name="timestamp",
+                dtype=model_signature.DataType.TIMESTAMP_NTZ,
+                default_value=datetime.datetime(2020, 1, 1, 0, 0, 0),
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
         )
 
-        # Validate standard keys are present with correct values
-        self.assertIn("snow.model_serving.request.data.value", record_attributes)
-        self.assertAlmostEqual(
-            record_attributes["snow.model_serving.request.data.value"],
-            10.0,
-            places=5,
-            msg="Captured input feature value should match the request.",
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
         )
-        self.assertIn("snow.model_serving.request.timestamp", record_attributes)
-        self.assertIn("snow.model_serving.response.timestamp", record_attributes)
-        self.assertIn("snow.model_serving.response.code", record_attributes)
-        self.assertIn("snow.model_serving.function.name", record_attributes)
+
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # Send dataframe_split format with bytes (base64 encoded) and datetime (ISO format) params
+        request_bytes = b"test_data"
+        request_timestamp = datetime.datetime(2026, 3, 20, 14, 45, 30)
+        split_payload = {
+            "dataframe_split": {
+                "index": [0],
+                "columns": ["value"],
+                "data": [[10.0]],
+            },
+            "params": {
+                "data_bytes": base64.b64encode(request_bytes).decode("utf-8"),
+                "timestamp": request_timestamp.isoformat(),
+            },
+        }
+
+        result_df = self._inference_using_rest_api(split_payload, endpoint=endpoint, target_method="predict")
+
+        # Verify inference received correct params
+        # output = 10.0 + len(b"test_data") + 2026 = 10 + 9 + 2026 = 2045
+        self.assertAlmostEqual(result_df["output"].iloc[0], 2045.0, places=5)
+        self.assertEqual(result_df["received_bytes_length"].iloc[0], 9)
+        self.assertEqual(result_df["received_timestamp_year"].iloc[0], 2026)
+        self.assertEqual(result_df["received_bytes_decoded"].iloc[0], "test_data")
+
+        # Query INFERENCE_TABLE expecting 1 record
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=1, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+
+        record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])
+
+        self._assert_autocapture_record(
+            record_attributes,
+            expected_request_data={"value": 10.0},
+            expected_params={"data_bytes": base64.b64encode(request_bytes).decode("utf-8")},
+        )
+        self.assertIn(
+            "snow.model_serving.request.params.timestamp",
+            record_attributes,
+            "Expected 'timestamp' to be captured since it was explicitly provided.",
+        )
+
+    def test_autocapture_external_function_formats(self):
+        """Test autocapture with ExternalFunction FLAT and WIDE formats.
+
+        This test verifies that:
+        1. Inference works correctly for both FLAT and WIDE formats with params
+        2. Autocapture captures feature data but NOT params for ExternalFunction formats
+
+        Note: Params are intentionally NOT captured for ExternalFunction formats because:
+        - Inference extracts params from the first record only (request-level)
+        - Each record could have different param values in the data (user modified)
+        - Capturing per-record param values would be misleading
+        """
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override environment variables not set.")
+
+        service_name = f"autocapture_external_format_test_{self._run_id}"
+
+        try:
+            self.session.sql("ALTER SESSION SET FEATURE_MODEL_INFERENCE_AUTOCAPTURE = ENABLED").collect()
+        except Exception as e:
+            self.skipTest(f"Failed to enable FEATURE_MODEL_INFERENCE_AUTOCAPTURE: {e}")
+
+        model = ModelWithScalarParams(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"value": [1.0, 2.0]})
+        sample_output = model.predict(sample_input, temperature=0.7, max_tokens=100)
+
+        params = [
+            model_signature.ParamSpec(
+                name="temperature",
+                dtype=model_signature.DataType.FLOAT,
+                default_value=0.7,
+            ),
+            model_signature.ParamSpec(
+                name="max_tokens",
+                dtype=model_signature.DataType.INT64,
+                default_value=100,
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        prediction_assert_fns: dict[str, tuple[pd.DataFrame, Any]] = {}
+        mv = self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns=prediction_assert_fns,
+            sample_input_data=sample_input,
+            signatures={"predict": sig},
+            autocapture=True,
+            service_name=service_name,
+            skip_rest_api_test=True,
+        )
+
+        endpoint = self._ensure_ingress_url(mv)
+        self._verify_list_service(mv, expected_autocapture=True)
+
+        # WIDE FORMAT TESTS
+
+        # Test 1: WIDE format with all params
+        # Format: [index, {value: v, temperature: t, max_tokens: m}]
+        wide_all_payload = {"data": [[0, {"value": 10.0, "temperature": 0.9, "max_tokens": 150}]]}
+        result_df = self._inference_using_rest_api(wide_all_payload, endpoint=endpoint, target_method="predict")
+
+        # output = 10.0 * 0.9 + 150 = 159.0
+        self.assertAlmostEqual(result_df["output"].iloc[0], 159.0, places=5)
+        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.9, places=5)
+        self.assertEqual(result_df["received_max_tokens"].iloc[0], 150)
+
+        # Test 2: WIDE format with partial params (only temperature, max_tokens uses default)
+        wide_partial_payload = {"data": [[1, {"value": 20.0, "temperature": 0.5}]]}
+        result_df = self._inference_using_rest_api(wide_partial_payload, endpoint=endpoint, target_method="predict")
+
+        # output = 20.0 * 0.5 + 100 (default) = 110.0
+        self.assertAlmostEqual(result_df["output"].iloc[0], 110.0, places=5)
+        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.5, places=5)
+        self.assertEqual(result_df["received_max_tokens"].iloc[0], 100)  # default
+
+        # Test 3: WIDE format with no params (all use defaults)
+        wide_no_params_payload = {"data": [[2, {"value": 30.0}]]}
+        result_df = self._inference_using_rest_api(wide_no_params_payload, endpoint=endpoint, target_method="predict")
+
+        # output = 30.0 * 0.7 (default) + 100 (default) = 121.0
+        self.assertAlmostEqual(result_df["output"].iloc[0], 121.0, places=5)
+        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.7, places=5)  # default
+        self.assertEqual(result_df["received_max_tokens"].iloc[0], 100)  # default
+
+        # FLAT FORMAT TESTS
+
+        # Test 4: FLAT format with all params
+        # Format: [index, value, temperature, max_tokens]
+        flat_all_payload = {"data": [[3, 40.0, 0.8, 200]]}
+        result_df = self._inference_using_rest_api(flat_all_payload, endpoint=endpoint, target_method="predict")
+
+        # output = 40.0 * 0.8 + 200 = 232.0
+        self.assertAlmostEqual(result_df["output"].iloc[0], 232.0, places=5)
+        self.assertAlmostEqual(result_df["received_temperature"].iloc[0], 0.8, places=5)
+        self.assertEqual(result_df["received_max_tokens"].iloc[0], 200)
+
+        # Test 5: FLAT format with partial params - should FAIL (row too short)
+        # Format: [index, value, temperature] - missing max_tokens
+        flat_partial_payload = {"data": [[4, 50.0, 0.6]]}
+        with self.assertRaises(requests.exceptions.HTTPError) as context:
+            self._inference_using_rest_api(flat_partial_payload, endpoint=endpoint, target_method="predict")
+        self.assertEqual(context.exception.response.status_code, 400, "FLAT with partial params should fail with 400")
+
+        # Test 6: FLAT format with no params - should FAIL (row too short)
+        # Format: [index, value] - missing both params
+        flat_no_params_payload = {"data": [[5, 60.0]]}
+        with self.assertRaises(requests.exceptions.HTTPError) as context:
+            self._inference_using_rest_api(flat_no_params_payload, endpoint=endpoint, target_method="predict")
+        self.assertEqual(context.exception.response.status_code, 400, "FLAT with no params should fail with 400")
+
+        # VERIFY AUTOCAPTURE
+        # Only 4 successful records (Tests 1-4), failed requests (Tests 5-6) NOT captured
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=4, timeout_seconds=120
+        )
+        self.assertIsNotNone(inference_table_df, "Should have inference table results")
+        self.assertEqual(
+            len(inference_table_df), 4, "Should have exactly 4 records (failed FLAT requests should NOT be captured)"
+        )
+
+        # Expected input->output pairs from the 4 successful requests (Tests 1-4)
+        expected_pairs = {
+            10.0: 159.0,  # Test 1: WIDE all params - value=10.0, output=10.0*0.9+150=159.0
+            20.0: 110.0,  # Test 2: WIDE partial - value=20.0, output=20.0*0.5+100=110.0
+            30.0: 121.0,  # Test 3: WIDE no params - value=30.0, output=30.0*0.7+100=121.0
+            40.0: 232.0,  # Test 4: FLAT all params - value=40.0, output=40.0*0.8+200=232.0
+        }
+        captured_pairs = {}
+
+        for i, row in inference_table_df.iterrows():
+            record_attributes = json.loads(row["RECORD_ATTRIBUTES"])
+
+            self._assert_autocapture_record(
+                record_attributes,
+                unexpected_params=["temperature", "max_tokens"],
+                record_idx=i,
+            )
+
+            self.assertIn("snow.model_serving.request.data.value", record_attributes)
+            self.assertIn("snow.model_serving.response.data.output", record_attributes)
+
+            req_value = record_attributes["snow.model_serving.request.data.value"]
+            resp_output = record_attributes["snow.model_serving.response.data.output"]
+            captured_pairs[req_value] = resp_output
+
+        # Verify all expected request->response pairs were captured correctly
+        self.assertEqual(
+            captured_pairs, expected_pairs, f"Captured pairs {captured_pairs} should match expected {expected_pairs}"
+        )
 
     def test_autocapture_with_null_values(self):
-        """Test that rows with null feature values are captured in the inference table, not dropped."""
+        """Test that rows with null feature values are captured in the inference table, not dropped.
+
+        Also tests hyphenated method name (predict_proba -> predict-proba) autocapture.
+        When running against pp8, uses custom proxy image via SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL.
+        """
+        # Skip test unless image override env vars are set (uncomment to require full image override).
         if not self._has_image_override():
             self.skipTest("Skipping test: image override environment variables not set.")
 
@@ -633,7 +936,7 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
             model=model,
             prediction_assert_fns=prediction_assert_fns,
             sample_input_data=sample_input,
-            signatures={"predict": sig},
+            signatures={"predict": sig, "predict_proba": sig},
             autocapture=True,
             service_name=service_name,
             skip_rest_api_test=True,
@@ -660,14 +963,31 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         self.assertIsNotNone(inference_table_df, "Should have inference table results")
         self.assertEqual(len(inference_table_df), 2, "Both rows (including null) should be captured")
 
-        # Verify both records have standard metadata keys
         for i in range(len(inference_table_df)):
             record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[i])
+            self._assert_autocapture_record(record_attributes, record_idx=i)
             self.assertIn("snow.model_serving.request.data.feature_a", record_attributes)
-            self.assertIn("snow.model_serving.request.timestamp", record_attributes)
-            self.assertIn("snow.model_serving.response.timestamp", record_attributes)
-            self.assertIn("snow.model_serving.response.code", record_attributes)
-            self.assertIn("snow.model_serving.function.name", record_attributes)
+
+        # Test hyphenated method name: predict_proba is exposed as predict-proba in the API; autocapture
+        # must resolve it so the inference table gets a record with function name predict_proba.
+        proba_payload = {
+            "dataframe_records": [{"feature_a": 3.0, "feature_b": "proba"}],
+        }
+        result_proba = self._inference_using_rest_api(proba_payload, endpoint=endpoint, target_method="predict_proba")
+        self.assertEqual(len(result_proba), 1, "predict_proba response should have 1 row")
+        inference_table_df = self._query_inference_table(
+            mv=mv, service_name=service_name, expected_record_count=3, timeout_seconds=120
+        )
+        proba_records = [
+            row
+            for _, row in inference_table_df.iterrows()
+            if json.loads(row["RECORD_ATTRIBUTES"]).get("snow.model_serving.function.name") == "predict_proba"
+        ]
+        self.assertEqual(
+            len(proba_records),
+            1,
+            "Exactly one autocapture record should be for predict_proba (hyphenated method name)",
+        )
 
     def test_autocapture_with_extra_columns(self):
         """Test that extra_columns are captured correctly in autocapture for both split and records formats."""
@@ -739,9 +1059,11 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         self.assertIsNotNone(inference_table_df, "Should have inference table results")
         self.assertEqual(len(inference_table_df), 2, "Should have exactly 2 records in inference table")
 
-        # Parse RECORD_ATTRIBUTES JSON for both records and verify extra_columns
         for idx in range(2):
             record_attributes = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[idx])
+
+            self._assert_autocapture_record(record_attributes, record_idx=idx)
+            self.assertIn("snow.model_serving.request.data.value", record_attributes)
 
             # Verify extra_columns captured correctly
             self.assertIn(
@@ -760,37 +1082,9 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
                 record_attributes,
                 f"Record {idx}: Expected extra_timestamp_col to be captured in extra_columns",
             )
-            # Verify timestamp is captured (exact format may vary, just check it exists and is non-empty)
             timestamp_value = record_attributes["snow.model_serving.request.extra_columns.extra_timestamp_col"]
             self.assertIsNotNone(timestamp_value, f"Record {idx}: Timestamp value should not be None")
             self.assertTrue(len(str(timestamp_value)) > 0, f"Record {idx}: Timestamp value should not be empty")
-
-            # Verify standard keys are present
-            self.assertIn(
-                "snow.model_serving.request.data.value",
-                record_attributes,
-                f"Record {idx}: Expected data.value to be captured",
-            )
-            self.assertIn(
-                "snow.model_serving.request.timestamp",
-                record_attributes,
-                f"Record {idx}: Expected request.timestamp to be present",
-            )
-            self.assertIn(
-                "snow.model_serving.response.timestamp",
-                record_attributes,
-                f"Record {idx}: Expected response.timestamp to be present",
-            )
-            self.assertIn(
-                "snow.model_serving.response.code",
-                record_attributes,
-                f"Record {idx}: Expected response.code to be present",
-            )
-            self.assertIn(
-                "snow.model_serving.function.name",
-                record_attributes,
-                f"Record {idx}: Expected function.name to be present",
-            )
 
         # Verify the input values are correct for each record
         record_0_attrs = json.loads(inference_table_df["RECORD_ATTRIBUTES"].iloc[0])

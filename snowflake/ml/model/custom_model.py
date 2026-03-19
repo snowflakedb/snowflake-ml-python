@@ -210,20 +210,24 @@ class CustomModel:
 
     Attributes:
         context: A ModelContext object showing sub-models and artifacts related to this model.
+        _allows_kwargs: Class-level flag. Handler-generated models set this to True
+            to permit **kwargs on inference methods. Defaults to False.
     """
+
+    _allows_kwargs: bool = False
 
     def __init__(self, context: Optional[ModelContext] = None) -> None:
         if context is None:
             context = ModelContext()
         self.context = context
         for method in self._get_infer_methods():
-            _validate_predict_function(method)
+            _validate_predict_function(method, allow_kwargs=self._allows_kwargs)
 
     def __setattr__(self, __name: str, __value: Any) -> None:
         # A hook for case when users reassign the method.
         if getattr(__value, "_is_inference_api", False):
             if inspect.ismethod(__value):
-                _validate_predict_function(__value.__func__)
+                _validate_predict_function(__value.__func__, allow_kwargs=self._allows_kwargs)
             else:
                 raise TypeError("A non-method inference API function is not supported.")
         super().__setattr__(__name, __value)
@@ -253,11 +257,13 @@ class CustomModel:
         return rv
 
 
-def _validate_predict_function(func: Callable[..., pd.DataFrame]) -> None:
+def _validate_predict_function(func: Callable[..., pd.DataFrame], allow_kwargs: bool = False) -> None:
     """Validate the user provided predict method.
 
     Args:
         func: The predict method.
+        allow_kwargs: If True, allow **kwargs (VAR_KEYWORD) parameters.
+            Only handler-generated models on the allowlist should set this to True.
 
     Raises:
         TypeError: Raised when the method is not a callable object.
@@ -266,6 +272,7 @@ def _validate_predict_function(func: Callable[..., pd.DataFrame]) -> None:
         TypeError: Raised when the method's input (X) does not have type pd.DataFrame.
         TypeError: Raised when the method's output does not have type pd.DataFrame.
         TypeError: Raised when additional parameters are not keyword-only with defaults.
+        TypeError: Raised when **kwargs is used on a non-handler model.
     """
     if not callable(func):
         raise TypeError("Predict method is not callable.")
@@ -291,8 +298,16 @@ def _validate_predict_function(func: Callable[..., pd.DataFrame]) -> None:
     ):
         raise TypeError("Output for predict method should have type pandas.DataFrame.")
 
-    # Validate additional parameters (beyond self and input) are keyword-only with defaults
+    # Validate additional parameters (beyond self and input) are keyword-only with defaults.
     for func_signature_param in func_signature_params[2:]:
+        if func_signature_param.kind == inspect.Parameter.VAR_KEYWORD:
+            if allow_kwargs:
+                continue
+            raise TypeError(
+                "**kwargs is not supported on custom model inference methods. "
+                "Use named keyword-only parameters instead: "
+                "def predict(self, df, *, param: type = default)"
+            )
         _validate_parameter(func_signature_param)
 
 
@@ -356,7 +371,7 @@ def _validate_parameter(param: inspect.Parameter) -> None:
         )
 
 
-def get_method_parameters(func: Callable[..., Any]) -> list[tuple[str, Any, Any]]:
+def _get_method_parameters(func: Callable[..., Any]) -> list[tuple[str, Any, Any]]:
     """Extract keyword-only parameters with defaults from an inference method.
 
     Args:
@@ -367,7 +382,11 @@ def get_method_parameters(func: Callable[..., Any]) -> list[tuple[str, Any, Any]
     """
     func_signature = inspect.signature(func)
     params = list(func_signature.parameters.values())
-    return [(param.name, param.annotation, param.default) for param in params[2:]]
+    return [
+        (param.name, param.annotation, param.default)
+        for param in params[2:]
+        if param.kind == inspect.Parameter.KEYWORD_ONLY
+    ]
 
 
 def inference_api(

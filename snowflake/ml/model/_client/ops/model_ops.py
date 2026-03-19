@@ -216,7 +216,6 @@ class ModelOperator:
         statement_params: Optional[dict[str, Any]] = None,
         use_live_commit: Optional[bool] = False,
     ) -> None:
-
         if use_live_commit:
             # if the model version is live, we can only commit the version
             self._model_version_client.commit_version(
@@ -983,7 +982,6 @@ class ModelOperator:
         model_func_info = []
 
         for function_name, function_type in function_names_and_types:
-
             target_method = function_name_mapping[function_name]
 
             is_partitioned = False
@@ -1154,6 +1152,11 @@ class ModelOperator:
                     explain_case_sensitive=explain_case_sensitive,
                     params=method_parameters,
                 )
+
+        # For partitioned models, input columns come back as NULL from the table function.
+        # Always drop them regardless of input type.
+        if is_partitioned:
+            output_with_input_features = False
 
         if keep_order:
             # if it's a partitioned table function, _ID will be null and we won't be able to sort.

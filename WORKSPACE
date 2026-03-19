@@ -83,7 +83,7 @@ local_repository(
 git_repository(
     name = "firstpass",
     build_file = "//third_party/firstpass:firstpass.BUILD",
-    commit = "2d5a0a51cc77524303cec7c9e644d7a69664344f",
+    branch = "main",
     remote = "git@github.com:snowflake-eng/firstpass.git",
 )
 

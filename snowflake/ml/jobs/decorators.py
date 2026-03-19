@@ -73,7 +73,6 @@ def remote(
             external_access_integrations=external_access_integrations,
             session=session,
             arg_protocol=arg_protocol.ArgProtocol.PICKLE,
-            generate_suffix=True,
             **kwargs,
         )
 

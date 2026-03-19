@@ -40,6 +40,24 @@ class PartitionedDemoModel(custom_model.CustomModel):
         return pd.DataFrame({"output": input["c1"]})
 
 
+class MixedPartitionedDemoModel(custom_model.CustomModel):
+    @custom_model.partitioned_api
+    def predict_partitioned(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
+
+    @custom_model.inference_api
+    def predict_regular(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
+
+    @custom_model.inference_api
+    def predict_regular2(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
+
+    @custom_model.partitioned_api
+    def predict_partitioned2(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["c1"]})
+
+
 class AnotherDemoModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
@@ -362,6 +380,33 @@ class CustomHandlerTest(absltest.TestCase):
                 elif param.name == "name":
                     self.assertEqual(param.dtype, model_signature.DataType.STRING)
                     self.assertEqual(param.default_value, "default")
+
+    def test_custom_model_partitioned_function_properties(self) -> None:
+        """Test that @partitioned_api gets PARTITIONED=True and @inference_api gets PARTITIONED=False."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lm = MixedPartitionedDemoModel(custom_model.ModelContext())
+
+            arr = np.array([[1, 2, 3], [4, 2, 5]])
+            d = pd.DataFrame(arr, columns=["c1", "c2", "c3"])
+            s = {
+                "predict_partitioned": model_signature.infer_signature(d, lm.predict_partitioned(d)),
+                "predict_regular": model_signature.infer_signature(d, lm.predict_regular(d)),
+                "predict_regular2": model_signature.infer_signature(d, lm.predict_regular2(d)),
+                "predict_partitioned2": model_signature.infer_signature(d, lm.predict_partitioned2(d)),
+            }
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=lm,
+                signatures=s,
+                options=model_types.CustomModelSaveOption(),
+            )
+
+            assert model_metadata.function_properties == {
+                "predict_partitioned": {model_meta_schema.FunctionProperties.PARTITIONED.value: True},
+                "predict_regular": {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
+                "predict_regular2": {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
+                "predict_partitioned2": {model_meta_schema.FunctionProperties.PARTITIONED.value: True},
+            }
 
     def test_custom_model_with_user_provided_signature_preserves_params(self) -> None:
         """Test that user-provided signatures with params are not overwritten."""

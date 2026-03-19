@@ -128,10 +128,17 @@ class ExperimentTracking:
         state["_session"] = None
         state["_sql_client"] = None
         state["_registry"] = None
+        # Save logger buffer state before clearing _logging_context
+        if self._logging_context:
+            state["_stdout_buffer"] = self._logging_context.stdout_logger._buffer
+            state["_stderr_buffer"] = self._logging_context.stderr_logger._buffer
         state["_logging_context"] = None
         return state
 
     def __setstate__(self, state: dict[str, Any]) -> None:
+        stdout_buffer = state.pop("_stdout_buffer", "")
+        stderr_buffer = state.pop("_stderr_buffer", "")
+
         if hasattr(super(), "__setstate__"):
             super().__setstate__(state)  # type: ignore[misc]
         else:
@@ -153,6 +160,10 @@ class ExperimentTracking:
         )
         if self._run:
             self._patch_stdout_and_stderr()
+            # _patch_stdout_and_stderr sets _logging_context if live logging is enabled
+            if self._logging_context:
+                self._logging_context.stdout_logger._buffer = stdout_buffer
+                self._logging_context.stderr_logger._buffer = stderr_buffer
 
     def set_experiment(
         self,

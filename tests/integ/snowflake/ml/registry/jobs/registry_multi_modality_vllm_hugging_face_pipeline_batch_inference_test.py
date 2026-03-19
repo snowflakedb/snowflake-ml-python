@@ -136,7 +136,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
                 "engine": InferenceEngine.VLLM,
                 "engine_args_override": [
                     "--max-model-len=5000",
-                    "--gpu-memory-utilization=0.9",
+                    "--gpu-memory-utilization=0.8",
                 ],
             },
             prediction_assert_fn=output_validator,
@@ -224,7 +224,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
                 "engine": InferenceEngine.VLLM,
                 "engine_args_override": [
                     "--max-model-len=18048",
-                    "--gpu-memory-utilization=0.9",
+                    "--gpu-memory-utilization=0.8",
                 ],
             },
             prediction_assert_fn=output_validator,
@@ -321,7 +321,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
                 "engine": InferenceEngine.VLLM,
                 "engine_args_override": [
                     "--max-model-len=18048",
-                    "--gpu-memory-utilization=0.9",
+                    "--gpu-memory-utilization=0.8",
                 ],
             },
             prediction_assert_fn=output_validator,
@@ -355,7 +355,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
                 "engine": InferenceEngine.VLLM,
                 "engine_args_override": [
                     "--max-model-len=5000",
-                    "--gpu-memory-utilization=0.9",
+                    "--gpu-memory-utilization=0.8",
                 ],
             },
             blocking=False,

@@ -16,8 +16,8 @@ class FunctionProperties(Enum):
 
 
 class ModelRuntimeDependenciesDict(TypedDict):
-    conda: Required[str]
-    pip: Required[str]
+    conda: NotRequired[str]
+    pip: NotRequired[str]
     artifact_repository_map: NotRequired[Optional[dict[str, str]]]
 
 
@@ -28,8 +28,8 @@ class ModelRuntimeDict(TypedDict):
 
 
 class ModelEnvDict(TypedDict):
-    conda: Required[str]
-    pip: Required[str]
+    conda: NotRequired[str]
+    pip: NotRequired[str]
     artifact_repository_map: NotRequired[Optional[dict[str, str]]]
     resource_constraint: NotRequired[Optional[dict[str, str]]]
     python_version: Required[str]

@@ -157,6 +157,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
             options={"enable_explainability": True},
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
+            is_partitioned_assert={"explain": False},
         )
 
     def test_xgb_explain_case_sensitive(self) -> None:

@@ -24,6 +24,10 @@ _DEFAULT_PIP_REQUIREMENTS_FILENAME = "requirements.txt"
 # Make sure they are aligned with default CUDA version in inference server.
 DEFAULT_CUDA_VERSION = "12.4"
 
+# Feature flag for pip-only packaging. When enabled, models without conda dependencies
+# will skip generating conda.yml and use pip-based Dockerfile template for SPCS deployment.
+_ENABLE_PIP_ONLY_PACKAGING = False
+
 
 class ModelEnv:
     def __init__(
@@ -386,13 +390,19 @@ class ModelEnv:
                 env_utils.append_requirement_list(self._pip_requirements, pip_dependency)
 
     def load_from_dict(self, base_dir: pathlib.Path, env_dict: model_meta_schema.ModelEnvDict) -> None:
-        self.conda_env_rel_path = pathlib.PurePosixPath(env_dict["conda"])
-        self.pip_requirements_rel_path = pathlib.PurePosixPath(env_dict["pip"])
+        conda_path = env_dict.get("conda")
+        pip_path = env_dict.get("pip")
+
         self.artifact_repository_map = env_dict.get("artifact_repository_map")
         self.resource_constraint = env_dict.get("resource_constraint")
 
-        self.load_from_conda_file(base_dir / self.conda_env_rel_path)
-        self.load_from_pip_file(base_dir / self.pip_requirements_rel_path)
+        if conda_path:
+            self.conda_env_rel_path = pathlib.PurePosixPath(conda_path)
+            self.load_from_conda_file(base_dir / self.conda_env_rel_path)
+
+        if pip_path:
+            self.pip_requirements_rel_path = pathlib.PurePosixPath(pip_path)
+            self.load_from_pip_file(base_dir / self.pip_requirements_rel_path)
 
         self.python_version = env_dict["python_version"]
         self.cuda_version = env_dict.get("cuda_version")
@@ -405,18 +415,23 @@ class ModelEnv:
         is_gpu: Optional[bool] = False,
     ) -> model_meta_schema.ModelEnvDict:
         cuda_version = self.cuda_version if is_gpu else None
-        env_utils.save_conda_env_file(
-            pathlib.Path(base_dir / self.conda_env_rel_path),
-            self._conda_dependencies,
-            self.python_version,
-            cuda_version,
-            default_channel_override=default_channel_override,
-        )
+        has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())
+        write_conda = has_conda_deps or not _ENABLE_PIP_ONLY_PACKAGING
+
+        if write_conda:
+            env_utils.save_conda_env_file(
+                pathlib.Path(base_dir / self.conda_env_rel_path),
+                self._conda_dependencies,
+                self.python_version,
+                cuda_version,
+                default_channel_override=default_channel_override,
+            )
+
         env_utils.save_requirements_file(
             pathlib.Path(base_dir / self.pip_requirements_rel_path), self._pip_requirements
         )
-        return {
-            "conda": self.conda_env_rel_path.as_posix(),
+
+        env_dict: model_meta_schema.ModelEnvDict = {
             "pip": self.pip_requirements_rel_path.as_posix(),
             "artifact_repository_map": self.artifact_repository_map or {},
             "resource_constraint": self.resource_constraint or {},
@@ -424,6 +439,12 @@ class ModelEnv:
             "cuda_version": self.cuda_version,
             "snowpark_ml_version": self.snowpark_ml_version,
         }
+
+        # Add conda key if conda.yml was written
+        if write_conda:
+            env_dict["conda"] = self.conda_env_rel_path.as_posix()
+
+        return env_dict
 
     def validate_with_local_env(
         self, check_snowpark_ml_version: bool = False

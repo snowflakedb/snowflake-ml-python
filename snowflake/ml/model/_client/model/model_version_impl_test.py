@@ -2106,6 +2106,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2186,6 +2187,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",
                 column_handling=test_column_handling,
                 params=None,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2261,6 +2263,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",
                 column_handling=None,
                 params=test_params,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2343,6 +2346,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",
                 column_handling=test_column_handling,
                 params=test_params,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2545,6 +2549,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 input_file_pattern="*",  # InputSpec default
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",  # OutputSpec default
@@ -2616,38 +2621,6 @@ class ModelVersionImplTest(absltest.TestCase):
                 call_args.kwargs["inference_engine_args"].inference_engine_args_override,
                 expected_args,
             )
-
-    def test_run_batch_partitioned_function_raises_error(self) -> None:
-        """Test run_batch raises ValueError when the function is partitioned."""
-        input_df = mock.MagicMock(spec=dataframe.DataFrame)
-        input_df.write.copy_into_location = mock.MagicMock()
-
-        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
-        job_spec = batch_inference_specs.JobSpec(
-            function_name="predict_table",
-            job_name="TEST_JOB",
-            warehouse="TEST_WAREHOUSE",
-        )
-
-        with (
-            mock.patch.object(
-                self.m_mv,
-                "_get_function_info",
-                return_value={
-                    "name": '"predict_table"',
-                    "target_method": "predict_table",
-                    "target_method_function_type": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
-                    "signature": _DUMMY_SIG["predict_table"],
-                    "is_partitioned": True,
-                },
-            ),
-            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
-        ):
-            with self.assertRaisesRegex(
-                ValueError,
-                r"predict_table.*partitioned model function.*not supported",
-            ):
-                self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
 
     def _add_show_versions_mock(self) -> None:
         current_dir = os.path.dirname(__file__)
@@ -2815,6 +2788,51 @@ class ModelVersionImplTest(absltest.TestCase):
                     input_spec=input_spec,
                     job_spec=job_spec,
                 )
+
+    def test_run_batch_with_partition_column(self) -> None:
+        """Test run_batch passes partition_columns=[col] when partition_column is set."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(
+                input_df,
+                compute_pool="TEST_POOL",
+                output_spec=output_spec,
+                input_spec=input_spec,
+                job_spec=job_spec,
+            )
+
+            mock_invoke_batch_job.assert_called_once()
+            call_kwargs = mock_invoke_batch_job.call_args.kwargs
+            self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
+            self.assertEqual(result, mock_job)
 
 
 if __name__ == "__main__":

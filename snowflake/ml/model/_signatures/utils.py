@@ -433,8 +433,25 @@ def huggingface_pipeline_signature_auto_infer(
     return None
 
 
-def series_dropna(series: pd.Series) -> pd.Series:
-    return series.dropna(inplace=False).reset_index(drop=True).convert_dtypes()
+def series_dropna(series: pd.Series, try_convert_dtypes: bool = True) -> pd.Series:
+    """Drop NA values from a Series, optionally narrowing the dtype.
+
+    Args:
+        series: The input pandas Series.
+        try_convert_dtypes: If True, call ``convert_dtypes()`` after dropping
+            NAs, which may narrow ``float64`` to ``Int64`` when all remaining
+            values are whole numbers. Set to False in signature *inference* to
+            preserve the original pandas dtype and avoid position-dependent
+            type inference. Keep True for *validation* so that INT64 features
+            pass when the user supplies data containing None.
+
+    Returns:
+        A new Series with NA values removed and index reset.
+    """
+    result = series.dropna(inplace=False).reset_index(drop=True)
+    if try_convert_dtypes:
+        result = result.convert_dtypes()
+    return result
 
 
 def infer_list(name: str, data: list[Any]) -> core.BaseFeatureSpec:

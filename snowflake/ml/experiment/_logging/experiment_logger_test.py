@@ -31,8 +31,28 @@ class ExperimentLoggerTest(absltest.TestCase):
     def test_write(self) -> None:
         """Test that writing to ExperimentLogger writes the correct JSON format to the file."""
         data = "This is a test log message."
+        logger_write_return_value = self.logger.write(data + "\n")
+        self.assertEqual(logger_write_return_value, len(data) + 1)
+
+        expected_log_message = {
+            "body": data,
+            "attributes": {
+                "snow.experiment.id": self.experiment_id,
+                "snow.experiment.run.id": self.run_id,
+                "snow.experiment.stream": self.stream,
+            },
+        }
+        expected_json_data = json.dumps(expected_log_message) + "\n"
+        self.logger.file.write.assert_called_once_with(expected_json_data)  # type: ignore[attr-defined]
+
+    def test_write_partial_line(self) -> None:
+        """Test that a file write is not triggered until a complete line is written."""
+        data = "This is a test log message."
         logger_write_return_value = self.logger.write(data)
         self.assertEqual(logger_write_return_value, len(data))
+        self.logger.file.write.assert_not_called()  # type: ignore[attr-defined]
+        logger_write_return_value = self.logger.write("\n")
+        self.assertEqual(logger_write_return_value, 1)
 
         expected_log_message = {
             "body": data,
@@ -48,7 +68,7 @@ class ExperimentLoggerTest(absltest.TestCase):
     def test_writelines(self) -> None:
         """Test that writelines writes each line correctly."""
         lines = ["first line", "second line"]
-        self.logger.writelines(lines)
+        self.logger.writelines([line + "\n" for line in lines])
 
         for line in lines:
             expected_log_message = {

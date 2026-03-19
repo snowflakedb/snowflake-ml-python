@@ -131,6 +131,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         inference_engine_options: Optional[dict[str, Any]] = None,
         assert_container_count: Optional[int] = None,
         target_platforms: Optional[list[str]] = None,
+        skip_row_count_check: bool = False,
     ) -> job.MLJob[Any]:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -167,6 +168,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             prediction_assert_fn=prediction_assert_fn,
             inference_engine_options=inference_engine_options,
             assert_container_count=assert_container_count,
+            skip_row_count_check=skip_row_count_check,
         )
 
     def _has_image_override(self) -> bool:
@@ -205,6 +207,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         prediction_assert_fn: Optional[Any] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         assert_container_count: Optional[int] = None,
+        skip_row_count_check: bool = False,
     ) -> job.MLJob[Any]:
         # Resolve compute pool if not provided
         job_spec = job_spec or JobSpec()
@@ -240,7 +243,10 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             logger.warning(f"Batch job timed out after 30 minutes. Status: {batch_job.status}")
         if batch_job.status != "DONE":
             logs = batch_job.get_logs(limit=100)
-            msg = f"Job status is {batch_job.status}, expected DONE.\n\nLast 100 lines of job logs:\n{logs}"
+            msg = (
+                f"Job {batch_job.id} status is {batch_job.status}, expected DONE.\n\n"
+                f"Last 100 lines of job logs:\n{logs}"
+            )
 
             # Also fetch logs from proxy and model-inference containers if there are multiple containers
             containers = batch_job._service_spec.get("spec", {}).get("containers", [])
@@ -273,11 +279,12 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
 
         # todo: add more logic to validate the outcome
         df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
-        self.assertEqual(
-            df.count(),
-            X.count(),
-            f"Output row count ({df.count()}) does not match input row count ({X.count()})",
-        )
+        if not skip_row_count_check:
+            self.assertEqual(
+                df.count(),
+                X.count(),
+                f"Output row count ({df.count()}) does not match input row count ({X.count()})",
+            )
 
         # Apply custom validation function if provided
         if prediction_assert_fn is not None:

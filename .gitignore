@@ -414,3 +414,6 @@ CLAUDE.local.md
 
 # Claude tasks
 tasks/todo.md
+
+# Claude worktrees
+.claude/worktrees/

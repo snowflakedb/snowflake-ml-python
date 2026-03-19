@@ -1,7 +1,8 @@
 import logging
 import os
 import warnings
-from typing import TYPE_CHECKING, Callable, Optional, Sequence, Union, cast, final
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -280,6 +281,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         if enable_explainability:
             model_meta.env.include_if_absent([model_env.ModelDependency(requirement="shap>=0.46.0", pip_name="shap")])
             model_meta.explain_algorithm = model_meta_schema.ModelExplainAlgorithm.SHAP
+            model_meta.function_properties["explain"] = {model_meta_schema.FunctionProperties.PARTITIONED.value: False}
 
         model_meta.env.include_if_absent(
             [

@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -168,7 +169,7 @@ class ModelTest(absltest.TestCase):
 
         # Get the method and extract parameters
         for method in model._get_infer_methods():
-            params = custom_model.get_method_parameters(method)
+            params = custom_model._get_method_parameters(method)
             self.assertEqual(len(params), 2)
             self.assertEqual(params[0][0], "threshold")
             self.assertEqual(params[0][1], float)
@@ -457,7 +458,7 @@ class ValidateParameterListTypesTest(absltest.TestCase):
         model = ModelWithListParams(custom_model.ModelContext())
 
         for method in model._get_infer_methods():
-            params = custom_model.get_method_parameters(method)
+            params = custom_model._get_method_parameters(method)
             self.assertEqual(len(params), 2)
             self.assertEqual(params[0][0], "tokens")
             self.assertEqual(params[0][1], list[str])
@@ -465,6 +466,41 @@ class ValidateParameterListTypesTest(absltest.TestCase):
             self.assertEqual(params[1][0], "weights")
             self.assertEqual(params[1][1], list[float])
             self.assertEqual(params[1][2], [0.5, 0.5])
+
+
+class KwargsValidationTest(absltest.TestCase):
+    """Test that **kwargs is blocked for customer CustomModels but allowed via the allowlist."""
+
+    def test_custom_model_with_kwargs_raises_at_init(self) -> None:
+        """CustomModel with **kwargs should raise TypeError at instantiation."""
+
+        class InvalidCustomModel(custom_model.CustomModel):
+            @custom_model.inference_api  # type: ignore[arg-type]
+            def predict(self, input: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        with self.assertRaises(TypeError) as cm:
+            InvalidCustomModel(custom_model.ModelContext())
+        self.assertIn("**kwargs", str(cm.exception))
+        self.assertIn("named keyword-only", str(cm.exception))
+
+    def test_allows_kwargs_flag_enables_kwargs(self) -> None:
+        """When _allows_kwargs is True on the class, **kwargs is permitted."""
+
+        @custom_model.inference_api  # type: ignore[arg-type]
+        def fn(self: custom_model.CustomModel, X: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+            return pd.DataFrame({"output": X.iloc[:, 0]})
+
+        _TestModel = type("_TestModel", (custom_model.CustomModel,), {"predict": fn})
+
+        with self.assertRaises(TypeError):
+            _TestModel(custom_model.ModelContext())
+
+        _TestModelWithFlag = type(
+            "_TestModelWithFlag", (custom_model.CustomModel,), {"predict": fn, "_allows_kwargs": True}
+        )
+        model = _TestModelWithFlag(custom_model.ModelContext())
+        self.assertIsNotNone(model)
 
 
 if __name__ == "__main__":

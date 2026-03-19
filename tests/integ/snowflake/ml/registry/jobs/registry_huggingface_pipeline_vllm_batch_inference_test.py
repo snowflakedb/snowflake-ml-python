@@ -60,7 +60,10 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
             "gpu_requests": "1",
             "memory_requests": "8Gi",
             "replicas": 2,
-            "engine_args_override": ["--gpu-memory-utilization=0.9", "--max-model-len=1024"],
+            "engine_args_override": [
+                "--gpu-memory-utilization=0.8",
+                "--max-model-len=1024",
+            ],
         },
     )
     def test_text_generation_with_vllm(
@@ -215,7 +218,10 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
             prediction_assert_fn=validator,
             inference_engine_options={
                 "engine": inference_engine.InferenceEngine.VLLM,
-                "engine_args_override": ["--gpu-memory-utilization=0.9", "--max-model-len=1024"],
+                "engine_args_override": [
+                    "--gpu-memory-utilization=0.8",
+                    "--max-model-len=1024",
+                ],
             },
             assert_container_count=3,
         )

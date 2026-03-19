@@ -66,6 +66,18 @@ def _update_environment(rctx, env_name, env_file):
     if result.return_code:
         fail("Failure updating environment.\nstdout: {}\nstderr: {}".format(result.stdout, result.stderr))
 
+# Remove legacy setuptools namespace package .pth files from the conda environment.
+# These files (e.g. snowflake_snowpark_python-*-nspkg.pth) pre-register namespace
+# packages in sys.modules with __path__ pointing only to site-packages, which prevents
+# Python 3.11+ from discovering namespace package portions in other sys.path entries
+# (like Bazel's runfiles). Removing them lets Python use native PEP 420 implicit
+# namespace packages, which correctly merges paths from all sys.path entries.
+def _remove_legacy_nspkg_pth_files(rctx, env_name):
+    site_packages_glob = "{}/lib/python*/site-packages/*-nspkg.pth".format(env_name)
+    result = rctx.execute(["sh", "-c", "rm -f {}".format(site_packages_glob)])
+    if result.return_code:
+        pass
+
 # create new local conda environment from file
 def _create_environment(rctx, env_name):
     rctx.report_progress("Creating conda environment")
@@ -75,6 +87,7 @@ def _create_environment(rctx, env_name):
 
     _create_empty_environment(rctx, env_name)
     _update_environment(rctx, env_name, env_file)
+    _remove_legacy_nspkg_pth_files(rctx, env_name)
 
 # get installed python version
 def _get_py_version(rctx, env_path, interpreter_path):

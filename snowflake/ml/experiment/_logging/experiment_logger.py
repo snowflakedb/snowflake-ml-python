@@ -20,14 +20,31 @@ class ExperimentLogger(TextIO):
         self.exp_id = exp_id
         self.run_id = run_id
         self.stream = stream
+        self._buffer = ""  # Buffer to store incomplete lines
+
+    def _write_line(self, line: str) -> None:
+        log_message = {
+            "body": line,
+            "attributes": {
+                "snow.experiment.id": self.exp_id,
+                "snow.experiment.run.id": self.run_id,
+                "snow.experiment.stream": self.stream,
+            },
+        }
+        json_data = json.dumps(log_message)
+        self.file.write(json_data + "\n")
 
     def close(self) -> None:
+        self.flush()
         self.file.close()
 
     def fileno(self) -> int:
         return self.file.fileno()
 
     def flush(self) -> None:
+        if self._buffer:
+            self._write_line(self._buffer)
+            self._buffer = ""
         self.file.flush()
 
     def isatty(self) -> bool:
@@ -61,17 +78,11 @@ class ExperimentLogger(TextIO):
         return True
 
     def write(self, data: str) -> int:
-        log_message = {
-            "body": data,
-            "attributes": {
-                "snow.experiment.id": self.exp_id,
-                "snow.experiment.run.id": self.run_id,
-                "snow.experiment.stream": self.stream,
-            },
-        }
-        json_data = json.dumps(log_message)
-        self.file.write(json_data + "\n")
-        return len(data)  # Return length of input, not JSON output
+        self._buffer += data
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            self._write_line(line)
+        return len(data)
 
     def writelines(self, lines: Iterable[str]) -> None:
         for line in lines:

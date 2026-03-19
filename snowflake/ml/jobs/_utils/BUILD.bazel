@@ -3,15 +3,15 @@ load("//bazel:py_rules.bzl", "py_library", "py_test")
 package(default_visibility = ["//visibility:public"])
 
 py_library(
-    name = "types",
-    srcs = ["types.py"],
+    name = "type_utils",
+    srcs = ["type_utils.py"],
 )
 
 py_library(
     name = "constants",
     srcs = ["constants.py"],
     deps = [
-        ":types",
+        ":type_utils",
         "//snowflake/ml/_internal/utils:snowflake_env",
     ],
 )
@@ -32,7 +32,7 @@ py_library(
     name = "stage_utils",
     srcs = ["stage_utils.py"],
     deps = [
-        ":types",
+        ":type_utils",
         "//snowflake/ml/_internal/utils:identifier",
     ],
 )
@@ -57,7 +57,7 @@ py_library(
         ":payload_scripts",
         ":query_helper",
         ":stage_utils",
-        ":types",
+        ":type_utils",
     ],
 )
 

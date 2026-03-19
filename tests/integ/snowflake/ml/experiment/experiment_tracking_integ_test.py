@@ -4,12 +4,12 @@ import pickle
 import sys
 import tempfile
 import uuid
+from unittest.mock import patch
 
 import pandas as pd
 import xgboost as xgb
 from absl.testing import absltest, parameterized
 
-from snowflake.ml._internal import env as snowml_env
 from snowflake.ml.experiment import ExperimentTracking, _logging as experiment_logging
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session, session as snowpark_session
@@ -22,7 +22,6 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
         """Creates Snowpark and Snowflake environments for testing."""
         cls._session = Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
         experiment_logging.ExperimentLogger.OUTPUT_DIRECTORY = "/tmp/experiment_tracking"
-        snowml_env.IN_ML_RUNTIME = "True"  # Pretend we're in SPCS for testing live logging
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -66,9 +65,20 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
             self.assertEqual(exp1._run.name, exp2._run.name)
         self.assertEqual(exp1._logging_context is None, exp2._logging_context is None)
         if exp1._logging_context is not None and exp2._logging_context is not None:
-            self.assertEqual(exp1._logging_context.logger.exp_id, exp2._logging_context.logger.exp_id)
-            self.assertEqual(exp1._logging_context.logger.run_id, exp2._logging_context.logger.run_id)
-            self.assertEqual(exp1._logging_context.logger.file.name, exp2._logging_context.logger.file.name)
+            self.assertEqual(exp1._logging_context.stdout_logger.exp_id, exp2._logging_context.stdout_logger.exp_id)
+            self.assertEqual(exp1._logging_context.stdout_logger.run_id, exp2._logging_context.stdout_logger.run_id)
+            self.assertEqual(exp1._logging_context.stdout_logger.stream, exp2._logging_context.stdout_logger.stream)
+            self.assertEqual(exp1._logging_context.stdout_logger._buffer, exp2._logging_context.stdout_logger._buffer)
+            self.assertEqual(
+                exp1._logging_context.stdout_logger.file.name, exp2._logging_context.stdout_logger.file.name
+            )
+            self.assertEqual(exp1._logging_context.stderr_logger.exp_id, exp2._logging_context.stderr_logger.exp_id)
+            self.assertEqual(exp1._logging_context.stderr_logger.run_id, exp2._logging_context.stderr_logger.run_id)
+            self.assertEqual(exp1._logging_context.stderr_logger.stream, exp2._logging_context.stderr_logger.stream)
+            self.assertEqual(exp1._logging_context.stderr_logger._buffer, exp2._logging_context.stderr_logger._buffer)
+            self.assertEqual(
+                exp1._logging_context.stderr_logger.file.name, exp2._logging_context.stderr_logger.file.name
+            )
         # The registry doesn't have an __eq__ method, so we have to check its attributes manually and recursively
         self.assertEqual(exp1._registry is None, exp2._registry is None)
         if exp1._registry is not None and exp2._registry is not None:
@@ -529,7 +539,8 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
         stderr_message = "This is a test message to stderr"
         unpatched_message = "No run in context; this should not be logged."
 
-        self.exp.set_live_logging_status(live_logging_status)
+        with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
+            self.exp.set_live_logging_status(live_logging_status)
         self.exp.set_experiment(experiment_name=experiment_name)
         self.assertIsNone(self.exp._logging_context)
         print(unpatched_message)
@@ -539,6 +550,45 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
             self.assertEqual(live_logging_status, self.exp._logging_context is not None)
             print(stdout_message)
             print(stderr_message, file=sys.stderr)
+
+            # Test buffer preservation after pickling and unpickling (only when live logging is enabled)
+            if live_logging_status:
+                # Write partial messages (no newline) to create buffered content
+                print("partial stdout", end="")
+                print("partial stderr", end="", file=sys.stderr)
+
+                # Verify that the partial messages are in the buffer
+                assert self.exp._logging_context is not None
+                self.assertEqual(self.exp._logging_context.stdout_logger._buffer, "partial stdout")
+                self.assertEqual(self.exp._logging_context.stderr_logger._buffer, "partial stderr")
+
+                pickled = pickle.dumps(self.exp)
+
+                # Disable live logging on original instance before unpickling to avoid double patching
+                with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
+                    self.exp.set_live_logging_status(False)
+
+                ExperimentTracking._instance = None  # Reset singleton for test
+                # Make sure that there is only one active session when _get_active_session() in setstate is called
+                with snowpark_session._session_management_lock:
+                    session_set = snowpark_session._active_sessions.copy()
+                    snowpark_session._active_sessions = {self._session}
+                    with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
+                        restored_exp = pickle.loads(pickled)
+                    snowpark_session._active_sessions = session_set
+
+                # Verify that the partial messages are in the buffer of the restored object
+                assert restored_exp._logging_context is not None
+                self.assertEqual(restored_exp._logging_context.stdout_logger._buffer, "partial stdout")
+                self.assertEqual(restored_exp._logging_context.stderr_logger._buffer, "partial stderr")
+
+                # Complete the partial messages with newlines
+                print(" completed")
+                print(" completed", file=sys.stderr)
+
+                # Clean up restored_exp to unpatch stdout/stderr before exiting
+                with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
+                    restored_exp.set_live_logging_status(False)
 
         self.assertIsNone(self.exp._logging_context)
         print(unpatched_message)
@@ -566,11 +616,13 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
                 self.assertIn(stdout_message, log_contents)
                 self.assertNotIn(stderr_message, log_contents)
                 self.assertNotIn(unpatched_message, log_contents)
+                self.assertIn("partial stdout completed", log_contents)
             with open(stderr_logfile_path) as f:
                 log_contents = f.read()
                 self.assertNotIn(stdout_message, log_contents)
                 self.assertIn(stderr_message, log_contents)
                 self.assertNotIn(unpatched_message, log_contents)
+                self.assertIn("partial stderr completed", log_contents)
 
 
 if __name__ == "__main__":

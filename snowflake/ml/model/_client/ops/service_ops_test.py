@@ -1444,6 +1444,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
@@ -1485,6 +1486,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 function_name="predict",
@@ -1588,6 +1590,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     input_file_pattern="*.parquet",
                     column_handling=None,
                     params=None,
+                    partition_columns=None,
                     signature_params=None,
                     output_stage_location="@output_stage/",
                     completion_filename="completion.txt",
@@ -1679,6 +1682,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
@@ -1704,6 +1708,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 output_stage_location="@output_stage/",
                 completion_filename="completion.txt",
                 function_name="predict",
@@ -1904,6 +1909,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2002,6 +2008,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=None,
+                partition_columns=None,
                 signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2080,6 +2087,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=None,
                 params=test_params,
+                partition_columns=None,
                 signature_params=_DUMMY_SIG_WITH_PARAMS.params,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2154,6 +2162,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 input_file_pattern="*.parquet",
                 column_handling=test_column_handling,
                 params=None,
+                partition_columns=None,
                 signature_params=None,
                 output_stage_location="@output_stage/",
                 completion_filename="_SUCCESS",
@@ -2244,6 +2253,67 @@ class ServiceOpsTest(parameterized.TestCase):
         self.assertEqual(decoded["config"]["nested_bytes"], "abcd")
         self.assertEqual(decoded["config"]["nested_datetime"], "2025-06-01T12:00:00")
         self.assertEqual(decoded["items"], ["01", "02", {"inner": "03"}])
+
+    def test_invoke_batch_job_method_with_partition_columns(self) -> None:
+        """Test invoke_batch_job_method passes partition_columns to add_job_spec."""
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(self.m_ops._model_deployment_spec, "clear"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_job_spec") as mock_add_job_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+        ):
+            self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name="BATCH_JOB",
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
+                partition_columns=["PARTITION_COL"],
+                signature_params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                replicas=None,
+            )
+
+            # Verify partition_columns was passed to add_job_spec
+            mock_add_job_spec.assert_called_once()
+            call_kwargs = mock_add_job_spec.call_args.kwargs
+            self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
 
 
 if __name__ == "__main__":

@@ -72,10 +72,17 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 predictions_df = target_method(model, sample_input_data)
             return predictions_df
 
-        for func_name in model._get_partitioned_methods():
+        partitioned_methods = model._get_partitioned_methods()
+        for func_name in partitioned_methods:
             function_properties = model_meta.function_properties.get(func_name, {})
             function_properties[model_meta_schema.FunctionProperties.PARTITIONED.value] = True
             model_meta.function_properties[func_name] = function_properties
+
+        for method in model._get_infer_methods():
+            if method.__name__ not in partitioned_methods:
+                function_properties = model_meta.function_properties.get(method.__name__, {})
+                function_properties[model_meta_schema.FunctionProperties.PARTITIONED.value] = False
+                model_meta.function_properties[method.__name__] = function_properties
 
         if not is_sub_model:
             model_meta = handlers_utils.validate_signature(
@@ -218,7 +225,8 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 continue
 
             # Extract parameters from the method
-            method_params = custom_model.get_method_parameters(method)
+            method_params = custom_model._get_method_parameters(method)
+
             if not method_params:
                 continue
 

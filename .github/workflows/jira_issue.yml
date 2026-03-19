@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          repository: snowflakedb/gh-actions
+          repository: snowflake-eng/gh-actions
           ref: jira_v1
           token: ${{ secrets.SNOWFLAKE_GITHUB_TOKEN }}  # stored in GitHub secrets
           path: .
