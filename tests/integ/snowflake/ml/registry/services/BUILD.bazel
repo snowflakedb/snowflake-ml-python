@@ -136,6 +136,7 @@ py_test(
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/parameters:enable_pip_only_packaging",
     ],
 )

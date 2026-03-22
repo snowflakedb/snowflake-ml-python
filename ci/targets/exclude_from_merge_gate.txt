@@ -10,6 +10,7 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_external_stage_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_failure_mode_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_functional_test
+//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_partitioned_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_wide_input_test
 //tests/integ/snowflake/ml/registry/jobs:registry_catboost_batch_inference_test
 //tests/integ/snowflake/ml/registry/jobs:registry_custom_model_batch_inference_test

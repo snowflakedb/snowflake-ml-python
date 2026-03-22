@@ -25,6 +25,7 @@ from snowflake.ml.model._client.model import (
 from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
+from snowflake.ml.model._packager.model_handlers import huggingface, snowmlmodel
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Session, dataframe, row
@@ -2808,10 +2809,15 @@ class ModelVersionImplTest(absltest.TestCase):
         with (
             mock.patch.object(
                 self.m_mv,
+                "_get_model_spec",
+                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
+            ),
+            mock.patch.object(
+                self.m_mv,
                 "_get_function_info",
                 return_value={
                     "target_method": "predict",
-                    "target_method_function_type": "FUNCTION",
+                    "target_method_function_type": "TABLE_FUNCTION",
                     "signature": _DUMMY_SIG["predict"],
                     "is_partitioned": False,
                 },
@@ -2833,6 +2839,83 @@ class ModelVersionImplTest(absltest.TestCase):
             call_kwargs = mock_invoke_batch_job.call_args.kwargs
             self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
             self.assertEqual(result, mock_job)
+
+    def test_run_batch_hf_model_with_partition_column_error(self) -> None:
+        """Test run_batch raises ValueError when partition_column is set for a HuggingFace pipeline model."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value={"model_type": huggingface.TransformersPipelineHandler.HANDLER_TYPE},
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "partition_column is not supported for HuggingFace pipeline models",
+            ):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
+
+    def test_run_batch_scalar_function_with_partition_column_error(self) -> None:
+        """Test run_batch raises ValueError when partition_column is set for a scalar function method."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
+            ),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "partition_column is not supported for FUNCTION type methods",
+            ):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
 
 
 if __name__ == "__main__":

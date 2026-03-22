@@ -1,8 +1,9 @@
+import functools
 import logging
 import os
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Callable, Optional, Union, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
 import cloudpickle
 import numpy as np
@@ -331,9 +332,9 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 target_method: str,
                 background_data: Optional[pd.DataFrame],
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
-                @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    res = getattr(raw_model, target_method)(X)
+                @custom_model._internal_inference_api
+                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
+                    res = getattr(raw_model, target_method)(X, **method_kwargs)
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions
@@ -344,24 +345,24 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
 
                     return model_signature_utils.rename_pandas_df(df, signature.outputs)
 
-                @custom_model.inference_api
-                def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    fn = cls._build_explain_fn(raw_model, background_data, signature.inputs)
-                    return model_signature_utils.rename_pandas_df(fn(X), signature.outputs)
+                @custom_model._internal_inference_api
+                def explain_fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
+                    explain = cls._build_explain_fn(raw_model, background_data, signature.inputs, **method_kwargs)
+                    return model_signature_utils.rename_pandas_df(explain(X), signature.outputs)
 
                 if target_method == "explain":
                     return explain_fn
 
                 return fn
 
-            type_method_dict = {}
+            sklearn_type_dict: dict[str, Any] = {"_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name, background_data)
+                sklearn_type_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name, background_data)
 
             _SKLModel = type(
                 "_SKLModel",
                 (custom_model.CustomModel,),
-                type_method_dict,
+                sklearn_type_dict,
             )
 
             return _SKLModel
@@ -377,17 +378,23 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         model: Union["sklearn.base.BaseEstimator", "sklearn.pipeline.Pipeline"],
         background_data: model_types.SupportedDataType,
         input_specs: Sequence[model_signature.BaseFeatureSpec],
+        **kwargs: dict[str, Any],
     ) -> Callable[[model_types.SupportedDataType], pd.DataFrame]:
         import shap
         import sklearn.pipeline
 
         transformed_bg_data = _apply_transforms_up_to_last_step(model, background_data)
+        predictor = model[-1] if isinstance(model, sklearn.pipeline.Pipeline) else model
+
+        if kwargs:
+            predict_with_params = functools.partial(predictor.predict, **kwargs)
+        else:
+            predict_with_params = predictor
 
         def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:
             transformed_data = _apply_transforms_up_to_last_step(model, data)
-            predictor = model[-1] if isinstance(model, sklearn.pipeline.Pipeline) else model
             try:
-                explainer = shap.Explainer(predictor, transformed_bg_data)
+                explainer = shap.Explainer(predict_with_params, transformed_bg_data)
                 return handlers_utils.convert_explanations_to_2D_df(model, explainer(transformed_data).values).astype(
                     np.float64, errors="ignore"
                 )
@@ -398,8 +405,11 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
                 for explain_target_method in cls.EXPLAIN_TARGET_METHODS:
                     if not hasattr(predictor, explain_target_method):
                         continue
-                    explain_target_method_fn = getattr(predictor, explain_target_method)
-                    explanations = shap.Explainer(explain_target_method_fn, transformed_bg_data.values)(
+                    if kwargs:
+                        target_fn = functools.partial(getattr(predictor, explain_target_method), **kwargs)
+                    else:
+                        target_fn = getattr(predictor, explain_target_method)
+                    explanations = shap.Explainer(target_fn, transformed_bg_data.values)(
                         transformed_data.to_numpy()
                     ).values
                     return handlers_utils.convert_explanations_to_2D_df(model, explanations)

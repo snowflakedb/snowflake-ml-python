@@ -2,7 +2,7 @@ import logging
 import os
 import tempfile
 import warnings
-from typing import Optional
+from typing import Any, Optional
 from unittest import mock
 
 import numpy as np
@@ -697,6 +697,220 @@ class SKLearnHandlerTest(parameterized.TestCase):
                     self.assertIn(
                         model_signature.FeatureSpec(name, model_signature.DataType.DOUBLE), explain_signature.outputs
                     )
+
+
+class SKLearnHandlerParamsTest(absltest.TestCase):
+    """Test cases for sklearn handler support for model signature params."""
+
+    def test_sklearn_estimator_with_param_forwarding(self) -> None:
+        """Params declared in the ModelSignature are forwarded to the estimator's predict method."""
+
+        class EstimatorWithParam(linear_model.LinearRegression):
+            def predict(self, X: pd.DataFrame, *, scale: float = 1.0) -> Any:
+                return super().predict(X) * scale
+
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        est = EstimatorWithParam()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        est.fit(iris_X_df, iris_y)
+
+        sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c1"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c2"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c3"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c4"),
+            ],
+            outputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output"),
+            ],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=est,
+                signatures={"predict": sig},
+                options=model_types.SKLModelSaveOptions(enable_explainability=False),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+
+            loaded_sig = pk.meta.signatures["predict"]
+            self.assertEqual(len(loaded_sig.params), 1)
+            param = loaded_sig.params[0]
+            assert isinstance(param, model_signature.ParamSpec)
+            self.assertEqual(param.name, "scale")
+
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            # Without kwargs — uses estimator's default (scale=1.0)
+            res_default = predict_method(iris_X_df[:5])
+            np.testing.assert_allclose(res_default.to_numpy().flatten(), est.predict(iris_X_df[:5]))
+
+            # With kwargs — param is forwarded and affects the output
+            res_scaled = predict_method(iris_X_df[:5], scale=2.0)
+            np.testing.assert_allclose(
+                res_scaled.to_numpy().flatten(),
+                est.predict(iris_X_df[:5], scale=2.0),
+            )
+
+    def test_sklearn_with_multiple_params(self) -> None:
+        """Multiple params in the signature are all forwarded to the estimator."""
+
+        class MultiParamEstimator(linear_model.LinearRegression):
+            def predict(self, X: pd.DataFrame, *, scale: float = 1.0, offset: float = 0.0) -> Any:
+                return super().predict(X) * scale + offset
+
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        est = MultiParamEstimator()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        est.fit(iris_X_df, iris_y)
+
+        sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c1"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c2"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c3"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c4"),
+            ],
+            outputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output"),
+            ],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+                model_signature.ParamSpec(name="offset", dtype=model_signature.DataType.DOUBLE, default_value=0.0),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=est,
+                signatures={"predict": sig},
+                options=model_types.SKLModelSaveOptions(enable_explainability=False),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+
+            self.assertEqual(len(pk.meta.signatures["predict"].params), 2)
+
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+            res = predict_method(iris_X_df[:5], scale=3.0, offset=10.0)
+            np.testing.assert_allclose(
+                res.to_numpy().flatten(),
+                est.predict(iris_X_df[:5], scale=3.0, offset=10.0),
+            )
+
+    def test_sklearn_without_params_no_kwargs(self) -> None:
+        """Verify that models without params in signature do not accept kwargs."""
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        regr = linear_model.LinearRegression()
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        regr.fit(iris_X_df, iris_y)
+
+        sig = model_signature.infer_signature(iris_X_df, regr.predict(iris_X_df))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=regr,
+                signatures={"predict": sig},
+                options=model_types.SKLModelSaveOptions(enable_explainability=False),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            res = predict_method(iris_X_df[:5])
+            np.testing.assert_allclose(res.to_numpy().flatten(), regr.predict(iris_X_df[:5]))
+
+            # Unknown kwargs are forwarded to the estimator, which rejects them
+            with self.assertRaises(TypeError):
+                predict_method(iris_X_df[:5], temperature=0.5)
+
+    def test_sklearn_pipeline_with_params(self) -> None:
+        """Save an sklearn pipeline with a param-accepting estimator and verify forwarding."""
+
+        class ScaledRegressor(linear_model.LinearRegression):
+            def predict(self, X: pd.DataFrame, *, scale: float = 1.0) -> Any:
+                return super().predict(X) * scale
+
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        pipe = Pipeline([("scaler", StandardScaler()), ("regr", ScaledRegressor())])
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        pipe.fit(iris_X_df, iris_y)
+
+        sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c1"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c2"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c3"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="c4"),
+            ],
+            outputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output"),
+            ],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=pipe,
+                signatures={"predict": sig},
+                sample_input_data=iris_X_df,
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            res = predict_method(iris_X_df[:5], scale=2.0)
+            np.testing.assert_allclose(
+                res.to_numpy().flatten(),
+                pipe.predict(iris_X_df[:5], scale=2.0),
+            )
+
+            explain_method = getattr(pk.model, "explain", None)
+            assert callable(explain_method)
+
+            res_default = explain_method(iris_X_df[:5])
+            self.assertIsInstance(res_default, pd.DataFrame)
+            self.assertEqual(len(res_default), 5)
+
+            res_scaled = explain_method(iris_X_df[:5], scale=2.0)
+            self.assertIsInstance(res_scaled, pd.DataFrame)
+            self.assertEqual(len(res_scaled), 5)
+
+            # SHAP values must differ when scale changes, proving kwargs reached the predictor
+            self.assertFalse(
+                np.allclose(res_default.to_numpy(), res_scaled.to_numpy()),
+                "Explanations with scale=1.0 and scale=2.0 should differ",
+            )
 
 
 class SklearnHelperFunctionsTest(absltest.TestCase):

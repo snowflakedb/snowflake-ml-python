@@ -7,6 +7,7 @@ import torch
 from absl.testing import absltest
 
 from snowflake.ml.model import model_signature
+from snowflake.ml.model._signatures import core
 from snowflake.ml.test_utils import exception_utils
 
 
@@ -872,6 +873,178 @@ class ModelSignatureMiscTest(absltest.TestCase):
         sig = model_signature.infer_signature(input_data3, output_data, params=params)
         self.assertEqual(len(sig.inputs), 2)
         self.assertEqual(len(sig.params), 2)
+
+    def test_infer_signature_with_dict_params(self) -> None:
+        """Test that infer_signature accepts a dict of params and infers ParamSpec correctly."""
+        input_data = pd.DataFrame([[1, 2], [3, 4]], columns=["a", "b"])
+        output_data = pd.DataFrame([[10], [20]], columns=["result"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={"temperature": 0.7, "max_tokens": 100})
+
+        self.assertEqual(len(sig.params), 2)
+
+        temp_param = sig.params[0]
+        self.assertIsInstance(temp_param, model_signature.ParamSpec)
+        self.assertEqual(temp_param.name, "temperature")
+        self.assertEqual(temp_param.dtype, model_signature.DataType.DOUBLE)  # type: ignore[attr-defined]
+        self.assertEqual(temp_param.default_value, 0.7)  # type: ignore[attr-defined]
+        self.assertIsNone(temp_param.shape)
+
+        max_tokens_param = sig.params[1]
+        self.assertIsInstance(max_tokens_param, model_signature.ParamSpec)
+        self.assertEqual(max_tokens_param.name, "max_tokens")
+        self.assertEqual(max_tokens_param.dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
+        self.assertEqual(max_tokens_param.default_value, 100)  # type: ignore[attr-defined]
+        self.assertIsNone(max_tokens_param.shape)
+
+    def test_infer_signature_with_dict_params_all_scalar_types(self) -> None:
+        """Test dict params with all supported scalar Python types."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        dt = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        sig = model_signature.infer_signature(
+            input_data,
+            output_data,
+            params={
+                "int_param": 42,
+                "float_param": 3.14,
+                "str_param": "hello",
+                "bool_param": True,
+                "bytes_param": b"data",
+                "datetime_param": dt,
+            },
+        )
+
+        self.assertEqual(len(sig.params), 6)
+        expected = [
+            ("int_param", model_signature.DataType.INT64, 42),
+            ("float_param", model_signature.DataType.DOUBLE, 3.14),
+            ("str_param", model_signature.DataType.STRING, "hello"),
+            ("bool_param", model_signature.DataType.BOOL, True),
+            ("bytes_param", model_signature.DataType.BYTES, b"data"),
+            ("datetime_param", model_signature.DataType.TIMESTAMP_NTZ, dt),
+        ]
+        for param, (exp_name, exp_dtype, exp_default) in zip(sig.params, expected):
+            self.assertEqual(param.name, exp_name)
+            self.assertEqual(param.dtype, exp_dtype)  # type: ignore[attr-defined]
+            self.assertEqual(param.default_value, exp_default)  # type: ignore[attr-defined]
+            self.assertIsNone(param.shape)
+
+    def test_infer_signature_with_dict_params_list_values(self) -> None:
+        """Test that list values in dict params produce shaped ParamSpec."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={"weights": [1.0, 2.0, 3.0]})
+
+        self.assertEqual(len(sig.params), 1)
+        weights_param = sig.params[0]
+        self.assertIsInstance(weights_param, model_signature.ParamSpec)
+        self.assertEqual(weights_param.name, "weights")
+        self.assertEqual(weights_param.dtype, model_signature.DataType.DOUBLE)  # type: ignore[attr-defined]
+        self.assertEqual(weights_param.default_value, [1.0, 2.0, 3.0])  # type: ignore[attr-defined]
+        self.assertEqual(weights_param.shape, (-1,))
+
+    def test_infer_signature_with_dict_params_nested_list(self) -> None:
+        """Test that nested list values produce multi-dimensional shape."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={"matrix": [[1, 2], [3, 4]]})
+
+        self.assertEqual(len(sig.params), 1)
+        matrix_param = sig.params[0]
+        self.assertEqual(matrix_param.name, "matrix")
+        self.assertEqual(matrix_param.dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
+        self.assertEqual(matrix_param.default_value, [[1, 2], [3, 4]])  # type: ignore[attr-defined]
+        self.assertEqual(matrix_param.shape, (-1, -1))
+
+    def test_infer_signature_with_dict_params_empty_dict(self) -> None:
+        """Test that an empty dict produces no params."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={})
+        self.assertEqual(len(sig.params), 0)
+
+    def test_infer_signature_with_dict_params_unsupported_type(self) -> None:
+        """Test that unsupported value types raise ValueError."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        with self.assertRaisesRegex(ValueError, r"Cannot infer ParamSpec dtype from value of type set"):
+            model_signature.infer_signature(input_data, output_data, params={"bad_param": {1, 2, 3}})
+
+    def test_infer_signature_with_dict_params_none_value(self) -> None:
+        """Test that None values in dict raise ValueError."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        with self.assertRaisesRegex(ValueError, r"Cannot infer ParamSpec dtype.*from None value"):
+            model_signature.infer_signature(input_data, output_data, params={"bad_param": None})
+
+    def test_infer_signature_with_dict_params_empty_list_value(self) -> None:
+        """Test that empty list values in dict raise ValueError."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        with self.assertRaisesRegex(ValueError, r"Cannot infer ParamSpec dtype.*from an empty list"):
+            model_signature.infer_signature(input_data, output_data, params={"bad_param": []})
+
+    def test_infer_signature_with_dict_params_column_collision(self) -> None:
+        """Test that dict params still enforce name collision checks with input features."""
+        input_data = pd.DataFrame([[1, 2]], columns=["temperature", "value"])
+        output_data = pd.DataFrame([[10]], columns=["result"])
+
+        with self.assertRaisesRegex(ValueError, r"Parameters and inputs must have distinct names"):
+            model_signature.infer_signature(input_data, output_data, params={"temperature": 0.7})
+
+    def test_infer_signature_with_dict_params_backward_compat(self) -> None:
+        """Test that existing Sequence[BaseParamSpec] input still works unchanged."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        explicit_params = [
+            model_signature.ParamSpec(name="lr", dtype=model_signature.DataType.FLOAT, default_value=0.01),
+        ]
+        sig = model_signature.infer_signature(input_data, output_data, params=explicit_params)
+
+        self.assertEqual(len(sig.params), 1)
+        self.assertEqual(sig.params[0].name, "lr")
+        self.assertEqual(sig.params[0].dtype, model_signature.DataType.FLOAT)  # type: ignore[attr-defined]
+
+    def test_infer_signature_with_dict_params_serialization_roundtrip(self) -> None:
+        """Test that signatures created via dict params serialize/deserialize correctly."""
+        input_data = pd.DataFrame([[1.0, 2.0]], columns=["a", "b"])
+        output_data = pd.DataFrame([[5.0]], columns=["result"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={"temperature": 0.7, "top_k": 50})
+
+        sig_dict = sig.to_dict()
+        restored_sig = model_signature.ModelSignature.from_dict(sig_dict)
+        self.assertEqual(sig, restored_sig)
+
+    def test_infer_signature_with_dict_params_mixed_int_float_widens(self) -> None:
+        """Mixed int/float list values widen to DOUBLE via numpy."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        sig = model_signature.infer_signature(input_data, output_data, params={"weights": [1, 0.7, 2]})
+        weights_param = next(p for p in sig.params if p.name == "weights")
+        assert isinstance(weights_param, core.ParamSpec)
+        self.assertEqual(weights_param.dtype, core.DataType.DOUBLE)
+        self.assertEqual(weights_param.shape, (-1,))
+
+    def test_infer_signature_with_dict_params_incompatible_list_types(self) -> None:
+        """Truly incompatible types (object dtype) in list params raise ValueError."""
+        input_data = pd.DataFrame([[1]], columns=["x"])
+        output_data = pd.DataFrame([[1]], columns=["y"])
+
+        with self.assertRaisesRegex(ValueError, r"Ragged nested or Unsupported list-like data"):
+            model_signature.infer_signature(
+                input_data, output_data, params={"bad": [datetime.datetime(2024, 1, 1), 42]}
+            )
 
 
 if __name__ == "__main__":

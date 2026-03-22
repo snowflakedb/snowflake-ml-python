@@ -6,6 +6,7 @@ import re
 import sys
 import textwrap
 import time
+import unittest
 from types import ModuleType
 from typing import Any, Callable, Optional, cast
 from unittest import mock
@@ -30,6 +31,7 @@ from snowflake.ml.jobs._utils import (
     runtime_env_utils,
     type_utils,
 )
+from snowflake.ml.utils import sql_client
 from snowflake.snowpark import exceptions as sp_exceptions, functions as F
 from tests.integ.snowflake.ml.jobs import test_constants
 from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
@@ -542,6 +544,7 @@ class JobManagerTest(JobTestBase):
         # Ensure the result was saved with v2 (v1 results get loaded as normal ExecutionResults)
         self.assertIsInstance(job._result, interop_result.LoadedExecutionResult)
 
+    @unittest.skipIf(sys.version_info >= (3, 11), "Backcompat image runs Python 3.10; cannot deserialize 3.11 payload")
     def test_job_result_backcompat(self) -> None:
         """Test that v1 job results can still be loaded correctly."""
 
@@ -1466,12 +1469,36 @@ class JobManagerTest(JobTestBase):
 
         try:
             job = test_function(self.session, table_name)
+            # Wait for job to reach RUNNING state before checking dashboard URL
+            while job.status not in ("RUNNING"):
+                time.sleep(2)
+            if job.status == "RUNNING":
+                dashboard_url = job.get_ray_dashboard_url()
+                self.assertIsNotNone(dashboard_url)
             self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
             rows = self.session.sql(f"show tables like '{table_name}'").collect()
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["owner"], identifier.get_unescaped_names(self.session.get_current_role()))
         finally:
             self.session.sql(f"drop table if exists {table_name}").collect()
+
+    def test_job_with_ray_dashboard_negaitive(self) -> None:
+        compute_name = f"TEST_COMPUTE_{uuid4().hex}".upper()
+        try:
+            self.dbm.create_compute_pool(
+                compute_name,
+                creation_mode=sql_client.CreationMode(if_not_exists=True),
+                instance_family="CPU_X64_XS",
+            )
+
+            @jobs.remote(compute_name, stage_name="payload_stage", session=self.session)
+            def test_function() -> None:
+                print("hello world")
+
+            job = test_function()
+            self.assertIsNone(job.get_ray_dashboard_url())
+        finally:
+            self.dbm.drop_compute_pool(compute_name, if_exists=True)
 
 
 if __name__ == "__main__":

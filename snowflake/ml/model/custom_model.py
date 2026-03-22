@@ -427,6 +427,24 @@ def inference_api(
     return func
 
 
+def _internal_inference_api(
+    func: Callable[..., pd.DataFrame],
+) -> Callable[..., pd.DataFrame]:
+    """Internal variant of inference_api for handler-generated methods that use **kwargs.
+
+    Same runtime behavior as inference_api (sets _is_inference_api flag), but with a
+    wider type signature that allows **kwargs.
+
+    Args:
+        func: The method to decorate.
+
+    Returns:
+        The decorated function with inference API metadata.
+    """
+    func.__dict__["_is_inference_api"] = True
+    return func
+
+
 def partitioned_api(
     func: Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame],
 ) -> Callable[Concatenate[model_types.CustomModelType, pd.DataFrame, InferenceParams], pd.DataFrame]:

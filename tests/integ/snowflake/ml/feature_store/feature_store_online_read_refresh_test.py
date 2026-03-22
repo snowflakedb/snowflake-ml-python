@@ -649,6 +649,49 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             )
         self.assertIn("Each key must have 2 values", str(context.exception))
 
+    def test_read_online_single_key_uses_bind_params(self) -> None:
+        """Verify single-point online lookups use SQL bind parameters while multi-point lookups do not."""
+        fv_name = "test_bind_params"
+
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity, self.product_entity],
+            feature_df=self.sample_data.select("user_id", "product_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="10m",
+            desc="Test bind params for online reads",
+            online_config=feature_view.OnlineConfig(enable=True),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        online_table = registered_fv.fully_qualified_online_table_name()
+
+        # Single-point lookup should use bind params (? placeholders)
+        with self._session.query_history() as qh:
+            self.fs.read_feature_view(
+                registered_fv, keys=[[1, 100]], store_type=feature_view.StoreType.ONLINE
+            ).collect()
+
+        select_queries = [q.sql_text for q in qh.queries if q.sql_text.strip().upper().startswith("SELECT")]
+        self.assertTrue(len(select_queries) > 0, "Expected at least one SELECT query for single-key lookup")
+        expected_bind_query = f'SELECT * FROM {online_table} WHERE ("USER_ID" = ? AND "PRODUCT_ID" = ?)'
+        self.assertEqual(select_queries[-1], expected_bind_query)
+
+        # Multi-point lookup should NOT use bind params
+        with self._session.query_history() as qh:
+            self.fs.read_feature_view(
+                registered_fv, keys=[[1, 100], [2, 200]], store_type=feature_view.StoreType.ONLINE
+            ).collect()
+
+        select_queries = [q.sql_text for q in qh.queries if q.sql_text.strip().upper().startswith("SELECT")]
+        self.assertTrue(len(select_queries) > 0, "Expected at least one SELECT query for multi-key lookup")
+        expected_literal_query = (
+            f"SELECT * FROM {online_table}"
+            " WHERE (\"USER_ID\" = '1' AND \"PRODUCT_ID\" = '100')"
+            " OR (\"USER_ID\" = '2' AND \"PRODUCT_ID\" = '200')"
+        )
+        self.assertEqual(select_queries[-1], expected_literal_query)
+
 
 if __name__ == "__main__":
     absltest.main()

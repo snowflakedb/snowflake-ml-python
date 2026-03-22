@@ -326,6 +326,21 @@ py_test(
 )
 
 py_test(
+    name = "registry_new_hf_tasks_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_new_hf_tasks_batch_inference_test.py"],
+    data = [
+        "//tests/integ/snowflake/ml/test_data:cat.jpeg",
+    ],
+    optional_dependencies = ["transformers"],
+    shard_count = 3,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
     name = "registry_multi_modality_audio_video_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_multi_modality_audio_video_batch_inference_test.py"],
@@ -403,7 +418,8 @@ py_test(
     name = "registry_batch_inference_partitioned_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_partitioned_test.py"],
-    shard_count = 1,
+    optional_dependencies = ["transformers"],
+    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",

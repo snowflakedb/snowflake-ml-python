@@ -1,6 +1,29 @@
 # Release History
 
-## 1.31.0
+## 1.32.0
+
+### New Features
+
+* Registry: Extended `ParamSpec` support to scikit-learn models. Parameters declared in the model signature
+  can now be passed at inference time, matching the existing support for custom models.
+* Registry: `infer_signature()` now accepts a `dict` for the `params` argument (e.g.,
+  `params={"temperature": 0.7, "max_tokens": 100}`), automatically inferring `ParamSpec` objects
+  from the Python value types. The existing `Sequence[BaseParamSpec]` form is still supported.
+
+### Bug Fixes
+
+* Experiment Tracking live logging (PrPr): Fixed a bug where the tracebacks for uncaught exceptions were not logged
+  when the code was running inside Snowflake notebooks.
+
+### Behavior Changes
+
+* Registry: The models from `huggingface.TransformersPipeline` and `transformers.Pipeline` will default to safetensors
+  file format by default by using `safe_serialization=True` parameter to the `save_pretrained` call. This creates
+  safetensors files instead of PyTorch binaries or pt files, addressing security vulnerability CVE-2025-32434.
+
+### Deprecations
+
+## 1.31.0 (2026-03-19)
 
 ### New Features
 
@@ -18,7 +41,7 @@
 * Registry: Fixed a bug where invalid parameter types (e.g., passing a string to an integer parameter)
   were silently coerced instead of raising an error. Parameters are now strictly validated against their
   declared types before inference. This may break code that relied on the silent coercion behavior
-  (e.g., `model.run(max_tokens="100")` or `model.run(some_int_param=True)`).
+  (e.g., `mv.run(..., params={"max_tokens": "100"})` or `mv.run(..., params={"some_int_param": True})`).
 * ML Job: Fixed explicitly named `MLJobDefinition` objects so they can be overwritten in place and invoked
   repeatedly without job name collisions; the `generate_suffix` argument has been removed.
 * Experiment Tracking live logging (PrPr): Fixed a bug that generated too many lines of log that consist entirely of

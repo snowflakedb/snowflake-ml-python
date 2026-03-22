@@ -1,3 +1,4 @@
+import sys
 import warnings
 from typing import Any, cast
 from unittest import mock
@@ -578,12 +579,13 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         c_session = cast(Session, m_session)
 
         # Mock the information schema query that checks for snowflake-ml-python versions
-        query = """
+        py_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+        query = f"""
                 SELECT PACKAGE_NAME, VERSION
                 FROM information_schema.packages
                 WHERE (package_name = 'snowflake-ml-python')
                 AND language = 'python'
-                AND (runtime_version = '3.10'
+                AND (runtime_version = '{py_ver}'
                     OR runtime_version is null);
                 """
         # Return empty result to indicate no matching versions found (which triggers local ML library embedding)

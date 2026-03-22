@@ -3,6 +3,7 @@ import functools
 import json
 import sys
 import warnings
+from collections.abc import Callable
 from typing import Any, Optional, Union
 from urllib.parse import quote
 
@@ -617,6 +618,39 @@ class ExperimentTracking:
         self._run = None
         self._unpatch_stdout_and_stderr()
 
+    def _try_patch_ipython_showtraceback(
+        self, stderr_logger: experiment_logging.ExperimentLogger
+    ) -> tuple[Any, Optional[Callable[..., None]]]:
+        try:
+            from IPython import get_ipython
+
+            ip = get_ipython()
+            if ip:
+                original_showtraceback = ip._showtraceback
+
+                def _patched_showtraceback(
+                    etype: type[BaseException],
+                    evalue: Optional[BaseException],
+                    stb: list[str],
+                ) -> None:
+                    try:
+                        text = ip.InteractiveTB.stb2text(stb)
+                        stderr_logger.write(text + "\n")
+                        stderr_logger.flush()
+                    except Exception:
+                        pass
+                    if original_showtraceback is not None:  # for mypy
+                        original_showtraceback(etype, evalue, stb)
+
+                ip._showtraceback = _patched_showtraceback
+
+                return ip, original_showtraceback
+
+        except Exception:
+            pass  # Never let IPython patching break logging setup
+
+        return None, None
+
     def _patch_stdout_and_stderr(self) -> None:
         if not self._live_logging_enabled:
             return
@@ -626,6 +660,8 @@ class ExperimentTracking:
 
         assert self._experiment is not None and self._run is not None  # for mypy
         stdout_logger, stderr_logger, stdout_ctx, stderr_ctx = None, None, None, None  # for exception handling
+        ip: Any = None
+        original_showtraceback: Optional[Callable[..., None]] = None
         try:
             exp_id = self._sql_client.get_experiment_id(self._experiment.name)
             run_id = self._sql_client.get_run_id(
@@ -636,15 +672,23 @@ class ExperimentTracking:
             stderr_logger = experiment_logging.ExperimentLogger(exp_id=exp_id, run_id=run_id, stream="STDERR")
             stdout_ctx = contextlib.redirect_stdout(tee.OutputTee(sys.stdout, stdout_logger))
             stderr_ctx = contextlib.redirect_stderr(tee.OutputTee(sys.stderr, stderr_logger))
+            stdout_ctx.__enter__()
+            stderr_ctx.__enter__()
+
+            ip, original_showtraceback = self._try_patch_ipython_showtraceback(stderr_logger)
+
             self._logging_context = experiment_logging.ExperimentLoggingContext(
                 stdout_logger=stdout_logger,
                 stderr_logger=stderr_logger,
                 stdout_ctx=stdout_ctx,
                 stderr_ctx=stderr_ctx,
+                ipython_instance=ip,
+                original_showtraceback=original_showtraceback,
             )
-            stdout_ctx.__enter__()
-            stderr_ctx.__enter__()
+
         except Exception as e:
+            if ip:
+                ip._showtraceback = original_showtraceback
             if stdout_ctx:
                 stdout_ctx.__exit__(None, None, None)
             if stderr_ctx:
@@ -661,6 +705,8 @@ class ExperimentTracking:
 
     def _unpatch_stdout_and_stderr(self) -> None:
         if self._logging_context:
+            if self._logging_context.ipython_instance:
+                self._logging_context.ipython_instance._showtraceback = self._logging_context.original_showtraceback
             self._logging_context.stdout_ctx.__exit__(None, None, None)
             self._logging_context.stderr_ctx.__exit__(None, None, None)
             self._logging_context.stdout_logger.close()

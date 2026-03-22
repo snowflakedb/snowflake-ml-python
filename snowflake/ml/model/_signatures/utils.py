@@ -321,6 +321,61 @@ def huggingface_pipeline_signature_auto_infer(
             ],
         )
 
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageFeatureExtractionPipeline
+    if task == "image-feature-extraction":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureSpec(name="feature_extraction", dtype=core.DataType.DOUBLE, shape=(-1,)),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageToTextPipeline
+    if task == "image-to-text":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="outputs",
+                    specs=[
+                        core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ObjectDetectionPipeline
+    if task == "object-detection":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="detections",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureGroupSpec(
+                            name="box",
+                            specs=[
+                                core.FeatureSpec(name="xmin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="xmax", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymax", dtype=core.DataType.INT64),
+                            ],
+                        ),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TextGenerationPipeline
     if task == "text-generation" and has_chat_template:
         if params.get("return_tensors", False):
@@ -452,6 +507,69 @@ def series_dropna(series: pd.Series, try_convert_dtypes: bool = True) -> pd.Seri
     if try_convert_dtypes:
         result = result.convert_dtypes()
     return result
+
+
+def infer_param(name: str, value: Any) -> core.ParamSpec:
+    """Infer a ParamSpec from a Python value.
+
+    Scalar values produce a scalar ParamSpec (dtype via DataType.from_python_type).
+    List/tuple values produce a shaped ParamSpec with (-1,) per nesting level,
+    using the same numpy-based inference as feature lists (convert_list_to_ndarray).
+    This allows numeric widening (e.g. [1, 0.7] -> DOUBLE).
+
+    Args:
+        name: Parameter name.
+        value: A Python value to infer from.
+
+    Raises:
+        SnowflakeMLException: When value is None, an empty list, or
+            contains unsupported or mixed types.
+
+    Returns:
+        A ParamSpec with dtype and shape inferred from the value.
+    """
+    if value is None:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Cannot infer ParamSpec dtype for parameter '{name}' from None value. "
+                "Use an explicit ParamSpec to specify the dtype."
+            ),
+        )
+
+    if isinstance(value, dict):
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Dict values are not yet supported for parameter '{name}' in dict-based param inference."
+            ),
+        )
+
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Cannot infer ParamSpec dtype for parameter '{name}' from an empty list. "
+                    "Use an explicit ParamSpec to specify the dtype and shape."
+                ),
+            )
+        arr = convert_list_to_ndarray(list(value))
+        dtype = core.DataType.from_numpy_type(arr.dtype)
+        shape = tuple(-1 for _ in arr.shape)
+        return core.ParamSpec(name=name, dtype=dtype, default_value=value, shape=shape)
+
+    try:
+        dtype = core.DataType.from_python_type(type(value))
+    except snowml_exceptions.SnowflakeMLException:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Cannot infer ParamSpec dtype from value of type {type(value).__name__} " f"for parameter '{name}'."
+            ),
+        )
+
+    return core.ParamSpec(name=name, dtype=dtype, default_value=value, shape=None)
 
 
 def infer_list(name: str, data: list[Any]) -> core.BaseFeatureSpec:

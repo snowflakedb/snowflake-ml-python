@@ -1,4 +1,5 @@
 import sys
+import unittest
 import warnings
 from collections import namedtuple
 from unittest import mock
@@ -7,6 +8,10 @@ from absl.testing import absltest
 
 
 class DeprecationWarningTest(absltest.TestCase):
+    @unittest.skipIf(
+        sys.version_info >= (3, 11),
+        "snowflake-snowpark-python 1.38.0 has a Generic[_TT] typing incompatibility with Python 3.11+",
+    )
     def test_python_39_deprecation_warning(self) -> None:
         """Test that Python 3.9 triggers deprecation warning on import."""
         # Create a version_info namedtuple that matches sys.version_info structure
@@ -42,6 +47,10 @@ class DeprecationWarningTest(absltest.TestCase):
                 f"{[str(warning.message) for warning in w]}",
             )
 
+    @unittest.skipIf(
+        sys.version_info >= (3, 11),
+        "snowflake-snowpark-python 1.38.0 has a Generic[_TT] typing incompatibility with Python 3.11+",
+    )
     def test_python_310_no_deprecation_warning(self) -> None:
         """Test that Python 3.10 does not trigger deprecation warning."""
         # Create a version_info namedtuple that matches sys.version_info structure

@@ -96,6 +96,9 @@ print(base64.b64encode(serialized).decode())
 # Create a serialized unavailable class once and re-use it
 external_exception_bytes = create_serialized_unavailable_class()
 
+# Capture repr once to avoid non-deterministic memory addresses across two str() calls
+_NONSERIALIZABLE_REPR = str(DummyNonserializableClass())
+
 
 class TestInteropUtils(parameterized.TestCase):
     def setUp(self) -> None:
@@ -483,10 +486,10 @@ class TestInteropUtils(parameterized.TestCase):
             data={
                 "success": True,
                 "result_type": DummyNonserializableClass.__qualname__,
-                "result": str(DummyNonserializableClass()),
+                "result": _NONSERIALIZABLE_REPR,
             },
             secondary_data=None,
-            expected_value=str(DummyNonserializableClass()),
+            expected_value=_NONSERIALIZABLE_REPR,
         ),
         dict(
             testcase_name="legacy_exception_simple",

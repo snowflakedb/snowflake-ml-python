@@ -361,7 +361,16 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
         x_df = pd.DataFrame(
-            [['A descendant of the Lost City of Atlantis, who swam to Earth while saying, "']],
+            [
+                {
+                    "inputs": [
+                        {
+                            "role": "user",
+                            "content": 'A descendant of the Lost City of Atlantis, who swam to Earth while saying, "',  # noqa: E501
+                        },
+                    ],
+                }
+            ],
         )
 
         def check_res(res: pd.DataFrame) -> None:
@@ -378,22 +387,6 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     x_df,
                     check_res,
                 ),
-            },
-            signatures={
-                "__call__": model_signature.ModelSignature(
-                    inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="inputs")],
-                    outputs=[
-                        model_signature.FeatureGroupSpec(
-                            name="outputs",
-                            specs=[
-                                model_signature.FeatureSpec(
-                                    dtype=model_signature.DataType.STRING, name="generated_text"
-                                )
-                            ],
-                            shape=(-1,),
-                        )
-                    ],
-                )
             },
         )
 

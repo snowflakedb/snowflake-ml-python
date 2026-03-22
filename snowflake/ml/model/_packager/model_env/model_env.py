@@ -243,14 +243,17 @@ class ModelEnv:
                 channel, spec = spec_conda
                 self._conda_dependencies[channel].remove(spec)
 
-    def generate_env_for_cuda(self) -> None:
+    def _is_pip_only_path(self) -> bool:
+        """Check if this model will use the pip-only packaging path."""
+        has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())
+        return self.prefer_pip and _ENABLE_PIP_ONLY_PACKAGING and not has_conda_deps
 
-        # Insert py-xgboost-gpu only for XGBoost versions < 3.0.0
+    def _substitute_conda_gpu_packages(self) -> None:
+        """Replace conda packages with their GPU variants (xgboost→py-xgboost-gpu, tensorflow→tensorflow-gpu)."""
         xgboost_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="xgboost", remove_spec=False
         )
         if xgboost_spec:
-            # Only handle explicitly pinned versions. Insert GPU variant iff pinned major < 3.
             pinned_major: Optional[int] = None
             for spec in xgboost_spec.specifier:
                 if spec.operator in ("==", "===", ">", ">="):
@@ -278,6 +281,15 @@ class ModelEnv:
                 [ModelDependency(requirement=f"tensorflow-gpu{tf_spec.specifier}", pip_name="tensorflow")],
                 check_local_version=False,
             )
+
+    def generate_env_for_cuda(self) -> None:
+        # Conda-specific GPU substitutions only apply on the conda path, not the pip path.
+        include_conda_gpu_substitutions = not self._is_pip_only_path()
+
+        if include_conda_gpu_substitutions:
+            self._substitute_conda_gpu_packages()
+
+        # TODO: Implicit CAI for PyTorch (auto-add torch when needed) can be added on top of this flow later.
 
         transformers_spec = env_utils.find_dep_spec(
             self._conda_dependencies, self._pip_requirements, conda_pkg_name="transformers", remove_spec=False

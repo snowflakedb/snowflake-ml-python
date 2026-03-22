@@ -20,7 +20,7 @@ from snowflake.ml.model._client.ops import metadata_ops, model_ops, service_ops
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._model_composer.model_manifest import model_manifest_schema
 from snowflake.ml.model._model_composer.model_method import utils as model_method_utils
-from snowflake.ml.model._packager.model_handlers import snowmlmodel
+from snowflake.ml.model._packager.model_handlers import huggingface, snowmlmodel
 from snowflake.ml.model._packager.model_meta import model_meta_schema
 from snowflake.ml.model._signatures import core
 from snowflake.snowpark import Session, async_job, dataframe
@@ -779,6 +779,14 @@ class ModelVersion(lineage_node.LineageNode):
         column_handling = input_spec.column_handling
         partition_columns = [input_spec.partition_column] if input_spec.partition_column is not None else None
 
+        if partition_columns is not None:
+            model_spec = self._get_model_spec(statement_params)
+            if model_spec.get("model_type") == huggingface.TransformersPipelineHandler.HANDLER_TYPE:
+                raise ValueError(
+                    "partition_column is not supported for HuggingFace pipeline models in batch inference jobs. "
+                    "Please remove the partition_column from InputSpec."
+                )
+
         if job_spec is None:
             job_spec = batch_inference_specs.JobSpec()
 
@@ -816,6 +824,16 @@ class ModelVersion(lineage_node.LineageNode):
             job_name = job_spec.job_name
 
         target_function_info = self._get_function_info(function_name=job_spec.function_name)
+
+        if (
+            partition_columns is not None
+            and target_function_info["target_method_function_type"]
+            == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+        ):
+            raise ValueError(
+                "partition_column is not supported for FUNCTION type methods in batch inference jobs. "
+                "Only TABLE_FUNCTION type methods support partitioning."
+            )
 
         return self._service_ops.invoke_batch_job_method(
             # model version info
