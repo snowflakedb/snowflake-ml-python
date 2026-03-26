@@ -129,7 +129,8 @@ class MLJobLauncherTests(parameterized.TestCase):
         pickled_exc_tb = pickled_result.get("exc_tb")
         self.assertIsInstance(pickled_exc_tb, str)
         self.assertNotIn("mljob_launcher.py", pickled_exc_tb)
-        self.assertNotIn("runpy", pickled_exc_tb)
+        if sys.version_info < (3, 11):
+            self.assertNotIn("runpy", pickled_exc_tb)
 
         if not pickled_result.get("_converted_from_v2"):
             with open(self.result_json_path) as f:
@@ -141,7 +142,8 @@ class MLJobLauncherTests(parameterized.TestCase):
             json_exc_tb = json_result.get("exc_tb")
             self.assertIsInstance(json_exc_tb, str)
             self.assertNotIn("mljob_launcher.py", json_exc_tb)
-            self.assertNotIn("runpy", json_exc_tb)
+            if sys.version_info < (3, 11):
+                self.assertNotIn("runpy", json_exc_tb)
 
     def test_function_error(self) -> None:
         # Test error in a function

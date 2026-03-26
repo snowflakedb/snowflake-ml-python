@@ -1,0 +1,223 @@
+import json
+import math
+import os
+import tempfile
+
+import pandas as pd
+from absl.testing import absltest
+
+from snowflake.ml.model.batch import (
+    FileEncoding,
+    InputFormat,
+    InputSpec,
+    JobSpec,
+    OutputSpec,
+)
+from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
+
+
+# TODO(kdickerson): Reorganize these tests by input modality (image, audio, etc.) alongside
+# existing multi-modality test files once we've built confidence in these tests.
+class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cache_dir = tempfile.TemporaryDirectory()
+        cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
+        cls._original_hf_home = os.getenv("HF_HOME", None)
+        os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+        os.environ["HF_HOME"] = cls.cache_dir.name
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._original_cache_dir:
+            os.environ["TRANSFORMERS_CACHE"] = cls._original_cache_dir
+        else:
+            os.environ.pop("TRANSFORMERS_CACHE", None)
+        if cls._original_hf_home:
+            os.environ["HF_HOME"] = cls._original_hf_home
+        else:
+            os.environ.pop("HF_HOME", None)
+        cls.cache_dir.cleanup()
+
+    def test_image_feature_extraction(self) -> None:
+        from transformers import pipeline
+
+        model = pipeline(task="image-feature-extraction", model="google/vit-base-patch16-224-in21k")
+
+        (
+            job_name,
+            output_stage_location,
+            input_files_stage_location,
+        ) = self._prepare_job_name_and_stage_for_batch_inference()
+
+        cat_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
+        self.session.sql(
+            f"PUT 'file://{cat_file_path}' {input_files_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        ).collect()
+
+        data = [
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+        ]
+        column_names = ["images"]
+        input_df = self.session.create_dataframe(data, schema=column_names)
+
+        column_handling = {
+            "IMAGES": {
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
+            }
+        }
+
+        def check_image_features(res: pd.DataFrame) -> None:
+            self.assertIn("feature_extraction", res.columns)
+            self.assertEqual(len(res), 3)
+            embeddings = []
+            for _, row in res.iterrows():
+                features = json.loads(row["feature_extraction"])
+                self.assertIsInstance(features, list)
+                self.assertGreater(len(features), 0)
+                # Features may be nested (list of lists) — flatten to validate values
+                flat = features
+                if isinstance(features[0], list):
+                    flat = [v for sublist in features for v in sublist]
+                for val in flat:
+                    self.assertIsInstance(val, float)
+                    self.assertTrue(math.isfinite(val), f"Non-finite value in embedding: {val}")
+                embeddings.append(features)
+            # Same input image should produce identical embeddings
+            self.assertEqual(embeddings[0], embeddings[1])
+            self.assertEqual(embeddings[0], embeddings[2])
+
+        self._test_registry_batch_inference(
+            model=model,
+            X=input_df,
+            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            input_spec=InputSpec(column_handling=column_handling),
+            job_spec=JobSpec(job_name=job_name, replicas=1),
+            pip_requirements=["pillow"],
+            prediction_assert_fn=check_image_features,
+        )
+
+    def test_image_to_text(self) -> None:
+        from transformers import pipeline
+
+        model = pipeline(task="image-to-text", model="microsoft/git-base")
+
+        (
+            job_name,
+            output_stage_location,
+            input_files_stage_location,
+        ) = self._prepare_job_name_and_stage_for_batch_inference()
+
+        cat_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
+        self.session.sql(
+            f"PUT 'file://{cat_file_path}' {input_files_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        ).collect()
+
+        data = [
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+        ]
+        column_names = ["images"]
+        input_df = self.session.create_dataframe(data, schema=column_names)
+
+        column_handling = {
+            "IMAGES": {
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
+            }
+        }
+
+        def check_image_to_text(res: pd.DataFrame) -> None:
+            self.assertIn("outputs", res.columns)
+            self.assertEqual(len(res), 3)
+            all_captions = []
+            for _, row in res.iterrows():
+                outputs = json.loads(row["outputs"])
+                self.assertIsInstance(outputs, list)
+                self.assertGreater(len(outputs), 0)
+                for output in outputs:
+                    self.assertIn("generated_text", output)
+                    self.assertIsInstance(output["generated_text"], str)
+                    self.assertGreater(len(output["generated_text"]), 0)
+                    all_captions.append(output["generated_text"].lower())
+            self.assertTrue(
+                any("cat" in caption for caption in all_captions),
+                f"Expected 'cat' in at least one caption, got: {all_captions}",
+            )
+
+        self._test_registry_batch_inference(
+            model=model,
+            X=input_df,
+            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            input_spec=InputSpec(column_handling=column_handling),
+            job_spec=JobSpec(job_name=job_name, replicas=1),
+            pip_requirements=["pillow"],
+            prediction_assert_fn=check_image_to_text,
+        )
+
+    def test_object_detection(self) -> None:
+        from transformers import pipeline
+
+        model = pipeline(task="object-detection", model="hustvl/yolos-tiny")
+
+        (
+            job_name,
+            output_stage_location,
+            input_files_stage_location,
+        ) = self._prepare_job_name_and_stage_for_batch_inference()
+
+        cat_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
+        self.session.sql(
+            f"PUT 'file://{cat_file_path}' {input_files_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        ).collect()
+
+        data = [
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+            [f"{input_files_stage_location}cat.jpeg"],
+        ]
+        column_names = ["images"]
+        input_df = self.session.create_dataframe(data, schema=column_names)
+
+        column_handling = {
+            "IMAGES": {
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
+            }
+        }
+
+        def check_object_detection(res: pd.DataFrame) -> None:
+            self.assertIn("detections", res.columns)
+            self.assertEqual(len(res), 3)
+            for _, row in res.iterrows():
+                detections = json.loads(row["detections"])
+                self.assertIsInstance(detections, list)
+                for det in detections:
+                    self.assertIn("label", det)
+                    self.assertIn("score", det)
+                    self.assertIn("box", det)
+                    box = det["box"]
+                    for key in ("xmin", "ymin", "xmax", "ymax"):
+                        self.assertIn(key, box)
+                        self.assertGreaterEqual(box[key], 0)
+
+        self._test_registry_batch_inference(
+            model=model,
+            X=input_df,
+            compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            input_spec=InputSpec(column_handling=column_handling),
+            job_spec=JobSpec(job_name=job_name, replicas=1),
+            pip_requirements=["pillow"],
+            prediction_assert_fn=check_object_detection,
+        )
+
+
+if __name__ == "__main__":
+    absltest.main()

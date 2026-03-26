@@ -136,6 +136,10 @@ def add_inferred_explain_method_signature(
         output_feature_names=suffixed_output_names,
     )
 
+    target_sig = model_meta.signatures.get(target_method)
+    if target_sig is not None and target_sig.params is not None:
+        sig = model_signature.ModelSignature(inputs=sig.inputs, outputs=sig.outputs, params=target_sig.params)
+
     model_meta.signatures[explain_method] = sig
     return model_meta
 

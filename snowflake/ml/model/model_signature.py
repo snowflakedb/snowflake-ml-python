@@ -716,6 +716,18 @@ def _convert_and_validate_local_data(
     return df
 
 
+def _params_from_dict(params_dict: dict[str, Any]) -> list[core.ParamSpec]:
+    """Convert a dict of parameter names and default values to a list of ParamSpec.
+
+    Args:
+        params_dict: A dictionary mapping parameter names to their default values.
+
+    Returns:
+        A list of ParamSpec objects with dtype and shape inferred from the dict values.
+    """
+    return [utils.infer_param(name, value) for name, value in params_dict.items()]
+
+
 @telemetry.send_api_usage_telemetry(
     project=_TELEMETRY_PROJECT,
     subproject=_MODEL_TELEMETRY_SUBPROJECT,
@@ -727,7 +739,7 @@ def infer_signature(
     output_feature_names: Optional[list[str]] = None,
     input_data_limit: Optional[int] = 100,
     output_data_limit: Optional[int] = 100,
-    params: Optional[Sequence[core.BaseParamSpec]] = None,
+    params: Optional[Union[Sequence[core.BaseParamSpec], dict[str, Any]]] = None,
 ) -> core.ModelSignature:
     """
     Infer model signature from given input and output sample data.
@@ -757,8 +769,14 @@ def infer_signature(
         output_data_limit: Limit the number of rows to be used in signature inference in the output data. Defaults to
             100. If None, all rows are used. If the number of rows in the output data is less than the limit, all rows
             are used.
-        params: Optional sequence of parameter specifications to include in the signature. Parameters define
-            optional configuration values that can be passed to model inference. Defaults to None.
+        params: Optional parameter specifications to include in the signature. Can be provided as:
+            - A dict mapping parameter names to default values, e.g.
+              ``{"temperature": 0.7, "max_tokens": 100}``. The dtype and shape of each ParamSpec
+              will be inferred from the Python value type. Supported types are determined by
+                DataType.from_python_type().
+            - A sequence of BaseParamSpec (ParamSpec or ParamGroupSpec) objects for explicit control
+              over dtype, shape, and grouping.
+            - None (default) for no parameters.
 
     Raises:
         SnowflakeMLException: ValueError: Raised when input data contains columns matching parameter names.
@@ -768,6 +786,9 @@ def infer_signature(
 
     # noqa: DAR402
     """
+    if isinstance(params, dict):
+        params = _params_from_dict(params)
+
     inputs = _infer_signature(_truncate_data(input_data, input_data_limit), role="input")
     inputs = utils.rename_features(inputs, input_feature_names)
 

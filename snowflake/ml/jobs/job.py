@@ -287,10 +287,17 @@ class MLJob(Generic[T], SerializableSessionMixin):
             Optional[str]: The Ray dashboard URL if the job is running and has a Ray dashboard endpoint,
                 None otherwise.
         """
+        pool_info = _get_compute_pool_info(self._session, self._compute_pool)
+        if pool_info["instance_family"] == "CPU_X64_XS":
+            logger.warning(
+                "Ray dashboard is not supported on XS compute pools."
+                " Please use a larger compute pool if you want to use Ray dashboard."
+            )
+            return None
         if self.status != JOB_RUNNING_STATUS:
             logger.warning("Ray dashboard is not available for non-running jobs")
             return None
-        rows = self._session.sql(f"show endpoints in service {self.id}").collect()
+        rows = query_helper.run_query(self._session, "SHOW ENDPOINTS IN SERVICE IDENTIFIER(?)", params=(self.id,))
         for row in rows:
             if row["name"] == RAY_DASHBOARD_ENDPOINT_NAME:
                 ingress_url = row["ingress_url"]

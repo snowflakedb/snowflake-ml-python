@@ -1,8 +1,9 @@
 import copy
+import io
 import json
 import os
 import tempfile
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 from unittest import mock
 
 import numpy as np
@@ -1092,6 +1093,48 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         self.assertTrue("content" in res["choices"][0]["message"])
         self.assertTrue("role" in res["choices"][0]["message"])
 
+    def test_save_pretrained_uses_safetensors(self) -> None:
+        """Verify that save_pretrained is called with safe_serialization=True."""
+        import transformers
+
+        small_config = transformers.GPT2Config(
+            n_embd=16,
+            n_head=1,
+            n_layer=1,
+            n_positions=128,
+            vocab_size=128,
+        )
+        model = transformers.GPT2LMHeadModel(small_config)
+        tokenizer = transformers.BertTokenizerFast.from_pretrained("bert-base-uncased")
+        model.resize_token_embeddings(len(tokenizer))
+        pipe = transformers.pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+        )
+
+        original_save_pretrained = pipe.save_pretrained
+
+        captured_kwargs: dict[str, Any] = {}
+
+        def tracking_save_pretrained(*args: Any, **kwargs: Any) -> Any:
+            captured_kwargs.update(kwargs)
+            return original_save_pretrained(*args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(pipe, "save_pretrained", side_effect=tracking_save_pretrained):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=pipe,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
+                )
+
+            self.assertTrue(
+                captured_kwargs.get("safe_serialization", False),
+                "save_pretrained must be called with safe_serialization=True to avoid torch.load CVE-2025-32434",
+            )
+
     def test_video_classification_temp_file_handling(self) -> None:
         """Test that video classification correctly writes bytes to temp files and cleans up."""
         # Create mock video bytes for multiple videos
@@ -1180,6 +1223,39 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         # Verify output structure
         self.assertEqual(len(inferred_sig.outputs), 1)
         self.assertEqual(inferred_sig.outputs[0].name, "labels")
+
+    def test_image_pipeline_bytes_to_pil_conversion(self) -> None:
+        """Test that image pipelines correctly convert bytes to PIL Images."""
+        from PIL import Image
+
+        # Create a small valid PNG image in memory
+        img = Image.new("RGB", (10, 10), color="red")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        mock_image_bytes = buf.getvalue()
+
+        mock_pipeline_output = [[{"generated_text": "a cat sitting on a chair"}]]
+
+        call_args_collector: list[Any] = []
+
+        def mock_pipeline_call(images: list[Any]) -> list[list[dict[str, str]]]:
+            call_args_collector.append(images)
+            for image in images:
+                assert isinstance(image, Image.Image), f"Expected PIL Image, got {type(image)}"
+            return mock_pipeline_output
+
+        # Simulate the handler logic for single-input image pipelines
+        input_col = "images"
+        x_df = pd.DataFrame({input_col: [mock_image_bytes, mock_image_bytes]})
+
+        images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in x_df[input_col].to_list()]
+        result = mock_pipeline_call(images)
+
+        self.assertEqual(len(result), 1)  # batch result
+        self.assertEqual(result[0][0]["generated_text"], "a cat sitting on a chair")
+        self.assertEqual(len(call_args_collector[0]), 2)
+        for img_arg in call_args_collector[0]:
+            self.assertIsInstance(img_arg, Image.Image)
 
 
 if __name__ == "__main__":

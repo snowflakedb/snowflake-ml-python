@@ -112,6 +112,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
+        python_version: Optional[str] = None,
     ) -> ModelVersion:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -138,6 +139,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
             options=options,
             signatures=signatures,
+            python_version=python_version,
         )
 
         return self._deploy_model_service(

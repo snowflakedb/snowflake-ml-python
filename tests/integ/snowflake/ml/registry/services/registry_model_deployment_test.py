@@ -13,6 +13,8 @@ from tests.integ.snowflake.ml.registry.services import (
 
 
 class TestRegistryModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+    """Integration tests for model deployment using the conda path (default)."""
+
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
         {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},

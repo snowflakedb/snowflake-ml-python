@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import types
 import warnings
 from io import StringIO
 from unittest.mock import MagicMock, patch
@@ -666,6 +667,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         stdout_message = "This is a test message to stdout."
         stderr_message = "This is a test message to stderr."
         stdout_message2 = "This is a second test message to stdout."
+        exception_message = "This is an exception traceback."
         unpatched_message = "This message should not be logged."
 
         self.mock_sql_client.get_experiment_id.return_value = 123
@@ -690,12 +692,27 @@ class ExperimentTrackingTest(absltest.TestCase):
                 exp.set_live_logging_status(True)
             self.assertIn("Live logging is only supported in Snowpark Container Services (SPCS)", str(ctx.exception))
 
+        # Set up mocks for showtraceback patching.
+        mock_shell = MagicMock()
+        mock_shell.InteractiveTB = MagicMock()
+        orig_ipython_showtraceback = MagicMock()
+        mock_shell._showtraceback = orig_ipython_showtraceback
+        mock_shell.InteractiveTB.stb2text = MagicMock(return_value=exception_message)
+        fake_ipython_module = types.ModuleType("IPython")
+        fake_ipython_module.get_ipython = lambda: mock_shell  # type: ignore[attr-defined]
+        saved_ipython_module = sys.modules.get("IPython")
+        sys.modules["IPython"] = fake_ipython_module
+
         with patch("snowflake.ml._internal.env_utils.get_execution_context", return_value="SPCS"):
             exp.set_live_logging_status(True)
             self.assertIsNotNone(exp._logging_context)
             assert exp._logging_context is not None  # for mypy
             self.assertEqual(exp._logging_context.stdout_logger.file.name, stdout_logfile_path)
             self.assertEqual(exp._logging_context.stderr_logger.file.name, stderr_logfile_path)
+
+            e = ValueError("showtraceback test")
+            mock_shell._showtraceback(ValueError, e, ["showtraceback test"])
+            orig_ipython_showtraceback.assert_called_once_with(ValueError, e, ["showtraceback test"])
 
             print(stdout_message)  # noqa: T201
             print(stderr_message, file=sys.stderr)  # noqa: T201
@@ -710,17 +727,25 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertIsNotNone(exp._logging_context)
             print(stdout_message2)  # noqa: T201
 
+        # Restore the original IPython module.
+        if saved_ipython_module:
+            sys.modules["IPython"] = saved_ipython_module
+        else:
+            sys.modules.pop("IPython", None)
+
         with open(stdout_logfile_path) as f:
             log_contents = f.read()
             self.assertIn(stdout_message, log_contents)
             self.assertNotIn(stderr_message, log_contents)
             self.assertIn(stdout_message2, log_contents)
+            self.assertNotIn(exception_message, log_contents)
             self.assertNotIn(unpatched_message, log_contents)
         with open(stderr_logfile_path) as f:
             log_contents = f.read()
             self.assertNotIn(stdout_message, log_contents)
             self.assertIn(stderr_message, log_contents)
             self.assertNotIn(stdout_message2, log_contents)
+            self.assertIn(exception_message, log_contents)
             self.assertNotIn(unpatched_message, log_contents)
 
 

@@ -97,6 +97,36 @@ class UtilTest(absltest.TestCase):
             explain_sig.outputs,
         )
 
+    def test_add_inferred_explain_method_signature_with_params(self) -> None:
+        predict_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="feature1"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="feature2"),
+            ],
+            outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="output1")],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+        meta = model_meta.ModelMetadata(
+            name="name", env=model_env.ModelEnv(), model_type="custom", signatures={"predict": predict_sig}
+        )
+
+        def explain_fn(data: type_hints.SupportedDataType) -> pd.DataFrame:
+            return pd.DataFrame({"a": [0.3, 0.5], "b": [0.3, 0.5]})
+
+        new_meta = handlers_utils.add_inferred_explain_method_signature(
+            model_meta=meta,
+            explain_method="explain",
+            target_method="predict",
+            background_data=pd.DataFrame({"feature1": [1.0, 2.0, 3.0], "feature2": [4.0, 5.0, 6.0]}),
+            explain_fn=explain_fn,
+        )
+
+        self.assertIn("explain", new_meta.signatures)
+        explain_sig = new_meta.signatures["explain"]
+        self.assertEqual(explain_sig.params, predict_sig.params)
+
     def test_convert_explanations_to_2D_df_multi_value_string_labels(self) -> None:
         model = mock.MagicMock()
         model.classes_ = ["2", "3", "4"]

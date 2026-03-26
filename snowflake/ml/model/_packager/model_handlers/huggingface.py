@@ -240,7 +240,8 @@ class TransformersPipelineHandler(
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
             model.save_pretrained(  # type:ignore[attr-defined]
-                save_path
+                save_path,
+                safe_serialization=True,  # creates safetensors instead of pytorch binaries or pt files
             )
             handlers_utils.save_transformers_config_with_auto_map(
                 save_path,
@@ -553,6 +554,31 @@ class TransformersPipelineHandler(
                         input_col = signature.inputs[0].name
                         images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
                         temp_res = getattr(raw_model, target_method)(images)
+                    elif isinstance(
+                        raw_model,
+                        (
+                            transformers.ImageToTextPipeline,
+                            transformers.ImageFeatureExtractionPipeline,
+                            transformers.ObjectDetectionPipeline,
+                        ),
+                    ):
+                        # Image pipelines that need bytes→PIL conversion.
+                        # HuggingFace's load_image() does not accept raw bytes.
+                        from PIL import Image
+
+                        input_col = signature.inputs[0].name
+                        if len(signature.inputs) > 1:
+                            # Multi-input: convert image bytes to PIL, pass other columns as-is
+                            def process_image_row(row: pd.Series) -> Any:
+                                pil_image = Image.open(io.BytesIO(row[input_col]))
+                                kwargs = {k: row[k] for k in row.index if k != input_col}
+                                return getattr(raw_model, target_method)(pil_image, **kwargs)
+
+                            temp_res = X.apply(process_image_row, axis=1).to_list()
+                        else:
+                            # Single-input: convert all image bytes to PIL
+                            images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
+                            temp_res = getattr(raw_model, target_method)(images)
                     elif isinstance(raw_model, transformers.AutomaticSpeechRecognitionPipeline):
                         # ASR pipeline accepts a single audio input (bytes, str, np.ndarray, or dict),
                         # not a list. Process each audio input individually.
@@ -624,6 +650,7 @@ class TransformersPipelineHandler(
                                 (
                                     transformers.FillMaskPipeline,
                                     transformers.QuestionAnsweringPipeline,
+                                    transformers.ObjectDetectionPipeline,
                                 ),
                             )
                             and X.shape[0] == 1

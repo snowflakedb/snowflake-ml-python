@@ -809,6 +809,61 @@ class ModelEnvTest(absltest.TestCase):
 
         self.assertListEqual(env.pip_requirements, ["bitsandbytes>=0.41.0"])
 
+    def test_generate_env_for_cuda_skips_conda_substitutions_on_pip_path(self) -> None:
+        """Test that conda-specific GPU substitutions are skipped on the pip-only path.
+
+        Modern pip packages (XGBoost >= 2.0, TensorFlow >= 2.x) include GPU support,
+        No need for substitutions on the pip path.
+        """
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            # XGBoost pip-only: should NOT substitute to py-xgboost-gpu
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["xgboost>=2.0.0"]
+            env.cuda_version = "12.4"
+            env.generate_env_for_cuda()
+
+            self.assertListEqual(env.pip_requirements, ["xgboost>=2.0.0"])
+            self.assertListEqual(env.conda_dependencies, [])
+
+            # TensorFlow pip-only: should NOT substitute to tensorflow-gpu
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["tensorflow>=2.10.0"]
+            env.cuda_version = "12.4"
+            env.generate_env_for_cuda()
+
+            self.assertListEqual(env.pip_requirements, ["tensorflow>=2.10.0"])
+            self.assertListEqual(env.conda_dependencies, [])
+
+            # Transformers pip-only: accelerate/scipy/bitsandbytes should still be added
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["transformers>=4.30.0", "torch>=2.0.0"]
+            env.cuda_version = "12.4"
+            env.generate_env_for_cuda()
+
+            # On pip-only path, include_if_absent routes to pip, so check pip_requirements
+            self.assertIn("accelerate>=0.22.0", env.pip_requirements)
+            self.assertIn("scipy>=1.9", env.pip_requirements)
+            self.assertIn("bitsandbytes>=0.41.0", env.pip_requirements)
+
+    def test_generate_env_for_cuda_still_substitutes_on_conda_path(self) -> None:
+        """Test that conda-specific GPU substitutions still work on the conda path."""
+        env = model_env.ModelEnv()  # prefer_pip=False by default
+        env.conda_dependencies = ["xgboost>=1.0.0"]
+        env.cuda_version = "11.7"
+        env.generate_env_for_cuda()
+
+        # Should substitute to py-xgboost-gpu in conda_dependencies
+        self.assertListEqual(env.conda_dependencies, ["py-xgboost-gpu>=1.0.0"])
+
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", False):
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["xgboost>=1.0.0"]
+            env.cuda_version = "11.7"
+            env.generate_env_for_cuda()
+
+            self.assertListEqual(env.pip_requirements, ["xgboost>=1.0.0"])
+            self.assertListEqual(env.conda_dependencies, [])
+
     def test_relax_version(self) -> None:
         env = model_env.ModelEnv()
         env.conda_dependencies = [

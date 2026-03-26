@@ -18,7 +18,7 @@
 #   -t: specify the target for local_unit and local_all mode
 #   -c: specify the path to the coverage report dat file.
 #   -e: specify the environment, used to determine.
-#   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.10)
+#   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.11)
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
 #   --with-spcs-image: use spcs image for testing.
 #   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")

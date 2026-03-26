@@ -2772,7 +2772,7 @@ class FeatureStore:
 
         # Build SELECT and WHERE clauses using helper methods
         select_clause = self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
-        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+        where_clause, _ = self._build_where_clause_for_keys(feature_view, keys)
 
         query = f"SELECT {select_clause} FROM {table_name}{where_clause}"
         return self._session.sql(query)
@@ -2804,7 +2804,7 @@ class FeatureStore:
         quoted_keys_str = ", ".join(quoted_keys)
 
         # Build WHERE clause for key filtering (if any)
-        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+        where_clause, _ = self._build_where_clause_for_keys(feature_view, keys)
 
         # Step 1: Create spine CTE with unique entities + CURRENT_TIMESTAMP
         spine_cte = f"""
@@ -2850,10 +2850,27 @@ class FeatureStore:
         return self._session.sql(full_query)
 
     def _read_from_online_store(
-        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+        self,
+        feature_view: FeatureView,
+        keys: Optional[list[list[str]]],
+        feature_names: Optional[list[str]],
     ) -> DataFrame:
-        """Read feature values from the online store with optional key filtering."""
-        # Check if online store is enabled
+        """Read feature values from the online store with optional key filtering.
+
+        Uses bind variables for single-key lookups and literal interpolation
+        for batch lookups.
+
+        Args:
+            feature_view: The registered feature view to read from.
+            keys: Optional list of key value lists to filter by.
+            feature_names: Optional list of feature names to return.
+
+        Returns:
+            Snowpark DataFrame containing the feature view data.
+
+        Raises:
+            SnowflakeMLException: If online store is not enabled.
+        """
         if not feature_view.online:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -2864,11 +2881,16 @@ class FeatureStore:
 
         fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
 
-        # Build SELECT and WHERE clauses using helper methods
         select_clause = self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
-        where_clause = self._build_where_clause_for_keys(feature_view, keys)
+        # NOTE: We use snowflake sql query binds for single-point lookups to ensure the best performance.
+        # We don't use binds for multi-point lookups because we don't have any evidence that it improves
+        # performance, but we may need to revisit this in the future.
+        use_binds = keys is not None and len(keys) == 1
+        where_clause, params = self._build_where_clause_for_keys(feature_view, keys, use_binds=use_binds)
 
         query = f"SELECT {select_clause} FROM {fully_qualified_online_name}{where_clause}"
+        if params:
+            return self._session.sql(query, params=params)
         return self._session.sql(query)
 
     @dispatch_decorator()
@@ -5050,28 +5072,31 @@ FROM SPINE{' '.join(join_clauses)}
             # Select all columns
             return "*"
 
-    def _build_where_clause_for_keys(self, feature_view: FeatureView, keys: Optional[list[list[str]]]) -> str:
+    def _build_where_clause_for_keys(
+        self, feature_view: FeatureView, keys: Optional[list[list[Any]]], use_binds: bool = False
+    ) -> tuple[str, list[Any]]:
         """Build WHERE clause for key filtering.
 
         Args:
-            feature_view: The feature view to build the clause for
-            keys: Optional list of key value lists to filter by
+            feature_view: The feature view to build the clause for.
+            keys: Optional list of key value lists to filter by.
+            use_binds: If True, use ``?`` placeholders and return bind params.
+                If False, interpolate values as string literals.
 
         Returns:
-            WHERE clause string (empty if no keys provided)
+            Tuple of (WHERE clause string, bind params list). Params is empty
+            when use_binds is False or no keys are provided.
 
         Raises:
-            SnowflakeMLException: If key structure is invalid
+            SnowflakeMLException: If key structure is invalid.
         """
         if not keys:
-            return ""
+            return "", []
 
-        # Get join keys from entities for key filtering
         all_join_keys = []
         for entity in feature_view.entities:
             all_join_keys.extend([key.resolved() for key in entity.join_keys])
 
-        # Validate key structure
         for key_values in keys:
             if len(key_values) != len(all_join_keys):
                 raise snowml_exceptions.SnowflakeMLException(
@@ -5082,15 +5107,20 @@ FROM SPINE{' '.join(join_clauses)}
                     ),
                 )
 
+        params: list[Any] = []
         where_conditions = []
         for key_values in keys:
             key_conditions = []
             for join_key, value in zip(all_join_keys, key_values):
-                safe_value = str(value).replace("'", "''")
-                key_conditions.append(f"\"{join_key}\" = '{safe_value}'")
+                if use_binds:
+                    key_conditions.append(f'"{join_key}" = ?')
+                    params.append(value)
+                else:
+                    safe_value = str(value).replace("'", "''")
+                    key_conditions.append(f"\"{join_key}\" = '{safe_value}'")
             where_conditions.append(f"({' AND '.join(key_conditions)})")
 
-        return f" WHERE {' OR '.join(where_conditions)}"
+        return f" WHERE {' OR '.join(where_conditions)}", params
 
     def _get_store_type(self, store_type: Union[fv_mod.StoreType, str]) -> fv_mod.StoreType:
         """Return a StoreType enum from a Union[StoreType, str].

@@ -691,6 +691,74 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         self.registry.delete_model(model_name=name)
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
 
+    def test_skl_model_with_params_forwarding(self) -> None:
+        """Params are forwarded to predict and explain for a sklearn estimator."""
+
+        class ScaledRegressor(linear_model.LinearRegression):
+            def predict(self, X, *, scale: float = 1.0):  # type: ignore[override]
+                return super().predict(X) * scale
+
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        iris_X_df = pd.DataFrame(iris_X, columns=["c1", "c2", "c3", "c4"])
+        est = ScaledRegressor()
+        est.fit(iris_X_df, iris_y)
+
+        y_pred = est.predict(iris_X_df)
+        sig = model_signature.ModelSignature(
+            inputs=model_signature.infer_signature(iris_X_df, y_pred).inputs,
+            outputs=model_signature.infer_signature(iris_X_df, y_pred).outputs,
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        name = "model_test_skl_params_forwarding"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=est,
+            model_name=name,
+            version_name=version,
+            sample_input_data=iris_X_df,
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"enable_explainability": True, "embed_local_ml_library": True},
+        )
+
+        # predict: default params
+        res_default = mv.run(iris_X_df[:10], function_name="predict")
+        expected_default = pd.DataFrame(est.predict(iris_X_df[:10]), columns=res_default.columns)
+        pd.testing.assert_frame_equal(res_default, expected_default, check_dtype=False, rtol=1e-4)
+
+        # predict: scale=2.0 forwarded to the estimator
+        res_scaled = mv.run(iris_X_df[:10], function_name="predict", params={"scale": 2.0})
+        expected_scaled = pd.DataFrame(est.predict(iris_X_df[:10], scale=2.0), columns=res_scaled.columns)
+        pd.testing.assert_frame_equal(res_scaled, expected_scaled, check_dtype=False, rtol=1e-4)
+
+        # explain: default params
+        res_explain_default = mv.run(iris_X_df[:10], function_name="explain")
+        self.assertIsInstance(res_explain_default, pd.DataFrame)
+        self.assertEqual(len(res_explain_default), 10)
+
+        # explain: scale=2.0 forwarded to the SHAP predictor
+        res_explain_scaled = mv.run(iris_X_df[:10], function_name="explain", params={"scale": 2.0})
+        self.assertIsInstance(res_explain_scaled, pd.DataFrame)
+        self.assertEqual(len(res_explain_scaled), 10)
+
+        default_vals = res_explain_default.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+        scaled_vals = res_explain_scaled.apply(pd.to_numeric, errors="coerce").dropna(axis=1, how="all")
+        self.assertFalse(
+            np.allclose(default_vals.to_numpy(dtype=np.float64), scaled_vals.to_numpy(dtype=np.float64)),
+            "Explanations with scale=1.0 and scale=2.0 should differ",
+        )
+
+        self.registry.delete_model(model_name=name)
+        self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
+
 
 if __name__ == "__main__":
     absltest.main()
