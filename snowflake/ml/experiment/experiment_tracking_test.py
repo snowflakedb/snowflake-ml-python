@@ -668,6 +668,7 @@ class ExperimentTrackingTest(absltest.TestCase):
         stderr_message = "This is a test message to stderr."
         stdout_message2 = "This is a second test message to stdout."
         exception_message = "This is an exception traceback."
+        exception_message2 = "This is an exception that ends the run."
         unpatched_message = "This message should not be logged."
 
         self.mock_sql_client.get_experiment_id.return_value = 123
@@ -697,7 +698,9 @@ class ExperimentTrackingTest(absltest.TestCase):
         mock_shell.InteractiveTB = MagicMock()
         orig_ipython_showtraceback = MagicMock()
         mock_shell._showtraceback = orig_ipython_showtraceback
-        mock_shell.InteractiveTB.stb2text = MagicMock(return_value=exception_message)
+        # Simulate real IPython: structured_traceback builds `stb`, stb2text turns it into log text.
+        mock_shell.InteractiveTB.structured_traceback = MagicMock(side_effect=lambda et, ev, tb: [str(ev)])
+        mock_shell.InteractiveTB.stb2text = MagicMock(side_effect=lambda stb: "\n".join(stb))
         fake_ipython_module = types.ModuleType("IPython")
         fake_ipython_module.get_ipython = lambda: mock_shell  # type: ignore[attr-defined]
         saved_ipython_module = sys.modules.get("IPython")
@@ -710,9 +713,12 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertEqual(exp._logging_context.stdout_logger.file.name, stdout_logfile_path)
             self.assertEqual(exp._logging_context.stderr_logger.file.name, stderr_logfile_path)
 
-            e = ValueError("showtraceback test")
-            mock_shell._showtraceback(ValueError, e, ["showtraceback test"])
-            orig_ipython_showtraceback.assert_called_once_with(ValueError, e, ["showtraceback test"])
+            e = ValueError(exception_message)
+            with self.assertRaises(ValueError):
+                # Simulation: when an exception is raised in a notebook, _showtraceback is called directly.
+                mock_shell._showtraceback(ValueError, e, [exception_message])
+                raise e
+            orig_ipython_showtraceback.assert_called_with(ValueError, e, [exception_message])
 
             print(stdout_message)  # noqa: T201
             print(stderr_message, file=sys.stderr)  # noqa: T201
@@ -727,6 +733,14 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertIsNotNone(exp._logging_context)
             print(stdout_message2)  # noqa: T201
 
+            exp.end_run()
+
+            # Test that uncaught exceptions are still logged even if the run ends before _showtraceback is called
+            e = ValueError(exception_message2)
+            with self.assertRaises(ValueError):
+                with exp.start_run():
+                    raise e
+
         # Restore the original IPython module.
         if saved_ipython_module:
             sys.modules["IPython"] = saved_ipython_module
@@ -739,6 +753,7 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertNotIn(stderr_message, log_contents)
             self.assertIn(stdout_message2, log_contents)
             self.assertNotIn(exception_message, log_contents)
+            self.assertNotIn(exception_message2, log_contents)
             self.assertNotIn(unpatched_message, log_contents)
         with open(stderr_logfile_path) as f:
             log_contents = f.read()
@@ -746,6 +761,7 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertIn(stderr_message, log_contents)
             self.assertNotIn(stdout_message2, log_contents)
             self.assertIn(exception_message, log_contents)
+            self.assertIn(exception_message2, log_contents)
             self.assertNotIn(unpatched_message, log_contents)
 
 

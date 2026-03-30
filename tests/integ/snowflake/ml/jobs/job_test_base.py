@@ -35,6 +35,7 @@ class JobTestBase(parameterized.TestCase):
             cls.session = session._get_active_session()
         except sp_exceptions.SnowparkSessionException:
             cls.session = test_env_utils.get_available_session()
+        cls.session.use_database(test_constants._TEST_DB)
         cls.dbm = db_manager.DBManager(cls.session)
         cls.dbm.cleanup_schemas(prefix=test_constants._TEST_SCHEMA, expire_days=1)
         cls.db = cls.session.get_current_database()

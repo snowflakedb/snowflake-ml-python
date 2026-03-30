@@ -360,7 +360,9 @@ class ModelMetadata:
             {
                 "creation_timestamp": self.creation_timestamp,
                 "env": self.env.save_as_dict(
-                    pathlib.Path(model_dir_path), default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL
+                    pathlib.Path(model_dir_path),
+                    default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL,
+                    is_gpu=bool(self.env.cuda_version),
                 ),
                 "runtimes": {
                     runtime_name: runtime.save(pathlib.Path(model_dir_path), default_channel_override="conda-forge")

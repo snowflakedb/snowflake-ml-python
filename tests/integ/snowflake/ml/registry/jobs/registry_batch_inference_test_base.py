@@ -90,9 +90,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             "SPCS_MODEL_BASE_GPU_BATCH_INFERENCE_CONTAINER_URL": self.BASE_BATCH_GPU_IMAGE_PATH,
             "SPCS_MODEL_RAY_ORCHESTRATOR_CONTAINER_URL": self.RAY_ORCHESTRATOR_PATH,
             "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL": self.PROXY_IMAGE_PATH,
-            "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS": (
-                f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}' if self.VLLM_IMAGE_PATH is not None else None
-            ),
+            "SPCS_MODEL_INFERENCE_ENGINE_VLLM_URL": self.VLLM_IMAGE_PATH,
         }
         return {k: v for k, v in overrides.items() if v is not None}
 
@@ -132,6 +130,8 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         assert_container_count: Optional[int] = None,
         target_platforms: Optional[list[str]] = None,
         skip_row_count_check: bool = False,
+        model_name: Optional[str] = None,
+        version_name: Optional[str] = None,
     ) -> job.MLJob[Any]:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
@@ -140,8 +140,8 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             conda_dependencies.extend(additional_dependencies)
 
         # Get the name of the caller as the model name
-        name = f"model_{inspect.stack()[1].function}"
-        version = f"ver_{self._run_id}"
+        name = model_name or f"model_{inspect.stack()[1].function}"
+        version = version_name or f"ver_{self._run_id}"
         options = options or {}
         options["embed_local_ml_library"] = True
         mv = self.registry.log_model(

@@ -38,10 +38,12 @@ class Run:
         self,
         exc_type: Optional[type[BaseException]],
         exc_value: Optional[BaseException],
-        traceback: Optional[types.TracebackType],
+        tb: Optional[types.TracebackType],
     ) -> None:
-        self._patcher.__exit__(exc_type, exc_value, traceback)
+        self._patcher.__exit__(exc_type, exc_value, tb)
         if self._experiment_tracking._run is self:
+            if exc_type is not None:
+                self._experiment_tracking._try_log_exception(exc_type, exc_value, tb)
             self._experiment_tracking.end_run()
 
     def _get_experiment_info(self) -> experiment_info.ExperimentInfo:

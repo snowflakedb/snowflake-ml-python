@@ -124,33 +124,47 @@ def sync_target(
         name,
         root_path,
         targets,
-        src_requirement_file):
+        src_requirement_file,
+        runtime_cmds = []):
+    """Generate a sync script that copies build outputs to the source tree.
+
+    Args:
+        runtime_cmds: Shell commands to run at 'bazel run' time (not cached).
+            Each entry is a dict with "cmd" (shell command string) and
+            "tools" (list of Bazel labels needed as data deps).
+            The cmd can reference tools via bazel-bin/ paths since the
+            script runs with cwd=$BUILD_WORKSPACE_DIRECTORY.
+    """
+    runtime_tools = []
+    for entry in runtime_cmds:
+        runtime_tools.extend(entry.get("tools", []))
+
     write_file(
         name = "gen_{name}".format(name = name),
         out = "{name}.sh".format(name = name),
         content = [
-            # This depends on bash, would need tweaks for Windows
             "#!/usr/bin/env sh",
-            # Bazel gives us a way to access the source folder!
             "cd $BUILD_WORKSPACE_DIRECTORY",
         ] + [
-            # Paths are now relative to the workspace.
-            # We can copy files from bazel-bin to the sources
             "cp -fv bazel-bin/{root_path}/{generated} {target}".format(
                 root_path = root_path,
                 generated = value["generated"],
-                # Convert label to path
                 target = value["target"].lstrip("//").lstrip(":").replace(":", "/"),
             )
             for value in targets
+        ] + [
+            entry["cmd"]
+            for entry in runtime_cmds
         ],
     )
 
-    # This is what you can `bazel run` and it can write to the source folder
     native.sh_binary(
         name = name,
         srcs = ["{name}.sh".format(name = name)],
-        data = [":{generated}".format(generated = value["generated"]) for value in targets],
+        data = [
+            ":{generated}".format(generated = value["generated"])
+            for value in targets
+        ] + runtime_tools,
     )
 
 def sync_bazelrc_file(

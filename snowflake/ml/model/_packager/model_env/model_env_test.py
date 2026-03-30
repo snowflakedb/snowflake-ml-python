@@ -864,6 +864,53 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.pip_requirements, ["xgboost>=1.0.0"])
             self.assertListEqual(env.conda_dependencies, [])
 
+    def test_save_as_dict_gpu_pytorch_has_extra_index_url(self) -> None:
+        """Test that packaged GPU PyTorch model has correct extra index URL in requirements.txt."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
+            env.cuda_version = "12.4"
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                base_dir = pathlib.Path(tmpdir)
+                env.save_as_dict(base_dir, is_gpu=True)
+
+                # Read the generated requirements.txt
+                req_path = base_dir / env.pip_requirements_rel_path
+                with open(req_path) as f:
+                    content = f.read()
+
+                lines = content.strip().split("\n")
+                # Check extra index URL is at the top
+                self.assertEqual(lines[0], "--extra-index-url https://download.pytorch.org/whl/cu124")
+                # Check torch is pinned to CUDA variant
+                self.assertIn("torch==2.5.0+cu124", content)
+                # Check numpy is unchanged
+                self.assertIn("numpy>=1.0", content)
+
+    def test_save_as_dict_cpu_pytorch_no_extra_index_url(self) -> None:
+        """Test that packaged CPU PyTorch model does NOT have extra index URL."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            env = model_env.ModelEnv(prefer_pip=True)
+            env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
+            env.cuda_version = "12.4"  # Has cuda_version but is_gpu=False
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                base_dir = pathlib.Path(tmpdir)
+                env.save_as_dict(base_dir, is_gpu=False)  # CPU packaging
+
+                # Read the generated requirements.txt
+                req_path = base_dir / env.pip_requirements_rel_path
+                with open(req_path) as f:
+                    content = f.read()
+
+                # Should NOT have extra index URL for CPU
+                self.assertNotIn("--extra-index-url", content)
+                # Should NOT have +cu suffix
+                self.assertNotIn("+cu", content)
+                # Should have original torch version
+                self.assertIn("torch==2.5.0", content)
+
     def test_relax_version(self) -> None:
         env = model_env.ModelEnv()
         env.conda_dependencies = [

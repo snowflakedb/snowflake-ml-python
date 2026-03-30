@@ -6,6 +6,7 @@ filegroup(
     name = "function_fixtures",
     srcs = [
         "fixtures/function_1.py",
+        "fixtures/function_1_init_once.py",
         "fixtures/function_2.py",
         "fixtures/function_3.py",
         "fixtures/function_4.py",
@@ -31,6 +32,7 @@ py_library(
     srcs = ["function_generator.py"],
     data = [
         "infer_function.py_template",
+        "infer_function_init_once.py_template",
         "infer_partitioned.py_template",
         "infer_table_function.py_template",
     ],

@@ -8,7 +8,10 @@ py_test(
         "test_artifact.json",
         "test_artifact_dir",
     ],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
@@ -21,7 +24,10 @@ py_test(
     name = "experiment_lineage_integ_test",
     timeout = "long",
     srcs = ["experiment_lineage_integ_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
@@ -63,7 +69,10 @@ py_test(
     optional_dependencies = [
         "lightgbm",
     ],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         ":autolog_integ_test_base",
         "//snowflake/ml/experiment/callback:lightgbm",
@@ -74,7 +83,10 @@ py_test(
     name = "autolog_xgboost_integ_test",
     timeout = "long",
     srcs = ["autolog_xgboost_integ_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         ":autolog_integ_test_base",
         "//snowflake/ml/experiment/callback:xgboost",

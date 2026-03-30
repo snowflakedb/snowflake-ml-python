@@ -94,6 +94,26 @@ class FunctionGeneratorTest(absltest.TestCase):
                     is_partitioned_function=True,
                 )
 
+    def test_function_generator_init_once(self) -> None:
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fg.generate(
+                pathlib.Path(tmpdir, "handler.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                use_udf_init_once=True,
+            )
+            with open(pathlib.Path(tmpdir, "handler.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_1_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
 
 if __name__ == "__main__":
     absltest.main()

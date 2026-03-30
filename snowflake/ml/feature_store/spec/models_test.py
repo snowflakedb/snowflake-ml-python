@@ -21,11 +21,16 @@ from snowflake.ml.feature_store.spec.models import (
     _columns_from_struct_type,
     _make_fs_column,
     _sanitize_json_for_dollar_quoting,
+    validate_schema_types,
 )
 from snowflake.snowpark.types import (
     ArrayType,
+    BooleanType,
+    DateType,
     DecimalType,
+    DoubleType,
     FloatType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -48,11 +53,16 @@ class MakeFSColumnTest(parameterized.TestCase):
         self.assertEqual(col.type, "StringType")
         self.assertEqual(col.length, 10)
 
-    def test_float_type(self) -> None:
-        col = _make_fs_column("amount", FloatType())
-        self.assertEqual(col.type, "FloatType")
+    def test_double_type(self) -> None:
+        col = _make_fs_column("amount", DoubleType())
+        self.assertEqual(col.type, "DoubleType")
         self.assertIsNone(col.precision)
         self.assertIsNone(col.scale)
+
+    def test_long_type(self) -> None:
+        col = _make_fs_column("user_id", LongType())
+        self.assertEqual(col.type, "LongType")
+        self.assertIsNone(col.precision)
 
     def test_decimal_type(self) -> None:
         col = _make_fs_column("price", DecimalType(10, 2))
@@ -81,17 +91,17 @@ class ColumnsFromStructTypeTest(absltest.TestCase):
     def test_basic_schema(self) -> None:
         schema = StructType(
             [
-                StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("USER_ID", LongType()),
+                StructField("AMOUNT", DoubleType()),
                 StructField("EVENT_TIME", TimestampType()),
             ]
         )
         cols = _columns_from_struct_type(schema)
         self.assertEqual(len(cols), 3)
         self.assertEqual(cols[0].name, "USER_ID")
-        self.assertEqual(cols[0].type, "StringType")
+        self.assertEqual(cols[0].type, "LongType")
         self.assertEqual(cols[1].name, "AMOUNT")
-        self.assertEqual(cols[1].type, "FloatType")
+        self.assertEqual(cols[1].type, "DoubleType")
         self.assertEqual(cols[2].name, "EVENT_TIME")
         self.assertEqual(cols[2].type, "TimestampType")
 
@@ -111,7 +121,7 @@ class SourceModelTest(absltest.TestCase):
             source_version="v1",
             selected_features=["SCORE"],
         )
-        d = src.dict(exclude_none=True)  # type: ignore[deprecation]
+        d = src.model_dump(exclude_none=True)
         self.assertEqual(d["source_version"], "v1")
         self.assertEqual(d["selected_features"], ["SCORE"])
 
@@ -126,7 +136,7 @@ class FeatureModelTest(absltest.TestCase):
             function="SUM",
             window_sec=86400,
         )
-        d = feat.dict(exclude_none=True)  # type: ignore[deprecation]
+        d = feat.model_dump(exclude_none=True)
         self.assertEqual(d["function"], "SUM")
         self.assertEqual(d["window_sec"], 86400)
 
@@ -140,22 +150,22 @@ class OfflineTableConfigTest(absltest.TestCase):
             store_type=StoreType.SNOWFLAKE,
             table_type=TableType.UDF_TRANSFORMED,
             database="DB",
-            schema_="SCH",
+            schema="SCH",
             table="TBL",
             columns=[FSColumn(name="X", type="FloatType")],
         )
-        d = config.dict(exclude_none=True, by_alias=True)  # type: ignore[deprecation]
+        d = config.model_dump(exclude_none=True, by_alias=True)
         self.assertIn("schema", d)
         self.assertNotIn("schema_", d)
         self.assertEqual(d["schema"], "SCH")
 
     def test_populate_by_name(self) -> None:
-        """Can construct using Pythonic name schema_."""
+        """Can construct using alias 'schema' and access via field name schema_."""
         config = OfflineTableConfig(
             store_type=StoreType.SNOWFLAKE,
             table_type=TableType.TILED,
             database="DB",
-            schema_="SCH",
+            schema="SCH",
             table="TBL",
             columns=[],
         )
@@ -168,14 +178,14 @@ class MetadataTest(absltest.TestCase):
     def test_schema_alias(self) -> None:
         meta = Metadata(
             database="DB",
-            schema_="SCH",
+            schema="SCH",
             name="FV",
             version="v1",
             spec_format_version="1",
             internal_data_version="1",
             client_version="1.0.0",
         )
-        d = meta.dict(by_alias=True)  # type: ignore[deprecation]
+        d = meta.model_dump(by_alias=True)
         self.assertIn("schema", d)
         self.assertNotIn("schema_", d)
 
@@ -188,7 +198,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
             kind=FeatureViewKind.StreamingFeatureView,
             metadata=Metadata(
                 database="DB",
-                schema_="SCH",
+                schema="SCH",
                 name="FV",
                 version="v1",
                 spec_format_version="1",
@@ -200,7 +210,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
                     store_type=StoreType.SNOWFLAKE,
                     table_type=TableType.UDF_TRANSFORMED,
                     database="DB",
-                    schema_="SCH",
+                    schema="SCH",
                     table="TBL",
                     columns=[FSColumn(name="X", type="FloatType")],
                 )
@@ -211,7 +221,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
                 features=[],
             ),
         )
-        d = root.dict(exclude_none=True, by_alias=True)  # type: ignore[deprecation]
+        d = root.model_dump(exclude_none=True, by_alias=True)
         self.assertEqual(d["kind"], FeatureViewKind.StreamingFeatureView)
         self.assertEqual(d["metadata"]["schema"], "SCH")
         self.assertNotIn("online_store_type", d)
@@ -222,7 +232,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
             kind=FeatureViewKind.BatchFeatureView,
             metadata=Metadata(
                 database="DB",
-                schema_="SCH",
+                schema="SCH",
                 name="FV",
                 version="v1",
                 spec_format_version="1",
@@ -237,16 +247,16 @@ class FeatureViewSpecRootTest(absltest.TestCase):
             ),
             online_store_type=StoreType.POSTGRES,
         )
-        d = root.dict(exclude_none=True, by_alias=True)  # type: ignore[deprecation]
+        d = root.model_dump(exclude_none=True, by_alias=True)
         self.assertEqual(d["online_store_type"], StoreType.POSTGRES)
 
     def test_to_dict(self) -> None:
-        """to_dict() returns the same result as manual .dict() with correct flags."""
+        """to_dict() returns the same result as manual .model_dump() with correct flags."""
         root = FeatureViewSpec(
             kind=FeatureViewKind.BatchFeatureView,
             metadata=Metadata(
                 database="DB",
-                schema_="SCH",
+                schema="SCH",
                 name="FV",
                 version="v1",
                 spec_format_version="1",
@@ -279,7 +289,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
             kind=FeatureViewKind.BatchFeatureView,
             metadata=Metadata(
                 database="DB",
-                schema_="SCH",
+                schema="SCH",
                 name="FV",
                 version="v1",
                 spec_format_version="1",
@@ -307,7 +317,7 @@ class FeatureViewSpecRootTest(absltest.TestCase):
             kind=FeatureViewKind.BatchFeatureView,
             metadata=Metadata(
                 database="DB",
-                schema_="SCH",
+                schema="SCH",
                 name="FV",
                 version="v1",
                 spec_format_version="1",
@@ -332,6 +342,84 @@ class FeatureViewSpecRootTest(absltest.TestCase):
         # Values correct
         self.assertEqual(parsed["kind"], "BatchFeatureView")
         self.assertEqual(parsed["online_store_type"], "postgres")
+
+
+# ============================================================================
+# Schema Validation Tests
+# ============================================================================
+
+
+class ValidateSchemaTypesTest(parameterized.TestCase):
+    """Tests for validate_schema_types utility."""
+
+    def test_valid_schema_passes(self) -> None:
+        """Schema with all supported types passes without error."""
+        schema = StructType(
+            [
+                StructField("NAME", StringType()),
+                StructField("ID", LongType()),
+                StructField("SCORE", DoubleType()),
+                StructField("PRICE", DecimalType(10, 2)),
+                StructField("ACTIVE", BooleanType()),
+                StructField("TS", TimestampType()),
+            ]
+        )
+        # Should not raise
+        validate_schema_types(schema)
+
+    def test_empty_schema_passes(self) -> None:
+        """Empty schema passes without error."""
+        validate_schema_types(StructType([]))
+
+    def test_unsupported_type_rejected(self) -> None:
+        """Schema with unsupported type raises ValueError."""
+        schema = StructType(
+            [
+                StructField("NAME", StringType()),
+                StructField("TAGS", ArrayType(StringType())),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported column types.*TAGS.*ArrayType"):
+            validate_schema_types(schema)
+
+    def test_multiple_unsupported_types_all_reported(self) -> None:
+        """All unsupported columns are listed in the error, not just the first."""
+        schema = StructType(
+            [
+                StructField("NAME", StringType()),
+                StructField("TAGS", ArrayType(StringType())),
+                StructField("BIRTHDAY", DateType()),
+            ]
+        )
+        with self.assertRaises(ValueError) as ctx:
+            validate_schema_types(schema)
+        msg = str(ctx.exception)
+        self.assertIn("TAGS", msg)
+        self.assertIn("BIRTHDAY", msg)
+        self.assertIn("ArrayType", msg)
+        self.assertIn("DateType", msg)
+
+    def test_date_type_rejected(self) -> None:
+        """DateType is not supported."""
+        schema = StructType([StructField("D", DateType())])
+        with self.assertRaisesRegex(ValueError, "DateType"):
+            validate_schema_types(schema)
+
+    def test_float_type_rejected(self) -> None:
+        """FloatType (Snowpark) is not supported — use DoubleType instead."""
+        schema = StructType([StructField("F", FloatType())])
+        with self.assertRaisesRegex(ValueError, "FloatType"):
+            validate_schema_types(schema)
+
+    def test_error_message_includes_supported_types(self) -> None:
+        """Error message lists the supported types for user guidance."""
+        schema = StructType([StructField("X", ArrayType(StringType()))])
+        with self.assertRaises(ValueError) as ctx:
+            validate_schema_types(schema)
+        msg = str(ctx.exception)
+        self.assertIn("Supported types:", msg)
+        self.assertIn("LongType", msg)
+        self.assertIn("DoubleType", msg)
 
 
 # ============================================================================

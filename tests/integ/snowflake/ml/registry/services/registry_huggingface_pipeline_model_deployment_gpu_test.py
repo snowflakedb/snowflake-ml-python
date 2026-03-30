@@ -9,6 +9,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -42,7 +43,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     def _test_with_model_logging(
         self,
         model_name: str,
-        inference_engine: str = "Default",
+        inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
         requires_token: bool = False,
         task: str = "text-generation",
         base_inference_engine_options: Optional[dict[str, Any]] = None,
@@ -55,7 +56,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
         Args:
             model_name: HuggingFace model identifier
-            inference_engine: Inference engine type - either "Default" (Python) or "vLLM" (default: "Default")
+            inference_engine: InferenceEngine enum (default: PYTHON_GENERIC)
             requires_token: Whether the model is gated and requires HF token
         """
         # Skip test if token is required but not available
@@ -210,7 +211,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         self,
         pip_requirements: Optional[list[str]],
         use_default_repo: bool,
-        inference_engine: str = "Default",
+        inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
     ) -> None:
         import transformers
 
@@ -276,11 +277,11 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         )
 
     @parameterized.parameters(  # type: ignore[misc]
-        "Default",
-        "vLLM",
+        InferenceEngine.PYTHON_GENERIC,
+        InferenceEngine.VLLM,
     )
     @pytest.mark.conda_incompatible
-    def test_text_generation_with_model_logging_qwen(self, inference_engine: str) -> None:
+    def test_text_generation_with_model_logging_qwen(self, inference_engine: InferenceEngine) -> None:
         """Test text generation with Qwen model."""
         self._test_with_model_logging(
             model_name="Qwen/Qwen3-1.7B",
@@ -293,7 +294,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         """Test text generation with Gemma model (gated - requires HF token) using vLLM."""
         self._test_with_model_logging(
             model_name="google/gemma-3-1b-it",
-            inference_engine="vLLM",
+            inference_engine=InferenceEngine.VLLM,
             requires_token=True,  # This is a gated model
         )
 
@@ -352,7 +353,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         self._test_with_model_logging(
             model_name="Qwen/Qwen3-VL-2B-Instruct",
             task="image-text-to-text",
-            inference_engine="vLLM",
+            inference_engine=InferenceEngine.VLLM,
             base_inference_engine_options={
                 "engine_args_override": [
                     "--gpu-memory-utilization=0.8",
@@ -419,7 +420,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             gpu_requests="1",
-            inference_engine_options=self._get_inference_engine_options_for_inference_engine("vLLM"),
+            inference_engine_options=self._get_inference_engine_options_for_inference_engine(InferenceEngine.VLLM),
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )
 

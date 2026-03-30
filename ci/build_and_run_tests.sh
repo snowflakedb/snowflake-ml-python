@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run] [--with-snowpark] [--with-spcs-image] [--run-grype] [--report <report_path>] [--feature-areas <areas>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|short_regression] [--with-snowpark] [--with-spcs-image] [--run-grype] [--grype-scan-only] [--report <report_path>] [--feature-areas <areas>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -10,12 +10,14 @@
 # b: specify path to bazel
 # env: Set the environment, choose from pip and conda
 # mode: Set the tests set to be run.
-#   merge_gate: run affected tests only.
+#   merge_gate: run affected tests tagged with "short_regress".
 #   continuous_run (default): run all tests. (For nightly run. Alias: release)
 #   quarantined: run all quarantined tests.
+#   short_regression: run tests tagged with "short_regress".
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
 # with-spcs-image: Build and test with spcs-image in spcs-image directory in the workspace.
 # run-grype: Run grype security scanning on SPCS images. Only valid with --with-spcs-image.
+# grype-scan-only: Only build images and run grype scan, skip package build and tests. Requires --with-spcs-image and --run-grype.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 # feature-areas: Comma-separated list of feature areas to test (e.g., "jobs,core").
@@ -34,7 +36,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined] [--with-snowpark] [--with-spcs-image] [--run-grype] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined|short_regression] [--with-snowpark] [--with-spcs-image] [--run-grype] [--grype-scan-only] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
     exit "${exit_code}"
 }
 
@@ -44,6 +46,7 @@ ENV="pip"
 WITH_SNOWPARK=false
 WITH_SPCS_IMAGE=false
 RUN_GRYPE=false
+GRYPE_SCAN_ONLY=false
 MODE="continuous_run"
 PYTHON_VERSION=3.11
 PYTHON_ENABLE_SCRIPT="bin/activate"
@@ -73,7 +76,7 @@ while (($#)); do
         ;;
     --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "release" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "release" || $1 = "short_regression" ]]; then
             MODE=$1
             if [[ $MODE = "release" ]]; then
                 MODE="continuous_run"
@@ -100,6 +103,9 @@ while (($#)); do
     --run-grype)
         RUN_GRYPE=true
         ;;
+    --grype-scan-only)
+        GRYPE_SCAN_ONLY=true
+        ;;
     --feature-areas)
         shift
         FEATURE_AREAS=$1
@@ -118,6 +124,26 @@ done
 if [ "${RUN_GRYPE}" = true ] && [ "${WITH_SPCS_IMAGE}" = false ]; then
     echo "Error: --run-grype flag requires --with-spcs-image to be set"
     help 1
+fi
+
+if [ "${GRYPE_SCAN_ONLY}" = true ]; then
+    if [ "${WITH_SPCS_IMAGE}" = false ] || [ "${RUN_GRYPE}" = false ]; then
+        echo "Error: --grype-scan-only requires both --with-spcs-image and --run-grype"
+        help 1
+    fi
+fi
+
+# Grype-only mode: build images and run grype scan, skip package build and tests
+if [ "${GRYPE_SCAN_ONLY}" = true ]; then
+    echo "Running in grype-scan-only mode: building images and running grype scan..."
+    cd "${WORKSPACE}"
+    pushd ${SNOWML_DIR}
+    export RUN_GRYPE
+    export GRYPE_SCAN_ONLY
+    source model_container_services_deployment/ci/build_and_push_images.sh
+    popd
+    echo "Done running ${PROG} (grype-scan-only mode)"
+    exit 0
 fi
 
 # Check if version.py is the only Python file modified - if so, skip all tests

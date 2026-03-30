@@ -8,7 +8,7 @@ from absl.testing import absltest
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.stream_source import StreamSource, _schema_to_dict
 from snowflake.snowpark.types import (
-    FloatType,
+    DoubleType,
     StringType,
     StructField,
     StructType,
@@ -21,7 +21,7 @@ def _make_schema() -> StructType:
     return StructType(
         [
             StructField("user_id", StringType()),
-            StructField("amount", FloatType()),
+            StructField("amount", DoubleType()),
             StructField("event_time", TimestampType(TimestampTimeZone.NTZ)),
         ]
     )

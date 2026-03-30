@@ -293,9 +293,13 @@ class IsSupportedAnnotationTest(absltest.TestCase):
         self.assertFalse(custom_model._is_supported_annotation(CustomClass))
         self.assertFalse(custom_model._is_supported_annotation(type(None)))
 
+    def test_supported_dict_type(self) -> None:
+        """Test that bare dict is supported for ParamGroupSpec."""
+        self.assertTrue(custom_model._is_supported_annotation(dict))
+        self.assertTrue(custom_model._is_supported_annotation(list[list[list[dict]]]))  # type: ignore[type-arg]
+
     def test_unsupported_container_types(self) -> None:
         """Test that unsupported container types are rejected."""
-        self.assertFalse(custom_model._is_supported_annotation(dict))
         self.assertFalse(custom_model._is_supported_annotation(dict[str, int]))
         self.assertFalse(custom_model._is_supported_annotation(tuple))
         self.assertFalse(custom_model._is_supported_annotation(tuple[int, str]))
@@ -309,7 +313,6 @@ class IsSupportedAnnotationTest(absltest.TestCase):
             pass
 
         self.assertFalse(custom_model._is_supported_annotation(list[CustomClass]))
-        self.assertFalse(custom_model._is_supported_annotation(list[dict]))  # type: ignore[type-arg]
         self.assertFalse(custom_model._is_supported_annotation(list[dict[str, int]]))
 
     def test_nested_list_with_unsupported_innermost_type(self) -> None:
@@ -319,7 +322,6 @@ class IsSupportedAnnotationTest(absltest.TestCase):
             pass
 
         self.assertFalse(custom_model._is_supported_annotation(list[list[CustomClass]]))
-        self.assertFalse(custom_model._is_supported_annotation(list[list[list[dict]]]))  # type: ignore[type-arg]
 
 
 class ValidateParameterListTypesTest(absltest.TestCase):
@@ -390,7 +392,7 @@ class ValidateParameterListTypesTest(absltest.TestCase):
                     self,
                     input: pd.DataFrame,
                     *,
-                    bad_param: list[dict] = [{}],  # type: ignore[type-arg]  # noqa: B006
+                    bad_param: list[set] = [set()],  # type: ignore[type-arg]  # noqa: B006
                 ) -> pd.DataFrame:
                     return pd.DataFrame(input)
 
@@ -398,12 +400,31 @@ class ValidateParameterListTypesTest(absltest.TestCase):
 
         self.assertIn("unsupported type annotation", str(cm.exception))
 
-    def test_custom_model_with_dict_parameter_raises(self) -> None:
-        """Test that dict parameters raise TypeError."""
+    def test_custom_model_with_dict_parameter(self) -> None:
+        """Test that bare dict parameters are allowed for ParamGroupSpec."""
+
+        class ModelWithDictParam(custom_model.CustomModel):
+            def __init__(self, context: custom_model.ModelContext) -> None:
+                super().__init__(context)
+
+            @custom_model.inference_api
+            def predict(
+                self,
+                input: pd.DataFrame,
+                *,
+                config: dict = {"a": 1},  # type: ignore[type-arg]  # noqa: B006
+            ) -> pd.DataFrame:
+                return pd.DataFrame(input)
+
+        model = ModelWithDictParam(custom_model.ModelContext())
+        self.assertIsNotNone(model)
+
+    def test_custom_model_with_typed_dict_parameter_raises(self) -> None:
+        """Test that typed dict[K, V] parameters raise TypeError (only bare dict is supported)."""
 
         with self.assertRaises(TypeError) as cm:
 
-            class ModelWithDictParam(custom_model.CustomModel):
+            class ModelWithTypedDictParam(custom_model.CustomModel):
                 def __init__(self, context: custom_model.ModelContext) -> None:
                     super().__init__(context)
 
@@ -411,7 +432,7 @@ class ValidateParameterListTypesTest(absltest.TestCase):
                 def predict(self, input: pd.DataFrame, *, config: dict[str, int] = {}) -> pd.DataFrame:  # noqa: B006
                     return pd.DataFrame(input)
 
-            _ = ModelWithDictParam(custom_model.ModelContext())
+            _ = ModelWithTypedDictParam(custom_model.ModelContext())
 
         self.assertIn("unsupported type annotation", str(cm.exception))
 

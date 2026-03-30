@@ -83,14 +83,16 @@ class AutologIntegrationTest:
         self.assertEqual(len(runs), 1)
         run_name = runs[0]["name"]
 
-        metrics = self._session.sql(f"SHOW RUN METRICS IN EXPERIMENT {experiment_fqn} RUN {run_name}").collect()
-        metric_set = {(m["name"], m["step"]) for m in metrics}
+        metrics = self._session.sql(
+            f"SELECT * FROM TABLE(SYSTEM$GET_EXPERIMENT_RUN_METRICS('{experiment_fqn}', '{run_name}'))"
+        ).collect()
+        metric_set = {(m["METRIC_NAME"], m["STEP"]) for m in metrics}
         # Verify that the specified metric was logged at all expected epochs
         for epoch in range(0, self.num_steps, log_every_n_epochs):
             self.assertIn((metric_name, epoch), metric_set)
         # Verify that no metrics were logged at epochs that are not multiples of `log_every_n_epochs`
         for metric in metrics:
-            self.assertIn(metric["step"], range(0, self.num_steps, log_every_n_epochs))
+            self.assertIn(metric["STEP"], range(0, self.num_steps, log_every_n_epochs))
 
         # Verify that params were logged
         parameters = self._session.sql(f"SHOW RUN PARAMETERS IN EXPERIMENT {experiment_fqn} RUN {run_name}").collect()

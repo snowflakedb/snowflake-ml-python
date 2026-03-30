@@ -70,6 +70,29 @@ def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model
     return []
 
 
+def _resolve_chat_params(row: pd.Series, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Resolve chat completion params from kwargs (ParamSpec) or DataFrame row columns."""
+    src = kwargs if kwargs else row
+    return {
+        "max_completion_tokens": src.get("max_completion_tokens", None),
+        "temperature": src.get("temperature", None),
+        "stop_strings": src.get("stop", None),
+        "n": src.get("n", 1),
+        "stream": src.get("stream", False),
+        "top_p": src.get("top_p", 1.0),
+        "frequency_penalty": src.get("frequency_penalty", None),
+        "presence_penalty": src.get("presence_penalty", None),
+    }
+
+
+def _is_transformers_type(obj: Any, class_name: str) -> bool:
+    """Safely check isinstance against a transformers class that may not exist in all versions."""
+    import transformers
+
+    cls = getattr(transformers, class_name, None)
+    return cls is not None and isinstance(obj, cls)
+
+
 def sanitize_output(data: Any) -> Any:
     if isinstance(data, np.number):
         return data.item()
@@ -239,6 +262,10 @@ class TransformersPipelineHandler(
         is_repo_downloaded = False
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             save_path = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
+            # transformers>=5 removed the `modelcard` attribute from Pipeline,
+            # but save_pretrained still references it. Setting to None avoids AttributeError.
+            if not hasattr(model, "modelcard"):
+                model.modelcard = None  # type:ignore[attr-defined]
             model.save_pretrained(  # type:ignore[attr-defined]
                 save_path,
                 safe_serialization=True,  # creates safetensors instead of pytorch binaries or pt files
@@ -500,25 +527,32 @@ class TransformersPipelineHandler(
                 raw_model: "transformers.Pipeline",
                 signature: model_signature.ModelSignature,
                 target_method: str,
-            ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
-                @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
-                    # These 3 zero-shot classification cannot take a list of dict as input like other multi input
+            ) -> Callable[..., pd.DataFrame]:
+                @custom_model._internal_inference_api
+                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+                    # These zero-shot pipelines cannot take a list of dict as input like other multi input
                     # pipelines, thus dealing separately.
-                    if isinstance(
-                        raw_model,
-                        (
-                            transformers.ZeroShotAudioClassificationPipeline,
-                            transformers.ZeroShotClassificationPipeline,
-                            transformers.ZeroShotImageClassificationPipeline,
-                        ),
+                    if (
+                        _is_transformers_type(raw_model, "ZeroShotAudioClassificationPipeline")
+                        or _is_transformers_type(raw_model, "ZeroShotClassificationPipeline")
+                        or _is_transformers_type(raw_model, "ZeroShotImageClassificationPipeline")
+                        or _is_transformers_type(raw_model, "ZeroShotObjectDetectionPipeline")
                     ):
-                        temp_res = X.apply(
-                            lambda row: getattr(raw_model, target_method)(
-                                row[signature.inputs[0].name], row["candidate_labels"]
-                            ),
-                            axis=1,
-                        ).to_list()
+
+                        def process_zero_shot_row(row: pd.Series) -> Any:
+                            input_val = row[signature.inputs[0].name]
+                            # Convert bytes to PIL for image-based zero-shot pipelines
+                            if _is_transformers_type(
+                                raw_model, "ZeroShotImageClassificationPipeline"
+                            ) or _is_transformers_type(raw_model, "ZeroShotObjectDetectionPipeline"):
+                                from PIL import Image
+
+                                input_val = Image.open(io.BytesIO(input_val))
+                            return getattr(raw_model, target_method)(
+                                input_val, candidate_labels=row["candidate_labels"]
+                            )
+
+                        temp_res = X.apply(process_zero_shot_row, axis=1).to_list()
                     elif raw_model.task == "text-generation":
                         # verify when the target method is __call__ and
                         # if the signature is default text-generation signature
@@ -529,14 +563,7 @@ class TransformersPipelineHandler(
                             temp_res = X.apply(
                                 lambda row: wrapped_model.generate_chat_completion(
                                     messages=row["messages"],
-                                    max_completion_tokens=row.get("max_completion_tokens", None),
-                                    temperature=row.get("temperature", None),
-                                    stop_strings=row.get("stop", None),
-                                    n=row.get("n", 1),
-                                    stream=row.get("stream", False),
-                                    top_p=row.get("top_p", 1.0),
-                                    frequency_penalty=row.get("frequency_penalty", None),
-                                    presence_penalty=row.get("presence_penalty", None),
+                                    **_resolve_chat_params(row, kwargs),
                                 ),
                                 axis=1,
                             ).to_list()
@@ -547,20 +574,19 @@ class TransformersPipelineHandler(
                             else:
                                 input_data = X[signature.inputs[0].name].to_list()
                             temp_res = getattr(raw_model, target_method)(input_data)
-                    elif isinstance(raw_model, transformers.ImageClassificationPipeline):
+                    elif _is_transformers_type(raw_model, "ImageClassificationPipeline"):
                         # Image classification expects PIL Images. Convert bytes to PIL Images.
                         from PIL import Image
 
                         input_col = signature.inputs[0].name
                         images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
                         temp_res = getattr(raw_model, target_method)(images)
-                    elif isinstance(
-                        raw_model,
-                        (
-                            transformers.ImageToTextPipeline,
-                            transformers.ImageFeatureExtractionPipeline,
-                            transformers.ObjectDetectionPipeline,
-                        ),
+                    elif (
+                        _is_transformers_type(raw_model, "ImageToTextPipeline")
+                        or _is_transformers_type(raw_model, "ImageFeatureExtractionPipeline")
+                        or _is_transformers_type(raw_model, "ObjectDetectionPipeline")
+                        or _is_transformers_type(raw_model, "DocumentQuestionAnsweringPipeline")
+                        or _is_transformers_type(raw_model, "VisualQuestionAnsweringPipeline")
                     ):
                         # Image pipelines that need bytes→PIL conversion.
                         # HuggingFace's load_image() does not accept raw bytes.
@@ -579,13 +605,13 @@ class TransformersPipelineHandler(
                             # Single-input: convert all image bytes to PIL
                             images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
                             temp_res = getattr(raw_model, target_method)(images)
-                    elif isinstance(raw_model, transformers.AutomaticSpeechRecognitionPipeline):
+                    elif _is_transformers_type(raw_model, "AutomaticSpeechRecognitionPipeline"):
                         # ASR pipeline accepts a single audio input (bytes, str, np.ndarray, or dict),
                         # not a list. Process each audio input individually.
                         input_col = signature.inputs[0].name
                         audio_inputs = X[input_col].to_list()
                         temp_res = [getattr(raw_model, target_method)(audio) for audio in audio_inputs]
-                    elif isinstance(raw_model, transformers.VideoClassificationPipeline):
+                    elif _is_transformers_type(raw_model, "VideoClassificationPipeline"):
                         # Video classification expects file paths. Write bytes to temp files,
                         # process them, and clean up.
                         import tempfile
@@ -609,9 +635,7 @@ class TransformersPipelineHandler(
                         # TODO: remove conversational pipeline code
                         # For others, we could offer the whole dataframe as a list.
                         # Some of them may need some conversion
-                        if hasattr(transformers, "ConversationalPipeline") and isinstance(
-                            raw_model, transformers.ConversationalPipeline
-                        ):
+                        if _is_transformers_type(raw_model, "ConversationalPipeline"):
                             input_data = [
                                 transformers.Conversation(
                                     text=conv_data["user_inputs"][0],
@@ -621,7 +645,7 @@ class TransformersPipelineHandler(
                                 for conv_data in X.to_dict("records")
                             ]
                         else:
-                            if isinstance(raw_model, transformers.TableQuestionAnsweringPipeline):
+                            if _is_transformers_type(raw_model, "TableQuestionAnsweringPipeline"):
                                 X["table"] = X["table"].apply(json.loads)
 
                             # Most pipelines if it is expecting more than one arguments,
@@ -633,37 +657,42 @@ class TransformersPipelineHandler(
                                 input_data = X[signature.inputs[0].name].to_list()
                         temp_res = getattr(raw_model, target_method)(input_data)
 
-                    # Some huggingface pipeline will omit the outer list when there is only 1 input.
-                    # Making it not aligned with the auto-inferred signature.
-                    # If the output is a dict, we could blindly create a list containing that.
-                    # Otherwise, creating pandas DataFrame won't succeed.
-                    if (
-                        (hasattr(transformers, "Conversation") and isinstance(temp_res, transformers.Conversation))
-                        or isinstance(temp_res, dict)
+                    # Some huggingface pipelines omit the outer list when there is only 1 input,
+                    # making the output not aligned with the auto-inferred signature.
+                    #
+                    # Expected output shape is list[result], one result per input row.
+                    # When the outer list is dropped for a single input we need to re-wrap.
+                    #
+                    # Cases:
+                    #   - bare dict
+                    #       (e.g. text-classification → {"label": ..., "score": ...}) → wrap
+                    #   - list[dict] with FeatureGroupSpec output
+                    #       (e.g. fill-mask → [{"token": "a"}, {"token": "b"}]) → outer list was dropped, wrap
+                    #   - Conversation object
+                    #       (legacy transformers <4.42) → wrap
+                    #   - list[list[dict]] with FeatureGroupSpec → already correct, don't wrap
+                    _is_group_output = len(signature.outputs) == 1 and isinstance(
+                        signature.outputs[0], model_signature_core.FeatureGroupSpec
+                    )
+                    # TODO (SNOW-3107908): Create subclass handlers for all tasks to keep it manageable.
+                    _needs_wrap = (
+                        isinstance(temp_res, dict)
+                        or _is_transformers_type(temp_res, "Conversation")
                         or (
-                            # For some pipeline that is expected to generate a list of dict per input
-                            # When it omit outer list, it becomes list of dict instead of list of list of dict.
-                            # We need to distinguish them from those pipelines that designed to output a dict per input
-                            # So we need to check the pipeline type.
-                            isinstance(
-                                raw_model,
-                                (
-                                    transformers.FillMaskPipeline,
-                                    transformers.QuestionAnsweringPipeline,
-                                    transformers.ObjectDetectionPipeline,
-                                ),
-                            )
-                            and X.shape[0] == 1
+                            X.shape[0] == 1
+                            and _is_group_output
+                            and isinstance(temp_res, list)
+                            and len(temp_res) > 0
+                            and not isinstance(temp_res[0], list)
                         )
-                    ):
+                    )
+                    if _needs_wrap:
                         temp_res = [temp_res]
 
                     if len(temp_res) == 0:
                         return pd.DataFrame()
 
-                    if hasattr(transformers, "ConversationalPipeline") and isinstance(
-                        raw_model, transformers.ConversationalPipeline
-                    ):
+                    if _is_transformers_type(raw_model, "ConversationalPipeline"):
                         temp_res = [[conv.generated_responses] for conv in temp_res]
 
                     # To concat those who outputs a list with one input.
@@ -687,7 +716,7 @@ class TransformersPipelineHandler(
 
                 return fn
 
-            type_method_dict = {}
+            type_method_dict: dict[str, Any] = {"_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

@@ -9,7 +9,7 @@ from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.snowpark.types import (
     BooleanType,
-    FloatType,
+    DoubleType,
     StringType,
     StructField,
     StructType,
@@ -59,7 +59,7 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
             schema=StructType(
                 [
                     StructField("user_id", StringType()),
-                    StructField("amount", FloatType()),
+                    StructField("amount", DoubleType()),
                     StructField("merchant_id", StringType()),
                     StructField("event_time", TimestampType(TimestampTimeZone.NTZ)),
                 ]
@@ -95,7 +95,7 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
             name="txn_events",
             schema=StructType(
                 [
-                    StructField("col_a", FloatType()),
+                    StructField("col_a", DoubleType()),
                     StructField("ts", TimestampType(TimestampTimeZone.NTZ)),
                 ]
             ),
@@ -458,7 +458,7 @@ class FeatureStoreStreamSourceTest(FeatureStoreIntegTestBase, parameterized.Test
         original_schema = StructType(
             [
                 StructField("user_id", StringType()),
-                StructField("amount", FloatType()),
+                StructField("amount", DoubleType()),
                 StructField("is_active", BooleanType()),
                 StructField("event_time", TimestampType(TimestampTimeZone.NTZ)),
             ]

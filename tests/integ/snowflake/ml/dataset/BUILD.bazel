@@ -23,7 +23,10 @@ py_test(
     srcs = ["dataset_integ_test.py"],
     optional_dependencies = ["torch"],
     shard_count = 6,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":dataset_integ_test_base",
         "//snowflake/ml/dataset",
@@ -38,7 +41,10 @@ py_test(
         "tensorflow",
     ],
     shard_count = 4,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":dataset_integ_test_base",
         "//snowflake/ml/dataset",

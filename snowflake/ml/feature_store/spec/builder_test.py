@@ -15,7 +15,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Optional, TypedDict
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -38,8 +38,9 @@ from snowflake.ml.feature_store.spec.enums import (
 from snowflake.ml.feature_store.spec.models import FSColumn, Source
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.snowpark.types import (
+    DataType,
     DecimalType,
-    FloatType,
+    DoubleType,
     StringType,
     StructField,
     StructType,
@@ -57,7 +58,7 @@ def _txn_schema() -> StructType:
     return StructType(
         [
             StructField("USER_ID", StringType()),
-            StructField("AMOUNT", FloatType()),
+            StructField("AMOUNT", DoubleType()),
             StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
         ]
     )
@@ -76,7 +77,7 @@ def _udf_transformed_config(schema: str = "SCH") -> SnowflakeTableInfo:
         columns=StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
             ]
         ),
     )
@@ -91,7 +92,7 @@ def _tiled_config(schema: str = "SCH") -> SnowflakeTableInfo:
         columns=StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT_SUM_24H", FloatType()),
+                StructField("AMOUNT_SUM_24H", DoubleType()),
             ]
         ),
     )
@@ -106,17 +107,24 @@ def _batch_source_config() -> SnowflakeTableInfo:
         columns=StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
             ]
         ),
     )
 
 
-def _simple_udf_args() -> dict:
+class _UdfArgs(TypedDict):
+    name: str
+    engine: str
+    output_columns: list[tuple[str, DataType]]
+    function_definition: str
+
+
+def _simple_udf_args() -> _UdfArgs:
     return {
         "name": "transform_fn",
-        "engine": "python",
-        "output_columns": [("AMOUNT", FloatType())],
+        "engine": "pandas",
+        "output_columns": [("AMOUNT", DoubleType())],
         "function_definition": "def f(x): return x * 2",
     }
 
@@ -125,7 +133,7 @@ def _request_source() -> RequestSource:
     return RequestSource(
         schema=StructType(
             [
-                StructField("TXN_AMOUNT", FloatType()),
+                StructField("TXN_AMOUNT", DoubleType()),
                 StructField("MERCHANT_ID", StringType()),
             ]
         )
@@ -151,8 +159,8 @@ def _mock_feature_view(
     fv.output_schema = StructType(
         [
             StructField("USER_ID", StringType()),
-            StructField("SCORE", FloatType()),
-            StructField("RISK", FloatType()),
+            StructField("SCORE", DoubleType()),
+            StructField("RISK", DoubleType()),
         ]
     )
     return fv
@@ -250,6 +258,7 @@ class StreamingBuilderTilesTest(absltest.TestCase):
         # UDF — plain text (no base64)
         udf = spec.udf
         self.assertIsNotNone(udf)
+        assert udf is not None
         self.assertEqual(udf.name, "transform_fn")
         self.assertEqual(udf.function_definition, "def f(x): return x * 2")
 
@@ -340,6 +349,48 @@ class BatchBuilderTest(absltest.TestCase):
         # Non-tiled batch: no sources, no UDF
         self.assertEqual(result.spec.sources, [])
         self.assertIsNone(result.spec.udf)
+        # Passthrough features auto-generated from BATCH_SOURCE columns (entity excluded)
+        self.assertEqual(len(result.spec.features), 1)
+        feat = result.spec.features[0]
+        self.assertEqual(feat.source_column.name, "AMOUNT")
+        self.assertEqual(feat.output_column.name, "AMOUNT")
+        self.assertIsNone(feat.function)
+        self.assertIsNone(feat.window_sec)
+
+    def test_build_batch_no_agg_excludes_entity_and_timestamp(self) -> None:
+        """Non-tiled batch: entity and timestamp columns are excluded from passthrough features."""
+        config = SnowflakeTableInfo(
+            table_type=TableType.BATCH_SOURCE,
+            database="DB",
+            schema="SCH",
+            table="BATCH_TBL",
+            columns=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                    StructField("AMOUNT", DoubleType()),
+                    StructField("SCORE", DoubleType()),
+                ]
+            ),
+        )
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.BatchFeatureView,
+                database="DB",
+                schema="SCH",
+                name="batch_fv_ts",
+                version="v1",
+            )
+            .set_offline_configs([config])
+            .set_properties(entity_columns=["USER_ID"], timestamp_field="EVENT_TIME")
+            .build()
+        )
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["AMOUNT", "SCORE"])
+        for feat in result.spec.features:
+            self.assertEqual(feat.source_column, feat.output_column)
+            self.assertIsNone(feat.function)
+            self.assertIsNone(feat.window_sec)
 
     def test_build_batch_with_tiles(self) -> None:
         result = (
@@ -362,7 +413,7 @@ class BatchBuilderTest(absltest.TestCase):
                         schema=StructType(
                             [
                                 StructField("USER_ID", StringType()),
-                                StructField("AMOUNT", FloatType()),
+                                StructField("AMOUNT", DoubleType()),
                             ]
                         )
                     )
@@ -400,7 +451,7 @@ class RealtimeBuilderTest(absltest.TestCase):
         side_effect=lambda fv: Source(
             name=str(fv.name),
             source_type=SourceType.FEATURES,
-            columns=[FSColumn(name="SCORE", type="FloatType")],
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
             source_version=str(fv.version),
         ),
     )
@@ -418,8 +469,8 @@ class RealtimeBuilderTest(absltest.TestCase):
             .set_sources([_request_source(), mock_fv])
             .set_udf(
                 name="score_fn",
-                engine="python",
-                output_columns=[("RISK_SCORE", FloatType())],
+                engine="pandas",
+                output_columns=[("RISK_SCORE", DoubleType())],
                 function_definition="def score(txn, features): return 0.5",
             )
             .build()
@@ -480,7 +531,7 @@ class SourceConversionTest(absltest.TestCase):
         mock_convert.return_value = Source(
             name="upstream_fv",
             source_type=SourceType.FEATURES,
-            columns=[FSColumn(name="SCORE", type="FloatType")],
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
             source_version="v1",
         )
         fv = _mock_feature_view()
@@ -504,7 +555,7 @@ class SourceConversionTest(absltest.TestCase):
         mock_convert.return_value = Source(
             name="upstream_fv",
             source_type=SourceType.FEATURES,
-            columns=[FSColumn(name="SCORE", type="FloatType")],
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
             source_version="v1",
             selected_features=["SCORE"],
         )
@@ -543,7 +594,7 @@ class SourceConversionTest(absltest.TestCase):
         schema = StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
             ]
         )
         builder.set_sources([BatchSource(schema=schema)])
@@ -584,7 +635,7 @@ class FeatureViewConversionTest(absltest.TestCase):
         fv.output_schema = output_schema or StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("SCORE", FloatType()),
+                StructField("SCORE", DoubleType()),
                 StructField("RISK", DecimalType(10, 2)),
             ]
         )
@@ -604,7 +655,7 @@ class FeatureViewConversionTest(absltest.TestCase):
         """FSColumn type metadata (precision, scale) is preserved."""
         fv = self._make_typed_fv()
         cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
-        self.assertEqual(cols[0].type, "FloatType")
+        self.assertEqual(cols[0].type, "DoubleType")
         self.assertEqual(cols[1].type, "DecimalType")
         self.assertEqual(cols[1].precision, 10)
         self.assertEqual(cols[1].scale, 2)
@@ -684,8 +735,8 @@ class UDFEncodingTest(absltest.TestCase):
         )
         builder.set_udf(
             name="fn",
-            engine="python",
-            output_columns=[("OUT", FloatType())],
+            engine="pandas",
+            output_columns=[("OUT", DoubleType())],
             function_definition=code,
         )
         return builder
@@ -694,6 +745,7 @@ class UDFEncodingTest(absltest.TestCase):
         """function_definition is stored as plain text (no base64)."""
         code = "def transform(x):\n    return x * 2\n"
         builder = self._make_builder_with_udf(code)
+        assert builder._udf is not None
         self.assertEqual(builder._udf.function_definition, code)
 
     def test_dollar_sign_safe_in_to_json(self) -> None:
@@ -718,7 +770,7 @@ class UDFEncodingTest(absltest.TestCase):
             .set_sources([_make_stream_source()])
             .set_udf(
                 name="fn",
-                engine="python",
+                engine="pandas",
                 output_columns=[("OUT", StringType())],
                 function_definition=code,
             )
@@ -752,8 +804,8 @@ class UDFEncodingTest(absltest.TestCase):
             .set_sources([_make_stream_source()])
             .set_udf(
                 name="fn",
-                engine="python",
-                output_columns=[("OUT", FloatType())],
+                engine="pandas",
+                output_columns=[("OUT", DoubleType())],
                 function_definition=code,
             )
         )
@@ -769,6 +821,7 @@ class UDFEncodingTest(absltest.TestCase):
         """Unicode characters in function definition are stored as-is."""
         code = "def f():\n    return '日本語テスト'\n"
         builder = self._make_builder_with_udf(code)
+        assert builder._udf is not None
         self.assertEqual(builder._udf.function_definition, code)
 
     def test_no_dollar_dollar_passes_through(self) -> None:
@@ -790,8 +843,8 @@ class UDFEncodingTest(absltest.TestCase):
             .set_sources([_make_stream_source()])
             .set_udf(
                 name="fn",
-                engine="python",
-                output_columns=[("OUT", FloatType())],
+                engine="pandas",
+                output_columns=[("OUT", DoubleType())],
                 function_definition=code,
             )
         )
@@ -845,8 +898,8 @@ class FeatureResolutionTest(absltest.TestCase):
         features = builder._resolve_features()
         self.assertEqual(len(features), 1)
         self.assertEqual(features[0].source_column.name, "AMOUNT")
-        self.assertEqual(features[0].source_column.type, "FloatType")
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].source_column.type, "DoubleType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertEqual(features[0].function, "sum")
         self.assertEqual(features[0].window_sec, 86400)
 
@@ -869,7 +922,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     columns=StructType(
                         [
                             StructField("USER_ID", StringType()),
-                            StructField("ENRICHED_AMOUNT", FloatType()),
+                            StructField("ENRICHED_AMOUNT", DoubleType()),
                         ]
                     ),
                 )
@@ -885,7 +938,7 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.name, "ENRICHED_AMOUNT")
-        self.assertEqual(features[0].source_column.type, "FloatType")
+        self.assertEqual(features[0].source_column.type, "DoubleType")
 
     def test_streaming_missing_column_raises(self) -> None:
         """Column not in UDF_TRANSFORMED raises ValueError."""
@@ -956,7 +1009,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     schema=StructType(
                         [
                             StructField("USER_ID", StringType()),
-                            StructField("REVENUE", FloatType()),
+                            StructField("REVENUE", DoubleType()),
                         ]
                     )
                 )
@@ -973,7 +1026,7 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.name, "REVENUE")
-        self.assertEqual(features[0].source_column.type, "FloatType")
+        self.assertEqual(features[0].source_column.type, "DoubleType")
 
     def test_batch_tiled_missing_batch_source_raises(self) -> None:
         """Batch tiled FV without BatchSource raises."""
@@ -1071,7 +1124,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     database="DB",
                     schema="SCH",
                     table="T",
-                    columns=StructType([StructField("AMOUNT", FloatType())]),
+                    columns=StructType([StructField("AMOUNT", DoubleType())]),
                 )
             ]
         )
@@ -1137,7 +1190,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     database="DB",
                     schema="SCH",
                     table="T",
-                    columns=StructType([StructField("AMOUNT", FloatType())]),
+                    columns=StructType([StructField("AMOUNT", DoubleType())]),
                 )
             ]
         )
@@ -1150,13 +1203,13 @@ class FeatureResolutionTest(absltest.TestCase):
             )
         ]
         features = builder._resolve_features()
-        self.assertEqual(features[0].source_column.type, "FloatType")
+        self.assertEqual(features[0].source_column.type, "DoubleType")
         self.assertEqual(features[0].output_column.type, "DecimalType")
         self.assertEqual(features[0].output_column.precision, 18)
         self.assertEqual(features[0].output_column.scale, 0)
 
     def test_avg_output_type_is_float(self) -> None:
-        """AVG always produces FloatType regardless of source type."""
+        """AVG always produces DoubleType regardless of source type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1185,7 +1238,7 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertIsNone(features[0].output_column.precision)
 
     def test_sum_preserves_source_type(self) -> None:
@@ -1302,7 +1355,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     database="DB",
                     schema="SCH",
                     table="T",
-                    columns=StructType([StructField("SCORE", FloatType())]),
+                    columns=StructType([StructField("SCORE", DoubleType())]),
                 )
             ]
         )
@@ -1315,10 +1368,10 @@ class FeatureResolutionTest(absltest.TestCase):
             )
         ]
         features = builder._resolve_features()
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
 
     def test_stddev_output_type_is_float(self) -> None:
-        """STD always produces FloatType regardless of source type."""
+        """STD always produces DoubleType regardless of source type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1347,11 +1400,11 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertIsNone(features[0].output_column.precision)
 
     def test_var_output_type_is_float(self) -> None:
-        """VAR always produces FloatType regardless of source type."""
+        """VAR always produces DoubleType regardless of source type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1380,7 +1433,7 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertIsNone(features[0].output_column.precision)
 
     def test_approx_count_distinct_output_type_is_integer(self) -> None:
@@ -1418,7 +1471,7 @@ class FeatureResolutionTest(absltest.TestCase):
         self.assertEqual(features[0].output_column.scale, 0)
 
     def test_approx_percentile_output_type_is_float(self) -> None:
-        """APPROX_PERCENTILE always produces FloatType."""
+        """APPROX_PERCENTILE always produces DoubleType."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1448,7 +1501,7 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.type, "FloatType")
+        self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertIsNone(features[0].output_column.precision)
 
     def test_first_n_preserves_source_type(self) -> None:
@@ -1501,7 +1554,7 @@ class FeatureResolutionTest(absltest.TestCase):
                     database="DB",
                     schema="SCH",
                     table="T",
-                    columns=StructType([StructField("AMOUNT", FloatType())]),
+                    columns=StructType([StructField("AMOUNT", DoubleType())]),
                 )
             ]
         )
@@ -1703,6 +1756,16 @@ class StreamingValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "timestamp_field"):
             builder.build()
 
+    def test_unsupported_udf_engine_rejected(self) -> None:
+        builder = self._base_builder()
+        with self.assertRaisesRegex(ValueError, "Unsupported UDF engine 'python'"):
+            builder.set_udf(
+                name="fn",
+                engine="python",
+                output_columns=[("OUT", DoubleType())],
+                function_definition="def f(x): return x",
+            )
+
 
 # ============================================================================
 # Validation Tests — Batch
@@ -1765,7 +1828,7 @@ class BatchValidationTest(absltest.TestCase):
             self._base_builder()
             .set_offline_configs([_batch_source_config()])
             .set_properties(entity_columns=["USER_ID"])
-            .set_sources([BatchSource(schema=StructType([StructField("X", FloatType())]))])
+            .set_sources([BatchSource(schema=StructType([StructField("X", DoubleType())]))])
         )
         with self.assertRaisesRegex(ValueError, "must not have sources"):
             builder.build()
@@ -1800,7 +1863,7 @@ class BatchValidationTest(absltest.TestCase):
                 entity_columns=["USER_ID"],
                 agg_method=FeatureAggregationMethod.TILES,
             )
-            .set_sources([BatchSource(schema=StructType([StructField("X", FloatType())]))])
+            .set_sources([BatchSource(schema=StructType([StructField("X", DoubleType())]))])
         )
         with self.assertRaisesRegex(ValueError, "granularity_sec is required"):
             builder.build()
@@ -1829,6 +1892,154 @@ class BatchValidationTest(absltest.TestCase):
             )
         )
         with self.assertRaisesRegex(ValueError, "granularity_sec must be None"):
+            builder.build()
+
+    def test_supported_aggregations_accepted(self) -> None:
+        """All PG-supported aggregation types build without error."""
+        for agg_type in (
+            AggregationType.SUM,
+            AggregationType.MIN,
+            AggregationType.MAX,
+            AggregationType.COUNT,
+            AggregationType.AVG,
+            AggregationType.STD,
+            AggregationType.VAR,
+        ):
+            batch_schema = StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                    StructField("AMOUNT", DoubleType()),
+                ]
+            )
+            builder = (
+                self._base_builder()
+                .set_offline_configs(
+                    [
+                        SnowflakeTableInfo(
+                            table_type=TableType.BATCH_SOURCE,
+                            database="DB",
+                            schema="SCH",
+                            table="BATCH_TBL",
+                            columns=batch_schema,
+                        )
+                    ]
+                )
+                .set_properties(
+                    entity_columns=["USER_ID"],
+                    timestamp_field="EVENT_TIME",
+                    granularity="1h",
+                    agg_method=FeatureAggregationMethod.TILES,
+                    target_lag="30s",
+                )
+                .set_sources([BatchSource(schema=batch_schema)])
+                .set_features(
+                    [
+                        AggregationSpec(
+                            function=agg_type,
+                            source_column="AMOUNT",
+                            window="24h",
+                            output_column=f"AMOUNT_{agg_type.value.upper()}_24H",
+                        )
+                    ]
+                )
+            )
+            builder.build()
+
+    def test_unsupported_aggregation_rejected(self) -> None:
+        """APPROX_PERCENTILE is not supported for PG online store."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="BATCH_TBL",
+                        columns=batch_schema,
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.APPROX_PERCENTILE,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="AMOUNT_AP_24H",
+                        params={"percentile": 0.5},
+                    )
+                ]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported aggregation.*Postgres"):
+            builder.build()
+
+    def test_mixed_supported_and_unsupported_rejected(self) -> None:
+        """A mix of supported and unsupported aggs is rejected."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="BATCH_TBL",
+                        columns=batch_schema,
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.SUM,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="AMOUNT_SUM_24H",
+                    ),
+                    AggregationSpec(
+                        function=AggregationType.LAST_N,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="AMOUNT_LAST_5_24H",
+                        params={"n": 5},
+                    ),
+                ]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported aggregation.*Postgres"):
             builder.build()
 
 
@@ -1860,12 +2071,12 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -1879,7 +2090,7 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
         ]
         # Should NOT raise — features source is optional
@@ -1894,7 +2105,7 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -1908,17 +2119,17 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="r1",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="r2",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Z", type="FloatType")],
+                columns=[FSColumn(name="Z", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -1932,17 +2143,17 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="stream",
                 source_type=SourceType.STREAM,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Z", type="FloatType")],
+                columns=[FSColumn(name="Z", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -1956,12 +2167,12 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="batch",
                 source_type=SourceType.BATCH,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
             ),
         ]
         with self.assertRaisesRegex(ValueError, "must not have Batch sources"):
@@ -1973,12 +2184,12 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -1998,12 +2209,12 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -2023,12 +2234,12 @@ class RealtimeValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -2073,7 +2284,7 @@ class SourceFieldValidationTest(absltest.TestCase):
             Source(
                 name="s",
                 source_type=SourceType.STREAM,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
                 source_version="v1",
             )
         ]
@@ -2086,7 +2297,7 @@ class SourceFieldValidationTest(absltest.TestCase):
             Source(
                 name="s",
                 source_type=SourceType.STREAM,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
                 selected_features=["X"],
             )
         ]
@@ -2105,13 +2316,13 @@ class SourceFieldValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
                 source_version="v1",
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
                 source_version="v1",
             ),
         ]
@@ -2132,12 +2343,12 @@ class SourceFieldValidationTest(absltest.TestCase):
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
-                columns=[FSColumn(name="X", type="FloatType")],
+                columns=[FSColumn(name="X", type="DoubleType")],
             ),
             Source(
                 name="fv",
                 source_type=SourceType.FEATURES,
-                columns=[FSColumn(name="Y", type="FloatType")],
+                columns=[FSColumn(name="Y", type="DoubleType")],
             ),
         ]
         builder._udf = mock.MagicMock()
@@ -2240,7 +2451,7 @@ class OnlineStoreTypeTest(absltest.TestCase):
 class IntervalConversionTest(parameterized.TestCase):
     """Tests for interval string → seconds conversion in set_properties."""
 
-    @parameterized.parameters(
+    @parameterized.parameters(  # type: ignore[misc]
         ("1h", 3600),
         ("24h", 86400),
         ("30s", 30),
@@ -2262,7 +2473,7 @@ class IntervalConversionTest(parameterized.TestCase):
         )
         self.assertEqual(builder._granularity_sec, expected)
 
-    @parameterized.parameters(
+    @parameterized.parameters(  # type: ignore[misc]
         ("30s", 30),
         ("1m", 60),
     )

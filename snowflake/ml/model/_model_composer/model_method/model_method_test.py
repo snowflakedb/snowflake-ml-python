@@ -328,6 +328,116 @@ class ModelMethodTest(parameterized.TestCase):
                 },
             )
 
+    def test_model_method_model_init_once_true(self) -> None:
+        """model_init_once=True selects the init_once template regardless of model type."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(model_init_once=True),
+            )
+            mm.save(pathlib.Path(workspace))
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_1_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+    def test_model_method_model_init_once_false(self) -> None:
+        """model_init_once=False uses the plain inference template regardless of model type."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        for opts in (
+            model_method.ModelMethodOptions(model_init_once=False),
+            model_method.ModelMethodOptions(),  # absent — defaults to False
+        ):
+            with (
+                tempfile.TemporaryDirectory() as workspace,
+                tempfile.TemporaryDirectory() as tmpdir,
+                platform_capabilities.PlatformCapabilities.mock_features(),
+            ):
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                mm = model_method.ModelMethod(
+                    meta,
+                    "predict",
+                    "python_runtime",
+                    fg,
+                    options=opts,
+                )
+                mm.save(pathlib.Path(workspace))
+                with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                    self.assertEqual(
+                        (
+                            importlib_resources.files(model_method_pkg)
+                            .joinpath("fixtures")
+                            .joinpath("function_1.py")
+                            .read_text()
+                        ),
+                        f.read(),
+                    )
+
+    def test_model_method_model_init_once_via_options_dict(self) -> None:
+        """model_init_once=True in a raw options dict flows through
+        get_model_method_options_from_options and produces the init_once template."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        raw_options: type_hints.ModelSaveOption = {
+            "enable_explainability": False,
+            "model_init_once": True,
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            resolved_options = model_method.get_model_method_options_from_options(
+                raw_options, "predict", model_type="custom"
+            )
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=resolved_options,
+            )
+            mm.save(pathlib.Path(workspace))
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_1_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
     def test_model_method_with_volatility_default(self) -> None:
         """Test that ModelMethod.save() omits volatility when not enabled."""
         fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
@@ -582,6 +692,133 @@ class ModelMethodTest(parameterized.TestCase):
             self.assertEqual(method_dict["params"][1]["name"], "IDS")
             self.assertEqual(method_dict["params"][1]["type"], "ARRAY")
             self.assertEqual(method_dict["params"][1]["default"], "[1, 2, 3]")
+
+    def test_model_method_with_dict_parameter(self) -> None:
+        """Test that ParamGroupSpec produces type=OBJECT with OBJECT_CONSTRUCT_KEEP_NULL default."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        sig_with_dict_param = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+                params=[
+                    model_signature.ParamGroupSpec(
+                        name="config",
+                        specs=[
+                            model_signature.ParamSpec(
+                                name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0
+                            ),
+                            model_signature.ParamSpec(
+                                name="top_k", dtype=model_signature.DataType.INT32, default_value=50
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig_with_dict_param
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            self.assertIn("params", method_dict)
+            self.assertEqual(len(method_dict["params"]), 1)
+            self.assertEqual(method_dict["params"][0]["name"], "CONFIG")
+            self.assertEqual(method_dict["params"][0]["type"], "OBJECT")
+            self.assertEqual(
+                method_dict["params"][0]["default"],
+                "OBJECT_CONSTRUCT_KEEP_NULL('temperature', 1.0, 'top_k', 50)",
+            )
+
+    def test_model_method_with_nested_dict_parameter(self) -> None:
+        """Test ParamGroupSpec with nested ParamSpec (shaped) and nested ParamGroupSpec (shaped)."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        sig_with_nested = {
+            "predict": model_signature.ModelSignature(
+                inputs=[
+                    model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="input"),
+                ],
+                outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+                params=[
+                    model_signature.ParamGroupSpec(
+                        name="config",
+                        specs=[
+                            model_signature.ParamSpec(
+                                name="temperature", dtype=model_signature.DataType.FLOAT, default_value=1.0
+                            ),
+                            model_signature.ParamSpec(
+                                name="nested_list",
+                                dtype=model_signature.DataType.INT64,
+                                default_value=[[1, 2], [3, 4]],
+                                shape=(2, 2),
+                            ),
+                            model_signature.ParamGroupSpec(
+                                name="nested_dict",
+                                specs=[
+                                    model_signature.ParamSpec(
+                                        name="a", dtype=model_signature.DataType.INT64, default_value=1
+                                    ),
+                                    model_signature.ParamSpec(
+                                        name="b", dtype=model_signature.DataType.INT64, default_value=2
+                                    ),
+                                ],
+                                shape=(2,),
+                            ),
+                        ],
+                    ),
+                ],
+            )
+        }
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=sig_with_nested
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+            )
+            method_dict = mm.save(pathlib.Path(workspace))
+
+            self.assertIn("params", method_dict)
+            self.assertEqual(len(method_dict["params"]), 1)
+            self.assertEqual(method_dict["params"][0]["name"], "CONFIG")
+            self.assertEqual(method_dict["params"][0]["type"], "OBJECT")
+
+            default_sql = method_dict["params"][0]["default"]
+            self.assertEqual(
+                default_sql,
+                "OBJECT_CONSTRUCT_KEEP_NULL("
+                "'temperature', 1.0, "
+                "'nested_list', [[1, 2], [3, 4]], "
+                "'nested_dict', [{'a': 1, 'b': 2}, {'a': 1, 'b': 2}]"
+                ")",
+            )
 
 
 class FormatParamDefaultValueTest(absltest.TestCase):

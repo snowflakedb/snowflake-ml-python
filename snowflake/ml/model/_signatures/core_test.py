@@ -24,6 +24,9 @@ class DataTypeTest(absltest.TestCase):
         data = pd.Series(["a", "b", "c", "d"]).convert_dtypes()
         self.assertEqual(core.DataType.STRING, core.DataType.from_numpy_type(data.dtype))
 
+        data = pd.Series([{"a": 1, "b": 2}, {"a": 3, "b": 4}]).convert_dtypes()
+        self.assertEqual(core.DataType.OBJECT, core.DataType.from_numpy_type(data.dtype))
+
     def test_snowpark_type(self) -> None:
         self.assertEqual(core.DataType.INT8, core.DataType.from_snowpark_type(spt.ByteType()))
         self.assertEqual(core.DataType.INT16, core.DataType.from_snowpark_type(spt.ShortType()))
@@ -39,6 +42,8 @@ class DataTypeTest(absltest.TestCase):
         self.assertEqual(core.DataType.BOOL, core.DataType.from_snowpark_type(spt.BooleanType()))
         self.assertEqual(core.DataType.STRING, core.DataType.from_snowpark_type(spt.StringType()))
         self.assertEqual(core.DataType.BYTES, core.DataType.from_snowpark_type(spt.BinaryType()))
+
+        self.assertEqual(core.DataType.OBJECT.as_snowpark_type(), spt.MapType(spt.StringType(), spt.VariantType()))
 
     def test_python_type(self) -> None:
         """Test conversion from Python built-in types to DataType."""
@@ -423,6 +428,23 @@ class ParamGroupSpecTest(absltest.TestCase):
             pg_2d.as_snowpark_type(),
             spt.ArrayType(spt.ArrayType(spt.MapType(spt.StringType(), spt.VariantType()))),
         )
+
+    def test_param_group_spec_dtype(self) -> None:
+        """Test that ParamGroupSpec.dtype always returns DataType.OBJECT."""
+        p1 = core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)
+        p2 = core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9)
+        pg = core.ParamGroupSpec(name="optimizer", specs=[p1, p2])
+
+        self.assertEqual(pg.dtype, core.DataType.OBJECT)
+        self.assertEqual(pg.dtype.as_snowpark_type(), spt.MapType(spt.StringType(), spt.VariantType()))
+
+        # Nested group also returns OBJECT
+        pg_nested = core.ParamGroupSpec(name="config", specs=[p1, pg])
+        self.assertEqual(pg_nested.dtype, core.DataType.OBJECT)
+
+        # With shape, dtype is still OBJECT (shape affects as_snowpark_type, not dtype)
+        pg_shaped = core.ParamGroupSpec(name="configs", specs=[p1, p2], shape=(-1,))
+        self.assertEqual(pg_shaped.dtype, core.DataType.OBJECT)
 
     def test_param_group_spec_default_value_with_none(self) -> None:
         """Test default_value when child ParamSpec has None default."""
@@ -1026,7 +1048,7 @@ ModelSignature(
         self.assertEqual(len(sig.params), 1)
         self.assertEqual(sig.params[0].name, "temperature")
         self.assertIsInstance(sig.params[0], core.ParamSpec)
-        self.assertEqual(sig.params[0].default_value, 1.0)  # type: ignore[attr-defined]
+        self.assertEqual(sig.params[0].default_value, 1.0)
 
 
 class ConvertMlflowColTypeTest(absltest.TestCase):

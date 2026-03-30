@@ -31,8 +31,8 @@ def _is_null_param_value(val):
     """Check if a param value should use the default (None or NA scalar)."""
     if val is None:
         return True
-    if isinstance(val, (list, np.ndarray)):
-        return False  # Arrays are never considered "null", even if empty
+    if isinstance(val, (list, np.ndarray, dict)):
+        return False  # Containers are never considered "null", even if empty
     return pd.isna(val)
 
 

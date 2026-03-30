@@ -5,14 +5,14 @@ spec-internal — constructed only inside the builder, never by external users.
 
 Note: spec.Feature is distinct from feature_store.Feature (user-facing).
 
-Uses Pydantic v1 (``BaseModel.dict()``).
+Uses Pydantic v2 (``BaseModel.model_dump()``).
 """
 
 import json
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from snowflake.ml.feature_store.spec.enums import (
     FeatureAggregationMethod,
@@ -24,26 +24,24 @@ from snowflake.ml.feature_store.spec.enums import (
 from snowflake.snowpark.types import (
     BooleanType,
     DataType,
-    DateType,
     DecimalType,
-    FloatType,
+    DoubleType,
+    LongType,
     StringType,
     StructType,
     TimestampTimeZone,
     TimestampType,
-    TimeType,
 )
 
 # Supported Snowpark types for FSColumn conversion — aligned with
 # stream_source._TYPE_NAME_TO_CLASS.
 _SUPPORTED_TYPES: set[type] = {
     StringType,
-    FloatType,
+    LongType,
+    DoubleType,
     DecimalType,
     BooleanType,
     TimestampType,
-    DateType,
-    TimeType,
 }
 
 # ---------------------------------------------------------------------------
@@ -51,11 +49,35 @@ _SUPPORTED_TYPES: set[type] = {
 # ---------------------------------------------------------------------------
 
 
+def validate_schema_types(schema: StructType) -> None:
+    """Validate that all columns in a schema use supported Snowpark types.
+
+    Reusable validation for any code path that builds a feature view spec
+    (batch FV, streaming FV, etc.).
+
+    Args:
+        schema: A Snowpark StructType to validate.
+
+    Raises:
+        ValueError: If any column uses an unsupported type, listing all
+            offending columns and the set of supported types.
+    """
+    unsupported = []
+    for field in schema.fields:
+        if type(field.datatype) not in _SUPPORTED_TYPES:
+            unsupported.append((field.name, type(field.datatype).__name__))
+
+    if unsupported:
+        col_details = ", ".join(f"'{name}' ({typ})" for name, typ in unsupported)
+        supported_names = sorted(t.__name__ for t in _SUPPORTED_TYPES)
+        raise ValueError(f"Unsupported column types: {col_details}. " f"Supported types: {supported_names}")
+
+
 def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
     """Convert a (name, Snowpark DataType) pair to an FSColumn.
 
-    Follows the same pattern as stream_source._schema_to_dict — uses
-    type(dt).__name__ directly, no manual mapping needed.
+    Uses ``type(dt).__name__`` directly for the type string, which aligns
+    with the Go backend's FSBaseType names (e.g. ``LongType``, ``DoubleType``).
 
     Args:
         name: Column name.
@@ -125,7 +147,7 @@ def _sanitize_json_for_dollar_quoting(payload: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Domain Models (Pydantic v1)
+# Domain Models (Pydantic v2)
 # ---------------------------------------------------------------------------
 
 
@@ -184,11 +206,9 @@ class Feature(BaseModel):
 class OfflineTableConfig(BaseModel):
     """Offline storage configuration for a feature view table."""
 
-    class Config:
-        # allow_population_by_field_name: allows construction via Python name
-        # (schema_="value") while serializing as the alias ("schema") with
-        # by_alias=True.
-        allow_population_by_field_name = True
+    # populate_by_name: allows construction via Python name (schema_="value")
+    # while serializing as the alias ("schema") with by_alias=True.
+    model_config = ConfigDict(populate_by_name=True)
 
     store_type: StoreType
     table_type: TableType
@@ -201,8 +221,7 @@ class OfflineTableConfig(BaseModel):
 class Metadata(BaseModel):
     """Feature view metadata — identity and versioning."""
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = ConfigDict(populate_by_name=True)
 
     database: str
     schema_: str = Field(..., alias="schema")
@@ -241,7 +260,7 @@ class FeatureViewSpec(BaseModel):
         Returns:
             A dictionary matching the unified FeatureView JSON schema.
         """
-        return self.dict(exclude_none=True, by_alias=True)  # type: ignore[deprecation]
+        return self.model_dump(exclude_none=True, by_alias=True)
 
     def to_json(self) -> str:
         """Serialize to a JSON string with ``omitempty`` and alias resolution.
@@ -255,7 +274,7 @@ class FeatureViewSpec(BaseModel):
             A JSON string matching the unified FeatureView JSON schema,
             safe for SQL ``$$`` quoting.
         """
-        raw = self.json(exclude_none=True, by_alias=True)  # type: ignore[deprecation]
+        raw = self.model_dump_json(exclude_none=True, by_alias=True)
         return _sanitize_json_for_dollar_quoting(raw)
 
     def to_yaml(self) -> str:

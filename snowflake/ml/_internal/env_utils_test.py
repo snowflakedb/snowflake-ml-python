@@ -1121,6 +1121,129 @@ class EnvFileTest(absltest.TestCase):
             loaded_rl = env_utils.load_requirements_file(pip_file_path)
             self.assertEqual(rl, loaded_rl)
 
+    def test_has_torch_dependency(self) -> None:
+        # Test with torch
+        deps_with_torch = [requirements.Requirement("torch>=2.0")]
+        self.assertTrue(env_utils._has_torch_dependency(deps_with_torch))
+
+        # Test without torch
+        deps_without_torch = [requirements.Requirement("numpy>=1.0"), requirements.Requirement("pandas>=1.0")]
+        self.assertFalse(env_utils._has_torch_dependency(deps_without_torch))
+
+        # Test empty list
+        self.assertFalse(env_utils._has_torch_dependency([]))
+
+    def test_get_pytorch_cuda_index_url(self) -> None:
+        # Test with CUDA 12.4
+        url = env_utils._get_pytorch_cuda_index_url("12.4")
+        self.assertEqual(url, "--extra-index-url https://download.pytorch.org/whl/cu124")
+
+        # Test with CUDA 11.8
+        url = env_utils._get_pytorch_cuda_index_url("11.8")
+        self.assertEqual(url, "--extra-index-url https://download.pytorch.org/whl/cu118")
+
+        # Test with CUDA 12.1
+        url = env_utils._get_pytorch_cuda_index_url("12.1")
+        self.assertEqual(url, "--extra-index-url https://download.pytorch.org/whl/cu121")
+
+    def test_pin_torch_to_cuda_variant(self) -> None:
+        # Test pinning torch==2.5.0 to torch==2.5.0+cu124
+        deps = [requirements.Requirement("torch==2.5.0"), requirements.Requirement("numpy>=1.0")]
+        result = env_utils._pin_torch_to_cuda_variant(deps, "12.4")
+
+        torch_req = [str(r) for r in result if r.name == "torch"][0]
+        self.assertEqual(torch_req, "torch==2.5.0+cu124")
+
+        # numpy should be unchanged
+        numpy_req = [str(r) for r in result if r.name == "numpy"][0]
+        self.assertEqual(numpy_req, "numpy>=1.0")
+
+    def test_pin_torch_to_cuda_variant_already_pinned(self) -> None:
+        # Already has +cu suffix - should not modify
+        deps = [requirements.Requirement("torch==2.5.0+cu118")]
+        result = env_utils._pin_torch_to_cuda_variant(deps, "12.4")
+
+        torch_req = str(result[0])
+        self.assertEqual(torch_req, "torch==2.5.0+cu118")
+
+    def test_pin_torch_to_cuda_variant_unpinned(self) -> None:
+        # torch>=2.0 (no == pin) - should not modify
+        deps = [requirements.Requirement("torch>=2.0")]
+        result = env_utils._pin_torch_to_cuda_variant(deps, "12.4")
+
+        torch_req = str(result[0])
+        self.assertEqual(torch_req, "torch>=2.0")
+
+    def test_save_requirements_file_with_pytorch_cuda(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test with torch==2.5.0 + cuda_version - should add index URL and pin to +cu124
+            rl = [requirements.Requirement("torch==2.5.0"), requirements.Requirement("numpy>=1.0")]
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
+
+            with open(pip_file_path) as f:
+                content = f.read()
+
+            lines = content.strip().split("\n")
+            # Check index URL is at the top
+            self.assertEqual(lines[0], "--extra-index-url https://download.pytorch.org/whl/cu124")
+            # Check torch is pinned to CUDA variant
+            self.assertIn("torch==2.5.0+cu124", content)
+            # Check numpy is unchanged
+            self.assertIn("numpy>=1.0", content)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test with torch but no cuda_version - should NOT add index URL or modify torch
+            rl = [requirements.Requirement("torch==2.5.0")]
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl, cuda_version=None)
+
+            with open(pip_file_path) as f:
+                content = f.read()
+
+            self.assertNotIn("--extra-index-url", content)
+            self.assertIn("torch==2.5.0", content)
+            self.assertNotIn("+cu", content)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Test without torch but with cuda_version - should NOT add index URL
+            rl = [requirements.Requirement("numpy>=1.0")]
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            env_utils.save_requirements_file(pip_file_path, rl, cuda_version="12.4")
+
+            with open(pip_file_path) as f:
+                content = f.read()
+
+            self.assertNotIn("--extra-index-url", content)
+
+    def test_load_requirements_file_with_extra_index_url(self) -> None:
+        """Test that load_requirements_file correctly skips pip options like --extra-index-url."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a requirements.txt with --extra-index-url at the top (like GPU PyTorch models)
+            pip_file_path = pathlib.Path(tmpdir, "requirements.txt")
+            content = """--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.0+cu124
+numpy>=1.0
+# This is a comment
+pandas>=2.0
+"""
+            with open(pip_file_path, "w") as f:
+                f.write(content)
+
+            # Load should succeed and skip the --extra-index-url line and comment
+            loaded = env_utils.load_requirements_file(pip_file_path)
+
+            # Should have 3 requirements (torch, numpy, pandas)
+            self.assertEqual(len(loaded), 3)
+            pkg_names = [r.name for r in loaded]
+            self.assertIn("torch", pkg_names)
+            self.assertIn("numpy", pkg_names)
+            self.assertIn("pandas", pkg_names)
+
+            # Verify torch has the +cu124 suffix
+            torch_req = [r for r in loaded if r.name == "torch"][0]
+            self.assertIn("+cu124", str(torch_req))
+
     def test_validate_local_installed_version_of_pip_package(self) -> None:
         with mock.patch.object(
             importlib_metadata, "distribution", side_effect=importlib_metadata.PackageNotFoundError()

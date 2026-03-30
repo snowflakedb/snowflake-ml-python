@@ -168,11 +168,23 @@ diff_test(
 
 # Generate the updater script so there's only one target for devs to run,
 # even if many generated files are in the source folder.
+_MODEL_LOGGER_TARGET_PATH = _MODEL_LOGGER_REQUIREMENTS_TARGET["target"].lstrip("//").replace(":", "/")
+
 sync_target(
     name = _SYNC_RULE_NAME,
     root_path = _CURRENT_PATH,
+    runtime_cmds = [
+        {
+            "cmd": "python3 {root_path}/update_model_logger_version.py {src} > {target}".format(
+                src = "model_container_services_deployment/model_logger/base_requirements.txt",
+                root_path = _CURRENT_PATH,
+                target = _MODEL_LOGGER_TARGET_PATH,
+            ),
+            "tools": [],
+        },
+    ],
     src_requirement_file = _SRC_REQUIREMENT_FILE,
-    targets = _GENERATED_REQUIREMENTS_FILES.values() + [_MODEL_LOGGER_REQUIREMENTS_TARGET],
+    targets = _GENERATED_REQUIREMENTS_FILES.values(),
 )
 
 sh_test(

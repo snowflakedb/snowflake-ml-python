@@ -12,15 +12,14 @@ from snowflake.ml.feature_store.stream_source import (
 from snowflake.snowpark.types import (
     BooleanType,
     DataType,
-    DateType,
     DecimalType,
-    FloatType,
+    DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
     TimestampTimeZone,
     TimestampType,
-    TimeType,
 )
 
 
@@ -31,7 +30,7 @@ class StreamSourceValidationTest(parameterized.TestCase):
         return StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
                 StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
             ]
         )
@@ -72,12 +71,11 @@ class StreamSourceValidationTest(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         StringType,
-        FloatType,
+        LongType,
+        DoubleType,
         DecimalType,
         BooleanType,
         TimestampType,
-        DateType,
-        TimeType,
     )
     def test_supported_scalar_types(self, type_cls: type) -> None:
         """Test that all supported scalar types are accepted in schema."""
@@ -133,7 +131,7 @@ class StreamSourceSerializationTest(absltest.TestCase):
         return StructType(
             [
                 StructField("USER_ID", StringType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
                 StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
             ]
         )
@@ -261,12 +259,11 @@ class SchemaSerializationTest(parameterized.TestCase):
 
     @parameterized.parameters(  # type: ignore[misc]
         ("col", StringType()),
-        ("col", FloatType()),
+        ("col", LongType()),
+        ("col", DoubleType()),
         ("col", DecimalType()),
         ("col", BooleanType()),
         ("col", TimestampType(TimestampTimeZone.NTZ)),
-        ("col", DateType()),
-        ("col", TimeType()),
     )
     def test_roundtrip_single_type(self, col_name: str, dtype: DataType) -> None:
         """Test schema roundtrip for each supported type."""
@@ -352,7 +349,7 @@ class SchemaSerializationTest(parameterized.TestCase):
         schema = StructType(
             [
                 StructField("A", StringType()),
-                StructField("B", FloatType()),
+                StructField("B", DoubleType()),
                 StructField("C", TimestampType(TimestampTimeZone.NTZ)),
                 StructField("D", BooleanType()),
             ]
@@ -372,7 +369,7 @@ class SchemaSerializationTest(parameterized.TestCase):
             [
                 StructField("userId", StringType()),
                 StructField("EventTime", TimestampType()),
-                StructField("AMOUNT", FloatType()),
+                StructField("AMOUNT", DoubleType()),
                 StructField("is_active", BooleanType()),
             ]
         )
@@ -412,11 +409,11 @@ class SchemaSerializationTest(parameterized.TestCase):
 
     def test_to_dict_field_structure(self) -> None:
         """Test the structure of each field dict."""
-        schema = StructType([StructField("MY_COL", FloatType())])
+        schema = StructType([StructField("MY_COL", DoubleType())])
         d = _schema_to_dict(schema)
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0]["name"], "MY_COL")
-        self.assertEqual(d[0]["type"], "FloatType")
+        self.assertEqual(d[0]["type"], "DoubleType")
         self.assertNotIn("nullable", d[0])
 
 
@@ -453,7 +450,7 @@ class StreamSourceEqualityTest(absltest.TestCase):
         )
         schema2 = StructType(
             [
-                StructField("B", FloatType()),
+                StructField("B", DoubleType()),
                 StructField("TS", TimestampType(TimestampTimeZone.NTZ)),
             ]
         )

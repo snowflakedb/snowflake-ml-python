@@ -203,6 +203,36 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
             self._session, f"SHOW RUNS {like_clause} IN EXPERIMENT {experiment_fqn}"
         ).validate()
 
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def show_run_metrics_in_experiment(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: Optional[sql_identifier.SqlIdentifier] = None,
+        like: Optional[str] = None,
+    ) -> list[row.Row]:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        run_name_clause = f"RUN {run_name}" if run_name else ""
+        like_clause = f"LIKE '{like}'" if like else ""
+        return query_result_checker.SqlResultValidator(
+            self._session, f"SHOW RUN METRICS {like_clause} IN EXPERIMENT {experiment_fqn} {run_name_clause}"
+        ).validate()
+
+    @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
+    def show_run_parameters_in_experiment(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: Optional[sql_identifier.SqlIdentifier] = None,
+        like: Optional[str] = None,
+    ) -> list[row.Row]:
+        experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
+        run_name_clause = f"RUN {run_name}" if run_name else ""
+        like_clause = f"LIKE '{like}'" if like else ""
+        return query_result_checker.SqlResultValidator(
+            self._session, f"SHOW RUN PARAMETERS {like_clause} IN EXPERIMENT {experiment_fqn} {run_name_clause}"
+        ).validate()
+
     def _build_snow_uri(
         self, experiment_name: sql_identifier.SqlIdentifier, run_name: sql_identifier.SqlIdentifier, artifact_path: str
     ) -> str:

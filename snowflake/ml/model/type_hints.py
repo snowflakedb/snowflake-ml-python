@@ -180,6 +180,9 @@ class BaseModelSaveOption(TypedDict):
         values with the desired options.
     enable_explainability: Whether to enable explainability features for the model.
     save_location: Local directory path to save the model and metadata.
+    model_init_once: When True, the model is loaded once per worker process at startup, eliminating
+        model-loading overhead on the first inference batch. Only applies to FUNCTION methods; ignored
+        for TABLE_FUNCTION methods. Defaults to False.
     """
 
     embed_local_ml_library: NotRequired[bool]
@@ -189,6 +192,7 @@ class BaseModelSaveOption(TypedDict):
     method_options: NotRequired[dict[str, ModelMethodSaveOptions]]
     enable_explainability: NotRequired[bool]
     save_location: NotRequired[str]
+    model_init_once: NotRequired[bool]
 
 
 class CatBoostModelSaveOptions(BaseModelSaveOption):

@@ -691,6 +691,39 @@ class TestRegistrySKLearnModelInteg(registry_model_test_base.RegistryModelTestBa
         self.registry.delete_model(model_name=name)
         self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
 
+    def test_skl_model_udf_init_once(self) -> None:
+        """E2E test: log and run inference on a sklearn model with model_init_once=True."""
+        iris_X, iris_y = datasets.load_iris(return_X_y=True)
+        classifier = linear_model.LogisticRegression(max_iter=1000)
+        classifier.fit(iris_X, iris_y)
+        self._test_registry_model(
+            model=classifier,
+            sample_input_data=iris_X,
+            prediction_assert_fns={
+                "predict": (
+                    iris_X,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res["output_feature_0"].to_frame("output_feature_0"),
+                        pd.DataFrame(classifier.predict(iris_X), columns=["output_feature_0"]),
+                        check_dtype=False,
+                    ),
+                ),
+                "predict_proba": (
+                    iris_X[:10],
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(classifier.predict_proba(iris_X[:10]), columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            function_type_assert={
+                "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+                "predict_proba": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
+            },
+            options={"model_init_once": True},
+        )
+
     def test_skl_model_with_params_forwarding(self) -> None:
         """Params are forwarded to predict and explain for a sklearn estimator."""
 

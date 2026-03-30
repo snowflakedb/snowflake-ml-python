@@ -45,6 +45,7 @@ class FunctionGenerator:
         is_partitioned_function: bool = False,
         wide_input: bool = False,
         options: Optional[FunctionGenerateOptions] = None,
+        use_udf_init_once: bool = False,
     ) -> None:
         import importlib_resources
 
@@ -58,6 +59,8 @@ class FunctionGenerator:
                     original_exception=ValueError("Partitioned inference api functions must have type TABLE_FUNCTION."),
                 )
             template_filename = "infer_partitioned.py_template"
+        elif function_type.lower() == ModelMethodFunctionTypes.FUNCTION.value.lower() and use_udf_init_once:
+            template_filename = "infer_function_init_once.py_template"
         else:
             template_filename = f"infer_{function_type.lower()}.py_template"
 

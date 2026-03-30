@@ -41,6 +41,7 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewSlice,
     FeatureViewStatus,
     FeatureViewVersion,
+    OnlineStoreType,
     StorageConfig,
     StorageFormat,
     _FeatureViewMetadata,
@@ -51,6 +52,20 @@ from snowflake.ml.feature_store.metadata_manager import (
     FeatureStoreMetadataManager,
     MetadataObjectType,
     MetadataType,
+)
+from snowflake.ml.feature_store.spec.builder import (
+    BatchSource,
+    FeatureViewSpecBuilder,
+    SnowflakeTableInfo,
+)
+from snowflake.ml.feature_store.spec.enums import (
+    FeatureAggregationMethod,
+    FeatureViewKind,
+    TableType,
+)
+from snowflake.ml.feature_store.spec.models import (
+    FeatureViewSpec,
+    validate_schema_types,
 )
 from snowflake.ml.feature_store.stream_source import (
     _LIST_STREAM_SOURCE_SCHEMA,
@@ -202,10 +217,12 @@ def switch_warehouse(
     return wrapper
 
 
-def dispatch_decorator() -> Callable[
-    [Callable[Concatenate[FeatureStore, _Args], _RT]],
-    Callable[Concatenate[FeatureStore, _Args], _RT],
-]:
+def dispatch_decorator() -> (
+    Callable[
+        [Callable[Concatenate[FeatureStore, _Args], _RT]],
+        Callable[Concatenate[FeatureStore, _Args], _RT],
+    ]
+):
     def decorator(
         f: Callable[Concatenate[FeatureStore, _Args], _RT],
     ) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
@@ -665,7 +682,7 @@ class FeatureStore:
             # Step 2: Create online feature table if requested
             if feature_view.online:
                 online_table_name = self._create_online_feature_table(
-                    feature_view, feature_view_name, overwrite=overwrite
+                    feature_view, feature_view_name, version=str(version), overwrite=overwrite
                 )
                 created_resources.append(
                     (_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, self._get_fully_qualified_name(online_table_name))
@@ -2741,7 +2758,7 @@ class FeatureStore:
                 assert isinstance(op_data, FeatureView)
                 assert op_data.version is not None
                 feature_view_name = FeatureView._get_physical_name(op_data.name, op_data.version)
-                self._create_online_feature_table(op_data, feature_view_name)
+                self._create_online_feature_table(op_data, feature_view_name, version=str(op_data.version))
             elif op_type == "DELETE_ONLINE":
                 assert isinstance(op_data, str)
                 self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {op_data}").collect(
@@ -3872,7 +3889,6 @@ FROM SPINE{' '.join(join_clauses)}
         join_keys: list[SqlIdentifier] = []
 
         if join_method == "cte":
-
             logger.info(f"Using the CTE method with {len(features)} feature views")
 
             query = self._build_cte_query(
@@ -4670,13 +4686,19 @@ FROM SPINE{' '.join(join_clauses)}
         self,
         feature_view: FeatureView,
         feature_view_name: SqlIdentifier,
+        version: str,
         overwrite: bool = False,
     ) -> str:
         """Create online feature table for the feature view.
 
+        For ``HYBRID_TABLE`` store type, creates the OFT via ``CREATE ... FROM <source_table>``.
+        For ``POSTGRES`` store type, builds a feature view spec and creates the OFT via
+        ``CREATE ... FROM SPECIFICATION $$<json>$$``.
+
         Args:
             feature_view: The FeatureView object for which to create the online feature table.
-            feature_view_name: The name of the feature view.
+            feature_view_name: The physical name of the feature view (DT/View).
+            version: The version string for the feature view.
             overwrite: Whether to overwrite existing online feature table. Defaults to False.
 
         Returns:
@@ -4727,6 +4749,34 @@ FROM SPINE{' '.join(join_clauses)}
         if feature_view.timestamp_col:
             timestamp_clause = f"TIMESTAMP_COLUMN='{feature_view.timestamp_col}'"
 
+        # Determine source clause based on online store type
+        store_type = config.store_type
+        if store_type == OnlineStoreType.POSTGRES:
+            # Validate schema types before building spec
+            try:
+                validate_schema_types(feature_view.output_schema)
+            except ValueError as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"Feature view '{feature_view.name}' contains column types not supported by "
+                        f"Postgres online store. {e} "
+                        f"Consider casting unsupported columns to a supported type before creating the feature view."
+                    ),
+                ) from e
+
+            spec = self._build_batch_feature_view_spec(
+                feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                version=version,
+                target_lag=target_lag_value,
+            )
+            spec_json = spec.to_json()
+            source_clause = f"FROM SPECIFICATION $${spec_json}$$"
+        else:
+            # HYBRID_TABLE: existing path
+            source_clause = f"FROM {source_table_name}"
+
         # Create online feature table
         try:
             overwrite_clause = "OR REPLACE " if overwrite else ""
@@ -4738,7 +4788,7 @@ FROM SPINE{' '.join(join_clauses)}
                 timestamp_clause,
                 warehouse_clause,
                 target_lag_clause,
-                f"FROM {source_table_name}",
+                source_clause,
             ]
 
             query = " ".join(part for part in query_parts if part)
@@ -4761,6 +4811,82 @@ FROM SPINE{' '.join(join_clauses)}
             ) from e
 
         return online_table_name
+
+    def _build_batch_feature_view_spec(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        version: str,
+        target_lag: str,
+    ) -> FeatureViewSpec:
+        """Build a validated FeatureView spec for a batch feature view.
+
+        Constructs a :class:`FeatureViewSpec` from the FeatureView metadata and
+        the physical DT/View name.
+
+        Args:
+            feature_view: The FeatureView definition.
+            feature_view_name: Physical name of the DT/View (already created).
+            version: Feature view version string.
+            target_lag: Resolved target lag string (e.g., ``"30s"``).
+
+        Returns:
+            FeatureViewSpec instance ready for serialization.
+        """
+        database = self._config.database.resolved()
+        schema = self._config.schema.resolved()
+
+        # Entity join key column names (deduplicated, preserving order)
+        entity_columns: list[str] = []
+        seen_entity_cols: set[str] = set()
+        for entity in feature_view.entities:
+            for jk in entity.join_keys:
+                resolved = jk.resolved()
+                if resolved not in seen_entity_cols:
+                    seen_entity_cols.add(resolved)
+                    entity_columns.append(resolved)
+
+        # Offline config: the DT/View that was just created
+        offline_table_info = SnowflakeTableInfo(
+            table_type=TableType.BATCH_SOURCE,
+            database=database,
+            schema=schema,
+            table=feature_view_name.resolved(),
+            columns=feature_view.output_schema,
+        )
+
+        builder = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.BatchFeatureView,
+                database=database,
+                schema=schema,
+                name=feature_view.name.resolved(),
+                version=version,
+            )
+            .set_offline_configs([offline_table_info])
+            .set_properties(
+                entity_columns=entity_columns,
+                timestamp_field=(feature_view.timestamp_col.resolved() if feature_view.timestamp_col else None),
+                granularity=feature_view.feature_granularity if feature_view.is_tiled else None,
+                agg_method=FeatureAggregationMethod.TILES if feature_view.is_tiled else None,
+                target_lag=target_lag,
+            )
+        )
+
+        # For tiled batch FVs, set the raw source schema and aggregation specs.
+        # Rollup FVs inherit agg specs from the parent; the raw source columns
+        # that those specs reference live in the parent's feature_df.
+        if feature_view.is_tiled and feature_view.aggregation_specs:
+            if feature_view.is_rollup:
+                assert feature_view.rollup_config is not None
+                source_df = feature_view.rollup_config.source.feature_df
+            else:
+                source_df = feature_view.feature_df
+            assert source_df is not None
+            builder.set_sources([BatchSource(schema=source_df.schema)])
+            builder.set_features(feature_view.aggregation_specs)
+
+        return builder.build()
 
     def _find_object(
         self,

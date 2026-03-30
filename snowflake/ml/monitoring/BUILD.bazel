@@ -46,7 +46,7 @@ py_test(
     srcs = [
         "model_monitor_test.py",
     ],
-    tags = ["feature:observability"],
+    tags = ["feature:model_serving"],
     deps = [
         ":model_monitor",
         "//snowflake/ml/test_utils:mock_session",

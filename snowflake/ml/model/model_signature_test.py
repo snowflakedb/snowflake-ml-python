@@ -771,13 +771,13 @@ class ModelSignatureMiscTest(absltest.TestCase):
         self.assertEqual(len(sig_with_params.params), 3)
         self.assertEqual(sig_with_params.params[0].name, "temperature")
         self.assertEqual(sig_with_params.params[0].dtype, model_signature.DataType.FLOAT)  # type: ignore[attr-defined]
-        self.assertEqual(sig_with_params.params[0].default_value, 0.7)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[0].default_value, 0.7)
         self.assertEqual(sig_with_params.params[1].name, "max_tokens")
         self.assertEqual(sig_with_params.params[1].dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
-        self.assertEqual(sig_with_params.params[1].default_value, 100)  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[1].default_value, 100)
         self.assertEqual(sig_with_params.params[2].name, "stop_sequence")
         self.assertEqual(sig_with_params.params[2].dtype, model_signature.DataType.STRING)  # type: ignore[attr-defined]
-        self.assertEqual(sig_with_params.params[2].default_value, "END")  # type: ignore[attr-defined]
+        self.assertEqual(sig_with_params.params[2].default_value, "END")
 
     def test_infer_signature_with_parameters_serialization(self) -> None:
         """Test that signatures inferred with parameters can be serialized and deserialized."""
@@ -887,14 +887,14 @@ class ModelSignatureMiscTest(absltest.TestCase):
         self.assertIsInstance(temp_param, model_signature.ParamSpec)
         self.assertEqual(temp_param.name, "temperature")
         self.assertEqual(temp_param.dtype, model_signature.DataType.DOUBLE)  # type: ignore[attr-defined]
-        self.assertEqual(temp_param.default_value, 0.7)  # type: ignore[attr-defined]
+        self.assertEqual(temp_param.default_value, 0.7)
         self.assertIsNone(temp_param.shape)
 
         max_tokens_param = sig.params[1]
         self.assertIsInstance(max_tokens_param, model_signature.ParamSpec)
         self.assertEqual(max_tokens_param.name, "max_tokens")
         self.assertEqual(max_tokens_param.dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
-        self.assertEqual(max_tokens_param.default_value, 100)  # type: ignore[attr-defined]
+        self.assertEqual(max_tokens_param.default_value, 100)
         self.assertIsNone(max_tokens_param.shape)
 
     def test_infer_signature_with_dict_params_all_scalar_types(self) -> None:
@@ -928,7 +928,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         for param, (exp_name, exp_dtype, exp_default) in zip(sig.params, expected):
             self.assertEqual(param.name, exp_name)
             self.assertEqual(param.dtype, exp_dtype)  # type: ignore[attr-defined]
-            self.assertEqual(param.default_value, exp_default)  # type: ignore[attr-defined]
+            self.assertEqual(param.default_value, exp_default)
             self.assertIsNone(param.shape)
 
     def test_infer_signature_with_dict_params_list_values(self) -> None:
@@ -943,7 +943,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         self.assertIsInstance(weights_param, model_signature.ParamSpec)
         self.assertEqual(weights_param.name, "weights")
         self.assertEqual(weights_param.dtype, model_signature.DataType.DOUBLE)  # type: ignore[attr-defined]
-        self.assertEqual(weights_param.default_value, [1.0, 2.0, 3.0])  # type: ignore[attr-defined]
+        self.assertEqual(weights_param.default_value, [1.0, 2.0, 3.0])
         self.assertEqual(weights_param.shape, (-1,))
 
     def test_infer_signature_with_dict_params_nested_list(self) -> None:
@@ -957,7 +957,7 @@ class ModelSignatureMiscTest(absltest.TestCase):
         matrix_param = sig.params[0]
         self.assertEqual(matrix_param.name, "matrix")
         self.assertEqual(matrix_param.dtype, model_signature.DataType.INT64)  # type: ignore[attr-defined]
-        self.assertEqual(matrix_param.default_value, [[1, 2], [3, 4]])  # type: ignore[attr-defined]
+        self.assertEqual(matrix_param.default_value, [[1, 2], [3, 4]])
         self.assertEqual(matrix_param.shape, (-1, -1))
 
     def test_infer_signature_with_dict_params_empty_dict(self) -> None:

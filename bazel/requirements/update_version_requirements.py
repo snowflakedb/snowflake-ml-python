@@ -278,7 +278,7 @@ def main() -> None:
 
         # Fetch latest versions
         latest_pypi = get_latest_pypi_version(pypi_pkg_name) if pypi_pkg_name else None
-        conda_channel = pkg_entry.get("from_channel", DEFAULT_CONDA_CHANNEL) if conda_pkg_name else None
+        conda_channel = pkg_entry.get("from_channel", DEFAULT_CONDA_CHANNEL)
         latest_conda = get_latest_conda_version(conda_pkg_name, from_channel=conda_channel) if conda_pkg_name else None
 
         # Update requirements

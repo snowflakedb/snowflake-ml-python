@@ -71,12 +71,16 @@ class DataType(Enum):
 
     TIMESTAMP_NTZ = ("datetime64[ns]", spt.TimestampType, "datetime64[ns]")
 
+    OBJECT = ("object", spt.MapType, np.object_)
+
     def as_snowpark_type(self) -> spt.DataType:
         """Convert to corresponding Snowpark Type.
 
         Returns:
             A Snowpark type.
         """
+        if self == DataType.OBJECT:
+            return spt.MapType(spt.StringType(), spt.VariantType())
         return self._snowpark_type()
 
     def __repr__(self) -> str:
@@ -162,7 +166,7 @@ class DataType(Enum):
             i._snowpark_type: i
             for i in DataType
             # We by default infer as signed integer.
-            if i not in [DataType.UINT8, DataType.UINT16, DataType.UINT32, DataType.UINT64]
+            if i not in [DataType.UINT8, DataType.UINT16, DataType.UINT32, DataType.UINT64, DataType.OBJECT]
         }
         for potential_type in snowpark_to_snowml_type_mapping.keys():
             if isinstance(actual_sp_type, potential_type):
@@ -669,6 +673,15 @@ class BaseParamSpec(ABC):
         """Shape of the parameter. None means scalar."""
         return self._shape
 
+    @property
+    @abstractmethod
+    def default_value(self) -> Any:
+        """Default value of the parameter."""
+
+    @abstractmethod
+    def as_snowpark_type(self) -> spt.DataType:
+        """Convert to corresponding Snowpark Type."""
+
     @abstractmethod
     def to_dict(self) -> dict[str, Any]:
         """Serialization"""
@@ -977,6 +990,11 @@ class ParamGroupSpec(BaseParamSpec):
     def specs(self) -> list[BaseParamSpec]:
         """List of parameter specifications in the group."""
         return self._specs
+
+    @property
+    def dtype(self) -> DataType:
+        """Type of the parameter group. Always OBJECT."""
+        return DataType.OBJECT
 
     @staticmethod
     def _wrap_value_in_shape(value: Any, shape: tuple[int, ...]) -> Any:

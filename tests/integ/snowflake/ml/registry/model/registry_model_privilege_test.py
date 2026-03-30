@@ -1,3 +1,4 @@
+import logging
 import tempfile
 from typing import Callable, TypeVar
 
@@ -53,7 +54,11 @@ class RegistryModelPrivilegeTest(registry_model_test_base.RegistryModelTestBase)
             try:
                 self.session.sql(f"GRANT USAGE ON WAREHOUSE {self._test_warehouse} TO ROLE {role_name}").collect()
             except Exception:
-                pass
+                logging.error(
+                    f"Failed to grant warehouse {self._test_warehouse} to role {role_name}. "
+                    "Tests requiring warehouse access under this role will fail. "
+                    "Ensure the current role has GRANT OPTION on the warehouse."
+                )
 
         iris_X, iris_y = datasets.load_iris(return_X_y=True)
         self._test_input = pd.DataFrame(iris_X[:5], columns=[f"input_feature_{i}" for i in range(iris_X.shape[1])])

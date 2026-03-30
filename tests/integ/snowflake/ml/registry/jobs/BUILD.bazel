@@ -84,7 +84,10 @@ py_test(
     timeout = "eternal",
     srcs = ["registry_custom_model_batch_inference_test.py"],
     shard_count = 2,
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
     deps = [
         ":registry_batch_inference_test_base",
     ],
@@ -165,6 +168,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
+        "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:pytorch_handler",
         "//snowflake/ml/model/_signatures:snowpark_handler",
         "//tests/integ/snowflake/ml/test_utils:model_factory",
@@ -333,7 +337,7 @@ py_test(
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
     ],
     optional_dependencies = ["transformers"],
-    shard_count = 3,
+    shard_count = 7,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",

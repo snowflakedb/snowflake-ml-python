@@ -23,6 +23,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml.model import model_signature, openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.compute_pool import DEFAULT_CPU_COMPUTE_POOL
+from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -200,13 +201,13 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
     def _deploy(
         self,
-        engine: str,
+        engine: InferenceEngine,
         compute_pool_for_log: Optional[str],
         signature: dict[str, model_signature.ModelSignature],
         gpu_requests: Optional[str] = None,
     ) -> tuple[Any, str]:
         logging_style = "remote" if compute_pool_for_log else "local"
-        deploy_label = f"{engine}/{logging_style}"
+        deploy_label = f"{engine.name}/{logging_style}"
         logger.info("Deploying model: %s", deploy_label)
 
         model = huggingface.TransformersPipeline(
@@ -216,8 +217,9 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         )
         messages = _get_messages(signature)
         test_input = pd.DataFrame.from_records([{"messages": messages}])
-        options: dict[str, Any] = {"cuda_version": model_env.DEFAULT_CUDA_VERSION} if engine == "vLLM" else {}
-        service_compute_pool = self._TEST_GPU_COMPUTE_POOL if engine == "vLLM" else None
+        is_vllm = engine == InferenceEngine.VLLM
+        options: dict[str, Any] = {"cuda_version": model_env.DEFAULT_CUDA_VERSION} if is_vllm else {}
+        service_compute_pool = self._TEST_GPU_COMPUTE_POOL if is_vllm else None
 
         def check_result(res: pd.DataFrame) -> None:
             self.assertEqual(len(res), 1, f"[{deploy_label}/deploy] Expected single response row")
@@ -365,14 +367,16 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     @parameterized.named_parameters(  # type: ignore[misc]
         *[
             dict(
-                testcase_name=f"{engine}_{log}_{fmt}_{'gpu' if gpu == '1' else 'no_gpu'}",
+                testcase_name=f"{engine.name}_{log}_{fmt}_{'gpu' if gpu == '1' else 'no_gpu'}",
                 engine=engine,
                 compute_pool_for_log=pool,
                 signature=sig,
                 gpu_requests=gpu,
             )
             for engine, pool_pairs in [
-                ("vLLM", [("local", None), ("remote", DEFAULT_CPU_COMPUTE_POOL)]),
+                (InferenceEngine.VLLM, [("local", None), ("remote", DEFAULT_CPU_COMPUTE_POOL)]),
+                # TODO(jack-douglas_snow): Uncomment this when transformer signatures are supported for PYTHON_GENERIC
+                # (InferenceEngine.PYTHON_GENERIC, [("local", None), ("remote", DEFAULT_CPU_COMPUTE_POOL)]),
             ]
             for log, pool in pool_pairs
             for sig, fmt in zip(
@@ -385,7 +389,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     @pytest.mark.conda_incompatible
     def test_params(
         self,
-        engine: str,
+        engine: InferenceEngine,
         compute_pool_for_log: Optional[str],
         signature: dict[str, model_signature.ModelSignature],
         gpu_requests: Optional[str],
@@ -393,7 +397,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         """Deploy once, then run all param variants across every invocation path."""
         logging_style = "remote" if compute_pool_for_log else "local"
         content_fmt = "object" if _is_object_content(signature) else "string"
-        ctx = f"{engine}/{logging_style}/{content_fmt}/{'gpu' if gpu_requests == '1' else 'no_gpu'}"
+        ctx = f"{engine.name}/{logging_style}/{content_fmt}/{'gpu' if gpu_requests == '1' else 'no_gpu'}"
 
         mv, endpoint = self._deploy(engine, compute_pool_for_log, signature, gpu_requests=gpu_requests)
         messages = _get_messages(signature)

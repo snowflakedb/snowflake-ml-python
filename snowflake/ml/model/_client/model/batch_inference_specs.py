@@ -118,8 +118,8 @@ class JobSpec(BaseModel):
             Required when the model has multiple inference functions.
         force_rebuild (bool): Whether to force rebuilding the container image even if
             it already exists. Defaults to False.
-        max_batch_rows (int): Maximum number of rows to process in a single batch.
-            Defaults to 1024. Larger values may improve throughput.
+        max_batch_rows (Optional[int]): Maximum number of rows to process in a single batch.
+            Auto determined if None. Larger values may improve throughput.
         warehouse (Optional[str]): Snowflake warehouse to use for the batch inference job.
             If not specified, uses the session's current warehouse.
         cpu_requests (Optional[str]): The cpu limit for CPU based inference. Can be an integer,
@@ -147,7 +147,7 @@ class JobSpec(BaseModel):
     num_workers: Optional[int] = None
     function_name: Optional[str] = None
     force_rebuild: bool = False
-    max_batch_rows: int = 1024
+    max_batch_rows: Optional[int] = None
     warehouse: Optional[str] = None
     cpu_requests: Optional[str] = None
     memory_requests: Optional[str] = None

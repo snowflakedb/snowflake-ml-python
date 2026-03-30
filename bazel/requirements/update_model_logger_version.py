@@ -2,11 +2,15 @@
 """Fetch the latest snowflake-ml-python version from PyPI and prepend it to a base requirements file."""
 
 import json
+import re
 import sys
 import urllib.request
 from typing import Optional
 
-from packaging import version
+
+def _parse_version(v: str) -> tuple[int, ...]:
+    """Parse a PEP 440 version string into a tuple of ints for sorting."""
+    return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
 def get_latest_pypi_version(package_name: str) -> Optional[str]:
@@ -15,13 +19,17 @@ def get_latest_pypi_version(package_name: str) -> Optional[str]:
     with urllib.request.urlopen(url, timeout=10) as resp:
         data = json.loads(resp.read())
 
-        versions = data["releases"].keys()
-        versions = [version.parse(v) for v in versions]
-        versions.sort(reverse=True)
+        # PyPI "info.version" is already the latest stable release
+        latest: str = data["info"]["version"]
+        releases = data["releases"].get(latest, [])
+        if releases and not releases[0].get("yanked", False):
+            return latest
 
-        # find the last version that's not yanked
+        # Fall back: scan all releases for the latest non-yanked version
+        versions = sorted(data["releases"].keys(), key=_parse_version, reverse=True)
         for v in versions:
-            if not data["releases"][str(v)][0]["yanked"]:
+            files = data["releases"][v]
+            if files and not files[0].get("yanked", False):
                 return str(v)
     return None
 

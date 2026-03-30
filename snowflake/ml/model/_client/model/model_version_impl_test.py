@@ -1390,6 +1390,63 @@ class ModelVersionImplTest(absltest.TestCase):
                 ["--custom-arg=value", "--another-arg"],
             )
 
+    def test_create_service_rejects_all_table_functions(self) -> None:
+        self.m_mv._functions = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": "predict_table",
+                    "target_method": "predict_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": True,
+                }
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "predict_table.*Consider using batch inference jobs instead"):
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                image_repo="IMAGE_REPO",
+            )
+
+    def test_create_service_warns_for_mixed_functions_with_table_function(self) -> None:
+        mock_progress_status = create_mock_progress_status()
+        self.m_mv._functions = [
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": "predict",
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                }
+            ),
+            model_manifest_schema.ModelFunctionInfo(
+                {
+                    "name": "predict_table",
+                    "target_method": "predict_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": True,
+                }
+            ),
+        ]
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
+            with self.assertWarnsRegex(UserWarning, "predict_table.*will not be available in the service"):
+                self.m_mv.create_service(
+                    service_name="SERVICE",
+                    service_compute_pool="SERVICE_COMPUTE_POOL",
+                    image_repo="IMAGE_REPO",
+                )
+            mock_create_service.assert_called_once()
+
     def test_repr_html_happy_path_with_functions_and_metrics(self) -> None:
         """Test _repr_html_ method with functions and metrics present."""
         # Mock model signature with _repr_html_ method
@@ -2177,7 +2234,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=False,
                 image_repo_name=None,
                 num_workers=None,
-                max_batch_rows=1024,
+                max_batch_rows=None,
                 warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
                 cpu_requests=None,
                 memory_requests=None,
@@ -2253,7 +2310,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=False,
                 image_repo_name=None,
                 num_workers=None,
-                max_batch_rows=1024,
+                max_batch_rows=None,
                 warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
                 cpu_requests=None,
                 memory_requests=None,
@@ -2336,7 +2393,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=False,
                 image_repo_name=None,
                 num_workers=None,
-                max_batch_rows=1024,
+                max_batch_rows=None,
                 warehouse=sql_identifier.SqlIdentifier("TEST_WAREHOUSE"),
                 cpu_requests=None,
                 memory_requests=None,
@@ -2539,7 +2596,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 force_rebuild=False,  # JobSpec default
                 image_repo_name=None,  # JobSpec default
                 num_workers=None,  # JobSpec default
-                max_batch_rows=1024,  # JobSpec default
+                max_batch_rows=None,  # JobSpec default
                 warehouse=sql_identifier.SqlIdentifier("SESSION_WAREHOUSE"),  # from session since warehouse=None
                 cpu_requests=None,  # JobSpec default
                 memory_requests=None,  # JobSpec default

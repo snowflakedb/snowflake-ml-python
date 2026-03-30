@@ -236,6 +236,88 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
 
         self.assertEqual(res, expected_get_result)
 
+    def test_show_run_metrics_in_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN METRICS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ", self._create_mock_df()
+        )
+
+        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name)
+
+    def test_show_run_metrics_in_experiment_with_like(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN METRICS LIKE 'acc%' IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, like="acc%")
+
+    def test_show_run_metrics_in_experiment_with_run_name(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN METRICS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT RUN TEST_RUN",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, run_name=run_name)
+
+    def test_show_run_metrics_in_experiment_with_like_and_run_name(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN METRICS LIKE 'loss%' IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT RUN TEST_RUN",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, run_name=run_name, like="loss%")
+
+    def test_show_run_parameters_in_experiment(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN PARAMETERS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ", self._create_mock_df()
+        )
+
+        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name)
+
+    def test_show_run_parameters_in_experiment_with_like(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN PARAMETERS LIKE 'lr%' IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, like="lr%")
+
+    def test_show_run_parameters_in_experiment_with_run_name(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN PARAMETERS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT RUN TEST_RUN",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, run_name=run_name)
+
+    def test_show_run_parameters_in_experiment_with_like_and_run_name(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "SHOW RUN PARAMETERS LIKE 'batch%' IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT RUN TEST_RUN",
+            self._create_mock_df(),
+        )
+
+        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, run_name=run_name, like="batch%")
+
     def test_build_snow_uri(self) -> None:
         # Test the _build_snow_uri helper method
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")

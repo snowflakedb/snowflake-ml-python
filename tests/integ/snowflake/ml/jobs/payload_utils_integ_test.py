@@ -4,6 +4,7 @@ from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 
+from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs._utils import constants, payload_utils, type_utils
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 from tests.integ.snowflake.ml.test_utils import db_manager, test_env_utils
@@ -44,7 +45,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         cls.session = test_env_utils.get_available_session()
         cls.dbm = db_manager.DBManager(cls.session)
         cls.dbm.cleanup_schemas(prefix=_TEST_SCHEMA, expire_days=1)
-        cls.db = cls.session.get_current_database()
+        cls.db = identifier._get_unescaped_name(cls.session.get_current_database())
         cls.schema = cls.dbm.create_random_schema(prefix=_TEST_SCHEMA)
         cls.stage = cls.dbm.create_stage(stage_name=_TEST_STAGE, schema_name=cls.schema, db_name=cls.db)
 
