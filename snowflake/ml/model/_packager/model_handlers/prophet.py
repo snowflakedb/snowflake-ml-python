@@ -2,7 +2,6 @@ import logging
 import os
 from typing import TYPE_CHECKING, Callable, Optional, cast, final
 
-import cloudpickle
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
@@ -208,7 +207,7 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
     _MIN_SNOWPARK_ML_VERSION = "1.8.0"
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
-    MODEL_BLOB_FILE_OR_DIR = "model.pkl"
+    MODEL_BLOB_FILE_OR_DIR = "model.json"
     DEFAULT_TARGET_METHODS = ["predict"]
 
     # Prophet models require sample data to infer signatures because the data may contain regressors.
@@ -353,12 +352,13 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
 
             model_meta.task = model_types.Task.UNKNOWN  # Prophet is forecasting, which isn't in standard tasks
 
-        # Save the Prophet model using cloudpickle
+        from prophet.serialize import model_to_json
+
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         os.makedirs(model_blob_path, exist_ok=True)
 
-        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "wb") as f:
-            cloudpickle.dump(model, f)
+        with open(os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR), "w") as f:
+            f.write(model_to_json(model))
 
         # Create model blob metadata with column mapping options
         from snowflake.ml.model._packager.model_meta import model_meta_schema
@@ -410,14 +410,15 @@ class ProphetHandler(_base.BaseModelHandler["prophet.Prophet"]):
             The loaded Prophet model
         """
         import prophet
+        from prophet.serialize import model_from_json
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models
         model_blob_metadata = model_blobs_metadata[name]
         model_blob_filename = model_blob_metadata.path
 
-        with open(os.path.join(model_blob_path, model_blob_filename), "rb") as f:
-            model = cloudpickle.load(f)
+        with open(os.path.join(model_blob_path, model_blob_filename)) as f:
+            model = model_from_json(f.read())
 
         assert isinstance(model, prophet.Prophet)
         return model

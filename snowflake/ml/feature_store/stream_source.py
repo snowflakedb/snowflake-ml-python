@@ -4,15 +4,14 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.snowpark.types import (
     BooleanType,
     DataType,
-    DateType,
     DecimalType,
-    FloatType,
+    DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
     TimestampTimeZone,
     TimestampType,
-    TimeType,
 )
 
 _STREAM_SOURCE_NAME_LENGTH_LIMIT = 32
@@ -29,12 +28,11 @@ _LIST_STREAM_SOURCE_SCHEMA = StructType(
 # Mapping from type class name to type class for schema serialization/deserialization.
 _TYPE_NAME_TO_CLASS: dict[str, type] = {
     "StringType": StringType,  # VARCHAR(<n>)
-    "FloatType": FloatType,  # FLOAT
+    "LongType": LongType,  # INT / NUMBER(38,0)
+    "DoubleType": DoubleType,  # FLOAT / DOUBLE
     "DecimalType": DecimalType,  # NUMBER(<p>,<s>)
     "BooleanType": BooleanType,  # BOOLEAN
     "TimestampType": TimestampType,  # TIMESTAMP_NTZ(9)
-    "DateType": DateType,  # DATE
-    "TimeType": TimeType,  # TIME(9)
 }
 
 

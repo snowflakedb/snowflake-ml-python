@@ -25,6 +25,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import model_signature, openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -212,12 +213,12 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
     @parameterized.named_parameters(  # type: ignore[misc]
         *[
             dict(
-                testcase_name=f"{engine}_{log}_{fmt}",
+                testcase_name=f"{engine.name}_{log}_{fmt}",
                 engine=engine,
                 compute_pool_for_log=pool,
                 signature=sig,
             )
-            for engine in ["Default", "vLLM"]
+            for engine in [InferenceEngine.PYTHON_GENERIC, InferenceEngine.VLLM]
             for log, pool in [("local", None)]  # Remote logging hardcodes the signature
             for sig, fmt in zip(
                 _NON_PARAM_SPEC_SIGNATURES,
@@ -227,7 +228,7 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
     )
     def test_non_param_spec_signature(
         self,
-        engine: str,
+        engine: InferenceEngine,
         compute_pool_for_log: Optional[str],
         signature: dict[str, model_signature.ModelSignature],
     ) -> None:
@@ -236,7 +237,7 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
         input_df = pd.DataFrame.from_records([{"messages": messages, **_FULL_PARAMS}])
         logging_style = "remote" if compute_pool_for_log else "local"
         content_fmt = "object" if _is_object_content(signature) else "string"
-        ctx = f"{engine}/{logging_style}/{content_fmt}"
+        ctx = f"{engine.name}/{logging_style}/{content_fmt}"
 
         model = huggingface.TransformersPipeline(
             task="text-generation",

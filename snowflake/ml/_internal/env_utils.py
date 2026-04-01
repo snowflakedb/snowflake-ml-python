@@ -591,18 +591,104 @@ def save_conda_env_file(
         yaml.safe_dump(env, stream=f, default_flow_style=False)
 
 
-def save_requirements_file(path: pathlib.Path, pip_deps: list[requirements.Requirement]) -> None:
+def _get_pytorch_cuda_suffix(cuda_version: str) -> str:
+    """Get PyTorch CUDA wheel suffix (e.g., '124') for the specified CUDA version.
+
+    Args:
+        cuda_version: CUDA version string.
+
+    Returns:
+        The CUDA suffix for PyTorch wheels.
+    """
+    parsed = version.parse(cuda_version)
+    return f"{parsed.major}{parsed.minor}"
+
+
+def _get_pytorch_cuda_index_url(cuda_version: str) -> str:
+    """Get PyTorch CUDA index URL for the specified CUDA version.
+
+    Args:
+        cuda_version: CUDA version string.
+
+    Returns:
+        The --extra-index-url argument for pip/uv.
+    """
+    cuda_suffix = _get_pytorch_cuda_suffix(cuda_version)
+    return f"--extra-index-url https://download.pytorch.org/whl/cu{cuda_suffix}"
+
+
+def _pin_torch_to_cuda_variant(
+    pip_deps: list[requirements.Requirement], cuda_version: str
+) -> list[requirements.Requirement]:
+    """Pin torch requirement to the CUDA variant (e.g., torch==2.5.0+cu124).
+
+    PyTorch CUDA wheels use local version identifiers like +cu124 to distinguish
+    CUDA-enabled builds from CPU-only builds.
+
+    Args:
+        pip_deps: Validated pip requirements.
+        cuda_version: CUDA version string (e.g., "12.4", "12.4.1").
+
+    Returns:
+        A new list of requirements with ``torch==X.Y.Z`` rewritten to ``torch==X.Y.Z+cu...``
+        when the requirement is exactly pinned and has no ``+cu`` suffix yet.
+    """
+    cuda_suffix = _get_pytorch_cuda_suffix(cuda_version)
+    result = []
+
+    for req in pip_deps:
+        if req.name != "torch":
+            result.append(req)
+            continue
+
+        # Extract pinned version (e.g., ==2.5.0)
+        pinned_version = next((s.version for s in req.specifier if s.operator == "=="), None)
+
+        # Skip if not pinned or already has +cu suffix
+        if not pinned_version or "+cu" in pinned_version:
+            result.append(req)
+            continue
+
+        # Create new requirement with CUDA local version
+        new_req = requirements.Requirement(f"torch=={pinned_version}+cu{cuda_suffix}")
+        new_req.extras = req.extras
+        new_req.marker = req.marker
+        result.append(new_req)
+
+    return result
+
+
+def _has_torch_dependency(pip_deps: list[requirements.Requirement]) -> bool:
+    """Check if torch is in the pip dependencies."""
+    return any(dep.name == "torch" for dep in pip_deps)
+
+
+def save_requirements_file(
+    path: pathlib.Path,
+    pip_deps: list[requirements.Requirement],
+    cuda_version: Optional[str] = None,
+) -> None:
     """Generate Python requirements.txt file in the given directory path.
 
     Args:
         path: Path to the requirements.txt file.
-        pip_deps: List of dependencies string after validated.
+        pip_deps: List of dependencies after validation.
+        cuda_version: Optional CUDA version for GPU models. If provided and torch is in
+            dependencies, adds PyTorch CUDA index URL and pins torch to CUDA variant.
     """
     assert path.suffix in [".txt"], "PIP requirement file should have extension of txt."
     path.parent.mkdir(parents=True, exist_ok=True)
-    requirements = "\n".join(map(str, pip_deps))
+
+    lines: list[str] = []
+
+    if cuda_version and _has_torch_dependency(pip_deps):
+        lines.append(_get_pytorch_cuda_index_url(cuda_version))
+        pip_deps = _pin_torch_to_cuda_variant(pip_deps, cuda_version)
+
+    lines.extend(map(str, pip_deps))
+
     with open(path, "w", encoding="utf-8") as out:
-        out.write(requirements)
+        out.write("\n".join(lines))
 
 
 def load_conda_env_file(
@@ -701,6 +787,9 @@ def load_requirements_file(path: pathlib.Path) -> list[requirements.Requirement]
 
     with open(path, encoding="utf-8") as f:
         reqs = f.readlines()
+
+    # Filter out pip options
+    reqs = [line for line in reqs if line.strip() and not line.strip().startswith(("-", "#"))]
 
     return validate_pip_requirement_string_list(reqs)
 

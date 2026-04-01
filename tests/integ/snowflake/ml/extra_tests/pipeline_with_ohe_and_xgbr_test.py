@@ -134,7 +134,6 @@ class PipelineXGBRTest(absltest.TestCase):
                             ("num_transforms", SkMinMaxScaler(clip=True), numerical_columns),
                             ("num_imputer", SkKNNImputer(), COLUMNS_TO_IMPUTE),
                         ],
-                        remainder="passthrough",
                     ),
                 ),
                 ("Training", XGB_XGBClassifier()),

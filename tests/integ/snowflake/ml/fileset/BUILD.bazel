@@ -13,7 +13,10 @@ py_test(
     name = "sfcfs_integ_test",
     srcs = ["sfcfs_integ_test.py"],
     shard_count = 4,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":fileset_integ_utils",
         "//snowflake/ml/fileset:sfcfs",
@@ -25,7 +28,10 @@ py_test(
     name = "snowfs_integ_test",
     srcs = ["snowfs_integ_test.py"],
     shard_count = 4,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":fileset_integ_utils",
         "//snowflake/ml/fileset:snowfs",
@@ -53,7 +59,10 @@ py_test(
     srcs = ["fileset_integ_test.py"],
     optional_dependencies = ["torch"],
     shard_count = 8,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":fileset_integ_test_base",
         "//snowflake/ml/fileset",
@@ -68,7 +77,10 @@ py_test(
         "tensorflow",
     ],
     shard_count = 8,
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":fileset_integ_test_base",
         "//snowflake/ml/fileset",

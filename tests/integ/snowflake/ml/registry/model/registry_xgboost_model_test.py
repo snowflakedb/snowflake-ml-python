@@ -1,3 +1,4 @@
+import unittest
 from typing import Callable
 
 import inflection
@@ -5,6 +6,7 @@ import pandas as pd
 import shap
 import xgboost
 from absl.testing import absltest
+from packaging import version as pkg_version
 from sklearn import (
     compose,
     datasets,
@@ -19,8 +21,15 @@ from snowflake.ml.model._model_composer.model_manifest import model_manifest_sch
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
+_XGBOOST_SHAP_BROKEN = pkg_version.parse(xgboost.__version__) >= pkg_version.parse("3.1.0")
+_SKIP_REASON = (
+    f"XGBoost {xgboost.__version__} >= 3.1.0: SHAP explainability is broken due to "
+    "server-side numpy<2 constraint preventing shap>=0.50.0 installation."
+)
+
 
 class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBase):
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_manual_shap_override(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -108,6 +117,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_explain_by_default(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -133,6 +143,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_explain_explicitly_enabled(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -160,6 +171,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             is_partitioned_assert={"explain": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_explain_case_sensitive(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -220,6 +232,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
@@ -283,6 +296,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_booster_explain(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -342,6 +356,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_booster_explain_sp(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True).frame
         cal_data.columns = [inflection.parameterize(c, "_") for c in cal_data]
@@ -379,6 +394,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_booster_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
@@ -463,6 +479,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_model_with_dmatrix_input(self) -> None:
         data = {
             "size": [1, 2, 2, 4],
@@ -503,6 +520,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_model_with_native_categorical_dtype_columns(
         self,
     ) -> None:
@@ -555,6 +573,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_classifier_with_pandas_categorical_dtype_columns(
         self,
     ) -> None:
@@ -610,6 +629,36 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
         )
 
+    def test_xgb_model_init_once(self) -> None:
+        """Test that xgboost models log and run inference correctly with model_init_once=True."""
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        regressor = xgboost.XGBRegressor(n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
+        regressor.fit(cal_X_train, cal_y_train)
+
+        def _check_predict_fn(res: pd.DataFrame) -> None:
+            pd.testing.assert_frame_equal(
+                res,
+                pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
+                check_dtype=False,
+            )
+
+        self._test_registry_model(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            prediction_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    _check_predict_fn,
+                ),
+            },
+            options={"enable_explainability": False, "model_init_once": True},
+        )
+
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_model_with_quoted_identifiers_ignore_case(self):
         cal_X, cal_y = datasets.load_breast_cancer(return_X_y=True)
         cal_X_df = pd.DataFrame(cal_X, columns=[f"col_{i}" for i in range(cal_X.shape[1])])

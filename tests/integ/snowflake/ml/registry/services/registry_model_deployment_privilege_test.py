@@ -1,3 +1,4 @@
+import logging
 from typing import Callable, TypeVar
 
 import pandas as pd
@@ -53,7 +54,11 @@ class RegistryModelDeploymentPrivilegeTest(registry_model_deployment_test_base.R
         try:
             self.session.sql(f"GRANT USAGE ON WAREHOUSE {self._test_warehouse} TO ROLE {self._usage_role}").collect()
         except Exception:
-            pass
+            logging.error(
+                f"Failed to grant warehouse {self._test_warehouse} to role {self._usage_role}. "
+                "Tests requiring warehouse access under this role will fail. "
+                "Ensure the current role has GRANT OPTION on the warehouse."
+            )
 
     def tearDown(self) -> None:
         self.session.use_role(self._admin_role)

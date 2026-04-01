@@ -2,12 +2,13 @@ import contextlib
 import functools
 import json
 import sys
+import traceback
 import warnings
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any, Optional, Union
 from urllib.parse import quote
 
-import snowflake.snowpark._internal.utils as snowpark_utils
 from snowflake import snowpark
 from snowflake.ml import model as ml_model, registry
 from snowflake.ml._internal import env_utils
@@ -536,7 +537,6 @@ class ExperimentTracking:
                 target_path=local_dir,
             )
 
-    @snowpark_utils.private_preview(version="1.30.0")
     def set_live_logging_status(self, enabled: bool) -> None:
         """
         Enable or disable live logging. When enabled, stdout and stderr are captured and logged to persistent storage.
@@ -635,7 +635,7 @@ class ExperimentTracking:
                 ) -> None:
                     try:
                         text = ip.InteractiveTB.stb2text(stb)
-                        stderr_logger.write(text + "\n")
+                        stderr_logger.write(text)
                         stderr_logger.flush()
                     except Exception:
                         pass
@@ -650,6 +650,39 @@ class ExperimentTracking:
             pass  # Never let IPython patching break logging setup
 
         return None, None
+
+    def _try_log_exception(
+        self,
+        exc_type: type[BaseException],
+        exc_value: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        """Append a traceback to the stderr logger before unpatching.
+
+        On exception, `Run.__exit__` ends the run and restores `sys.stderr` before the
+        interpreter prints the traceback for the exception, so the default traceback path
+        never reaches the stderr logger.
+
+        Args:
+            exc_type: The type of the exception.
+            exc_value: The value of the exception.
+            exc_tb: The traceback of the exception.
+        """
+        if self._logging_context is None:
+            return
+        ip = self._logging_context.ipython_instance
+        if ip:
+            try:
+                stb = ip.InteractiveTB.structured_traceback(exc_type, exc_value, exc_tb)
+                text = ip.InteractiveTB.stb2text(stb)
+                self._logging_context.stderr_logger.write(text)
+                self._logging_context.stderr_logger.flush()
+                return
+            except Exception:
+                pass
+        err_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        self._logging_context.stderr_logger.write(err_msg)
+        self._logging_context.stderr_logger.flush()
 
     def _patch_stdout_and_stderr(self) -> None:
         if not self._live_logging_enabled:

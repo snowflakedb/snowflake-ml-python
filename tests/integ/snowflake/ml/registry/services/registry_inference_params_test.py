@@ -805,6 +805,121 @@ class TestRegistryInferenceParamsInteg(registry_model_deployment_test_base.Regis
         self.assertEqual(res_row["received_weights"], [4.5, 3.5, 2.5])
         self.assertEqual(res_row["received_nested_list"], [[4, 3], [2, 1]])
 
+    def _get_nested_params_signature(self) -> model_signature.ModelSignature:
+        """Signature for ModelWithNestedParams.
+
+        The model's None guards map None to 0.0/0, which differs from the actual defaults
+        (0.01, 0.9, 10, 32). This lets us distinguish server-side default substitution
+        (correct: model receives 0.01) from None passthrough (incorrect: model receives None,
+        guard maps to 0.0).
+        """
+        return model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="value", dtype=model_signature.DataType.FLOAT)],
+            outputs=[
+                model_signature.FeatureSpec(name="input_value", dtype=model_signature.DataType.FLOAT),
+                model_signature.FeatureSpec(name="received_learning_rate", dtype=model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec(name="received_momentum", dtype=model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec(name="received_epochs", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="received_batch_size", dtype=model_signature.DataType.INT64),
+            ],
+            params=[
+                model_signature.ParamSpec(
+                    name="learning_rate", dtype=model_signature.DataType.DOUBLE, default_value=0.01
+                ),
+                model_signature.ParamSpec(name="momentum", dtype=model_signature.DataType.DOUBLE, default_value=0.9),
+                model_signature.ParamSpec(name="epochs", dtype=model_signature.DataType.INT64, default_value=10),
+                model_signature.ParamSpec(name="batch_size", dtype=model_signature.DataType.INT64, default_value=32),
+            ],
+        )
+
+    def test_mv_run_with_none_params_uses_default(self) -> None:
+        """Test that explicitly passing None for params substitutes default values.
+
+        Verifies parity with the warehouse UDF path: None/NULL params should use the
+        signature default, not be passed through as literal None to the model.
+        """
+        if not self._has_image_override():
+            self.skipTest("Requires image release with None-to-default param substitution.")
+
+        model = ModelWithNestedParams(custom_model.ModelContext())
+        sig = self._get_nested_params_signature()
+
+        test_input = pd.DataFrame({"value": [10.0]})
+        test_params = {"learning_rate": None, "momentum": None}
+
+        def check_result(res: pd.DataFrame) -> None:
+            self.assertAlmostEqual(res["input_value"].iloc[0], 10.0, places=5)
+            # If None were passed through, the model's guards would map to 0.0/0.
+            # Correct behavior: server substitutes defaults (0.01, 0.9, 10, 32).
+            self.assertAlmostEqual(res["received_learning_rate"].iloc[0], 0.01, places=5)
+            self.assertAlmostEqual(res["received_momentum"].iloc[0], 0.9, places=5)
+            self.assertEqual(res["received_epochs"].iloc[0], 10)
+            self.assertEqual(res["received_batch_size"].iloc[0], 32)
+
+        self._test_registry_model_deployment(
+            model=model,
+            signatures={"predict": sig},
+            prediction_assert_fns={"predict": (test_input, check_result)},
+            params=test_params,
+            skip_rest_api_test=True,
+        )
+
+    def test_rest_api_split_format_with_null_params_uses_default(self) -> None:
+        """Test that null params in REST SPLIT format substitute defaults.
+
+        Verifies parity with the warehouse UDF path via the REST API: JSON null params
+        should use the signature default, not be passed through as literal None.
+        """
+        if not self._has_image_override():
+            self.skipTest("Requires image release with None-to-default param substitution.")
+
+        model = ModelWithNestedParams(custom_model.ModelContext())
+        sig = self._get_nested_params_signature()
+
+        test_input = pd.DataFrame({"value": [1.0]})
+        test_params = {"learning_rate": 0.05, "momentum": 0.8, "epochs": 20, "batch_size": 64}
+
+        def check_result(res: pd.DataFrame) -> None:
+            self.assertAlmostEqual(res["received_learning_rate"].iloc[0], 0.05, places=5)
+            self.assertAlmostEqual(res["received_momentum"].iloc[0], 0.8, places=5)
+            self.assertEqual(res["received_epochs"].iloc[0], 20)
+            self.assertEqual(res["received_batch_size"].iloc[0], 64)
+
+        mv = self._test_registry_model_deployment(
+            model=model,
+            signatures={"predict": sig},
+            prediction_assert_fns={"predict": (test_input, check_result)},
+            params=test_params,
+            skip_rest_api_test=True,
+        )
+
+        endpoint = self._ensure_ingress_url(mv)
+        split_payload = {
+            "dataframe_split": {
+                "index": [0],
+                "columns": ["value"],
+                "data": [[10.0]],
+            },
+            "params": {
+                "learning_rate": None,
+                "momentum": None,
+            },
+        }
+
+        response = self._make_rest_api_request(endpoint, split_payload, "predict")
+        response.raise_for_status()
+
+        response_data = response.json()["data"]
+        res_row = response_data[0][1]
+
+        self.assertAlmostEqual(res_row["input_value"], 10.0, places=5)
+        # None params should be substituted with defaults, not passed through
+        self.assertAlmostEqual(res_row["received_learning_rate"], 0.01, places=5)
+        self.assertAlmostEqual(res_row["received_momentum"], 0.9, places=5)
+        # Omitted params should also use defaults
+        self.assertEqual(res_row["received_epochs"], 10)
+        self.assertEqual(res_row["received_batch_size"], 32)
+
 
 if __name__ == "__main__":
     absltest.main()

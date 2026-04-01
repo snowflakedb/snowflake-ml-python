@@ -288,6 +288,8 @@ def resolve_params(
             spec = param_spec_lookup[param_name.upper()]
             canonical_name = spec.name
             if isinstance(spec, core.ParamGroupSpec) and isinstance(override_value, dict):
+                # Deep merge: user provides partial dict {"temperature": 0.5},
+                # we fill in missing keys from the spec's defaults {"temperature": 0.5, "top_k": 50}
                 default_dict = final_params.get(canonical_name, {})
                 if isinstance(default_dict, dict):
                     final_params[canonical_name] = _deep_merge_param_group(spec, default_dict, override_value)

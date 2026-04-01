@@ -9,7 +9,10 @@ py_test(
     timeout = "eternal",
     testonly = True,
     srcs = ["lineage_integ_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/lineage",

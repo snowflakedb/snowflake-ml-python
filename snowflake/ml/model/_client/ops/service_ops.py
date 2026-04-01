@@ -375,6 +375,7 @@ class ServiceOperator:
             )
 
         # start service log streaming
+        stop_event = threading.Event()
         log_thread = self._start_service_log_streaming(
             async_job=async_job,
             model_logger_service=model_logger_service,
@@ -384,6 +385,7 @@ class ServiceOperator:
             force_rebuild=force_rebuild,
             operation_id=operation_id,
             statement_params=statement_params,
+            stop_event=stop_event,
         )
 
         if block:
@@ -436,7 +438,8 @@ class ServiceOperator:
                 # Update progress status to show failure
                 progress_status.update(error_msg, state="error")
 
-                # Stop the log thread if it's running
+                # Signal the log thread to stop and wait for it
+                stop_event.set()
                 if "log_thread" in locals() and log_thread.is_alive():
                     log_thread.join(timeout=5)  # Give it a few seconds to finish gracefully
 
@@ -478,11 +481,13 @@ class ServiceOperator:
         force_rebuild: bool,
         operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> threading.Thread:
         """Start the service log streaming in a separate thread."""
         # TODO: create a DAG of services and stream logs in the order of the DAG
         log_thread = threading.Thread(
             target=self._stream_service_logs,
+            name="service-log-streamer",
             args=(
                 async_job,
                 model_logger_service,
@@ -492,6 +497,7 @@ class ServiceOperator:
                 force_rebuild,
                 operation_id,
                 statement_params,
+                stop_event,
             ),
         )
         log_thread.start()
@@ -696,6 +702,7 @@ class ServiceOperator:
         force_rebuild: bool,
         operation_id: str,
         statement_params: Optional[dict[str, Any]] = None,
+        stop_event: Optional[threading.Event] = None,
     ) -> None:
         """Stream service logs while the async job is running."""
 
@@ -743,7 +750,9 @@ class ServiceOperator:
                 log_offset=0,
             )
 
-        while not async_job.is_done():
+        # stop_event exits this polling loop early on error; _finalize_logs still runs after
+        # to collect any remaining output.
+        while not async_job.is_done() and not (stop_event and stop_event.is_set()):
             if model_inference_service_exists:
                 time.sleep(5)
                 continue

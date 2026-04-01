@@ -290,7 +290,6 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
         # Set up experiment and run
         self.exp.set_experiment(experiment_name=experiment_name)
         with self.exp.start_run(run_name=run_name):
-
             # Log single metric
             self.exp.log_metric("accuracy", 0.95, step=1)
 
@@ -333,14 +332,13 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
         self.assertEqual(metadata["status"], "FINISHED")
 
         # Check metrics
+        experiment_fqn = f"{self._db_name}.{self._schema_name}.{experiment_name}"
         metrics = self._session.sql(
-            f"""SHOW RUN METRICS IN
-                EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}
-                RUN {run_name}"""
+            f"SELECT * FROM TABLE(SYSTEM$GET_EXPERIMENT_RUN_METRICS('{experiment_fqn}', '{run_name}'))"
         ).collect()
         # Should have: accuracy(updated), precision, recall, f1_score, loss(3 steps), train_accuracy = 8 total
         self.assertEqual(len(metrics), 8)
-        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
+        metric_dict = {(m["METRIC_NAME"], m["STEP"]): float(m["VALUE"]) for m in metrics}
         # Verify single metric (updated value)
         self.assertEqual(metric_dict[("accuracy", 1)], 0.97)  # Updated value
 
@@ -394,13 +392,12 @@ class ExperimentTrackingIntegrationTest(parameterized.TestCase):
         run_name = runs[0]["name"]
 
         # Check metrics
+        experiment_fqn = f"{self._db_name}.{self._schema_name}.DEFAULT"
         metrics = self._session.sql(
-            f"""SHOW RUN METRICS IN
-                EXPERIMENT {self._db_name}.{self._schema_name}.DEFAULT
-                RUN {run_name}"""
+            f"SELECT * FROM TABLE(SYSTEM$GET_EXPERIMENT_RUN_METRICS('{experiment_fqn}', '{run_name}'))"
         ).collect()
         self.assertEqual(len(metrics), 3)
-        metric_dict = {(m["name"], m["step"]): float(m["value"]) for m in metrics}
+        metric_dict = {(m["METRIC_NAME"], m["STEP"]): float(m["VALUE"]) for m in metrics}
         self.assertEqual(metric_dict[("accuracy", 0)], 0.95)
         self.assertEqual(metric_dict[("precision", 2)], 0.92)
         self.assertEqual(metric_dict[("recall", 2)], 0.88)

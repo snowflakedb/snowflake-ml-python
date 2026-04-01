@@ -100,6 +100,20 @@ class BatchSource:
     schema: StructType
 
 
+# Aggregation functions supported by the Postgres (PG) online store backend.
+# Sketch and list aggregations are not implemented in the PG path.
+_PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
+    {
+        AggregationType.SUM,
+        AggregationType.MIN,
+        AggregationType.MAX,
+        AggregationType.COUNT,
+        AggregationType.AVG,
+        AggregationType.STD,
+        AggregationType.VAR,
+    }
+)
+
 # Aggregation functions whose output type is predetermined regardless of source type.
 # Functions not listed here (SUM, MIN, MAX, LAST_N, etc.) preserve the source type.
 _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
@@ -107,10 +121,10 @@ _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
     AggregationType.COUNT: FSColumn(name="", type="DecimalType", precision=18, scale=0),
     AggregationType.APPROX_COUNT_DISTINCT: FSColumn(name="", type="DecimalType", precision=18, scale=0),
     # AVG / STD / VAR / APPROX_PERCENTILE always produce a float.
-    AggregationType.AVG: FSColumn(name="", type="FloatType"),
-    AggregationType.STD: FSColumn(name="", type="FloatType"),
-    AggregationType.VAR: FSColumn(name="", type="FloatType"),
-    AggregationType.APPROX_PERCENTILE: FSColumn(name="", type="FloatType"),
+    AggregationType.AVG: FSColumn(name="", type="DoubleType"),
+    AggregationType.STD: FSColumn(name="", type="DoubleType"),
+    AggregationType.VAR: FSColumn(name="", type="DoubleType"),
+    AggregationType.APPROX_PERCENTILE: FSColumn(name="", type="DoubleType"),
 }
 
 # Type alias for the polymorphic source input
@@ -191,7 +205,7 @@ class FeatureViewSpecBuilder:
                     store_type=StoreType.SNOWFLAKE,
                     table_type=cfg.table_type,
                     database=cfg.database,
-                    schema_=cfg.schema,
+                    schema=cfg.schema,
                     table=cfg.table,
                     columns=_columns_from_struct_type(cfg.columns),
                 )
@@ -268,6 +282,8 @@ class FeatureViewSpecBuilder:
                 raise ValueError(f"Unsupported source type: {type(src).__name__}")
         return self
 
+    _SUPPORTED_UDF_ENGINES: frozenset[str] = frozenset({"pandas"})
+
     def set_udf(
         self,
         *,
@@ -283,13 +299,20 @@ class FeatureViewSpecBuilder:
 
         Args:
             name: UDF name.
-            engine: Execution engine (e.g., ``"python"``).
+            engine: Execution engine. Currently only ``"pandas"`` is supported.
             output_columns: List of (name, Snowpark DataType) pairs.
             function_definition: The UDF source code (plain text).
 
         Returns:
             self for method chaining.
+
+        Raises:
+            ValueError: If *engine* is not a supported value.
         """
+        if engine not in self._SUPPORTED_UDF_ENGINES:
+            raise ValueError(
+                f"Unsupported UDF engine '{engine}'. Supported engines: {sorted(self._SUPPORTED_UDF_ENGINES)}"
+            )
         fs_columns = [_make_fs_column(n, dt) for n, dt in output_columns]
         self._udf = UDF(
             name=name,
@@ -340,7 +363,7 @@ class FeatureViewSpecBuilder:
         # 3. Auto-populate metadata
         metadata = Metadata(
             database=self._database,
-            schema_=self._schema,
+            schema=self._schema,
             name=self._name,
             version=self._version,
             spec_format_version=self._SPEC_FORMAT_VERSION,
@@ -499,7 +522,7 @@ class FeatureViewSpecBuilder:
             ValueError: If a feature references a column not in the resolution pool.
         """
         if not self._agg_specs:
-            return []
+            return self._resolve_passthrough_features()
 
         resolve_columns = self._get_feature_input_columns()
         column_map: dict[str, FSColumn] = {col.name: col for col in resolve_columns}
@@ -522,6 +545,8 @@ class FeatureViewSpecBuilder:
                     type=predetermined.type,
                     precision=predetermined.precision,
                     scale=predetermined.scale,
+                    length=predetermined.length,
+                    timezone=predetermined.timezone,
                 )
             else:
                 # SUM, MIN, MAX, LAST_N, etc. preserve source column type
@@ -556,6 +581,27 @@ class FeatureViewSpecBuilder:
             )
         return spec_features
 
+    def _resolve_passthrough_features(self) -> list[Feature]:
+        """Auto-generate identity features for non-tiled batch FVs.
+
+        Each non-entity, non-timestamp column in the ``BATCH_SOURCE`` offline
+        config becomes a passthrough feature where ``source_column ==
+        output_column`` with no aggregation function or window.
+
+        Returns:
+            List of passthrough Feature models, or empty list if no
+            BATCH_SOURCE offline config is present.
+        """
+        config = self._find_offline_config(TableType.BATCH_SOURCE)
+        if config is None:
+            return []
+
+        exclude: set[str] = set(self._entity_columns)
+        if self._timestamp_field:
+            exclude.add(self._timestamp_field)
+
+        return [Feature(source_column=col, output_column=col) for col in config.columns if col.name not in exclude]
+
     # -----------------------------------------------------------------------
     # Validation
     # -----------------------------------------------------------------------
@@ -572,6 +618,9 @@ class FeatureViewSpecBuilder:
             self._validate_batch(table_types, source_types)
         elif kind == FeatureViewKind.RealtimeFeatureView:
             self._validate_realtime(table_types, source_types)
+
+        # PG online store only supports a subset of aggregation functions.
+        self._validate_pg_aggregations()
 
         # Source field validation (applies to all kinds)
         self._validate_source_fields()
@@ -672,6 +721,18 @@ class FeatureViewSpecBuilder:
             raise ValueError("RealtimeFeatureView must not have an agg_method")
         if self._granularity_sec is not None:
             raise ValueError("RealtimeFeatureView must not have granularity_sec")
+
+    def _validate_pg_aggregations(self) -> None:
+        """Reject aggregation functions not supported by the PG online store."""
+        if not self._agg_specs:
+            return
+        unsupported = [spec.function for spec in self._agg_specs if spec.function not in _PG_SUPPORTED_AGGREGATIONS]
+        if unsupported:
+            names = sorted({fn.value for fn in unsupported})
+            allowed = sorted(fn.value for fn in _PG_SUPPORTED_AGGREGATIONS)
+            raise ValueError(
+                f"Unsupported aggregation(s) for Postgres online store: {names}. " f"Supported aggregations: {allowed}"
+            )
 
     def _validate_source_fields(self) -> None:
         """Validate that each source has the correct fields for its type."""

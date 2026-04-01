@@ -1399,8 +1399,10 @@ class ModelVersion(lineage_node.LineageNode):
 
 
         Raises:
-            ValueError: Illegal external access integration arguments, or if GPU resources are requested
-                but the model does not have GPU runtime support.
+            ValueError: Illegal external access integration arguments.
+            ValueError: If GPU resources are requested but the model does not have GPU runtime support.
+            ValueError: If all model methods are TABLE_FUNCTION type, which is not supported for
+                online inference.
             exceptions.SnowparkSQLException: if service already exists.
 
         Returns:
@@ -1427,6 +1429,31 @@ class ModelVersion(lineage_node.LineageNode):
             build_external_access_integrations = [build_external_access_integration]
 
         service_db_id, service_schema_id, service_id = sql_identifier.parse_fully_qualified_name(service_name)
+
+        # Check for TABLE_FUNCTION methods — online inference doesn't support table functions
+        table_function_methods = [
+            f["name"]
+            for f in self._functions
+            if f["target_method_function_type"] == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        ]
+        if table_function_methods:
+            non_table_function_methods = [
+                f["name"]
+                for f in self._functions
+                if f["target_method_function_type"]
+                != model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+            ]
+            msg = (
+                "Online inference services do not support TABLE_FUNCTION methods. "
+                f"The following methods have TABLE_FUNCTION type: {', '.join(table_function_methods)}. "
+            )
+            if non_table_function_methods:
+                warnings.warn(
+                    msg + "These methods will not be available in the service.",
+                    stacklevel=2,
+                )
+            else:
+                raise ValueError(msg + "Consider using batch inference jobs instead.")
 
         # Validate GPU support if GPU resources are requested
         self._throw_error_if_gpu_is_not_supported(gpu_requests, statement_params)

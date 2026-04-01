@@ -86,14 +86,23 @@ class DemoModelWithDictParam(custom_model.CustomModel):
         self,
         input_df: pd.DataFrame,
         *,
-        config: dict = {"temperature": 1.0, "top_k": 50},  # noqa: B006
+        config: dict = {  # noqa: B006
+            "temperature": 1.0,
+            "top_k": 50,
+            "nested_list": [[1, 2], [3, 4]],
+            "nested_dict": [{"a": 1, "b": 2}, {"a": 1, "b": 2}],
+        },
     ) -> pd.DataFrame:
         temperature = config.get("temperature", 1.0)
         top_k = config.get("top_k", 50)
+        nested_list = config.get("nested_list", [[1, 2], [3, 4]])
+        nested_dict = config.get("nested_dict", [{"a": 1, "b": 2}, {"a": 1, "b": 2}])
         return pd.DataFrame(
             {
                 "output": input_df["feature"] * temperature,
                 "top_k_used": [top_k] * len(input_df),
+                "nested_list_used": [nested_list] * len(input_df),
+                "nested_dict_used": [nested_dict] * len(input_df),
             }
         )
 
@@ -386,17 +395,6 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         # Verify the error message mentions the param validation
         error_message = str(context.exception)
         self.assertIn("must be equal", error_message.lower())
-
-    def test_warehouse_inference_with_dict_params_fails(self) -> None:
-        """Demonstrate that dict parameters in predict signature do not work yet.
-
-        CustomModel.__init__ validates parameter type annotations via _validate_parameter,
-        which rejects dict as an unsupported type. The model cannot even be instantiated.
-        """
-        with self.assertRaises(TypeError) as context:
-            DemoModelWithDictParam(custom_model.ModelContext())
-
-        self.assertIn("unsupported type annotation", str(context.exception).lower())
 
 
 class TestTableFunctionWithParamsWarehouseInteg(common_test_base.CommonTestBase):
@@ -712,6 +710,123 @@ class TestPartitionedModelWithParamsWarehouseInteg(common_test_base.CommonTestBa
             self.assertAlmostEqual(actual, expected, places=5)
         for row in result:
             self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.5, places=5)
+
+
+class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBase):
+    """Integration tests for warehouse inference with dict (ParamGroupSpec) parameters."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._run_id = uuid.uuid4().hex
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        super().tearDown()
+
+    def _log_model_with_dict_params(self) -> "registry.ModelVersion":
+        model = DemoModelWithDictParam(custom_model.ModelContext())
+
+        sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        sample_output = model.predict(sample_input, config={"temperature": 1.0, "top_k": 50})
+
+        params = [
+            model_signature.ParamGroupSpec(
+                name="config",
+                specs=[
+                    model_signature.ParamSpec(
+                        name="temperature",
+                        dtype=model_signature.DataType.FLOAT,
+                        default_value=1.0,
+                    ),
+                    model_signature.ParamSpec(
+                        name="top_k",
+                        dtype=model_signature.DataType.INT32,
+                        default_value=50,
+                    ),
+                ],
+            ),
+        ]
+
+        sig = model_signature.infer_signature(
+            input_data=sample_input,
+            output_data=sample_output,
+            params=params,
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_dict_params_test_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"embed_local_ml_library": True},
+        )
+        return mv
+
+    def test_dict_params_with_override(self) -> None:
+        """Test that dict params can be overridden at runtime via mv.run()."""
+        mv = self._log_model_with_dict_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        result = mv.run(
+            input_df,
+            function_name="predict",
+            params={"config": {"temperature": 2.0, "top_k": 10}},
+        )
+
+        self.assertEqual(len(result), 3)
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        pd.testing.assert_series_equal(
+            result_sorted["output"],
+            pd.Series([2.0, 4.0, 6.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result_sorted["top_k_used"] == 10))
+
+    def test_dict_params_with_defaults(self) -> None:
+        """Test that dict params use defaults when not provided."""
+        mv = self._log_model_with_dict_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        result = mv.run(input_df, function_name="predict")
+
+        self.assertEqual(len(result), 3)
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        pd.testing.assert_series_equal(
+            result_sorted["output"],
+            pd.Series([1.0, 2.0, 3.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result_sorted["top_k_used"] == 50))
+
+    def test_dict_params_partial_override(self) -> None:
+        """Test that partial dict override deep-merges with defaults."""
+        mv = self._log_model_with_dict_params()
+
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+        result = mv.run(input_df, function_name="predict", params={"config": {"temperature": 3.0}})
+
+        self.assertEqual(len(result), 3)
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        pd.testing.assert_series_equal(
+            result_sorted["output"],
+            pd.Series([3.0, 6.0, 9.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result_sorted["top_k_used"] == 50))
 
 
 if __name__ == "__main__":

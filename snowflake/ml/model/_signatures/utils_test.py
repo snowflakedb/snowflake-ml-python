@@ -45,6 +45,64 @@ class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
         self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
         self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
 
+    def test_document_question_answering_signature_auto_infer(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="document-question-answering", params={})
+        self.assertIsNotNone(sig)
+        assert sig is not None
+
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="image", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="question", dtype=core.DataType.STRING),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="answers",
+                    specs=[
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureSpec(name="start", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="end", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        for i in range(len(sig.inputs)):
+            self.assertEqual(sig.inputs[i], expected_sig.inputs[i])
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
+    def test_visual_question_answering_signature_auto_infer(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="visual-question-answering", params={})
+        self.assertIsNotNone(sig)
+        assert sig is not None
+
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="image", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="question", dtype=core.DataType.STRING),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="answers",
+                    specs=[
+                        core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        for i in range(len(sig.inputs)):
+            self.assertEqual(sig.inputs[i], expected_sig.inputs[i])
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
     def test_image_feature_extraction_signature_auto_infer(self) -> None:
         sig = utils.huggingface_pipeline_signature_auto_infer(task="image-feature-extraction", params={})
         self.assertIsNotNone(sig)
@@ -121,6 +179,71 @@ class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
 
         self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
         self.assertEqual(sig.inputs[0], expected_sig.inputs[0])
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
+    def test_zero_shot_image_classification_signature_auto_infer(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-image-classification", params={})
+        self.assertIsNotNone(sig)
+        assert sig is not None
+
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="candidate_labels", dtype=core.DataType.STRING, shape=(-1,)),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        for i in range(len(sig.inputs)):
+            self.assertEqual(sig.inputs[i], expected_sig.inputs[i])
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+
+    def test_zero_shot_object_detection_signature_auto_infer(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-object-detection", params={})
+        self.assertIsNotNone(sig)
+        assert sig is not None
+
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="candidate_labels", dtype=core.DataType.STRING, shape=(-1,)),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="detections",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureGroupSpec(
+                            name="box",
+                            specs=[
+                                core.FeatureSpec(name="xmin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="xmax", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymax", dtype=core.DataType.INT64),
+                            ],
+                        ),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        for i in range(len(sig.inputs)):
+            self.assertEqual(sig.inputs[i], expected_sig.inputs[i])
         self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
         self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
 

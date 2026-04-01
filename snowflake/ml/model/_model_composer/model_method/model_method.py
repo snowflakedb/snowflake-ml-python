@@ -1,5 +1,6 @@
 import collections
 import pathlib
+import warnings
 from typing import Optional, TypedDict, Union
 
 from typing_extensions import NotRequired
@@ -25,11 +26,14 @@ class ModelMethodOptions(TypedDict):
     case_sensitive: Specify when the name of the method should be considered as case sensitive when registered to SQL.
     function_type: One of `ModelMethodFunctionTypes` specifying function type.
     volatility: One of `Volatility` enum values specifying function volatility.
+    model_init_once: When True the init_once template is used; when False the standard template
+        is used. Populated by get_model_method_options_from_options() from the top-level save option.
     """
 
     case_sensitive: NotRequired[bool]
     function_type: NotRequired[str]
     volatility: NotRequired[Volatility]
+    model_init_once: NotRequired[bool]
 
 
 def get_model_method_options_from_options(
@@ -62,6 +66,10 @@ def get_model_method_options_from_options(
     )
     if resolved_volatility:
         result["volatility"] = resolved_volatility
+
+    model_init_once = options.get("model_init_once")
+    if model_init_once is not None:
+        result["model_init_once"] = model_init_once
 
     return result
 
@@ -135,17 +143,6 @@ class ModelMethod:
         )
 
     @staticmethod
-    def _flatten_params(params: list[model_signature.BaseParamSpec]) -> list[model_signature.ParamSpec]:
-        """Flatten ParamGroupSpec into leaf ParamSpec items."""
-        result: list[model_signature.ParamSpec] = []
-        for param in params:
-            if isinstance(param, model_signature.ParamSpec):
-                result.append(param)
-            elif isinstance(param, model_signature.ParamGroupSpec):
-                result.extend(ModelMethod._flatten_params(param.specs))
-        return result
-
-    @staticmethod
     def _format_param_default_value(default_value: object) -> str:
         """Format a parameter default value for the MANIFEST file.
 
@@ -161,7 +158,7 @@ class ModelMethod:
 
     @staticmethod
     def _get_method_arg_from_param(
-        param_spec: model_signature.ParamSpec,
+        param_spec: model_signature.BaseParamSpec,
         case_sensitive: bool = False,
     ) -> model_manifest_schema.ModelMethodSignatureFieldWithNameAndDefault:
         try:
@@ -182,6 +179,13 @@ class ModelMethod:
         self, workspace_path: pathlib.Path, options: Optional[function_generator.FunctionGenerateOptions] = None
     ) -> model_manifest_schema.ModelMethodDict:
         (workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH).mkdir(parents=True, exist_ok=True)
+        is_table_function = self.function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
+        use_udf_init_once = (not is_table_function) and bool(self.options.get("model_init_once", False))
+        if use_udf_init_once:
+            warnings.warn(
+                "model_init_once is a Private Preview feature. It will only take effect if enabled server-side.",
+                stacklevel=2,
+            )
         self.function_generator.generate(
             workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH / f"{self.target_method}.py",
             self.target_method,
@@ -189,6 +193,7 @@ class ModelMethod:
             self.is_partitioned_function,
             self.wide_input,
             options=options,
+            use_udf_init_once=use_udf_init_once,
         )
         input_list = [
             ModelMethod._get_method_arg_from_feature(ft, case_sensitive=self.options.get("case_sensitive", False))
@@ -230,12 +235,10 @@ class ModelMethod:
 
         # Add parameters if signature has parameters
         if self.model_meta.signatures[self.target_method].params:
-            flat_params = ModelMethod._flatten_params(list(self.model_meta.signatures[self.target_method].params))
+            case_sensitive = self.options.get("case_sensitive", False)
             param_list = [
-                ModelMethod._get_method_arg_from_param(
-                    param_spec, case_sensitive=self.options.get("case_sensitive", False)
-                )
-                for param_spec in flat_params
+                ModelMethod._get_method_arg_from_param(param_spec, case_sensitive=case_sensitive)
+                for param_spec in self.model_meta.signatures[self.target_method].params
             ]
             param_name_counter = collections.Counter([param_info["name"] for param_info in param_list])
             dup_param_names = [k for k, v in param_name_counter.items() if v > 1]

@@ -916,6 +916,100 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             has_chat_template=getattr(tokenizer, "chat_template", None) is not None,
         )
 
+    def _check_openai_chat_response(self, res: pd.DataFrame) -> None:
+        pd.testing.assert_index_equal(
+            res.columns,
+            pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+            check_order=False,
+        )
+        for row in res["choices"]:
+            self.assertIsInstance(row, list)
+            self.assertIn("message", row[0])
+            self.assertIn("content", row[0]["message"])
+
+    def test_text_generation_with_params_signature(self) -> None:
+        """Test that ParamSpec OpenAI signatures work with kwargs in the Default engine."""
+        import transformers
+
+        model_id = "hf-internal-testing/tiny-gpt2-with-chatml-template"
+        model = transformers.pipeline(task="text-generation", model=model_id, max_length=200)
+
+        messages = [
+            {"role": "user", "content": "Hello"},
+        ]
+        x_df = pd.DataFrame({"messages": [messages]})
+
+        s = {"__call__": openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model,
+                signatures=s,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            assert callable(pk.model)
+
+            # Call with minimal kwargs (simulates inference server passing params)
+            res = pk.model(x_df.copy(deep=True), max_completion_tokens=10)
+            self._check_openai_chat_response(res)
+
+            # Call with multiple kwargs
+            res = pk.model(x_df.copy(deep=True), max_completion_tokens=10, temperature=0.5)
+            self._check_openai_chat_response(res)
+
+            # Call with all kwargs
+            res = pk.model(
+                x_df.copy(deep=True),
+                max_completion_tokens=10,
+                temperature=0.5,
+                n=1,
+                stream=False,
+                top_p=1.0,
+                frequency_penalty=0.0,
+                presence_penalty=0.0,
+            )
+            self._check_openai_chat_response(res)
+
+    def test_text_generation_with_params_content_format_string_signature(self) -> None:
+        """Test that ParamSpec OpenAI signatures with content format string work with kwargs."""
+        import transformers
+
+        model_id = "hf-internal-testing/tiny-gpt2-with-chatml-template"
+        model = transformers.pipeline(task="text-generation", model=model_id, max_length=200)
+
+        messages = [
+            {"role": "user", "content": "Hello"},
+        ]
+        x_df = pd.DataFrame({"messages": [messages]})
+
+        s = {"__call__": openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model,
+                signatures=s,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            assert callable(pk.model)
+
+            # Call with kwargs (simulates inference server passing params)
+            res = pk.model(x_df.copy(deep=True), max_completion_tokens=10, temperature=0.5)
+            self._check_openai_chat_response(res)
+
     def test_text2text_generation_pipeline(
         self,
     ) -> None:
@@ -1256,6 +1350,65 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         self.assertEqual(len(call_args_collector[0]), 2)
         for img_arg in call_args_collector[0]:
             self.assertIsInstance(img_arg, Image.Image)
+
+    def test_multi_input_image_pipeline_bytes_to_pil_conversion(self) -> None:
+        """Test that multi-input image pipelines (doc-qa, vqa) convert image bytes to PIL and pass kwargs."""
+        from PIL import Image
+
+        img = Image.new("RGB", (10, 10), color="blue")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        mock_image_bytes = buf.getvalue()
+
+        call_args_collector: list[tuple[Any, dict[str, Any]]] = []
+
+        def mock_pipeline_call(pil_image: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            call_args_collector.append((pil_image, kwargs))
+            assert isinstance(pil_image, Image.Image), f"Expected PIL Image, got {type(pil_image)}"
+            return [{"score": 0.95, "answer": "yes"}]
+
+        input_col = "image"
+        x_df = pd.DataFrame({input_col: [mock_image_bytes], "question": ["Is this a cat?"]})
+
+        def process_row(row: pd.Series) -> Any:
+            pil_image = Image.open(io.BytesIO(row[input_col]))
+            kwargs = {k: row[k] for k in row.index if k != input_col}
+            return mock_pipeline_call(pil_image, **kwargs)
+
+        temp_res = x_df.apply(process_row, axis=1).to_list()
+
+        self.assertEqual(len(temp_res), 1)
+        self.assertEqual(temp_res[0][0]["answer"], "yes")
+        self.assertIsInstance(call_args_collector[0][0], Image.Image)
+        self.assertEqual(call_args_collector[0][1]["question"], "Is this a cat?")
+
+    def test_zero_shot_image_pil_conversion(self) -> None:
+        """Test that zero-shot image pipelines convert bytes to PIL before calling pipeline."""
+        from PIL import Image
+
+        img = Image.new("RGB", (10, 10), color="green")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        mock_image_bytes = buf.getvalue()
+
+        call_args_collector: list[tuple[Any, Any]] = []
+
+        def mock_pipeline_call(input_val: Any, candidate_labels: list[str]) -> list[dict[str, Any]]:
+            call_args_collector.append((input_val, candidate_labels))
+            return [{"label": "cat", "score": 0.9}, {"label": "dog", "score": 0.1}]
+
+        input_col = "images"
+        x_df = pd.DataFrame({input_col: [mock_image_bytes], "candidate_labels": [["cat", "dog"]]})
+
+        def process_zero_shot_row(row: pd.Series) -> Any:
+            input_val = Image.open(io.BytesIO(row[input_col]))
+            return mock_pipeline_call(input_val, candidate_labels=row["candidate_labels"])
+
+        temp_res = x_df.apply(process_zero_shot_row, axis=1).to_list()
+
+        self.assertEqual(len(temp_res), 1)
+        self.assertEqual(temp_res[0][0]["label"], "cat")
+        self.assertIsInstance(call_args_collector[0][0], Image.Image)
 
 
 if __name__ == "__main__":

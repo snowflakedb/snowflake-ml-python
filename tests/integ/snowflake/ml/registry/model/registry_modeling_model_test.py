@@ -1,11 +1,14 @@
 import os
 import posixpath
+import unittest
 
 import numpy as np
 import pandas as pd
 import shap
+import xgboost
 import yaml
 from absl.testing import absltest, parameterized
+from packaging import version as pkg_version
 from sklearn import datasets
 
 from snowflake.ml import dataset
@@ -22,6 +25,12 @@ from snowflake.ml.modeling.xgboost import XGBRegressor
 from snowflake.snowpark import functions as F, types as T
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils, test_env_utils
+
+_XGBOOST_SHAP_BROKEN = pkg_version.parse(xgboost.__version__) >= pkg_version.parse("3.1.0")
+_SKIP_REASON = (
+    f"XGBoost {xgboost.__version__} >= 3.1.0: SHAP explainability is broken due to "
+    "server-side numpy<2 constraint preventing shap>=0.50.0 installation."
+)
 
 
 class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestBase):
@@ -224,6 +233,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             options={"enable_explainability": False},
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_snowml_model_deploy_xgboost_explain_default(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -263,6 +273,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_snowml_model_deploy_xgboost_explain_enabled(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]
@@ -307,6 +318,7 @@ class TestRegistryModelingModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_snowml_model_deploy_xgboost_explain(self) -> None:
         iris_X = datasets.load_iris(as_frame=True).frame
         iris_X.columns = [s.replace(" (CM)", "").replace(" ", "") for s in iris_X.columns.str.upper()]

@@ -320,6 +320,7 @@ def _is_supported_annotation(annotation: Any) -> bool:
 
     Supports:
         - Scalar types: int, float, str, bool, bytes, datetime.datetime
+        - dict: for ParamGroupSpec dictionary-typed parameters
         - list[T] where T is a supported type (recursively)
 
     Note: Bare 'list' without element type is NOT supported because we cannot
@@ -333,6 +334,10 @@ def _is_supported_annotation(annotation: Any) -> bool:
     """
     # Check if it's a supported scalar type
     if annotation in _SUPPORTED_SCALAR_TYPES:
+        return True
+
+    # dict is supported for ParamGroupSpec (dictionary-typed parameters)
+    if annotation is dict:
         return True
 
     # Reject bare list without type args - we need the element type for serialization
@@ -365,7 +370,7 @@ def _validate_parameter(param: inspect.Parameter) -> None:
     if not _is_supported_annotation(param.annotation):
         raise TypeError(
             f"Parameter '{param.name}' has unsupported type annotation '{param.annotation}'. "
-            f"Supported types are: int, float, str, bool, bytes, datetime.datetime, "
+            f"Supported types are: int, float, str, bool, bytes, datetime.datetime, dict, "
             f"and list with element type (e.g., list[str], list[list[int]]). "
             f"Note: bare 'list' without element type is not supported."
         )

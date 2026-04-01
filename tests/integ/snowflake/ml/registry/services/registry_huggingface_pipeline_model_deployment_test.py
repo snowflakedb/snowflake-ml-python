@@ -150,6 +150,49 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             },
         )
 
+    def test_zero_shot_classification(self) -> None:
+        import transformers
+
+        model_id = "sileod/deberta-v3-base-tasksource-nli"
+        model = transformers.pipeline(
+            model=model_id,
+            task="zero-shot-classification",
+        )
+
+        x_df = pd.DataFrame.from_records(
+            [
+                {
+                    "sequences": "one day I will see the world",
+                    "candidate_labels": ["travel", "cooking", "dancing"],
+                },
+            ]
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+
+            for row in res["outputs"]:
+                self.assertIsInstance(row, dict)
+                self.assertIn("sequence", row)
+                self.assertIn("labels", row)
+                self.assertIn("scores", row)
+                self.assertEqual(len(row["labels"]), 3)
+                self.assertEqual(len(row["scores"]), 3)
+
+        self._test_registry_model_deployment(
+            model=model,
+            prediction_assert_fns={
+                "__call__": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            pip_requirements=[
+                "transformers==5.3.0",
+                "torch==2.6.0",
+            ],
+        )
+
     @parameterized.product(  # type: ignore[misc]
         compute_pool_for_log=[
             compute_pool.DEFAULT_CPU_COMPUTE_POOL,

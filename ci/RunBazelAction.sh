@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted|short_regression] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -9,9 +9,10 @@
 # Flags
 #   -b: specify path to bazel.
 #   -m: specify the mode from the following options
-#       merge_gate: run affected tests only.
+#       merge_gate: run affected tests tagged with "short_regress".
 #       continuous_run (default): run all tests. (For nightly run. Alias: release)
 #       quarantined: Run quarantined tests.
+#       short_regression: run tests tagged with "short_regress".
 #       local_unit: run all unit tests affected by target defined by -t
 #       local_all: run all tests including integration tests affected by target defined by -t
 #       targeted: run specific Bazel targets defined by --targets
@@ -44,7 +45,7 @@ action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]"
     echo ""
     echo "Options:"
     echo "  -p <version>           Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
@@ -81,7 +82,7 @@ while (($#)); do
     case $1 in
     -m | --mode)
         shift
-        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" || $1 = "targeted" ]]; then
+        if [[ $1 = "merge_gate" || $1 = "continuous_run" || $1 = "quarantined" || $1 = "local_unittest" || $1 = "local_all" || $1 = "perf" || $1 = "targeted" || $1 = "short_regression" ]]; then
             mode=$1
         else
             help 1
@@ -195,6 +196,10 @@ fi
 
 action_env=()
 
+# Setup failures (image build, copybara, bazel query) should exit 2 to distinguish
+# from test failures (exit 1). RunTests.groovy treats exit >= 2 as failure.
+trap 'echo "ERROR: Setup failed at line ${LINENO}: ${BASH_COMMAND}" >&2; exit 2' ERR
+
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     export RUN_GRYPE=false
     source model_container_services_deployment/ci/build_and_push_images.sh
@@ -255,16 +260,44 @@ cache_test_results="--cache_test_results=no"
 
 case "${mode}" in
 merge_gate)
+    # Find affected targets, then filter to only those with short_regress tag
     affected_targets_file="${working_dir}/affected_targets"
     ./bazel/get_affected_targets.sh -b "${bazel}" -f "${affected_targets_file}"
 
-    query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/exclude_from_merge_gate.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+    # Use tag filter to only run short_regress tests within the affected set
+    echo "Applying short_regress tag filter for merge_gate mode..."
+    tag_filter="--test_tag_filters=short_regress"
+
+    if [[ -n "${TAG_FILTERS:-}" ]]; then
+        # Apply feature area filtering in the query, not in tag filters
+        echo "Also filtering by feature areas in query: ${TAG_FILTERS}"
+        # Build feature area query condition
+        feature_query="attr(tags, \"${TAG_FILTERS}\", //...)"
+        query_expr='kind(".*_test rule", rdeps((//... intersect '"${feature_query}"') - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+    else
+        query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+    fi
     ;;
 continuous_run)
     query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
     ;;
 quarantined)
     query_expr='kind(".*_test rule", set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    ;;
+short_regression)
+    # Run ALL tests with short_regress tag (not just affected)
+    echo "Applying short_regress tag filter for short_regression mode..."
+    tag_filter="--test_tag_filters=short_regress"
+
+    if [[ -n "${TAG_FILTERS:-}" ]]; then
+        # Apply feature area filtering in the query, not in tag filters
+        echo "Also filtering by feature areas in query: ${TAG_FILTERS}"
+        # Build feature area query condition
+        feature_query="attr(tags, \"${TAG_FILTERS}\", //...)"
+        query_expr='kind(".*_test rule", (//... intersect '"${feature_query}"') - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    else
+        query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    fi
     ;;
 local_unittest)
     cache_test_results="--cache_test_results=yes"
@@ -411,6 +444,8 @@ for i in "${!groups[@]}"; do
     cat "${group_test_targets_files[$i]}"
     echo "----------------------------------"
 done
+
+trap - ERR
 
 set +e
 if [[ "${action}" = "test" ]]; then

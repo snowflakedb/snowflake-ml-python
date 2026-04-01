@@ -1,11 +1,14 @@
+import inspect
 import os
 import tempfile
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
+from snowflake import snowpark
 from snowflake.ml.model import custom_model, model_signature, openai_signatures
 from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
@@ -257,6 +260,33 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         if not self._has_image_override():
             self.skipTest("Skipping: image override env vars not set.")
 
+    def _compare_with_warehouse(
+        self,
+        output_stage_location: str,
+        model_name: str,
+        version_name: str,
+        input_df: snowpark.DataFrame,
+        function_name: str,
+        sort_columns: list[str],
+        partition_column: Optional[str] = None,
+    ) -> None:
+        """Compare batch inference job output (from stage) with warehouse output."""
+        mv = self.registry.get_model(model_name).version(version_name)
+
+        job_output = self.session.read.option("pattern", ".*\\.parquet").parquet(output_stage_location).to_pandas()
+
+        run_kwargs: dict[str, str] = {"function_name": function_name}
+        if partition_column is not None:
+            run_kwargs["partition_column"] = partition_column
+        warehouse_output = mv.run(input_df, **run_kwargs)
+        if isinstance(warehouse_output, snowpark.DataFrame):
+            warehouse_output = warehouse_output.to_pandas()
+
+        job_cmp = job_output.sort_values(sort_columns).reset_index(drop=True)
+        wh_cmp = warehouse_output.sort_values(sort_columns).reset_index(drop=True)
+
+        pd.testing.assert_frame_equal(job_cmp, wh_cmp, check_dtype=False, rtol=1e-5)
+
     def test_non_partitioned_table_function_without_partition_column(self) -> None:
         """Case B: Non-partitioned table function without partition_column (1:1 row mapping, batch)."""
         input_pandas_df = pd.DataFrame(
@@ -271,6 +301,8 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         sample_input_df = self.session.create_dataframe(input_pandas_df)
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
 
         def check_output(actual: pd.DataFrame) -> None:
             self.assertIsInstance(actual, pd.DataFrame)
@@ -309,6 +341,17 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             prediction_assert_fn=check_output,
             # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_batch",
+            sort_columns=["OUTPUT_COL1"],
         )
 
     def test_non_partitioned_table_function_with_partition_column(self) -> None:
@@ -319,6 +362,8 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         input_df = self.session.create_dataframe(input_pandas_df)
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
 
         expected_output = pd.DataFrame(
             {
@@ -366,6 +411,18 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             prediction_assert_fn=check_non_partitioned_output,
             # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_stateful",
+            partition_column="PARTITION_COL",
+            sort_columns=["PARTITION_COL", "OUTPUT_COL1"],
         )
 
     def test_partitioned_table_function_without_partition_column(self) -> None:
@@ -376,6 +433,8 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         input_df = self.session.create_dataframe(input_pandas_df)
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
 
         def check_partition_by_1_output(actual: pd.DataFrame) -> None:
             self.assertIsInstance(actual, pd.DataFrame)
@@ -417,6 +476,17 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             skip_row_count_check=True,
             # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_expanded",
+            sort_columns=["OUTPUT_COL1"],
         )
 
     def test_partitioned_table_function_m_greater_than_n(self) -> None:
@@ -523,6 +593,8 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
         input_df = self.session.create_dataframe(input_pandas_df)
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
 
         def check_partitioned_expanded_output(actual: pd.DataFrame) -> None:
             self.assertIsInstance(actual, pd.DataFrame)
@@ -562,6 +634,18 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             skip_row_count_check=True,
             # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_expanded",
+            partition_column="PARTITION_COL",
+            sort_columns=["PARTITION_COL", "OUTPUT_COL1"],
         )
 
     def test_non_partitioned_table_function_with_partition_column_with_params(self) -> None:

@@ -1,6 +1,29 @@
 # Release History
 
-## 1.32.0
+## 1.33.0
+
+### New Features
+
+* Registry: Extended `ParamSpec` support to PyTorch models. Parameters declared in the model signature
+  can now be passed at inference time, matching the existing support for custom models.
+* Registry (PrPr): Added `model_init_once` model save option to `log_model`. When set to `True`, the
+  model is loaded once per worker process at startup, eliminating model-loading overhead. Defaults to `False`.
+* Experiment Tracking live logging is out of private preview
+  and will become generally available over the next few weeks.
+* Registry: Bumped `transformers` upper bound to `<6`, adding compatibility with Hugging Face Transformers v5.
+
+### Bug Fixes
+
+* Experiment Tracking live logging: Fixed a bug where the tracebacks for uncaught exceptions were not logged when
+  the code was running in a `with exp.start_run()` block.
+* Registry: Fixed a thread leak in `create_service(block=True)` where the log-streaming thread could outlive the
+  error handler when service deployment fails.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.32.0 (2026-03-26)
 
 ### New Features
 

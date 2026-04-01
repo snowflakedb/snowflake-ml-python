@@ -13,6 +13,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
@@ -110,7 +111,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         self,
         model: Any,
         method_name: str,
-        inference_engine: str = "Default",
+        inference_engine: InferenceEngine = InferenceEngine.PYTHON_GENERIC,
         input_data: Optional[pd.DataFrame] = None,
         validator_fn: Callable[[pd.DataFrame], None] = None,
         input_data_batch: Optional[pd.DataFrame] = None,
@@ -215,12 +216,12 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         logger.info("Service cleanup completed successfully")
 
     @parameterized.parameters(  # type: ignore[misc]
-        ("Default",),
-        ("vLLM",),
+        (InferenceEngine.PYTHON_GENERIC,),
+        (InferenceEngine.VLLM,),
     )
     @pytest.mark.conda_incompatible
     @absltest.skip("Skipping test until inference server release 1.0.0")
-    def test_inference_with_HF_model(self, inference_engine: str) -> None:
+    def test_inference_with_HF_model(self, inference_engine: InferenceEngine) -> None:
         # Define model
         model = huggingface_pipeline.HuggingFacePipelineModel(
             task="text-generation",

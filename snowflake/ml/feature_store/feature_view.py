@@ -51,6 +51,23 @@ _RESULT_SCAN_QUERY_PATTERN = re.compile(
 )
 
 
+class OnlineStoreType(Enum):
+    """Types of online storage backends.
+
+    This is the **user-facing** enum controlling which backend stores
+    the online feature table.  It is distinct from
+    ``spec.enums.StoreType`` which is a spec-internal enum used inside
+    the JSON payload sent to the Go backend.
+
+    Attributes:
+        HYBRID_TABLE: Snowflake Hybrid Table online store backend.
+        POSTGRES: Postgres online store backend.
+    """
+
+    HYBRID_TABLE = "hybrid_table"
+    POSTGRES = "postgres"
+
+
 class _FeatureViewSchemaNotReadyWarning(UserWarning):
     """Issued when feature view schema is unavailable because the backing
     dynamic table has not completed its initial refresh yet."""
@@ -60,10 +77,20 @@ class _FeatureViewSchemaNotReadyWarning(UserWarning):
 
 @dataclass(frozen=True)
 class OnlineConfig:
-    """Configuration for online feature storage."""
+    """Configuration for online feature storage.
+
+    Example::
+
+        >>> config = OnlineConfig(
+        ...     enable=True,
+        ...     target_lag="30s",
+        ...     store_type=OnlineStoreType.POSTGRES,
+        ... )
+    """
 
     enable: Optional[bool] = None
     target_lag: Optional[str] = None
+    store_type: OnlineStoreType = OnlineStoreType.HYBRID_TABLE
 
     def __post_init__(self) -> None:
         if self.target_lag is None:
@@ -75,11 +102,19 @@ class OnlineConfig:
 
     def to_json(self) -> str:
         data: dict[str, Any] = asdict(self)
+        # asdict() does not unwrap Enum members; convert to plain value.
+        if isinstance(data.get("store_type"), OnlineStoreType):
+            data["store_type"] = data["store_type"].value
         return json.dumps(data)
 
     @classmethod
     def from_json(cls, json_str: str) -> OnlineConfig:
         data = json.loads(json_str)
+        # Backward compatibility: old configs don't have store_type
+        if "store_type" not in data:
+            data["store_type"] = OnlineStoreType.HYBRID_TABLE
+        elif isinstance(data["store_type"], str):
+            data["store_type"] = OnlineStoreType(data["store_type"])
         return cls(**data)
 
 

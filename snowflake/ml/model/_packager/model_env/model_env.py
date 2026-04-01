@@ -439,8 +439,11 @@ class ModelEnv:
                 default_channel_override=default_channel_override,
             )
 
+        pip_cuda_version = None if write_conda else cuda_version
         env_utils.save_requirements_file(
-            pathlib.Path(base_dir / self.pip_requirements_rel_path), self._pip_requirements
+            pathlib.Path(base_dir / self.pip_requirements_rel_path),
+            self._pip_requirements,
+            cuda_version=pip_cuda_version,
         )
 
         env_dict: model_meta_schema.ModelEnvDict = {

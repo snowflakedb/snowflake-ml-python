@@ -9,6 +9,10 @@ from snowflake.ml.modeling.ensemble import RandomForestClassifier
 from snowflake.ml.modeling.xgboost import XGBClassifier
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+from tests.integ.snowflake.ml.test_utils import db_manager
+
+TEST_DB = "REGTEST_DB"
+TEST_SCHEMA_PREFIX = "MULTI_LABEL_TEST_SCHEMA"
 
 
 class MultiLabelTargetTest(TestCase):
@@ -21,9 +25,15 @@ class MultiLabelTargetTest(TestCase):
     def setUp(self):
         """Creates Snowpark and Snowflake environments for testing."""
         self._session = Session.builder.configs(SnowflakeLoginOptions()).create()
+        self._db_manager = db_manager.DBManager(self._session)
+        self._db_manager.use_database(TEST_DB)
+        self._db_manager.cleanup_schemas(prefix=TEST_SCHEMA_PREFIX, expire_days=1)
+        self._schema = self._db_manager.create_random_schema(prefix=TEST_SCHEMA_PREFIX)
+        self._db_manager.use_schema(self._schema)
         self._load_data()
 
     def tearDown(self):
+        self._db_manager.drop_schema(self._schema, if_exists=True)
         self._session.close()
 
     def test_random_forest_regressor_with_five_label_cols(self) -> None:

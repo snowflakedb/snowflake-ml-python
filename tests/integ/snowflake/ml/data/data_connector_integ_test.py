@@ -24,7 +24,7 @@ _hf_cache_dir = tempfile.mkdtemp()
 os.environ["HF_DATASETS_CACHE"] = _hf_cache_dir
 os.environ["HF_HOME"] = _hf_cache_dir
 
-DC_INTEG_TEST_DB = "DC_INTEG_TEST_DB"
+DC_INTEG_TEST_DB = "REGTEST_DB"
 DC_INTEG_TEST_SCHEMA = "DC_INTEG_TEST_SCHEMA"
 
 np.random.seed(0)

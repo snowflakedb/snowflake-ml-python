@@ -1,4 +1,6 @@
 import pathlib
+import threading
+import time
 import uuid
 from typing import Any, Optional, cast
 from unittest import mock
@@ -2314,6 +2316,88 @@ class ServiceOpsTest(parameterized.TestCase):
             mock_add_job_spec.assert_called_once()
             call_kwargs = mock_add_job_spec.call_args.kwargs
             self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
+
+    def test_create_service_block_error_stops_log_thread(self) -> None:
+        """Test that log-streaming thread is stopped when create_service(block=True) fails.
+
+        Regression test for thread leak: before the fix, the log thread could outlive
+        the error handler because join(timeout=5) returned before the thread finished
+        _finalize_logs. The fix adds a stop_event that the thread checks each iteration.
+        """
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+
+        # async_job.is_done() returns False initially (so the log thread enters its loop),
+        # then True (so it can exit once stop_event is set).
+        mock_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        mock_async_job.is_done.side_effect = [False, True, True, True]
+        mock_async_job.result.side_effect = RuntimeError("Compute pool does not exist")
+
+        threads_before = set(threading.enumerate())
+
+        with (
+            mock.patch.object(self.m_ops._stage_client, "create_tmp_stage"),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(self.m_ops._model_deployment_spec, "save"),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock_async_job),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                side_effect=snowpark.exceptions.SnowparkSQLException(
+                    "002003 (02000): Service 'MODEL_BUILD_ABCD1234' does not exist"
+                ),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_logs",
+                return_value="",
+            ),
+            mock.patch.object(
+                self.m_ops,
+                "_wait_for_service_status",
+                side_effect=RuntimeError("Service deployment failed: Compute pool does not exist"),
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.m_ops.create_service(
+                    database_name=sql_identifier.SqlIdentifier("DB"),
+                    schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("VERSION"),
+                    service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                    service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                    service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                    image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                    service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                    image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                    ingress_enabled=False,
+                    min_instances=0,
+                    max_instances=1,
+                    cpu_requests=None,
+                    memory_requests=None,
+                    gpu_requests=None,
+                    num_workers=None,
+                    max_batch_rows=None,
+                    force_rebuild=False,
+                    build_external_access_integrations=None,
+                    block=True,
+                    statement_params=self.m_statement_params,
+                    hf_model_args=None,
+                    progress_status=create_mock_progress_status(),
+                    inference_engine_args=None,
+                )
+
+        # Wait for any lingering threads to finish
+        time.sleep(2)
+        new_threads = set(threading.enumerate()) - threads_before
+        leaked = {t for t in new_threads if t.name == "service-log-streamer"}
+        self.assertEmpty(leaked, f"Log-streaming thread leaked after error: {leaked}")
 
 
 if __name__ == "__main__":

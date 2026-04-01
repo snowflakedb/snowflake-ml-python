@@ -321,6 +321,46 @@ def huggingface_pipeline_signature_auto_infer(
             ],
         )
 
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.DocumentQuestionAnsweringPipeline
+    if task == "document-question-answering":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="image", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="question", dtype=core.DataType.STRING),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="answers",
+                    specs=[
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureSpec(name="start", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="end", dtype=core.DataType.INT64),
+                        core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.VisualQuestionAnsweringPipeline
+    if task == "visual-question-answering":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="image", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="question", dtype=core.DataType.STRING),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="answers",
+                    specs=[
+                        core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageFeatureExtractionPipeline
     if task == "image-feature-extraction":
         return core.ModelSignature(
@@ -354,6 +394,53 @@ def huggingface_pipeline_signature_auto_infer(
         return core.ModelSignature(
             inputs=[
                 core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="detections",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                        core.FeatureGroupSpec(
+                            name="box",
+                            specs=[
+                                core.FeatureSpec(name="xmin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymin", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="xmax", dtype=core.DataType.INT64),
+                                core.FeatureSpec(name="ymax", dtype=core.DataType.INT64),
+                            ],
+                        ),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ZeroShotImageClassificationPipeline
+    if task == "zero-shot-image-classification":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="candidate_labels", dtype=core.DataType.STRING, shape=(-1,)),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ZeroShotObjectDetectionPipeline
+    if task == "zero-shot-object-detection":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="images", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="candidate_labels", dtype=core.DataType.STRING, shape=(-1,)),
             ],
             outputs=[
                 core.FeatureGroupSpec(

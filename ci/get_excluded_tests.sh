@@ -1,18 +1,16 @@
 #!/bin/bash
 
 # Usage
-# exclude_tests.sh [-b <bazel_path>] [-f <output_path>] [- merge_gate|continuous_run|release] [-a <feature_areas>]
+# get_excluded_tests.sh [-b <bazel_path>] [-f <output_path>] [-m merge_gate|continuous_run|release|short_regression] [-a <feature_areas>]
 #
 # Flags
 # -b: specify path to bazel
 # -f: specify output file path
 # -m: specify the mode from the following options
-#       merge_gate: exclude local_only + integration tests whose dependency is not part of the affected targets
-#                   compare to the the merge base to main of current revision.
-#       continuous_run (default): exclude integration tests whose dependency is not part of the wheel package.
-#               The missing dependency could happen when a new operator is being developed,
-#               but not yet released.
+#       merge_gate: run affected tests that are tagged with "short_regress".
+#       continuous_run (default): run all tests. (For nightly run. Alias: release)
 #       quarantined: exclude all tests that are not quarantined
+#       short_regression: run tests tagged with "short_regress".
 # -e: specify the environment (default: prod3)
 # -g: specify the group (default: "core") Test group could be found in bazel/platforms/optional_dependency_groups.bzl.
 #     `core` group is the default group that includes all tests that does not have a group specified.
@@ -26,7 +24,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} [-b <bazel_path>] [-f <output_path>] [-m merge_gate|continuous_run|quarantined] [-e <env>] [-g <group>] [-a <feature_areas>]"
+    echo "Usage: ${PROG} [-b <bazel_path>] [-f <output_path>] [-m merge_gate|continuous_run|quarantined|short_regression] [-e <env>] [-g <group>] [-a <feature_areas>]"
     exit "${exit_code}"
 }
 
@@ -49,7 +47,7 @@ while getopts "b:f:m:e:g:a:h" opt; do
         ;;
     m)
         mode=${OPTARG}
-        if ! [[ $mode = "merge_gate" || $mode = "continuous_run" || $mode = "quarantined" ]]; then
+        if ! [[ $mode = "merge_gate" || $mode = "continuous_run" || $mode = "quarantined" || $mode = "short_regression" ]]; then
             help 1
         fi
         ;;
@@ -120,8 +118,47 @@ continuous_run)
     echo "${unused_test_targets}" >"${targets_to_exclude_file}"
     ;;
 merge_gate)
-    # Concat and deduplicate.
-    targets_to_exclude=$(printf "%s\n%s\n" "${unused_test_targets}" "${unaffected_test_targets}" | sort | uniq)
+    # For merge_gate: use affected tests AND filter to only short_regress tagged tests
+    # Find unaffected tests first
+
+    echo "Filtering to short_regress tagged tests for merge_gate mode..."
+    # Also need to exclude tests that don't have short_regress tag
+    short_regression_test_rule_file=${working_dir}/short_regression_test_rule
+
+# -- Begin of Query Rules Heredoc --
+    cat >"${short_regression_test_rule_file}" <<EndOfMessage
+let all_tests = kind('py_test rule', //tests/...) in
+    let short_regress_tests = attr(tags, "short_regress", \$all_tests) in
+        labels(srcs, \$all_tests - \$short_regress_tests)
+EndOfMessage
+# -- End of Query Rules Heredoc --
+
+    non_short_regress_tests=$("${bazel}" query --query_file="${short_regression_test_rule_file}")
+    non_short_regress_count=$(echo "${non_short_regress_tests}" | grep -c . || echo 0)
+    echo "Excluding ${non_short_regress_count} tests without short_regress tag"
+
+    # Combine: unaffected tests + non-short-regress tests + unused tests
+    targets_to_exclude=$(printf "%s\n%s\n%s\n" "${unused_test_targets}" "${unaffected_test_targets}" "${non_short_regress_tests}" | sort | uniq)
+    echo "${targets_to_exclude}" >"${targets_to_exclude_file}"
+    ;;
+short_regression)
+    # For short_regression: run ALL tests with short_regress tag (not affected-only)
+    echo "Filtering to short_regress tagged tests for short_regression mode..."
+    short_regression_test_rule_file=${working_dir}/short_regression_test_rule
+
+# -- Begin of Query Rules Heredoc --
+    cat >"${short_regression_test_rule_file}" <<EndOfMessage
+let all_tests = kind('py_test rule', //tests/...) in
+    let short_regress_tests = attr(tags, "short_regress", \$all_tests) in
+        labels(srcs, \$all_tests - \$short_regress_tests)
+EndOfMessage
+# -- End of Query Rules Heredoc --
+
+    non_short_regress_tests=$("${bazel}" query --query_file="${short_regression_test_rule_file}")
+    non_short_regress_count=$(echo "${non_short_regress_tests}" | grep -c . || echo 0)
+    echo "Excluding ${non_short_regress_count} tests without short_regress tag"
+    # Also exclude tests with missing dependencies and quarantined tests
+    targets_to_exclude=$(printf "%s\n%s\n" "${unused_test_targets}" "${non_short_regress_tests}" | sort | uniq)
     echo "${targets_to_exclude}" >"${targets_to_exclude_file}"
     ;;
 quarantined)

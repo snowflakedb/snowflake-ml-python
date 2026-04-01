@@ -155,10 +155,10 @@ class ProphetHandlerTest(parameterized.TestCase):
         # Verify original data is not modified
         self.assertEqual(string_data["y"].iloc[0], "1.5")  # Still a string
 
-    @mock.patch("snowflake.ml.model._packager.model_handlers.prophet.cloudpickle.dump")
+    @mock.patch("prophet.serialize.model_to_json", return_value='{"mock": "json"}')
     @mock.patch("os.makedirs")
     @mock.patch("builtins.open", mock.mock_open())
-    def test_save_model_basic(self, mock_makedirs: Any, mock_dump: Any) -> None:
+    def test_save_model_basic(self, mock_makedirs: Any, mock_model_to_json: Any) -> None:
         """Test basic model saving functionality."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # Setup mock Prophet model and mock isinstance check
@@ -181,9 +181,9 @@ class ProphetHandlerTest(parameterized.TestCase):
                     sample_input_data=self.sample_data,
                 )
 
-                # Verify directory creation and pickle dump were called
+                # Verify directory creation and JSON serialization were called
                 mock_makedirs.assert_called()
-                mock_dump.assert_called_once()
+                mock_model_to_json.assert_called_once()
 
                 # Verify metadata was updated
                 self.assertIn("test_prophet", meta.models)
@@ -195,17 +195,17 @@ class ProphetHandlerTest(parameterized.TestCase):
                     {"predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}},
                 )
 
-    @mock.patch("cloudpickle.load")
-    @mock.patch("builtins.open", mock.mock_open())
-    def test_load_model(self, mock_load: Any) -> None:
+    @mock.patch("prophet.serialize.model_from_json")
+    @mock.patch("builtins.open", mock.mock_open(read_data='{"mock": "json"}'))
+    def test_load_model(self, mock_model_from_json: Any) -> None:
         """Test model loading functionality."""
-        mock_load.return_value = self.prophet_model
+        mock_model_from_json.return_value = self.prophet_model
 
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create test metadata
             meta = model_meta.ModelMetadata(name="test_prophet", env=model_env.ModelEnv(), model_type="prophet")
             meta.models["test_prophet"] = mock.MagicMock()
-            meta.models["test_prophet"].path = "model.pkl"
+            meta.models["test_prophet"].path = "model.json"
 
             with (
                 mock.patch("prophet.Prophet"),
@@ -220,7 +220,7 @@ class ProphetHandlerTest(parameterized.TestCase):
 
                 # Verify model was loaded
                 self.assertEqual(loaded_model, self.prophet_model)
-                mock_load.assert_called_once()
+                mock_model_from_json.assert_called_once()
 
     def test_convert_as_custom_model(self) -> None:
         """Test conversion to CustomModel."""
@@ -236,7 +236,7 @@ class ProphetHandlerTest(parameterized.TestCase):
             name="test_prophet",
             model_type="prophet",
             handler_version="2025-01-01",
-            path="model.pkl",
+            path="model.json",
             options={},
         )
 
@@ -262,14 +262,14 @@ class ProphetHandlerTest(parameterized.TestCase):
 
         self.assertEqual(handler.HANDLER_TYPE, "prophet")
         self.assertEqual(handler.HANDLER_VERSION, "2025-01-01")
-        self.assertEqual(handler.MODEL_BLOB_FILE_OR_DIR, "model.pkl")
+        self.assertEqual(handler.MODEL_BLOB_FILE_OR_DIR, "model.json")
         self.assertEqual(handler.DEFAULT_TARGET_METHODS, ["predict"])
         self.assertFalse(handler.IS_AUTO_SIGNATURE)
 
-    @mock.patch("snowflake.ml.model._packager.model_handlers.prophet.cloudpickle.dump")
+    @mock.patch("prophet.serialize.model_to_json", return_value='{"mock": "json"}')
     @mock.patch("os.makedirs")
     @mock.patch("builtins.open", mock.mock_open())
-    def test_table_function_configuration_complete(self, mock_makedirs: Any, mock_dump: Any) -> None:
+    def test_table_function_configuration_complete(self, mock_makedirs: Any, mock_model_to_json: Any) -> None:
         """Test that Prophet handler works correctly (TABLE_FUNCTION config now via options)."""
         with tempfile.TemporaryDirectory() as temp_dir:
             with (
@@ -398,10 +398,10 @@ class ProphetHandlerTest(parameterized.TestCase):
 
         self.assertIn("not found", str(context.exception))
 
-    @mock.patch("snowflake.ml.model._packager.model_handlers.prophet.cloudpickle.dump")
+    @mock.patch("prophet.serialize.model_to_json", return_value='{"mock": "json"}')
     @mock.patch("os.makedirs")
     @mock.patch("builtins.open", mock.mock_open())
-    def test_save_model_with_column_mapping(self, mock_makedirs: Any, mock_dump: Any) -> None:
+    def test_save_model_with_column_mapping(self, mock_makedirs: Any, mock_model_to_json: Any) -> None:
         """Test saving model with custom column names."""
         # Create data with custom column names
         custom_data = pd.DataFrame(
@@ -546,7 +546,7 @@ class ProphetHandlerTest(parameterized.TestCase):
             name="test_prophet",
             model_type="prophet",
             handler_version="2025-01-01",
-            path="model.pkl",
+            path="model.json",
             options={"date_column": "timestamp", "target_column": "revenue"},
         )
 

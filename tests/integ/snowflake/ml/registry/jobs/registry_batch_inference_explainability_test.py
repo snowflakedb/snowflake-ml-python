@@ -1,16 +1,26 @@
+import unittest
+
 import inflection
 import pandas as pd
 import shap
 import xgboost
 from absl.testing import absltest
+from packaging import version as pkg_version
 from sklearn import datasets, model_selection
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
+_XGBOOST_SHAP_BROKEN = pkg_version.parse(xgboost.__version__) >= pkg_version.parse("3.1.0")
+_SKIP_REASON = (
+    f"XGBoost {xgboost.__version__} >= 3.1.0: SHAP explainability is broken due to "
+    "server-side numpy<2 constraint preventing shap>=0.50.0 installation."
+)
+
 
 class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
     def test_xgb_booster_with_signature_and_sample_data(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data

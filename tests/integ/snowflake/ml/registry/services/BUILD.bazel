@@ -28,7 +28,10 @@ py_test(
     name = "registry_model_deployment_privilege_test",
     timeout = "eternal",
     srcs = ["registry_model_deployment_privilege_test.py"],
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/registry",
@@ -128,11 +131,29 @@ py_test(
 )
 
 py_test(
+    name = "registry_pytorch_model_deployment_test",
+    timeout = "eternal",
+    srcs = ["registry_pytorch_model_deployment_test.py"],
+    optional_dependencies = ["torch"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:pytorch_handler",
+    ],
+)
+
+py_test(
     name = "registry_pip_only_model_deployment_test",
     timeout = "eternal",
     srcs = ["registry_pip_only_model_deployment_test.py"],
+    optional_dependencies = ["torch"],
     shard_count = 1,
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
     deps = [
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model:custom_model",

@@ -26,7 +26,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
     # Session parameter names used to override the images.
     _BUILDER_SESSION_PARAM = "SPCS_MODEL_BUILD_CONTAINER_URL"
 
-    _INFERENCE_ENGINE_SESSION_PARAM = "SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS"
+    _INFERENCE_ENGINE_SESSION_PARAM = "SPCS_MODEL_INFERENCE_ENGINE_VLLM_URL"
 
     _PROXY_SESSION_PARAM = "SPCS_MODEL_INFERENCE_PROXY_CONTAINER_URL"
 
@@ -42,9 +42,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             self._BASE_CPU_IMAGE_SESSION_PARAM: self.BASE_CPU_IMAGE_PATH,
             self._PROXY_SESSION_PARAM: self.PROXY_IMAGE_PATH,
             self._BUILDER_SESSION_PARAM: self.BUILDER_IMAGE_PATH,
-            self._INFERENCE_ENGINE_SESSION_PARAM: (
-                f'{{"vllm": "{self.VLLM_IMAGE_PATH}"}}' if self.VLLM_IMAGE_PATH is not None else None
-            ),
+            self._INFERENCE_ENGINE_SESSION_PARAM: self.VLLM_IMAGE_PATH,
         }
         return {k: v for k, v in overrides.items() if v is not None}
 
@@ -113,10 +111,14 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
         python_version: Optional[str] = None,
+        conda_dependencies: Optional[list[str]] = None,
     ) -> ModelVersion:
-        conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
-        ]
+        # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
+        # Pass an empty list to skip conda dependencies (for pip-only tests).
+        if conda_dependencies is None:
+            conda_dependencies = [
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ]
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)
 
@@ -262,30 +264,24 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
 
     def _get_inference_engine_options_for_inference_engine(
         self,
-        inference_engine_type: str,
+        inference_engine_type: inference_engine.InferenceEngine,
         base_inference_engine_options: Optional[dict[str, Any]] = None,
     ) -> Optional[dict[str, Any]]:
         """Helper method to generate inference_engine_options based on inference engine type.
 
         Args:
-            inference_engine_type: Inference engine type - either "Default" (Python) or "vLLM"
+            inference_engine_type: InferenceEngine enum value.
             base_inference_engine_options: Base inference engine options to merge with inference engine-specific options
 
         Returns:
-            Dictionary of inference engine options or None for Default backend
-
-        Raises:
-            ValueError: If an unknown inference engine type is provided. Must be 'Default' or 'vLLM'.
+            Dictionary of inference engine options or None for PYTHON_GENERIC backend
         """
         inference_engine_options = base_inference_engine_options.copy() if base_inference_engine_options else {}
 
-        if inference_engine_type == "vLLM":
+        if inference_engine_type == inference_engine.InferenceEngine.VLLM:
             inference_engine_options["engine"] = inference_engine.InferenceEngine.VLLM
-        elif inference_engine_type != "Default":
-            raise ValueError(f"Unknown inference engine type: {inference_engine_type}. Must be 'Default' or 'vLLM'")
 
-        # Return None for Default backend if no other options are set
-        if inference_engine_type == "Default" and not inference_engine_options:
+        if inference_engine_type == inference_engine.InferenceEngine.PYTHON_GENERIC and not inference_engine_options:
             return None
 
         return inference_engine_options if inference_engine_options else None

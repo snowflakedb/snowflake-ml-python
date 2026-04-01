@@ -4,7 +4,10 @@ py_test(
     name = "stage_file_integ_test",
     timeout = "long",
     srcs = ["stage_file_integ_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         "//snowflake/ml/utils:stage_file",
         "//tests/integ/snowflake/ml/test_utils:common_test_base",
