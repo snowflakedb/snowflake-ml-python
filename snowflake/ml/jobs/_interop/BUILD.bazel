@@ -59,7 +59,10 @@ py_library(
 py_test(
     name = "protocols_test",
     srcs = ["protocols_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":protocols",
     ],
@@ -68,7 +71,10 @@ py_test(
 py_test(
     name = "exception_utils_test",
     srcs = ["exception_utils_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":exception_utils",
     ],
@@ -77,7 +83,10 @@ py_test(
 py_test(
     name = "utils_test",
     srcs = ["utils_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":utils",
     ],
@@ -86,7 +95,10 @@ py_test(
 py_test(
     name = "legacy_test",
     srcs = ["legacy_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":exception_utils",
         ":legacy",

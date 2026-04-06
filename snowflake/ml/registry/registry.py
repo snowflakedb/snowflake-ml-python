@@ -221,6 +221,13 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
+                - enable_explainability: Whether to enable the model explainability feature. Defaults to None,
+                    in which case explainability will be enabled automatically for supported model types when
+                    running in the Warehouse.
+
+                    Note: In Snowpark Container Services, the explain function is only available for batch
+                    inference jobs, not online inference services.
+
                 - save_location: Local directory to save the the serialized model files first before
                   uploading to Snowflake. This is useful when default tmp directory is not writable.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
@@ -379,6 +386,13 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
+                - enable_explainability: Whether to enable the model explainability feature. Defaults to None,
+                    in which case explainability will be enabled automatically for supported model types when
+                    running in the Warehouse.
+
+                    Note: In Snowpark Container Services, the explain function is only available for batch
+                    inference jobs, not online inference services.
+
                 - save_location: Location to save the model and metadata.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options. See the example below.

@@ -42,7 +42,10 @@ py_test(
     name = "pipeline_test",
     srcs = ["pipeline_test.py"],
     optional_dependencies = ["lightgbm"],
-    tags = ["feature:modeling"],
+    tags = [
+        "feature:modeling",
+        "short_regress",
+    ],
     deps = [
         ":pipeline",
         "//snowflake/ml/modeling/lightgbm:lgbm_classifier",

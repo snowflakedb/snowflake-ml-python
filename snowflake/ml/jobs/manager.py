@@ -95,7 +95,7 @@ def _get_job_services(
         .otherwise(lit(None))
         .alias('"completed_time"'),
     ).order_by('"created_time"', ascending=False)
-    return df
+    return df  # type: ignore[no-any-return]
 
 
 def _get_job_history_spcs(
@@ -146,7 +146,7 @@ def _get_job_history_spcs(
         df["CREATED_TIME"].alias('"created_time"'),
         df["COMPLETED_TIME"].alias('"completed_time"'),
     )
-    return df
+    return df  # type: ignore[no-any-return]
 
 
 @telemetry.send_api_usage_telemetry(project=_PROJECT)

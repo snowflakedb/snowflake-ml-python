@@ -132,10 +132,15 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         skip_row_count_check: bool = False,
         model_name: Optional[str] = None,
         version_name: Optional[str] = None,
+        python_version: Optional[str] = None,
+        conda_dependencies: Optional[list[str]] = None,
     ) -> job.MLJob[Any]:
-        conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
-        ]
+        # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
+        # Pass an empty list to skip conda dependencies (for pip-only tests).
+        if conda_dependencies is None:
+            conda_dependencies = [
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ]
         if additional_dependencies:
             conda_dependencies.extend(additional_dependencies)
 
@@ -154,6 +159,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             target_platforms=target_platforms or ["SNOWPARK_CONTAINER_SERVICES"],
             options=options,
             signatures=signatures,
+            python_version=python_version,
         )
 
         return self._deploy_batch_inference(

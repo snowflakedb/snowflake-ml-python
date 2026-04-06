@@ -13,7 +13,10 @@ py_library(
 py_test(
     name = "authentication_test",
     srcs = ["authentication_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":authentication",
     ],
@@ -32,7 +35,10 @@ py_library(
 py_test(
     name = "sparse_test",
     srcs = ["sparse_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":sparse",
     ],
@@ -47,7 +53,10 @@ py_library(
 py_test(
     name = "sql_client_test",
     srcs = ["sql_client_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":sql_client",
     ],
@@ -68,7 +77,10 @@ py_library(
 py_test(
     name = "stage_file_test",
     srcs = ["stage_file_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":stage_file",
         "//snowflake/ml/test_utils:mock_session",

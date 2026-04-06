@@ -30,7 +30,10 @@ py_library(
 py_test(
     name = "file_utils_test",
     srcs = ["file_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":file_utils",
         "//snowflake/ml/test_utils:mock_session",
@@ -50,7 +53,10 @@ py_library(
 py_test(
     name = "env_utils_test",
     srcs = ["env_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":env",
         ":env_utils",
@@ -73,7 +79,10 @@ py_library(
 py_test(
     name = "telemetry_test",
     srcs = ["telemetry_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":telemetry",
         "//snowflake/ml/_internal:env",
@@ -89,7 +98,10 @@ py_library(
 py_test(
     name = "cuda_utils_test",
     srcs = ["cuda_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":cuda_utils",
     ],
@@ -113,7 +125,10 @@ py_library(
 py_test(
     name = "platform_capabilities_test",
     srcs = ["platform_capabilities_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":platform_capabilities",
         "//snowflake/ml/test_utils:mock_data_frame",

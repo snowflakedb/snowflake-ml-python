@@ -189,7 +189,7 @@ class CustomModelHandler(_base.BaseModelHandler["custom_model.CustomModel"]):
                 name=sub_model_name,
                 model_meta=model_meta,
                 model_blobs_dir_path=model_blobs_dir_path,
-                **cast(model_types.BaseModelLoadOption, kwargs),
+                **kwargs,
             )
             models[sub_model_name] = sub_model
         reconstructed_context = custom_model.ModelContext(artifacts=artifacts, models=models)

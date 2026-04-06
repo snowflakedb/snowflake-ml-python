@@ -308,10 +308,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             ],
             options={"enable_explainability": True},
         )
-        with self.assertWarnsRegex(
-            UserWarning, "Explain function will only be available for model deployed to Warehouse"
-        ):
-            result = reconciler.reconcile()
+        result = reconciler.reconcile()
         assert result.options is not None
         self.assertEqual(result.options["enable_explainability"], True)
 
@@ -328,15 +325,13 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             target_platforms=[model_types.TargetPlatform.WAREHOUSE],
             options={"enable_explainability": True},
         )
-        with self.assertRaisesRegex(
-            ValueError, "`enable_explainability` cannot be set to True.*cannot run in Warehouse"
-        ):
-            reconciler.reconcile()
+        result = reconciler.reconcile()
+        assert result.options is not None
+        self.assertEqual(result.options["enable_explainability"], True)
 
     def test_embed_local_ml_library_logic(self) -> None:
         """Test embed_local_ml_library auto-setting logic."""
         with mock.patch.object(env_utils, "get_matched_package_versions_in_information_schema") as mock_get_versions:
-
             mock_get_versions.return_value = {}
 
             reconciler = self._create_reconciler(
@@ -491,7 +486,6 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
             ) as mock_get_versions:
-
                 result = reconciler.reconcile()
 
                 mock_validate_conda.assert_called_once()
@@ -525,12 +519,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                     "get_matched_package_versions_in_information_schema",
                     return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
                 ):
-
-                    with self.assertRaisesRegex(
-                        ValueError,
-                        "`enable_explainability` cannot be set to True when the model cannot run in Warehouse.",
-                    ):
-                        reconciler.reconcile()
+                    result = reconciler.reconcile()
+                    assert result.options is not None
+                    self.assertEqual(result.options["enable_explainability"], True)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},
@@ -565,7 +556,6 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 "get_matched_package_versions_in_information_schema",
                 return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
             ) as mock_get_versions:
-
                 reconciler.reconcile()
 
                 if target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:

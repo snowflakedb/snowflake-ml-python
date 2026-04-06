@@ -29,7 +29,7 @@ dependencies:
   - lightgbm==4.1.0
   - mlflow==2.16.2
   - moto==5.0.5
-  - mypy==1.16.0
+  - mypy==1.17.1
   - networkx==3.1
   - numpy==1.26.4
   - packaging==24.1

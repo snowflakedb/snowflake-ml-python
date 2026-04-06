@@ -41,7 +41,11 @@ py_library(
 py_test(
     name = "classify_text_test",
     srcs = ["classify_text_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":classify_text",
         ":test_util",
@@ -67,7 +71,11 @@ py_library(
 py_test(
     name = "complete_test",
     srcs = ["complete_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":complete",
         ":schema_utils",
@@ -88,7 +96,11 @@ py_library(
 py_test(
     name = "extract_answer_test",
     srcs = ["extract_answer_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":extract_answer",
         ":test_util",
@@ -108,7 +120,11 @@ py_library(
 py_test(
     name = "sentiment_test",
     srcs = ["sentiment_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":sentiment",
         ":test_util",
@@ -128,7 +144,11 @@ py_library(
 py_test(
     name = "summarize_test",
     srcs = ["summarize_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":summarize",
         ":test_util",
@@ -139,7 +159,10 @@ py_test(
 py_test(
     name = "sse_test",
     srcs = ["sse_test.py"],
-    tags = ["feature:cortex"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":complete_test",
         ":sse_client",
@@ -159,7 +182,11 @@ py_library(
 py_test(
     name = "translate_test",
     srcs = ["translate_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":test_util",
         ":translate",
@@ -179,7 +206,11 @@ py_library(
 py_test(
     name = "embed_text_768_test",
     srcs = ["embed_text_768_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":embed_text_768",
         ":test_util",
@@ -199,7 +230,11 @@ py_library(
 py_test(
     name = "embed_text_1024_test",
     srcs = ["embed_text_1024_test.py"],
-    tags = ["feature:cortex"],
+    imports = ["."],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":embed_text_1024",
         ":test_util",
@@ -220,7 +255,10 @@ py_library(
 py_test(
     name = "finetune_test",
     srcs = ["finetune_test.py"],
-    tags = ["feature:cortex"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         "//snowflake/cortex:cortex_pkg",
         "//snowflake/cortex:test_util",
@@ -250,7 +288,10 @@ py_library(
 py_test(
     name = "package_visibility_test",
     srcs = ["package_visibility_test.py"],
-    tags = ["feature:cortex"],
+    tags = [
+        "feature:cortex",
+        "short_regress",
+    ],
     deps = [
         ":init",
     ],

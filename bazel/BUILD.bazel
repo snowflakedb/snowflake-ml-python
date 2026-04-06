@@ -12,7 +12,10 @@ native_py_test(
     data = ["repo_paths.bzl"],
     python_version = "PY3",
     srcs_version = "PY3",
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
 )
 
 sh_binary(

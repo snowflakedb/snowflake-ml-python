@@ -29,13 +29,16 @@ py_library(
         "feature.py",
         "feature_store.py",
         "feature_view.py",
+        "interval_utils.py",
         "metadata_manager.py",
         "request_source.py",
         "spec/__init__.py",
         "spec/builder.py",
         "spec/enums.py",
         "spec/models.py",
+        "stream_config.py",
         "stream_source.py",
+        "streaming_registration.py",
         "tile_sql_generator.py",
     ],
     deps = [
@@ -64,7 +67,10 @@ py_package(
 py_test(
     name = "feature_view_test",
     srcs = ["feature_view_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -73,7 +79,10 @@ py_test(
 py_test(
     name = "aggregation_test",
     srcs = ["aggregation_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -82,7 +91,10 @@ py_test(
 py_test(
     name = "stream_source_test",
     srcs = ["stream_source_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -91,7 +103,10 @@ py_test(
 py_test(
     name = "feature_store_stream_source_test",
     srcs = ["feature_store_stream_source_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -100,7 +115,10 @@ py_test(
 py_test(
     name = "tile_sql_generator_test",
     srcs = ["tile_sql_generator_test.py"],
-    tags = ["feature:feature_store"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],
@@ -120,6 +138,24 @@ py_test(
     name = "spec_builder_test",
     srcs = ["spec/builder_test.py"],
     main = "spec/builder_test.py",
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "stream_config_test",
+    srcs = ["stream_config_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "streaming_registration_test",
+    srcs = ["streaming_registration_test.py"],
     tags = ["feature:feature_store"],
     deps = [
         ":feature_store_lib",

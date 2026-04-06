@@ -121,7 +121,7 @@ class TestRegistryCustomMultiModalityBatchInferenceInteg(
             output_spec=OutputSpec(stage_location=output_stage_location),
             job_spec=JobSpec(job_name=job_name, replicas=1, gpu_requests="1"),
             options={"cuda_version": "12.4"},
-            pip_requirements=["transformers==4.51.0"],
+            pip_requirements=["transformers"],
         )
 
 

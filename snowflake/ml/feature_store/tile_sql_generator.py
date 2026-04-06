@@ -8,6 +8,8 @@ This module provides SQL generation for:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from snowflake.ml.feature_store.aggregation import (
     AggregationSpec,
     AggregationType,
@@ -39,7 +41,7 @@ class TilingSqlGenerator:
     def __init__(
         self,
         source_query: str,
-        join_keys: list[str],
+        join_keys: Sequence[str],
         timestamp_col: str,
         feature_granularity: str,
         features: list[AggregationSpec],
@@ -48,7 +50,7 @@ class TilingSqlGenerator:
 
         Args:
             source_query: The source query providing raw event data.
-            join_keys: List of column names used as join keys (from entities).
+            join_keys: Column names used as join keys (from entities).
             timestamp_col: The timestamp column name.
             feature_granularity: The tile interval (e.g., "1h", "1d").
             features: List of aggregation specifications.
@@ -435,7 +437,7 @@ class MergingSqlGenerator:
     def __init__(
         self,
         tile_table: str,
-        join_keys: list[str],
+        join_keys: Sequence[str],
         timestamp_col: str,
         feature_granularity: str,
         features: list[AggregationSpec],
@@ -446,7 +448,7 @@ class MergingSqlGenerator:
 
         Args:
             tile_table: Fully qualified name of the tile table.
-            join_keys: List of join key column names.
+            join_keys: Join key column names.
             timestamp_col: The timestamp column from the feature view.
             feature_granularity: The tile interval.
             features: List of aggregation specifications.
@@ -543,20 +545,18 @@ class MergingSqlGenerator:
         """
         cte_name = f"SPINE_BOUNDARY_FV{self._fv_index}"
 
-        # Quote column names to preserve case-sensitivity from spine dataframe
-        # The spine_timestamp_col is passed as-is from the user (e.g., "query_ts")
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
-        quoted_spine_ts = f'"{self._spine_timestamp_col}"'
+        join_keys = self._join_keys
+        spine_ts = self._spine_timestamp_col
 
         # Select all columns plus the tile boundary
-        all_cols = quoted_join_keys + [quoted_spine_ts]
+        all_cols = list(join_keys) + [spine_ts]
         select_cols = ", ".join(all_cols)
 
         # DATE_TRUNC to tile granularity gives us the boundary
         # All timestamps in the same granularity window see the same complete tiles
         cte_body = f"""
     SELECT DISTINCT {select_cols},
-           DATE_TRUNC('{self._interval_unit.lower()}', {quoted_spine_ts}) AS {_TILE_BOUNDARY_COL}
+           DATE_TRUNC('{self._interval_unit.lower()}', {spine_ts}) AS {_TILE_BOUNDARY_COL}
     FROM SPINE
 """
         return cte_name, cte_body.strip()
@@ -572,9 +572,7 @@ class MergingSqlGenerator:
         """
         cte_name = f"UNIQUE_BOUNDS_FV{self._fv_index}"
 
-        # Quote column names to handle case-sensitivity
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
-        keys_str = ", ".join(quoted_join_keys)
+        keys_str = ", ".join(self._join_keys)
 
         cte_body = f"""
     SELECT DISTINCT {keys_str}, {_TILE_BOUNDARY_COL}
@@ -593,15 +591,10 @@ class MergingSqlGenerator:
         """
         cte_name = f"TILES_JOINED_FV{self._fv_index}"
 
-        # Quote column names for spine columns (case-sensitive)
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
+        tile_keys_str = ", ".join(self._join_keys)
 
-        # Tile table column names match the join keys (already SqlIdentifier-formatted)
-        tile_join_keys = list(self._join_keys)
-        tile_keys_str = ", ".join(tile_join_keys)
-
-        # Join conditions: quoted spine columns to uppercase tile columns
-        join_conditions = [f"UB.{qk} = TILES.{tk}" for qk, tk in zip(quoted_join_keys, tile_join_keys)]
+        # Join conditions between spine (UB) and tile columns
+        join_conditions = [f"UB.{k} = TILES.{k}" for k in self._join_keys]
 
         # Get all tile columns we need (deduplicated)
         tile_columns_set: set[str] = set()
@@ -728,10 +721,8 @@ class MergingSqlGenerator:
         """
         cte_name = f"SIMPLE_MERGED_FV{self._fv_index}"
 
-        # Quote column names for case-sensitivity (from UNIQUE_BOUNDS which inherits from spine)
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
         # Group by entity keys + TILE_BOUNDARY (optimization)
-        group_by_cols = quoted_join_keys + [_TILE_BOUNDARY_COL]
+        group_by_cols = list(self._join_keys) + [_TILE_BOUNDARY_COL]
         group_by_str = ", ".join(group_by_cols)
 
         agg_columns = []
@@ -866,16 +857,11 @@ class MergingSqlGenerator:
         """
         cte_name = f"LIFETIME_MERGED_FV{self._fv_index}"
 
-        # Quote column names for case-sensitivity
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
-        group_by_cols = quoted_join_keys + [_TILE_BOUNDARY_COL]
-
-        # Tile table column names match the join keys (already SqlIdentifier-formatted)
-        tile_join_keys = list(self._join_keys)
+        group_by_cols = list(self._join_keys) + [_TILE_BOUNDARY_COL]
 
         # Build ASOF JOIN condition: match the most recent tile before the boundary
         asof_match = f"UB.{_TILE_BOUNDARY_COL} > TILES.{_TILE_START_COL}"
-        join_conditions = [f"UB.{qk} = TILES.{tk}" for qk, tk in zip(quoted_join_keys, tile_join_keys)]
+        join_conditions = [f"UB.{k} = TILES.{k}" for k in self._join_keys]
         join_conditions_str = " AND ".join(join_conditions)
 
         # Build select columns for lifetime features
@@ -966,10 +952,8 @@ class MergingSqlGenerator:
         Returns:
             SQL string for the list merged CTE body.
         """
-        # Quote column names for case-sensitivity (from UNIQUE_BOUNDS which inherits from spine)
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
         # Group by entity keys + TILE_BOUNDARY (optimization)
-        group_by_cols = quoted_join_keys + [_TILE_BOUNDARY_COL]
+        group_by_cols = list(self._join_keys) + [_TILE_BOUNDARY_COL]
         group_by_str = ", ".join(group_by_cols)
         select_group_cols = ", ".join(f"t.{col}" for col in group_by_cols)
 
@@ -1062,12 +1046,9 @@ class MergingSqlGenerator:
         """
         cte_name = f"FV{self._fv_index:03d}"
 
-        # Quote column names for case-sensitivity
-        quoted_join_keys = [f'"{k}"' for k in self._join_keys]
-        quoted_spine_ts = f'"{self._spine_timestamp_col}"'
-        spine_output_cols = quoted_join_keys + [quoted_spine_ts]
+        spine_output_cols = list(self._join_keys) + [self._spine_timestamp_col]
         # Merged results are grouped by entity + TILE_BOUNDARY
-        boundary_group_cols = quoted_join_keys + [_TILE_BOUNDARY_COL]
+        boundary_group_cols = list(self._join_keys) + [_TILE_BOUNDARY_COL]
 
         # Select columns from spine (entity keys + original timestamp)
         select_cols = [f"s.{col}" for col in spine_output_cols]

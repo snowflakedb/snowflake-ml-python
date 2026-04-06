@@ -204,11 +204,11 @@ def _create_env_for_model_metadata(
     env = model_env.ModelEnv(prefer_pip=prefer_pip, target_platforms=target_platforms)
 
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
-    env.conda_dependencies = conda_dependencies  # type: ignore[assignment]
-    env.pip_requirements = pip_requirements  # type: ignore[assignment]
+    env.conda_dependencies = conda_dependencies
+    env.pip_requirements = pip_requirements
     env.artifact_repository_map = artifact_repository_map
     env.resource_constraint = resource_constraint
-    env.python_version = python_version  # type: ignore[assignment]
+    env.python_version = python_version
     env.snowpark_ml_version = snowml_version.VERSION
 
     requirements_to_add = _PACKAGING_REQUIREMENTS

@@ -212,7 +212,7 @@ class PayloadUtilsTests(parameterized.TestCase):
         (function_with_pos_arg, tuple(), {"b": 100, "a": "Hello world"}),
         (function_with_kw_arg, ("Hello world",), {"named_arg": "true", "c": 1.5, "b": 100}),
         (function_with_kw_arg, ("Hello world",), {"named_arg": "true", "c": 1.5, "b": 100}, True),
-        (functools.partial(function_with_kw_arg, "Hello world", named_arg=True, c=1.5, b=100), tuple(), dict(), True),
+        (functools.partial(function_with_kw_arg, "Hello world", named_arg="true", c=1.5, b=100), tuple(), dict(), True),
         (functools.partial(function_with_any_arg, {"key1": "val", "key2": "val"}), tuple(), dict(), True),
     )
     def test_generate_python_code(

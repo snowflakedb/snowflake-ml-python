@@ -53,8 +53,6 @@ class RegistryBatchInferenceExplainabilityTest(registry_batch_inference_test_bas
             expected_predictions=expected_predictions,
             output_spec=OutputSpec(stage_location=output_stage_location),
             job_spec=JobSpec(job_name=job_name, function_name="explain"),
-            # TODO(hayu): Remove target_platforms once explainability is supported with SPCS-only logging.
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
 

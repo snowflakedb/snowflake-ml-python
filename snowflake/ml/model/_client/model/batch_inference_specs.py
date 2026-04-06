@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from typing_extensions import TypedDict
 
 
@@ -110,6 +110,11 @@ class JobSpec(BaseModel):
             If not specified, uses the default repository.
         job_name (Optional[str]): Custom name for the batch inference job.
             If not provided, a name will be auto-generated in the form of "BATCH_INFERENCE_<UUID>".
+            Mutually exclusive with job_name_prefix.
+        job_name_prefix (Optional[str]): Prefix for auto-generated job names. When set, the job name
+            will be generated as "<PREFIX>_<UUID>". This is useful for task integration where each
+            repeated execution needs a unique name with a recognizable prefix.
+            Mutually exclusive with job_name.
         num_workers (Optional[int]): The number of workers to run the inference service for handling
             requests in parallel within an instance of the service. By default, it is set to 2*vCPU+1
             of the node for CPU based inference and 1 for GPU based inference. For GPU based inference,
@@ -144,6 +149,7 @@ class JobSpec(BaseModel):
 
     image_repo: Optional[str] = None
     job_name: Optional[str] = None
+    job_name_prefix: Optional[str] = None
     num_workers: Optional[int] = None
     function_name: Optional[str] = None
     force_rebuild: bool = False
@@ -153,3 +159,9 @@ class JobSpec(BaseModel):
     memory_requests: Optional[str] = None
     gpu_requests: Optional[str] = None
     replicas: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _validate_job_name_exclusivity(self) -> "JobSpec":
+        if self.job_name is not None and self.job_name_prefix is not None:
+            raise ValueError("job_name and job_name_prefix are mutually exclusive. Please specify only one or neither.")
+        return self

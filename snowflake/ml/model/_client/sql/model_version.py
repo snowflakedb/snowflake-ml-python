@@ -427,9 +427,9 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         ).drop(INTERMEDIATE_OBJ_NAME)
 
         if statement_params:
-            output_df._statement_params = statement_params  # type: ignore[assignment]
+            output_df._statement_params = statement_params
 
-        return output_df
+        return output_df  # type: ignore[no-any-return]
 
     def invoke_table_function_method(
         self,
@@ -537,12 +537,12 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
             values=output_cols,
         )
         if statement_params:
-            output_df._statement_params = statement_params  # type: ignore[assignment]
+            output_df._statement_params = statement_params
 
         if cols_to_drop:
             output_df = output_df.drop(cols_to_drop)
 
-        return output_df
+        return output_df  # type: ignore[no-any-return]
 
     def set_metadata(
         self,

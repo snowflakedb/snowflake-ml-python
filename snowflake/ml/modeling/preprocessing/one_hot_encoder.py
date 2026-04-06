@@ -501,7 +501,7 @@ class OneHotEncoder(base.BaseTransformer):
                         ),
                     )
 
-            return given_state_df
+            return given_state_df  # type: ignore[no-any-return]
 
         return found_state_df
 
@@ -818,7 +818,7 @@ class OneHotEncoder(base.BaseTransformer):
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
         passthrough_cols = list(set(original_dataset_cols) - set(all_output_cols))
         transformed_dataset = transformed_dataset.drop(suffixed_input_cols)[all_output_cols + passthrough_cols]
-        return transformed_dataset
+        return transformed_dataset  # type: ignore[no-any-return]
 
     def _transform_snowpark_dense(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """
@@ -905,7 +905,7 @@ class OneHotEncoder(base.BaseTransformer):
         transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
         transformed_dataset = transformed_dataset[all_output_cols + original_dataset_columns]
-        return transformed_dataset
+        return transformed_dataset  # type: ignore[no-any-return]
 
     def _transform_snowpark_sparse_udf(self, dataset: snowpark.DataFrame) -> snowpark.DataFrame:
         """

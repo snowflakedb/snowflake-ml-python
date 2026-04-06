@@ -27,11 +27,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
-from snowflake.ml.feature_store.aggregation import (
-    AggregationSpec,
-    AggregationType,
-    interval_to_seconds,
-)
+from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
+from snowflake.ml.feature_store.interval_utils import interval_to_seconds
 from snowflake.ml.feature_store.request_source import RequestSource
 from snowflake.ml.feature_store.spec.enums import (
     FeatureAggregationMethod,
@@ -582,17 +579,28 @@ class FeatureViewSpecBuilder:
         return spec_features
 
     def _resolve_passthrough_features(self) -> list[Feature]:
-        """Auto-generate identity features for non-tiled batch FVs.
+        """Auto-generate identity features for FVs without time-aggregated features.
 
-        Each non-entity, non-timestamp column in the ``BATCH_SOURCE`` offline
-        config becomes a passthrough feature where ``source_column ==
-        output_column`` with no aggregation function or window.
+        Each non-entity, non-timestamp column in the appropriate offline config
+        becomes a passthrough feature where ``source_column == output_column``
+        with no aggregation function or window.
+
+        The source config is determined explicitly by kind:
+          - **Batch**: ``BATCH_SOURCE`` offline config.
+          - **Streaming**: ``UDF_TRANSFORMED`` offline config.
+          - **Realtime**: no passthrough features.
 
         Returns:
-            List of passthrough Feature models, or empty list if no
-            BATCH_SOURCE offline config is present.
+            List of passthrough Feature models, or empty list if the
+            appropriate offline config is not present.
         """
-        config = self._find_offline_config(TableType.BATCH_SOURCE)
+        if self._kind == FeatureViewKind.BatchFeatureView:
+            config = self._find_offline_config(TableType.BATCH_SOURCE)
+        elif self._kind == FeatureViewKind.StreamingFeatureView:
+            config = self._find_offline_config(TableType.UDF_TRANSFORMED)
+        else:
+            return []
+
         if config is None:
             return []
 

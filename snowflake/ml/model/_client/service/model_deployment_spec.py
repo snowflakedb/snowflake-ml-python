@@ -199,7 +199,6 @@ class ModelDeploymentSpec:
     def add_job_spec(
         self,
         *,
-        job_name: sql_identifier.SqlIdentifier,
         inference_compute_pool_name: sql_identifier.SqlIdentifier,
         function_name: str,
         input_stage_location: str,
@@ -210,8 +209,10 @@ class ModelDeploymentSpec:
         params: Optional[str] = None,
         partition_columns: Optional[list[str]] = None,
         warehouse: sql_identifier.SqlIdentifier,
+        job_name: Optional[sql_identifier.SqlIdentifier] = None,
         job_database_name: Optional[sql_identifier.SqlIdentifier] = None,
         job_schema_name: Optional[sql_identifier.SqlIdentifier] = None,
+        name_prefix: Optional[str] = None,
         cpu: Optional[str] = None,
         memory: Optional[str] = None,
         gpu: Optional[str] = None,
@@ -222,7 +223,6 @@ class ModelDeploymentSpec:
         """Add job specification to the deployment spec.
 
         Args:
-            job_name: Name of the job.
             inference_compute_pool_name: Compute pool for inference.
             function_name: Function name.
             input_stage_location: Stage location for input data.
@@ -233,8 +233,10 @@ class ModelDeploymentSpec:
             params: Additional parameters for the job.
             partition_columns: Partition columns for the input data.
             warehouse: Warehouse for the job.
+            job_name: Name of the job. Optional when name_prefix is provided.
             job_database_name: Database name for the job.
             job_schema_name: Schema name for the job.
+            name_prefix: Prefix for server-side job name generation. Optional.
             cpu: CPU requirement.
             memory: Memory requirement.
             gpu: GPU requirement.
@@ -251,20 +253,23 @@ class ModelDeploymentSpec:
         if self._service:
             raise ValueError("Cannot add a job spec when a service spec already exists.")
 
-        saved_job_database = job_database_name or self.database
-        saved_job_schema = job_schema_name or self.schema
+        fq_job_name: Optional[str] = None
+        if job_name is not None:
+            saved_job_database = job_database_name or self.database
+            saved_job_schema = job_schema_name or self.schema
 
-        assert saved_job_database is not None
-        assert saved_job_schema is not None
+            assert saved_job_database is not None
+            assert saved_job_schema is not None
 
-        fq_job_name = identifier.get_schema_level_object_identifier(
-            saved_job_database.identifier(), saved_job_schema.identifier(), job_name.identifier()
-        )
+            fq_job_name = identifier.get_schema_level_object_identifier(
+                saved_job_database.identifier(), saved_job_schema.identifier(), job_name.identifier()
+            )
 
         self._add_inference_spec(cpu, memory, gpu, num_workers, max_batch_rows)
 
         self._job = model_deployment_spec_schema.Job(
             name=fq_job_name,
+            name_prefix=name_prefix,
             compute_pool=inference_compute_pool_name.identifier(),
             warehouse=warehouse.identifier() if warehouse else None,
             function_name=function_name,

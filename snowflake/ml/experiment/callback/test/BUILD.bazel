@@ -1,0 +1,57 @@
+load("//bazel:py_rules.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "test_base",
+    srcs = ["base.py"],
+    deps = [
+        "//snowflake/ml/experiment:experiment_tracking",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "keras_test",
+    srcs = ["keras_test.py"],
+    optional_dependencies = [
+        "keras",
+    ],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":test_base",
+        "//snowflake/ml/experiment/callback:keras",
+    ],
+)
+
+py_test(
+    name = "lightgbm_test",
+    srcs = ["lightgbm_test.py"],
+    optional_dependencies = [
+        "lightgbm",
+    ],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":test_base",
+        "//snowflake/ml/experiment/callback:lightgbm",
+    ],
+)
+
+py_test(
+    name = "xgboost_test",
+    srcs = ["xgboost_test.py"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":test_base",
+        "//snowflake/ml/experiment/callback:xgboost",
+    ],
+)

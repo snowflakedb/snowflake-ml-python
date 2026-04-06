@@ -46,7 +46,10 @@ py_test(
     srcs = [
         "model_monitor_test.py",
     ],
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
     deps = [
         ":model_monitor",
         "//snowflake/ml/test_utils:mock_session",

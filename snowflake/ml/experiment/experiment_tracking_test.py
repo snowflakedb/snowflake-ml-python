@@ -660,6 +660,102 @@ class ExperimentTrackingTest(absltest.TestCase):
             self.assertEqual(call_kwargs["artifact_path"], rel_path)
             self.assertEqual(call_kwargs["target_path"], local_dir)
 
+    def test_list_metrics_no_experiment_raises(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.list_metrics()
+        self.assertIn("No experiment set", str(ctx.exception))
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_metrics(self, mock_pivot: MagicMock) -> None:
+        mock_rows = [MagicMock(), MagicMock()]
+        self.mock_sql_client.show_run_metrics_in_experiment.return_value = mock_rows
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"name": "RUN_A"}, {"name": "RUN_B"}]
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_metrics()
+
+        self.mock_sql_client.show_runs_in_experiment.assert_called_once()
+        self.mock_sql_client.show_run_metrics_in_experiment.assert_called_once()
+        kwargs = self.mock_sql_client.show_run_metrics_in_experiment.call_args[1]
+        self.assertEqual(kwargs["experiment_name"].identifier(), "EXP1")
+        self.assertIsNone(kwargs["run_name"])
+        mock_pivot.assert_called_once_with(self.mock_session, mock_rows, run_names=["RUN_A", "RUN_B"], cast_value=float)
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_metrics_with_run_name(self, mock_pivot: MagicMock) -> None:
+        mock_rows = [MagicMock()]
+        self.mock_sql_client.show_run_metrics_in_experiment.return_value = mock_rows
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_metrics(run_name="RUN1")
+
+        self.mock_sql_client.show_runs_in_experiment.assert_not_called()
+        kwargs = self.mock_sql_client.show_run_metrics_in_experiment.call_args[1]
+        self.assertEqual(kwargs["run_name"].identifier(), "RUN1")
+        mock_pivot.assert_called_once_with(self.mock_session, mock_rows, run_names=["RUN1"], cast_value=float)
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_metrics_empty(self, mock_pivot: MagicMock) -> None:
+        self.mock_sql_client.show_run_metrics_in_experiment.return_value = []
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"name": "RUN_A"}]
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_metrics()
+
+        mock_pivot.assert_called_once_with(self.mock_session, [], run_names=["RUN_A"], cast_value=float)
+
+    def test_list_params_no_experiment_raises(self) -> None:
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        with self.assertRaises(RuntimeError) as ctx:
+            exp.list_params()
+        self.assertIn("No experiment set", str(ctx.exception))
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_params(self, mock_pivot: MagicMock) -> None:
+        mock_rows = [MagicMock(), MagicMock()]
+        self.mock_sql_client.show_run_parameters_in_experiment.return_value = mock_rows
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"name": "RUN_A"}, {"name": "RUN_B"}]
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_params()
+
+        self.mock_sql_client.show_runs_in_experiment.assert_called_once()
+        self.mock_sql_client.show_run_parameters_in_experiment.assert_called_once()
+        kwargs = self.mock_sql_client.show_run_parameters_in_experiment.call_args[1]
+        self.assertEqual(kwargs["experiment_name"].identifier(), "EXP1")
+        self.assertIsNone(kwargs["run_name"])
+        mock_pivot.assert_called_once_with(self.mock_session, mock_rows, run_names=["RUN_A", "RUN_B"])
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_params_with_run_name(self, mock_pivot: MagicMock) -> None:
+        mock_rows = [MagicMock()]
+        self.mock_sql_client.show_run_parameters_in_experiment.return_value = mock_rows
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_params(run_name="RUN1")
+
+        self.mock_sql_client.show_runs_in_experiment.assert_not_called()
+        kwargs = self.mock_sql_client.show_run_parameters_in_experiment.call_args[1]
+        self.assertEqual(kwargs["run_name"].identifier(), "RUN1")
+        mock_pivot.assert_called_once_with(self.mock_session, mock_rows, run_names=["RUN1"])
+
+    @patch("snowflake.ml.experiment._client.experiment_tracking_sql_client.pivot_run_attributes")
+    def test_list_params_empty(self, mock_pivot: MagicMock) -> None:
+        self.mock_sql_client.show_run_parameters_in_experiment.return_value = []
+        self.mock_sql_client.show_runs_in_experiment.return_value = [{"name": "RUN_A"}]
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("EXP1")
+        exp.list_params()
+
+        mock_pivot.assert_called_once_with(self.mock_session, [], run_names=["RUN_A"])
+
     def test_set_live_logging_status(self) -> None:
         # WARNING: This is the only unit test that should have live_logging_status set to True.
         # Otherwise, the stdout/stderr patching from simultaneously running tests will interfere with this test.

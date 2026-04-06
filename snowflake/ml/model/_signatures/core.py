@@ -572,7 +572,7 @@ class FeatureGroupSpec(BaseFeatureSpec):
         Returns:
             A feature group instance deserialized and created from the dict.
         """
-        specs = []
+        specs: list[BaseFeatureSpec] = []
         for e in input_dict["specs"]:
             spec = FeatureGroupSpec.from_dict(e) if "specs" in e else FeatureSpec.from_dict(e)
             specs.append(spec)

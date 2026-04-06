@@ -1,6 +1,27 @@
 # Release History
 
-## 1.33.0
+## 1.34.0
+
+### New Features
+
+* Experiment Tracking: Added `list_params` and `list_metrics` methods to retrieve parameters and metrics
+  for runs within an experiment. Both methods return a Dataframe and accept an optional `run_name` argument
+  to filter to a specific run.
+
+### Bug Fixes
+
+* Feature Store: Fixed `generate_dataset()`/`generate_training_set()` SQL generation for Unicode and case-sensitive
+  identifiers (for example Japanese column names), ensuring columns are quoted exactly once and preventing SQL
+  compilation errors such as `unexpected '<column_name>'`.
+
+### Behavior Changes
+
+* Registry: `enable_explainability=True` is now allowed for SPCS-only and non-warehouse-runnable models. Previously
+  this raised a `ValueError`.
+
+### Deprecations
+
+## 1.33.0 (2026-03-31)
 
 ### New Features
 
@@ -123,6 +144,9 @@
   `pd.StringDtype` correctly.
 
 ### Behavior Changes
+
+* Dependencies: Removed `snowflake.core` as a runtime dependency. If you use `snowflake.core` (e.g.,
+  `TaskDag`, `Root`, `Task`), add `snowflake.core` explicitly to your dependencies.
 
 ### Deprecations
 

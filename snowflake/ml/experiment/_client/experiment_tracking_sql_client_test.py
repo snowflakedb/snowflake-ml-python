@@ -1,5 +1,6 @@
 from typing import Optional, cast
 from unittest import mock
+from unittest.mock import MagicMock
 
 from absl.testing import absltest
 
@@ -10,7 +11,89 @@ from snowflake.ml.experiment._client import (
 )
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.utils import sql_client as sql_client_utils
-from snowflake.snowpark import file_operation, row, session
+from snowflake.snowpark import file_operation, row, session, types
+
+
+class PivotRunAttributesTest(absltest.TestCase):
+    def setUp(self) -> None:
+        self.mock_session = MagicMock(spec=session.Session)
+        self.mock_session.create_dataframe.return_value = MagicMock()
+
+    def _make_row(self, run_name: str, name: str, value: str) -> row.Row:
+        return row.Row(run_name=run_name, name=name, value=value)
+
+    def _get_create_dataframe_args(self) -> tuple[list, types.StructType]:  # type: ignore[type-arg]
+        """Extract (data, schema) from the mock create_dataframe call."""
+        args, kwargs = self.mock_session.create_dataframe.call_args
+        return args[0], kwargs.get("schema") or args[1]
+
+    def test_basic_pivot(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "accuracy", "0.95"),
+            self._make_row("RUN_A", "loss", "0.05"),
+            self._make_row("RUN_B", "accuracy", "0.80"),
+        ]
+
+        sql_client.pivot_run_attributes(self.mock_session, rows, run_names=["RUN_A", "RUN_B"])
+
+        data, schema = self._get_create_dataframe_args()
+        self.assertEqual(data, [["RUN_A", "0.95", "0.05"], ["RUN_B", "0.80", None]])
+        self.assertEqual(schema.names, ['"run_name"', '"accuracy"', '"loss"'])
+        for field in schema.fields[1:]:
+            self.assertIsInstance(field.datatype, types.StringType)
+
+    def test_cast_value_float(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "accuracy", "0.95"),
+            self._make_row("RUN_A", "loss", "0.05"),
+        ]
+
+        sql_client.pivot_run_attributes(self.mock_session, rows, run_names=["RUN_A"], cast_value=float)
+
+        data, schema = self._get_create_dataframe_args()
+        self.assertEqual(data, [["RUN_A", 0.95, 0.05]])
+        for field in schema.fields[1:]:
+            self.assertIsInstance(field.datatype, types.DoubleType)
+
+    def test_cast_failure_becomes_none(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "accuracy", "not_a_number"),
+        ]
+
+        sql_client.pivot_run_attributes(self.mock_session, rows, run_names=["RUN_A"], cast_value=float)
+
+        data, _ = self._get_create_dataframe_args()
+        self.assertEqual(data, [["RUN_A", None]])
+
+    def test_empty_rows(self) -> None:
+        sql_client.pivot_run_attributes(self.mock_session, rows=[], run_names=["RUN_A", "RUN_B"])
+
+        data, schema = self._get_create_dataframe_args()
+        self.assertEqual(data, [["RUN_A"], ["RUN_B"]])
+        self.assertEqual(schema.names, ['"run_name"'])
+
+    def test_run_with_no_attributes_gets_nulls(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "accuracy", "0.95"),
+        ]
+
+        sql_client.pivot_run_attributes(self.mock_session, rows, run_names=["RUN_A", "RUN_EMPTY"])
+
+        data, _ = self._get_create_dataframe_args()
+        self.assertEqual(data, [["RUN_A", "0.95"], ["RUN_EMPTY", None]])
+
+    def test_columns_sorted_alphabetically(self) -> None:
+        rows = [
+            self._make_row("RUN_A", "z_metric", "1"),
+            self._make_row("RUN_A", "a_metric", "2"),
+            self._make_row("RUN_A", "m_metric", "3"),
+        ]
+
+        sql_client.pivot_run_attributes(self.mock_session, rows, run_names=["RUN_A"])
+
+        data, schema = self._get_create_dataframe_args()
+        self.assertEqual(schema.names, ['"run_name"', '"a_metric"', '"m_metric"', '"z_metric"'])
+        self.assertEqual(data, [["RUN_A", "2", "3", "1"]])
 
 
 class ExperimentTrackingSQLClientTest(absltest.TestCase):
@@ -240,10 +323,12 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
 
         self.m_session.add_mock_sql(
-            "SHOW RUN METRICS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ", self._create_mock_df()
+            "SHOW RUN METRICS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ",
+            self._create_mock_df(),
         )
 
-        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name)
+        result = self.client.show_run_metrics_in_experiment(experiment_name=experiment_name)
+        self.assertIsInstance(result, list)
 
     def test_show_run_metrics_in_experiment_with_like(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -253,7 +338,8 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, like="acc%")
+        result = self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, like="acc%")
+        self.assertIsInstance(result, list)
 
     def test_show_run_metrics_in_experiment_with_run_name(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -264,7 +350,8 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, run_name=run_name)
+        result = self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, run_name=run_name)
+        self.assertIsInstance(result, list)
 
     def test_show_run_metrics_in_experiment_with_like_and_run_name(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -275,16 +362,21 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_metrics_in_experiment(experiment_name=experiment_name, run_name=run_name, like="loss%")
+        result = self.client.show_run_metrics_in_experiment(
+            experiment_name=experiment_name, run_name=run_name, like="loss%"
+        )
+        self.assertIsInstance(result, list)
 
     def test_show_run_parameters_in_experiment(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
 
         self.m_session.add_mock_sql(
-            "SHOW RUN PARAMETERS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ", self._create_mock_df()
+            "SHOW RUN PARAMETERS  IN EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ",
+            self._create_mock_df(),
         )
 
-        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name)
+        result = self.client.show_run_parameters_in_experiment(experiment_name=experiment_name)
+        self.assertIsInstance(result, list)
 
     def test_show_run_parameters_in_experiment_with_like(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -294,7 +386,8 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, like="lr%")
+        result = self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, like="lr%")
+        self.assertIsInstance(result, list)
 
     def test_show_run_parameters_in_experiment_with_run_name(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -305,7 +398,8 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, run_name=run_name)
+        result = self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, run_name=run_name)
+        self.assertIsInstance(result, list)
 
     def test_show_run_parameters_in_experiment_with_like_and_run_name(self) -> None:
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
@@ -316,7 +410,10 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
             self._create_mock_df(),
         )
 
-        self.client.show_run_parameters_in_experiment(experiment_name=experiment_name, run_name=run_name, like="batch%")
+        result = self.client.show_run_parameters_in_experiment(
+            experiment_name=experiment_name, run_name=run_name, like="batch%"
+        )
+        self.assertIsInstance(result, list)
 
     def test_build_snow_uri(self) -> None:
         # Test the _build_snow_uri helper method

@@ -2159,6 +2159,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests="8Gi",
                 gpu_requests=None,
                 job_name="CUSTOM_JOB_NAME",
+                job_name_prefix=None,
                 replicas=10,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
@@ -2240,6 +2241,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 job_name="TEST_JOB",
+                job_name_prefix=None,
                 replicas=None,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
@@ -2316,6 +2318,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 job_name="TEST_JOB",
+                job_name_prefix=None,
                 replicas=None,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
@@ -2399,6 +2402,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 job_name="TEST_JOB",
+                job_name_prefix=None,
                 replicas=None,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
@@ -2414,15 +2418,14 @@ class ModelVersionImplTest(absltest.TestCase):
 
             self.assertEqual(result, mock_job)
 
-    def test_run_batch_with_generated_job_name(self) -> None:
-        """Test _run_batch with job_name generated when None."""
+    def test_run_batch_without_job_name_or_prefix(self) -> None:
+        """Test _run_batch with no job_name or job_name_prefix passes both as None for server-side generation."""
         input_df = mock.MagicMock(spec=dataframe.DataFrame)
         input_df.write.copy_into_location = mock.MagicMock()
 
         output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
         job_spec = batch_inference_specs.JobSpec(
             function_name="predict",
-            job_name=None,  # This will trigger job name generation
             warehouse="TEST_WAREHOUSE",
             force_rebuild=False,
             image_repo="test_repo",
@@ -2449,20 +2452,101 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
             ) as mock_invoke_batch_job,
-            mock.patch("uuid.uuid4") as mock_uuid,
         ):
-            # Setup the UUID mock to return a predictable value
-            mock_uuid.return_value.configure_mock(__str__=lambda self: "12345678-1234-5678-9abc-123456789012")
-
             result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
 
             # Verify result
             self.assertEqual(result, mock_job)
 
-            # Verify the generated job name uses the mocked UUID
+            # Verify both job_name and job_name_prefix are None
             call_args = mock_invoke_batch_job.call_args
-            job_name = call_args.kwargs["job_name"]
-            self.assertEqual(job_name, "BATCH_INFERENCE_12345678_1234_5678_9ABC_123456789012")
+            self.assertIsNone(call_args.kwargs["job_name"])
+            self.assertIsNone(call_args.kwargs["job_name_prefix"])
+
+    def test_run_batch_with_job_name(self) -> None:
+        """Test _run_batch with explicit job_name passes it through directly."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict",
+            job_name="MY_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
+
+            self.assertEqual(result, mock_job)
+
+            call_args = mock_invoke_batch_job.call_args
+            self.assertEqual(call_args.kwargs["job_name"], "MY_JOB")
+            self.assertIsNone(call_args.kwargs["job_name_prefix"])
+
+    def test_run_batch_with_job_name_prefix(self) -> None:
+        """Test _run_batch with job_name_prefix passes None job_name and the prefix."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            job_name_prefix="CUSTOM_PREFIX",
+            warehouse="TEST_WAREHOUSE",
+            image_repo="test_repo",
+        )
+
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+            mock.patch.object(
+                self.m_mv._service_ops, "invoke_batch_job_method", return_value=mock_job
+            ) as mock_invoke_batch_job,
+        ):
+            result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=job_spec)
+
+            self.assertEqual(result, mock_job)
+
+            call_args = mock_invoke_batch_job.call_args
+            self.assertIsNone(call_args.kwargs["job_name"])
+            self.assertEqual(call_args.kwargs["job_name_prefix"], "CUSTOM_PREFIX")
+
+    def test_run_batch_with_job_name_and_prefix_error(self) -> None:
+        """Test _run_batch raises error when both job_name and job_name_prefix are set."""
+        with self.assertRaises(ValueError) as ctx:
+            batch_inference_specs.JobSpec(
+                job_name="CUSTOM_JOB",
+                job_name_prefix="CUSTOM_PREFIX",
+            )
+        self.assertIn("mutually exclusive", str(ctx.exception))
 
     def test_run_batch_with_warehouse_from_session(self) -> None:
         """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
@@ -2574,11 +2658,8 @@ class ModelVersionImplTest(absltest.TestCase):
             mock.patch.object(
                 self.m_mv._service_ops._session, "get_current_warehouse", return_value="SESSION_WAREHOUSE"
             ) as mock_get_warehouse,
-            mock.patch("uuid.uuid4") as mock_uuid,
         ):
             # Setup the UUID mock to return a predictable value
-            mock_uuid.return_value.configure_mock(__str__=lambda self: "default-uuid-1234-5678-abcd")
-
             result = self.m_mv.run_batch(input_df, compute_pool="TEST_POOL", output_spec=output_spec, job_spec=None)
 
             # Verify result
@@ -2601,7 +2682,8 @@ class ModelVersionImplTest(absltest.TestCase):
                 cpu_requests=None,  # JobSpec default
                 memory_requests=None,  # JobSpec default
                 gpu_requests=None,
-                job_name="BATCH_INFERENCE_DEFAULT_UUID_1234_5678_ABCD",  # generated since job_name=None
+                job_name=None,
+                job_name_prefix=None,
                 replicas=None,  # JobSpec default
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",  # InputSpec default

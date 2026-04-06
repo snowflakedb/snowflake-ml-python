@@ -225,23 +225,50 @@ py_library(
 )
 
 py_library(
-    name = "huggingface",
-    srcs = ["huggingface.py"],
+    name = "huggingface_utils",
+    srcs = ["huggingface/_utils.py"],
+    deps = [
+        "//snowflake/ml/model/_packager/model_env",
+    ],
+)
+
+py_library(
+    name = "huggingface_openai_chat_wrapper",
+    srcs = ["huggingface/_openai_chat_wrapper.py"],
+)
+
+py_library(
+    name = "huggingface_handler",
+    srcs = ["huggingface/_handler.py"],
     deps = [
         ":_base",
         ":_utils",
+        ":huggingface_openai_chat_wrapper",
+        ":huggingface_utils",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:openai_signatures",
         "//snowflake/ml/model:type_hints",
         "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/_packager/model_handlers_migrator:base_migrator",
         "//snowflake/ml/model/_packager/model_meta",
         "//snowflake/ml/model/_packager/model_meta:model_blob_meta",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
+        "//snowflake/ml/model/_signatures:core",
         "//snowflake/ml/model/_signatures:utils",
         "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
+    ],
+)
+
+py_library(
+    name = "huggingface",
+    srcs = ["huggingface/__init__.py"],
+    deps = [
+        ":huggingface_handler",
+        ":huggingface_openai_chat_wrapper",
+        ":huggingface_utils",
     ],
 )
 

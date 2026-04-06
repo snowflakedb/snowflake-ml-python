@@ -17,19 +17,6 @@ snowflake.ml.model
     HuggingFacePipelineModel
     TransformersPipeline
 
-.. rubric:: Batch Inference
-
-.. autosummary::
-    :toctree: api/model
-
-    InputSpec
-    OutputSpec
-    JobSpec
-    SaveMode
-    InputFormat
-    FileEncoding
-    ColumnHandlingOptions
-
 .. rubric:: Model Logging Options
 
 .. autosummary::

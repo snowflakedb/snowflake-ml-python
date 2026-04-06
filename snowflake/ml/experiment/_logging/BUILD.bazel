@@ -18,7 +18,10 @@ py_library(
 py_test(
     name = "experiment_logger_test",
     srcs = ["experiment_logger_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         ":logging",
         "//snowflake/ml/_internal/utils:sql_identifier",

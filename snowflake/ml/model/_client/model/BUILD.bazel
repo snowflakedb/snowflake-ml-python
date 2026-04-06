@@ -25,7 +25,10 @@ py_library(
 py_test(
     name = "model_impl_test",
     srcs = ["model_impl_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model_impl",
         ":model_version_impl",
@@ -60,7 +63,10 @@ py_test(
     name = "model_version_impl_test",
     srcs = ["model_version_impl_test.py"],
     data = ["sample_model_spec.yaml"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":batch_inference_specs",
         ":inference_engine_utils",

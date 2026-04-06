@@ -5,11 +5,13 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import xgboost
 from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
 from snowflake import snowpark
 from snowflake.ml.model import custom_model, model_signature, openai_signatures
+from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.batch import InputSpec, JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
@@ -116,6 +118,7 @@ class PartitionedModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
         self.partition_id_cache = None
+        self.model = None
 
     @custom_model.inference_api
     def predict_stateful(self, input_df: pd.DataFrame) -> pd.DataFrame:
@@ -130,16 +133,20 @@ class PartitionedModel(custom_model.CustomModel):
                 f"but found {input_df['PARTITION_COL'].unique().tolist()}"
             )
 
-        if self.partition_id_cache is None:
-            self.partition_id_cache = input_df["PARTITION_COL"].iloc[0]
+        current_partition = input_df["PARTITION_COL"].iloc[0]
+        if self.partition_id_cache != current_partition:
+            self.partition_id_cache = current_partition
+            # In real-world use cases, users would load a model based on the partition ID
+            self.model = lambda df: pd.DataFrame(
+                {
+                    "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                    "OUTPUT_COL1": df["INPUT_COL1"] * 2,
+                    "OUTPUT_COL2": df["INPUT_COL2"] + 1,
+                }
+            )
 
-        return pd.DataFrame(
-            {
-                "OUTPUT_PARTITION_ID": self.partition_id_cache,
-                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
-                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
-            }
-        )
+        # In real-world use cases, output depends on the loaded model
+        return self.model(input_df)
 
     @custom_model.partitioned_api
     def predict_reduced(self, input_df: pd.DataFrame) -> pd.DataFrame:
@@ -191,19 +198,23 @@ class PartitionedModel(custom_model.CustomModel):
                 f"but found {input_df['PARTITION_COL'].unique().tolist()}"
             )
 
-        if self.partition_id_cache is None:
-            self.partition_id_cache = input_df["PARTITION_COL"].iloc[0]
+        current_partition = input_df["PARTITION_COL"].iloc[0]
+        if self.partition_id_cache != current_partition:
+            self.partition_id_cache = current_partition
+            # In real-world use cases, users would load a model based on the partition ID
+            self.model = lambda df, p_int=param_int, p_float=param_float, p_bool=param_bool: pd.DataFrame(
+                {
+                    "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                    "OUTPUT_COL1": df["INPUT_COL1"] * 2,
+                    "OUTPUT_COL2": df["INPUT_COL2"] + 1,
+                    "OUTPUT_PARAM_INT": p_int,
+                    "OUTPUT_PARAM_FLOAT": p_float,
+                    "OUTPUT_PARAM_BOOL": p_bool,
+                }
+            )
 
-        return pd.DataFrame(
-            {
-                "OUTPUT_PARTITION_ID": self.partition_id_cache,
-                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
-                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
-                "OUTPUT_PARAM_INT": param_int,
-                "OUTPUT_PARAM_FLOAT": param_float,
-                "OUTPUT_PARAM_BOOL": param_bool,
-            }
-        )
+        # In real-world use cases, output depends on the loaded model
+        return self.model(input_df)
 
     @custom_model.partitioned_api
     def predict_expanded_with_params(
@@ -238,6 +249,49 @@ def _generate_partitioned_data(num_rows_per_partition: int = _NUM_ROWS_PER_PARTI
         for c1, c2 in zip(col1, col2):
             rows.append({"PARTITION_COL": partition_id, "INPUT_COL1": c1, "INPUT_COL2": c2})
     return pd.DataFrame(rows)
+
+
+class GPUXGBoostModel(custom_model.CustomModel):
+    """A stateful model that uses XGBoost for GPU-accelerated predictions with partition tracking."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+        self.xgb_model = self.context.model_ref("xgb_model")
+        self.partition_id_cache = None
+
+    @custom_model.inference_api
+    def predict_stateful_gpu(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        if input_df["PARTITION_COL"].nunique() != 1:
+            raise ValueError(
+                f"Mixed partitions in batch: expected all rows to be from the same partition, "
+                f"but found {input_df['PARTITION_COL'].unique().tolist()}"
+            )
+
+        if self.partition_id_cache is None:
+            self.partition_id_cache = input_df["PARTITION_COL"].iloc[0]
+
+        preds = self.xgb_model.predict(input_df[["INPUT_COL1", "INPUT_COL2"]])
+        import torch
+
+        return pd.DataFrame(
+            {
+                "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                "OUTPUT": preds,
+                "GPU_COUNT": torch.cuda.device_count(),
+            }
+        )
+
+
+_GPU_XGBOOST_MODEL_SIGNATURES = {
+    "predict_stateful_gpu": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("OUTPUT_PARTITION_ID", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("OUTPUT", model_signature.DataType.DOUBLE),
+            model_signature.FeatureSpec("GPU_COUNT", model_signature.DataType.INT64),
+        ],
+    ),
+}
 
 
 class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
@@ -339,7 +393,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             ),
             options={"function_type": "TABLE_FUNCTION"},
             prediction_assert_fn=check_output,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             model_name=model_name,
             version_name=version_name,
@@ -409,7 +462,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             options={"function_type": "TABLE_FUNCTION"},
             signatures=_PARTITIONED_MODEL_SIGNATURES,
             prediction_assert_fn=check_non_partitioned_output,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             model_name=model_name,
             version_name=version_name,
@@ -474,7 +526,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             signatures=_PARTITIONED_MODEL_SIGNATURES,
             prediction_assert_fn=check_partition_by_1_output,
             skip_row_count_check=True,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             model_name=model_name,
             version_name=version_name,
@@ -534,8 +585,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             signatures=_PARTITIONED_MODEL_SIGNATURES,
             prediction_assert_fn=check_partitioned_output,
             skip_row_count_check=True,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
     def test_partitioned_table_function_m_equals_n(self) -> None:
@@ -581,8 +630,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             signatures=_PARTITIONED_MODEL_SIGNATURES,
             prediction_assert_fn=check_partitioned_equal_output,
             skip_row_count_check=True,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
     def test_partitioned_table_function_m_less_than_n(self) -> None:
@@ -632,7 +679,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             signatures=_PARTITIONED_MODEL_SIGNATURES,
             prediction_assert_fn=check_partitioned_expanded_output,
             skip_row_count_check=True,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
             target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             model_name=model_name,
             version_name=version_name,
@@ -697,8 +743,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             options={"function_type": "TABLE_FUNCTION"},
             signatures=_PARTITIONED_MODEL_WITH_PARAMS_SIGNATURES,
             prediction_assert_fn=check_stateful_with_params,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
     def test_partitioned_table_function_m_less_than_n_with_params(self) -> None:
@@ -749,8 +793,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             signatures=_PARTITIONED_MODEL_WITH_PARAMS_SIGNATURES,
             prediction_assert_fn=check_expanded_with_params,
             skip_row_count_check=True,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
         )
 
     def test_hf_model_with_partition_column_raises_error(self) -> None:
@@ -783,8 +825,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             version_name=f"ver_{self._run_id}",
             conda_dependencies=conda_dependencies,
             pip_requirements=["transformers", "torch==2.6.0"],
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             options={"embed_local_ml_library": True},
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )
@@ -822,8 +862,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             version_name=f"ver_{self._run_id}",
             sample_input_data=input_pandas_df[["INPUT_COL1"]],
             conda_dependencies=conda_dependencies,
-            # TODO: (SNOW-3201744) remove this after the GS is ready
-            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
             options={"embed_local_ml_library": True, "function_type": "FUNCTION"},
         )
 
@@ -843,6 +881,61 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
                 output_spec=OutputSpec(stage_location=output_stage_location),
                 job_spec=JobSpec(job_name=job_name, function_name="predict"),
             )
+
+    def test_gpu_xgboost_with_partition_column(self) -> None:
+        """GPU stateful model: XGBoost with partition column and GPU requests."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)
+
+        # Train XGBoost regressor on the data
+        xgb_regressor = xgboost.XGBRegressor(
+            n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1, device="cuda"
+        )
+        xgb_regressor.fit(input_pandas_df[["INPUT_COL1", "INPUT_COL2"]], input_pandas_df["INPUT_COL1"] * 2)
+
+        model = GPUXGBoostModel(custom_model.ModelContext(models={"xgb_model": xgb_regressor}))
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        def check_gpu_stateful_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "INPUT_COL1", "INPUT_COL2", "OUTPUT_PARTITION_ID", "OUTPUT", "GPU_COUNT"],
+            )
+            self.assertEqual(len(actual), len(input_pandas_df))
+            self.assertTrue((actual["GPU_COUNT"].astype(int) >= 1).all(), "Expected at least 1 GPU available")
+
+            actual_sorted = actual.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+            input_sorted = input_pandas_df.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+            expected_sorted_preds = xgb_regressor.predict(input_sorted[["INPUT_COL1", "INPUT_COL2"]])
+
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT"].astype(float).values,
+                expected_sorted_preds,
+                rtol=1e-4,
+            )
+
+        self._test_registry_batch_inference(
+            model=model,
+            X=input_df,
+            input_spec=InputSpec(partition_column="PARTITION_COL"),
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                function_name="predict_stateful_gpu",
+                gpu_requests="1",
+            ),
+            options={"function_type": "TABLE_FUNCTION", "cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            signatures=_GPU_XGBOOST_MODEL_SIGNATURES,
+            pip_requirements=["torch==2.6.0"],
+            prediction_assert_fn=check_gpu_stateful_output,
+            model_name=model_name,
+            version_name=version_name,
+        )
 
 
 if __name__ == "__main__":

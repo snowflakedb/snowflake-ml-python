@@ -18,7 +18,10 @@ py_test(
     optional_dependencies = [
         "torch",
     ],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model_env",
         "//snowflake/ml/_internal:env",

@@ -77,7 +77,7 @@ class ModelEnvTest(absltest.TestCase):
         env.python_version = "3.9.16"
         self.assertEqual(env.python_version, "3.9")
 
-        env.python_version = None  # type: ignore[assignment]
+        env.python_version = None
         self.assertEqual(env.python_version, "3.9")
 
     def test_cuda_version(self) -> None:
@@ -102,7 +102,7 @@ class ModelEnvTest(absltest.TestCase):
         env.python_version = "3.9.16"
         self.assertEqual(env.python_version, "3.9")
 
-        env.python_version = None  # type: ignore[assignment]
+        env.python_version = None
         self.assertEqual(env.python_version, "3.9")
 
     def test_include_if_absent(self) -> None:

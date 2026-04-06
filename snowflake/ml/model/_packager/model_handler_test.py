@@ -72,7 +72,7 @@ class ModelHandlerTest(absltest.TestCase):
             IS_AUTO_SIGNATURE = False
 
             @classmethod
-            def can_handle(cls, model):  # type: ignore[no-untyped-def]
+            def can_handle(cls, model):  # type: ignore[no-untyped-def, override]
                 raise RuntimeError("Test error in can_handle")
 
             @classmethod

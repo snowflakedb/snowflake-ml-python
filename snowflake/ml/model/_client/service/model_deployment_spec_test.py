@@ -339,6 +339,99 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                     },
                 )
 
+    def test_job_with_name_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_job_spec(
+                job_database_name=sql_identifier.SqlIdentifier("job_db"),
+                job_schema_name=sql_identifier.SqlIdentifier("job_schema"),
+                job_name=sql_identifier.SqlIdentifier("job"),
+                name_prefix="CUSTOM_PREFIX",
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
+                warehouse=sql_identifier.SqlIdentifier("warehouse"),
+                function_name="function_name",
+                input_stage_location="input_stage_location",
+                output_stage_location="output_stage_location",
+                completion_filename="completion_filename",
+                input_file_pattern="*",
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                self.assertDictEqual(
+                    result,
+                    {
+                        "models": [{"name": "DB.SCHEMA.MODEL", "version": "VERSION"}],
+                        "image_build": {
+                            "compute_pool": "IMAGE_BUILD_COMPUTE_POOL",
+                            "force_rebuild": False,
+                            "image_repo": "DB.SCHEMA.IMAGE_REPO",
+                        },
+                        "job": {
+                            "name": "JOB_DB.JOB_SCHEMA.JOB",
+                            "name_prefix": "CUSTOM_PREFIX",
+                            "compute_pool": "JOB_COMPUTE_POOL",
+                            "warehouse": "WAREHOUSE",
+                            "function_name": "function_name",
+                            "input": {
+                                "input_stage_location": "input_stage_location",
+                                "input_file_pattern": "*",
+                            },
+                            "output": {
+                                "output_stage_location": "output_stage_location",
+                                "completion_filename": "completion_filename",
+                            },
+                        },
+                    },
+                )
+
+    def test_job_with_name_prefix_only(self) -> None:
+        """Test job spec with name_prefix but no job_name."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_job_spec(
+                name_prefix="CUSTOM_PREFIX",
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("job_compute_pool"),
+                warehouse=sql_identifier.SqlIdentifier("warehouse"),
+                function_name="function_name",
+                input_stage_location="input_stage_location",
+                output_stage_location="output_stage_location",
+                completion_filename="completion_filename",
+                input_file_pattern="*",
+            )
+            file_path_str = mds.save()
+
+            assert mds.workspace_path
+            file_path = pathlib.Path(file_path_str)
+            with file_path.open("r", encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+                # name should be omitted (None excluded)
+                self.assertNotIn("name", result["job"])
+                self.assertEqual(result["job"]["name_prefix"], "CUSTOM_PREFIX")
+
     def test_hf_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))

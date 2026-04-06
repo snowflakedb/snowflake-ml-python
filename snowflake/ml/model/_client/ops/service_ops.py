@@ -989,7 +989,7 @@ class ServiceOperator:
         function_name: str,
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
-        job_name: str,
+        job_name: Optional[str],
         compute_pool_name: sql_identifier.SqlIdentifier,
         warehouse: sql_identifier.SqlIdentifier,
         image_repo_name: Optional[str],
@@ -1008,6 +1008,7 @@ class ServiceOperator:
         memory_requests: Optional[str],
         gpu_requests: Optional[str],
         replicas: Optional[int],
+        job_name_prefix: Optional[str] = None,
         statement_params: Optional[dict[str, Any]] = None,
         inference_engine_args: Optional[InferenceEngineArgs] = None,
     ) -> job.MLJob[Any]:
@@ -1019,9 +1020,24 @@ class ServiceOperator:
         database_name = self._database_name
         schema_name = self._schema_name
 
-        job_database_name, job_schema_name, job_name = sql_identifier.parse_fully_qualified_name(job_name)
+        job_database_name: Optional[sql_identifier.SqlIdentifier] = None
+        job_schema_name: Optional[sql_identifier.SqlIdentifier] = None
+        parsed_job_name: Optional[sql_identifier.SqlIdentifier] = None
+
+        if job_name is not None:
+            job_database_name, job_schema_name, parsed_job_name = sql_identifier.parse_fully_qualified_name(job_name)
         job_database_name = job_database_name or database_name
         job_schema_name = job_schema_name or schema_name
+
+        # Qualify name_prefix with db.schema for server-side job name generation.
+        # Append trailing _ as the server concatenates prefix + UUID directly.
+        qualified_name_prefix: Optional[str] = None
+        if job_name_prefix is not None:
+            assert job_database_name is not None
+            assert job_schema_name is not None
+            qualified_name_prefix = identifier.get_schema_level_object_identifier(
+                job_database_name.identifier(), job_schema_name.identifier(), job_name_prefix + "_"
+            )
 
         self._model_deployment_spec.clear()
 
@@ -1035,7 +1051,8 @@ class ServiceOperator:
         self._model_deployment_spec.add_job_spec(
             job_database_name=job_database_name,
             job_schema_name=job_schema_name,
-            job_name=job_name,
+            job_name=parsed_job_name,
+            name_prefix=qualified_name_prefix,
             inference_compute_pool_name=compute_pool_name,
             num_workers=num_workers,
             max_batch_rows=max_batch_rows,
@@ -1091,10 +1108,22 @@ class ServiceOperator:
         )
 
         # Block until the async job is done
-        async_job.result()
+        result = async_job.result()
+
+        if job_name is not None:
+            assert parsed_job_name is not None
+            fq_job_name = sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, parsed_job_name)
+        else:
+            # When using name_prefix, parse the server-generated job name from the deploy response.
+            # Response format: "Batch inference job {job_name} with model ..."
+            response_msg = cast(str, cast(list[row.Row], result)[0][0])
+            match = re.search(r"Batch inference job (\S+)", response_msg)
+            if match is None:
+                raise RuntimeError(f"Failed to parse job name from deploy response: {response_msg}")
+            fq_job_name = match.group(1)
 
         return job.MLJob(
-            id=sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, job_name),
+            id=fq_job_name,
             session=self._session,
         )
 

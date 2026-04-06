@@ -434,8 +434,7 @@ class MergingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("DATE_TRUNC", cte_body)
         self.assertIn("TILE_BOUNDARY", cte_body)
         self.assertIn("FROM SPINE", cte_body)
-        # Column names are quoted for case-sensitivity
-        self.assertIn('"query_ts"', cte_body)
+        self.assertIn("query_ts", cte_body)
 
     def test_unique_bounds_cte_content(self) -> None:
         """Test the content of UNIQUE_BOUNDS CTE."""
@@ -463,8 +462,7 @@ class MergingSqlGeneratorTest(absltest.TestCase):
 
         # Check for DISTINCT on entity keys and boundary
         self.assertIn("DISTINCT", cte_body)
-        # Column names are quoted for case-sensitivity
-        self.assertIn('"USER_ID"', cte_body)
+        self.assertIn("USER_ID", cte_body)
         self.assertIn("TILE_BOUNDARY", cte_body)
         self.assertIn("FROM SPINE_BOUNDARY_FV0", cte_body)
 
@@ -525,6 +523,38 @@ class MergingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("TILES_JOINED_FV2", cte_names)
         self.assertIn("SIMPLE_MERGED_FV2", cte_names)
         self.assertIn("FV002", cte_names)
+
+    def test_unicode_join_keys_quoted_correctly(self) -> None:
+        """Test that already-quoted Unicode join keys are not double-quoted."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_SUM",
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.USER_TILES",
+            join_keys=['"顧客ID"'],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col='"記録時刻"',
+            fv_index=0,
+        )
+        ctes = generator.generate_all_ctes()
+
+        spine_boundary = next(cte for cte in ctes if cte[0] == "SPINE_BOUNDARY_FV0")
+        unique_bounds = next(cte for cte in ctes if cte[0] == "UNIQUE_BOUNDS_FV0")
+        combined = next(cte for cte in ctes if cte[0] == "FV000")
+
+        for cte_body in [spine_boundary[1], unique_bounds[1], combined[1]]:
+            self.assertIn('"顧客ID"', cte_body)
+            self.assertNotIn('""顧客ID""', cte_body, "Double-quoted Unicode join key found")
+
+        self.assertIn('"記録時刻"', spine_boundary[1])
+        self.assertNotIn('""記録時刻""', spine_boundary[1], "Double-quoted Unicode timestamp found")
 
 
 class RollupSqlGeneratorTest(absltest.TestCase):

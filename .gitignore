@@ -414,6 +414,7 @@ CLAUDE.local.md
 
 # Claude tasks
 tasks/todo.md
+*.planning/*
 
 # Claude worktrees
 .claude/worktrees/

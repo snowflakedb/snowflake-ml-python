@@ -270,7 +270,7 @@ class ModelImplTest(absltest.TestCase):
 
     def test_default_setter(self) -> None:
         with mock.patch.object(self.m_model._model_ops, "set_default_version") as mock_set_default_version:
-            self.m_model.default = "V1"  # type: ignore[assignment]
+            self.m_model.default = "V1"
             mock_set_default_version.assert_called_once_with(
                 database_name=None,
                 schema_name=None,

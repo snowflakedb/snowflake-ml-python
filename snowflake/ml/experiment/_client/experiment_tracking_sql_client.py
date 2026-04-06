@@ -1,14 +1,60 @@
-from typing import Optional
+from typing import Any, Optional
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.experiment._client import artifact
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.utils import sql_client
-from snowflake.snowpark import file_operation, row, session
+from snowflake.snowpark import dataframe, file_operation, row, session, types
 
 RUN_NAME_COL_NAME = "name"
 RUN_METADATA_COL_NAME = "metadata"
+
+
+def pivot_run_attributes(
+    sp_session: session.Session,
+    rows: list[row.Row],
+    run_names: list[str],
+    cast_value: Optional[type] = None,
+) -> dataframe.DataFrame:
+    """Pivot SHOW RUN METRICS/PARAMETERS rows into one row per run.
+
+    Each row is expected to have "run_name", "name", and "value" keys.
+    Returns a Snowpark DataFrame with a "run_name" column and one column per distinct
+    attribute name (sorted alphabetically). Runs present in ``run_names`` but absent
+    from ``rows`` appear with all-NULL attribute columns.
+
+    Args:
+        sp_session: Snowpark session used to create the result DataFrame.
+        rows: Collected rows from a SHOW RUN METRICS/PARAMETERS command.
+        run_names: Exhaustive list of run names (from SHOW RUNS) to include in the output.
+        cast_value: If provided, cast each value with this callable (e.g. ``float`` for metrics).
+                    Values that fail to cast are set to ``None``.
+
+    Returns:
+        A Snowpark DataFrame with a "run_name" column and one column per distinct attribute name.
+    """
+    pivoted: dict[str, dict[str, Any]] = {name: {} for name in run_names}
+    attr_names: set[str] = set()
+    for r in rows:
+        d = r.as_dict()
+        value = d["value"]
+        if cast_value is not None:
+            try:
+                value = cast_value(value)
+            except (ValueError, TypeError):
+                value = None
+        pivoted.setdefault(d["run_name"], {})[d["name"]] = value
+        attr_names.add(d["name"])
+
+    col_order = sorted(attr_names)
+    data = [[run_name] + [attrs.get(c) for c in col_order] for run_name, attrs in pivoted.items()]
+    value_type = types.DoubleType() if cast_value is float else types.StringType()
+    schema = types.StructType(
+        [types.StructField('"run_name"', types.StringType())]
+        + [types.StructField(f'"{c}"', value_type) for c in col_order]
+    )
+    return sp_session.create_dataframe(data, schema=schema)
 
 
 class ExperimentTrackingSQLClient(_base._BaseSQLClient):

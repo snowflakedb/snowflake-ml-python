@@ -6,12 +6,18 @@ that are computed using a tile-based approach for efficiency and correctness.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store.interval_utils import (  # noqa: F401 - re-export
+    LIFETIME_WINDOW as LIFETIME_WINDOW,
+    format_interval_for_snowflake as format_interval_for_snowflake,
+    interval_to_seconds as interval_to_seconds,
+    is_lifetime_window as is_lifetime_window,
+    parse_interval as parse_interval,
+)
 
 
 class AggregationType(Enum):
@@ -76,126 +82,10 @@ class AggregationType(Enum):
         )
 
 
-# Special window value for lifetime aggregations
-LIFETIME_WINDOW = "lifetime"
-
 # Internal column name prefixes used in tile tables.
 # WARNING: Changing these will break existing registered tiled feature views.
 _PARTIAL_COL_PREFIX = "_PARTIAL_"
 _CUMULATIVE_COL_PREFIX = "_CUM_"
-
-# Regex pattern for interval parsing: "1h", "24 hours", "30 minutes", etc.
-_INTERVAL_PATTERN = re.compile(
-    r"^\s*(\d+)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)\s*$",
-    re.IGNORECASE,
-)
-
-# Mapping of interval unit aliases to canonical Snowflake units
-_INTERVAL_UNIT_MAP = {
-    "s": "SECOND",
-    "sec": "SECOND",
-    "secs": "SECOND",
-    "second": "SECOND",
-    "seconds": "SECOND",
-    "m": "MINUTE",
-    "min": "MINUTE",
-    "mins": "MINUTE",
-    "minute": "MINUTE",
-    "minutes": "MINUTE",
-    "h": "HOUR",
-    "hr": "HOUR",
-    "hrs": "HOUR",
-    "hour": "HOUR",
-    "hours": "HOUR",
-    "d": "DAY",
-    "day": "DAY",
-    "days": "DAY",
-}
-
-# Seconds per unit for calculating window sizes
-_SECONDS_PER_UNIT = {
-    "SECOND": 1,
-    "MINUTE": 60,
-    "HOUR": 3600,
-    "DAY": 86400,
-}
-
-
-def is_lifetime_window(window: str) -> bool:
-    """Check if a window string represents a lifetime aggregation.
-
-    Args:
-        window: The window string to check.
-
-    Returns:
-        True if the window is "lifetime", False otherwise.
-    """
-    return window.lower().strip() == LIFETIME_WINDOW
-
-
-def parse_interval(interval: str) -> tuple[int, str]:
-    """Parse an interval string into (value, unit) tuple.
-
-    Args:
-        interval: Interval string like "1h", "24 hours", "30 minutes".
-            Note: "lifetime" is NOT a valid interval - use is_lifetime_window() first.
-
-    Returns:
-        Tuple of (numeric_value, snowflake_unit) e.g. (1, "HOUR").
-
-    Raises:
-        ValueError: If the interval format is invalid.
-    """
-    if is_lifetime_window(interval):
-        raise ValueError(
-            f"'{interval}' is not a numeric interval. " f"Use is_lifetime_window() to check for lifetime windows."
-        )
-
-    match = _INTERVAL_PATTERN.match(interval)
-    if not match:
-        raise ValueError(
-            f"Invalid interval format: '{interval}'. "
-            f"Expected format: '<number> <unit>' where unit is one of: "
-            f"seconds, minutes, hours, days (or abbreviations s, m, h, d)"
-        )
-
-    value = int(match.group(1))
-    unit_str = match.group(2).lower()
-    unit = _INTERVAL_UNIT_MAP[unit_str]
-
-    if value <= 0:
-        raise ValueError(f"Interval value must be positive, got: {value}")
-
-    return value, unit
-
-
-def interval_to_seconds(interval: str) -> int:
-    """Convert an interval string to total seconds.
-
-    Args:
-        interval: Interval string like "1h", "24 hours".
-            Note: "lifetime" is NOT supported - returns -1 as sentinel.
-
-    Returns:
-        Total seconds represented by the interval, or -1 for lifetime.
-    """
-    if is_lifetime_window(interval):
-        return -1  # Sentinel value for lifetime
-    value, unit = parse_interval(interval)
-    return value * _SECONDS_PER_UNIT[unit]
-
-
-def format_interval_for_snowflake(interval: str) -> str:
-    """Format an interval string for use in Snowflake SQL.
-
-    Args:
-        interval: Interval string like "1h", "24 hours".
-
-    Returns:
-        Formatted string like "HOUR" or "DAY" for use with DATEADD/TIME_SLICE.
-    """
-    _, unit = parse_interval(interval)
-    return unit
 
 
 @dataclass(frozen=True)
@@ -232,9 +122,13 @@ class AggregationSpec:
         # Validate window format (allow "lifetime" as special case)
         if not is_lifetime_window(self.window):
             try:
-                interval_to_seconds(self.window)
+                window_seconds = interval_to_seconds(self.window)
             except ValueError as e:
                 raise ValueError(f"Invalid window for aggregation '{self.output_column}': {e}") from e
+            if window_seconds <= 0:
+                raise ValueError(
+                    f"Aggregation window must be positive for '{self.output_column}', got: '{self.window}'"
+                )
 
         # Validate offset format (if not "0")
         # Note: offset is not allowed with lifetime windows

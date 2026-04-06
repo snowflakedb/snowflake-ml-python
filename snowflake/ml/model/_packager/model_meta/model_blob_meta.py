@@ -1,5 +1,3 @@
-from typing import cast
-
 from typing_extensions import Unpack
 
 from snowflake.ml.model._packager.model_meta import model_meta_schema
@@ -30,9 +28,7 @@ class ModelBlobMeta:
         if artifacts:
             self.artifacts = artifacts
 
-        self.options: model_meta_schema.ModelBlobOptions = cast(
-            model_meta_schema.ModelBlobOptions, kwargs.get("options", {})
-        )
+        self.options: model_meta_schema.ModelBlobOptions = kwargs.get("options", {})
 
     def to_dict(self) -> model_meta_schema.ModelBlobMetadataDict:
         return model_meta_schema.ModelBlobMetadataDict(

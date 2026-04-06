@@ -98,7 +98,7 @@ class ServiceSQLClient(_base._BaseSQLClient):
             model_deployment_spec_yaml_str = snowpark_utils.escape_single_quotes(
                 model_deployment_spec_yaml_str
             )  # type: ignore[no-untyped-call]
-            model_deployment_spec_yaml_str = model_deployment_spec_yaml_str.replace(  # type: ignore[union-attr]
+            model_deployment_spec_yaml_str = model_deployment_spec_yaml_str.replace(
                 QMARK_RESERVED_TOKEN, QMARK_PARAMETER_TOKEN
             )
             logger.info(f"Deploying model with spec={model_deployment_spec_yaml_str}")
@@ -195,9 +195,9 @@ class ServiceSQLClient(_base._BaseSQLClient):
         ).drop(INTERMEDIATE_OBJ_NAME)
 
         if statement_params:
-            output_df._statement_params = statement_params  # type: ignore[assignment]
+            output_df._statement_params = statement_params
 
-        return output_df
+        return output_df  # type: ignore[no-any-return]
 
     def get_service_logs(
         self,

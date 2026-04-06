@@ -1,3 +1,4 @@
+import inspect
 import os
 import tempfile
 import warnings
@@ -208,6 +209,98 @@ class TorchScriptHandlerTest(absltest.TestCase):
             torch.testing.assert_close(
                 pytorch_handler.PyTorchTensorHandler.convert_from_df(predict_method(x_df)), y_pred
             )
+
+    def test_torchscript_generated_method_accepts_kwargs(self) -> None:
+        """Test that convert_as_custom_model generates methods that accept **kwargs."""
+        model, data_x, data_y = _prepare_torch_model()
+        model_script = torch.jit.script(model)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"forward": model_signature.infer_signature(data_x, data_y)}
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model_script,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.TorchScriptSaveOptions(),
+            )
+
+            model_script.eval()
+            y_pred = model_script.forward(data_x).detach()
+
+            x_df = model_signature_utils.rename_pandas_df(
+                pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False),
+                s["forward"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "forward", None)
+                assert callable(predict_method)
+
+                # Verify the method signature includes **kwargs
+                sig = inspect.signature(predict_method)
+                has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                self.assertTrue(has_var_keyword, "Generated method should accept **kwargs")
+
+                # Call with extra kwargs — should not raise TypeError
+                result = predict_method(x_df, some_extra_param="test_value")
+                torch.testing.assert_close(
+                    pytorch_handler.PyTorchTensorHandler.convert_from_df(result),
+                    y_pred,
+                )
+
+                # Call without kwargs — backward compatible
+                result_no_kwargs = predict_method(x_df)
+                torch.testing.assert_close(
+                    pytorch_handler.PyTorchTensorHandler.convert_from_df(result_no_kwargs),
+                    y_pred,
+                )
+
+    def test_torchscript_multiple_inputs_accepts_kwargs(self) -> None:
+        """Test that convert_as_custom_model with multiple_inputs generates methods that accept **kwargs."""
+        model, data_x, data_y = _prepare_torch_model()
+        model_script = torch.jit.script(model)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = {"forward": model_signature.infer_signature([data_x], [data_y])}
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model_script,
+                signatures=s,
+                metadata={"author": "halu", "version": "1"},
+                options={"multiple_inputs": True},
+            )
+
+            model_script.eval()
+            y_pred = model_script.forward(data_x).detach()
+
+            x_df = model_signature_utils.rename_pandas_df(
+                pytorch_handler.SeqOfPyTorchTensorHandler.convert_to_df([data_x], ensure_serializable=False),
+                s["forward"].inputs,
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                assert pk.meta
+                predict_method = getattr(pk.model, "forward", None)
+                assert callable(predict_method)
+
+                # Call with extra kwargs — should not raise TypeError
+                result = predict_method(x_df, some_param=42)
+                torch.testing.assert_close(
+                    pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(result, s["forward"].outputs)[0],
+                    y_pred,
+                )
 
 
 if __name__ == "__main__":

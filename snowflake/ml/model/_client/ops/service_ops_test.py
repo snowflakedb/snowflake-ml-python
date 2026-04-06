@@ -1481,6 +1481,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 job_database_name=sql_identifier.SqlIdentifier(expected_job_db),
                 job_schema_name=expected_schema_identifier,
                 job_name="BATCH_JOB",
+                name_prefix=None,
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
                 num_workers=2,
                 max_batch_rows=1000,
@@ -1703,6 +1704,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 job_database_name=sql_identifier.SqlIdentifier("TEMP"),
                 job_schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
                 job_name="BATCH_JOB",
+                name_prefix=None,
                 inference_compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
                 num_workers=None,
                 max_batch_rows=None,
@@ -2316,6 +2318,86 @@ class ServiceOpsTest(parameterized.TestCase):
             mock_add_job_spec.assert_called_once()
             call_kwargs = mock_add_job_spec.call_args.kwargs
             self.assertEqual(call_kwargs["partition_columns"], ["PARTITION_COL"])
+
+    def test_invoke_batch_job_method_with_job_name_prefix(self) -> None:
+        """Test invoke_batch_job_method qualifies name_prefix with db.schema and parses job name from response."""
+        # Mock async job that returns a deploy response with the generated job name
+        mock_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        mock_async_job.is_done.return_value = True
+        mock_async_job.result.return_value = [
+            row.Row(
+                SYSTEM_DEPLOY_MODEL=(
+                    "Batch inference job TEMP.test.CUSTOM_PREFIX_12345678_1234_5678_9ABC_123456789012"
+                    " with model TEMP.test.MODEL version VERSION method predict is in RUNNING state."
+                    " Results will be persisted to the destination: @output_stage/, once the job is completed."
+                )
+            )
+        ]
+
+        with (
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "create_tmp_stage",
+            ),
+            mock.patch.object(
+                snowpark_utils, "random_name_for_temp_object", return_value="SNOWPARK_TEMP_STAGE_ABCDEF0123"
+            ),
+            mock.patch.object(
+                self.m_ops._stage_client,
+                "fully_qualified_object_name",
+                return_value="TEMP.test.SNOWPARK_TEMP_STAGE_ABCDEF0123",
+            ),
+            mock.patch.object(file_utils, "upload_directory_to_stage", return_value=None),
+            mock.patch.object(self.m_ops._model_deployment_spec, "clear"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_job_spec") as mock_add_job_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "save",
+                return_value=pathlib.Path("/mock/spec/path"),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), mock_async_job),
+            ),
+        ):
+            result = self.m_ops.invoke_batch_job_method(
+                function_name="predict",
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                job_name=None,
+                compute_pool_name=sql_identifier.SqlIdentifier("COMPUTE_POOL"),
+                warehouse=sql_identifier.SqlIdentifier("WAREHOUSE"),
+                image_repo_name="IMAGE_REPO",
+                input_stage_location="@input_stage/",
+                input_file_pattern="*.parquet",
+                column_handling=None,
+                params=None,
+                partition_columns=None,
+                signature_params=None,
+                output_stage_location="@output_stage/",
+                completion_filename="_SUCCESS",
+                force_rebuild=False,
+                num_workers=None,
+                max_batch_rows=None,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                replicas=None,
+                job_name_prefix="CUSTOM_PREFIX",
+            )
+
+            # Verify name_prefix is qualified with db.schema
+            mock_add_job_spec.assert_called_once()
+            call_kwargs = mock_add_job_spec.call_args.kwargs
+            self.assertEqual(call_kwargs["name_prefix"], 'TEMP."test".CUSTOM_PREFIX_')
+            self.assertIsNone(call_kwargs["job_name"])
+
+            # Verify job name was parsed from server response
+            self.assertIsInstance(result, job.MLJob)
+            self.assertEqual(result.id, "TEMP.test.CUSTOM_PREFIX_12345678_1234_5678_9ABC_123456789012")
 
     def test_create_service_block_error_stops_log_thread(self) -> None:
         """Test that log-streaming thread is stopped when create_service(block=True) fails.

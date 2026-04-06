@@ -89,6 +89,59 @@ class TestRegistryPytorchModelDeploymentInteg(registry_model_deployment_test_bas
             skip_rest_api_test=True,
         )
 
+    def test_torchscript_with_params_forwarding(self) -> None:
+        """Params are forwarded to a TorchScript model's forward method via inference service."""
+
+        @torch.jit.script
+        def scaled_forward(
+            x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, scale: float = 1.0
+        ) -> torch.Tensor:
+            return (x @ weight.t() + bias) * scale
+
+        class ScaledModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.linear = torch.nn.Linear(10, 1, dtype=torch.float64)
+
+            # `scale` is the keyword argument under test: it should be forwarded
+            # from ParamSpec through the handler to the model's forward method.
+            def forward(self, tensor: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+                return scaled_forward(tensor, self.linear.weight, self.linear.bias, scale)
+
+        model = ScaledModel()
+        model.eval()
+        model_script = torch.jit.script(model)
+
+        data_x = torch.rand(100, 10, dtype=torch.float64)
+        x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        y_scaled = model_script.forward(data_x, scale=2.0).detach()
+
+        sig = model_signature.infer_signature(
+            data_x,
+            y_scaled,
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        self._test_registry_model_deployment(
+            model=model_script,
+            sample_input_data=data_x,
+            signatures={"forward": sig},
+            prediction_assert_fns={
+                "forward": (
+                    x_df[:10],
+                    lambda res: torch.testing.assert_close(
+                        pytorch_handler.PyTorchTensorHandler.convert_from_df(res),
+                        y_scaled[:10],
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            params={"scale": 2.0},
+            skip_rest_api_test=True,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

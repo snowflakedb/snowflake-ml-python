@@ -19,7 +19,9 @@ py_test(
         "lightgbm",
     ],
     shard_count = 2,
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+    ],
     deps = [
         ":model_task_utils",
         "//snowflake/ml/model:model_signature",

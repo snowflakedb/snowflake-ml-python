@@ -478,6 +478,89 @@ class ExperimentTracking:
                 file_path=file_path,
             )
 
+    def list_metrics(self, run_name: Optional[str] = None) -> snowpark.DataFrame:
+        """
+        List metrics for runs within the current experiment.
+
+        When a metric is logged at multiple steps, the returned value corresponds to the highest step.
+
+        The returned DataFrame has a ``run_name`` column (str) and one float column per distinct metric name.
+        Runs that did not log a given metric have ``NULL`` for that column.
+
+        Example output::
+
+              run_name  accuracy  loss    f1
+            0 RUN_1     0.95      0.05    0.90
+            1 RUN_2     0.90      0.10    NULL
+
+        Args:
+            run_name: Name of the run to list metrics from. If None, lists metrics for all runs in the current
+                experiment.
+
+        Returns:
+            A Snowpark DataFrame (one row per run). Use ``.to_pandas()`` for a pandas DataFrame or
+            ``.collect()`` for a list of Row objects.
+
+        Raises:
+            RuntimeError: If no experiment is currently set.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please use the `set_experiment` method before listing metrics.")
+
+        if run_name:
+            run_names = [run_name]
+        else:
+            runs = self._sql_client.show_runs_in_experiment(experiment_name=self._experiment.name)
+            run_names = [r[sql_client.RUN_NAME_COL_NAME] for r in runs]
+
+        rows = self._sql_client.show_run_metrics_in_experiment(
+            experiment_name=self._experiment.name,
+            run_name=sql_identifier.SqlIdentifier(run_name) if run_name else None,
+        )
+
+        return sql_client.pivot_run_attributes(self._session, rows, run_names=run_names, cast_value=float)
+
+    def list_params(self, run_name: Optional[str] = None) -> snowpark.DataFrame:
+        """
+        List parameters for runs within the current experiment.
+
+        The returned DataFrame has a ``run_name`` column (str) and one string column per distinct parameter name.
+        Use ``.cast()`` for numeric comparisons on parameter values. Runs that did not log a given parameter
+        have ``NULL`` for that column.
+
+        Example output::
+
+              run_name  learning_rate  batch_size  optimizer
+            0 RUN_1     0.01           32          adam
+            1 RUN_2     0.02           64          NULL
+
+        Args:
+            run_name: Name of the run to list parameters from. If None, lists parameters for all runs in the current
+                experiment.
+
+        Returns:
+            A Snowpark DataFrame (one row per run). Use ``.to_pandas()`` for a pandas DataFrame or
+            ``.collect()`` for a list of Row objects.
+
+        Raises:
+            RuntimeError: If no experiment is currently set.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please use the `set_experiment` method before listing parameters.")
+
+        if run_name:
+            run_names = [run_name]
+        else:
+            runs = self._sql_client.show_runs_in_experiment(experiment_name=self._experiment.name)
+            run_names = [r[sql_client.RUN_NAME_COL_NAME] for r in runs]
+
+        rows = self._sql_client.show_run_parameters_in_experiment(
+            experiment_name=self._experiment.name,
+            run_name=sql_identifier.SqlIdentifier(run_name) if run_name else None,
+        )
+
+        return sql_client.pivot_run_attributes(self._session, rows, run_names=run_names)
+
     def list_artifacts(
         self,
         run_name: str,
@@ -599,7 +682,6 @@ class ExperimentTracking:
         scheme: str = "https",
         host: str = "app.snowflake.com",
     ) -> None:
-
         experiment_url = (
             f"{scheme}://{host}/_deeplink/#/experiments"
             f"/databases/{quote(str(self._database_name))}"

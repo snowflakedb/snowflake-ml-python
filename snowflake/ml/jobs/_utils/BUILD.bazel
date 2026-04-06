@@ -40,7 +40,10 @@ py_library(
 py_test(
     name = "stage_utils_test",
     srcs = ["stage_utils_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":stage_utils",
     ],
@@ -67,7 +70,10 @@ py_test(
         "payload_utils_test.py",
         "payload_utils_test_helper.py",
     ],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":payload_utils",
         ":test_file_helper",
@@ -104,7 +110,10 @@ py_library(
 py_test(
     name = "mljob_launcher_test",
     srcs = ["mljob_launcher_test.py"],
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":constants",
         ":payload_scripts",
@@ -119,7 +128,10 @@ py_test(
     name = "mljob_launcher_legacy_test",
     srcs = ["mljob_launcher_test.py"],
     main = "mljob_launcher_test.py",
-    tags = ["feature:jobs"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
     deps = [
         ":constants",
         ":payload_scripts",

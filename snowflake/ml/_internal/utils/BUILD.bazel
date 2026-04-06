@@ -15,7 +15,10 @@ py_library(
 py_test(
     name = "snowpark_dataframe_utils_test",
     srcs = ["snowpark_dataframe_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":snowpark_dataframe_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -39,7 +42,10 @@ py_library(
 py_test(
     name = "db_utils_test",
     srcs = ["db_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":db_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -50,7 +56,10 @@ py_test(
 py_test(
     name = "import_utils_test",
     srcs = ["import_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":import_utils",
     ],
@@ -67,7 +76,10 @@ py_library(
 py_test(
     name = "string_matcher_test",
     srcs = ["string_matcher_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":string_matcher",
     ],
@@ -81,7 +93,10 @@ py_library(
 py_test(
     name = "identifier_test",
     srcs = ["identifier_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":identifier",
     ],
@@ -98,7 +113,10 @@ py_library(
 py_test(
     name = "query_result_checker_test",
     srcs = ["query_result_checker_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":query_result_checker",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -114,7 +132,10 @@ py_library(
 py_test(
     name = "formatting_test",
     srcs = ["formatting_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":formatting",
     ],
@@ -131,7 +152,10 @@ py_library(
 py_test(
     name = "uri_test",
     srcs = ["uri_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":uri",
     ],
@@ -148,7 +172,10 @@ py_library(
 py_test(
     name = "url_test",
     srcs = ["url_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":url",
     ],
@@ -162,7 +189,10 @@ py_library(
 py_test(
     name = "rbac_test",
     srcs = ["rbac_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":rbac",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -181,7 +211,10 @@ py_library(
 py_test(
     name = "pkg_version_utils_test",
     srcs = ["pkg_version_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":pkg_version_utils",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -198,7 +231,10 @@ py_library(
 py_test(
     name = "temp_file_utils_test",
     srcs = ["temp_file_utils_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [":temp_file_utils"],
 )
 
@@ -211,7 +247,10 @@ py_library(
 py_test(
     name = "connection_params_test",
     srcs = ["connection_params_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [":connection_params"],
 )
 
@@ -243,7 +282,10 @@ py_library(
 py_test(
     name = "table_manager_test",
     srcs = ["table_manager_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":table_manager",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -262,7 +304,10 @@ py_library(
 py_test(
     name = "sql_identifier_test",
     srcs = ["sql_identifier_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":sql_identifier",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -278,7 +323,10 @@ py_library(
 py_test(
     name = "service_logger_test",
     srcs = ["service_logger_test.py"],
-    tags = ["feature:model_serving"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
     deps = [
         ":service_logger",
     ],
@@ -295,7 +343,10 @@ py_library(
 py_test(
     name = "snowflake_env_test",
     srcs = ["snowflake_env_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":snowflake_env",
         "//snowflake/ml/test_utils:mock_data_frame",
@@ -322,7 +373,10 @@ py_library(
 py_test(
     name = "tee_test",
     srcs = ["tee_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":tee",
     ],
