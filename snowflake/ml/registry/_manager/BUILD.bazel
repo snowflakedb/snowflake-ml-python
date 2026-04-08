@@ -50,7 +50,10 @@ py_test(
     srcs = [
         "model_parameter_reconciler_test.py",
     ],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model_parameter_reconciler",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -66,7 +69,10 @@ py_test(
     srcs = [
         "model_manager_test.py",
     ],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model_manager",
         "//snowflake/ml/_internal:env",

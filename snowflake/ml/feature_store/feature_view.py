@@ -7,7 +7,7 @@ import warnings
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -35,12 +35,16 @@ from snowflake.snowpark.types import (
     _NumericType,
 )
 
+if TYPE_CHECKING:
+    from snowflake.ml.feature_store.stream_config import StreamConfig
+
 _DEFAULT_TARGET_LAG = "10 seconds"
 _FEATURE_VIEW_NAME_DELIMITER = "$"
 _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS = ["FS_TIMESTAMP_COL_PLACEHOLDER_VAL", "NULL"]
 _TIMESTAMP_COL_PLACEHOLDER = "NULL"
 _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
 _ONLINE_TABLE_SUFFIX = "$ONLINE"
+_UDF_TRANSFORMED_TABLE_SUFFIX = "$UDF_TRANSFORMED"
 # Feature view version rule is aligned with dataset version rule in SQL.
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _FEATURE_VIEW_VERSION_MAX_LENGTH = 128
@@ -245,6 +249,7 @@ class _FeatureViewMetadata:
     timestamp_col: str
     is_tiled: bool = False  # Whether FV uses tile-based aggregations
     is_iceberg: bool = False  # Whether FV uses Iceberg storage format
+    is_streaming: bool = False  # Whether FV is a streaming feature view
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -258,6 +263,9 @@ class _FeatureViewMetadata:
         # Backward compatibility: old FVs don't have is_iceberg
         if "is_iceberg" not in state_dict:
             state_dict["is_iceberg"] = False
+        # Backward compatibility: old FVs don't have is_streaming
+        if "is_streaming" not in state_dict:
+            state_dict["is_streaming"] = False
         return cls(**state_dict)
 
 
@@ -418,6 +426,7 @@ class FeatureView(lineage_node.LineageNode):
         features: Optional[list[Feature]] = None,
         rollup_config: Optional[RollupConfig] = None,
         storage_config: Optional[StorageConfig] = None,
+        stream_config: Optional[StreamConfig] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -475,6 +484,13 @@ class FeatureView(lineage_node.LineageNode):
             storage_config: Configuration for storage format using ``StorageConfig``.
                 Supports Snowflake native format (default) or Iceberg format.
                 When using Iceberg, specify ``external_volume`` and optionally ``base_location``.
+            stream_config: Configuration for streaming feature views using ``StreamConfig``.
+                When provided, ``feature_df`` serves as backfill data, and an online feature table
+                with a streaming spec is automatically created.  Requires ``timestamp_col`` and
+                ``feature_df``.  Online storage is always enabled with the ``POSTGRES`` store type.
+
+                .. note::
+                    This feature is currently in private preview.
             _kwargs: Reserved kwargs for system generated args.
 
                 .. caution::
@@ -533,13 +549,15 @@ class FeatureView(lineage_node.LineageNode):
 
         # noqa: DAR401
         """
-        # Validate mutual exclusion of feature_df and rollup_config
+        # Validate mutual exclusion rules
         if rollup_config is not None and feature_df is not None:
             raise ValueError("Cannot specify both feature_df and rollup_config")
-        if rollup_config is None and feature_df is None:
-            raise ValueError("Must specify either feature_df or rollup_config")
-
-        # Validate that feature_granularity and features are not provided with rollup_config
+        if stream_config is not None and feature_df is not None:
+            raise ValueError(
+                "Cannot specify both feature_df and stream_config. " "Use stream_config.backfill_df for backfill data."
+            )
+        if rollup_config is None and feature_df is None and stream_config is None:
+            raise ValueError("Must specify either feature_df, rollup_config, or stream_config")
         if rollup_config is not None:
             if feature_granularity is not None:
                 raise ValueError(
@@ -561,10 +579,14 @@ class FeatureView(lineage_node.LineageNode):
         self._timestamp_col: Optional[SqlIdentifier] = None
         self._feature_granularity: Optional[str] = None
         self._aggregation_specs: Optional[list[AggregationSpec]] = None
+        self._infer_schema_df: Optional[DataFrame] = None
+        self._query: str = ""
+        self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = None
+        self._cluster_by: list[SqlIdentifier] = []
+        self._refresh_freq: Optional[str] = None
 
-        # Handle rollup initialization
+        # --- Branch: Rollup FV ---
         if rollup_config is not None:
-            # Validate rollup config
             target_keys = [str(k) for e in entities for k in e.join_keys]
             rollup_config.validate(target_keys)
 
@@ -574,30 +596,50 @@ class FeatureView(lineage_node.LineageNode):
             self._aggregation_specs = parent.aggregation_specs
             self._refresh_freq = refresh_freq or parent.refresh_freq
             self._infer_schema_df = self._build_rollup_schema_df(rollup_config, entities)
-            self._query = ""  # Will be generated during registration
+            self._feature_desc = rollup_config.source._feature_desc
+            if cluster_by is not None:
+                self._cluster_by = [SqlIdentifier(col) for col in cluster_by]
+            else:
+                self._cluster_by = [k for e in entities for k in e.join_keys] + [SqlIdentifier(_TILE_START_COL)]
+
+        # --- Branch: Streaming FV ---
+        elif stream_config is not None:
+            # Defer feature_df initialization — completed during registration
+            # via _initialize_from_feature_df() after the udf_transformed table is created.
+            if timestamp_col is None:
+                raise ValueError("Streaming feature views require timestamp_col to be specified.")
+            self._timestamp_col = SqlIdentifier(timestamp_col)
+            self._feature_granularity = feature_granularity
+            if features is not None:
+                self._aggregation_specs = [f.to_spec() for f in features]
+            self._refresh_freq = refresh_freq
+
+            # Warn if non-time-aggregated streaming FV has refresh_freq (a VIEW is more efficient)
+            if self._aggregation_specs is None and refresh_freq is not None:
+                warnings.warn(
+                    "Streaming feature views without time-aggregated features don't require refresh_freq. "
+                    "A VIEW provides zero-lag access at no extra cost.",
+                    stacklevel=2,
+                    category=UserWarning,
+                )
+
+        # --- Branch: Batch FV (standard) ---
         else:
-            self._feature_df = feature_df
             self._timestamp_col = SqlIdentifier(timestamp_col) if timestamp_col is not None else None
             self._feature_granularity = feature_granularity
             self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
             if features is not None:
                 self._aggregation_specs = [f.to_spec() for f in features]
             self._refresh_freq = refresh_freq
-            self._infer_schema_df = _kwargs.pop("_infer_schema_df", self._feature_df)
-            self._query = self._get_query()
+            self._initialize_from_feature_df(
+                feature_df,
+                cluster_by=cluster_by,
+                infer_schema_df=_kwargs.pop("_infer_schema_df", None),
+            )
 
         self._desc: str = desc
         self._version: Optional[FeatureViewVersion] = None
         self._status: FeatureViewStatus = FeatureViewStatus.DRAFT
-
-        # Feature names handling for rollup vs normal
-        self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = None
-        if rollup_config is not None:
-            # Inherit feature names from parent
-            self._feature_desc = rollup_config.source._feature_desc
-        else:
-            feature_names = self._get_feature_names()
-            self._feature_desc = OrderedDict((f, "") for f in feature_names) if feature_names is not None else None
 
         self._database: Optional[SqlIdentifier] = None
         self._schema: Optional[SqlIdentifier] = None
@@ -607,22 +649,19 @@ class FeatureView(lineage_node.LineageNode):
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
 
-        # Cluster by handling
-        if rollup_config is not None:
-            if cluster_by is not None:
-                self._cluster_by = [SqlIdentifier(col) for col in cluster_by]
-            else:
-                # Default cluster by for rollup: new entity keys + TILE_START
-                self._cluster_by = [k for e in entities for k in e.join_keys] + [SqlIdentifier(_TILE_START_COL)]
-        else:
-            self._cluster_by = (
-                [SqlIdentifier(col) for col in cluster_by] if cluster_by is not None else self._get_default_cluster_by()
-            )
-
         self._online_config: Optional[OnlineConfig] = online_config
 
-        # For tiled FVs, re-initialize feature_descs with output column names (not source column names)
-        # This ensures descriptions are keyed by the output columns users will see in datasets
+        # Streaming feature view configuration
+        self._stream_config = stream_config
+        self._is_streaming_marker: bool = _kwargs.pop("_is_streaming_marker", False)
+        self._transformation_fn_source: Optional[str] = None  # Populated from metadata for reconstructed FVs
+        if self._stream_config is not None:
+            if online_config is not None and online_config.enable is False:
+                raise ValueError("Streaming feature views require online to be enabled.")
+            if online_config is None:
+                self._online_config = OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES)
+
+        # For tiled FVs, re-initialize feature_descs with output column names
         if self.is_tiled and self._aggregation_specs:
             self._feature_desc = OrderedDict(
                 (SqlIdentifier(spec.get_sql_column_name()), "") for spec in self._aggregation_specs
@@ -636,8 +675,8 @@ class FeatureView(lineage_node.LineageNode):
         if _kwargs:
             raise TypeError(f"FeatureView.__init__ got an unexpected keyword argument: '{next(iter(_kwargs.keys()))}'")
 
-        # Skip validation for rollup FVs (they have different requirements)
-        if rollup_config is None:
+        # Validate for batch FVs only (rollup and streaming have different requirements)
+        if rollup_config is None and stream_config is None:
             self._validate()
 
     def slice(self, names: list[str]) -> FeatureViewSlice:
@@ -959,6 +998,51 @@ class FeatureView(lineage_node.LineageNode):
         return self._feature_granularity is not None and self._aggregation_specs is not None
 
     @property
+    def is_streaming(self) -> bool:
+        """Check if this feature view is a streaming feature view.
+
+        Returns:
+            True if ``stream_config`` was provided or the FV was reconstructed
+            from a streaming backend object.
+        """
+        return self._stream_config is not None or self._is_streaming_marker
+
+    @property
+    def stream_config(self) -> Optional[StreamConfig]:
+        """Get the stream configuration if this is a streaming feature view.
+
+        Returns:
+            The StreamConfig used to create this feature view, or None.
+            For reconstructed FVs (via ``get_feature_view``), this is None
+            since the transformation function is only needed at registration time.
+        """
+        return self._stream_config
+
+    @property
+    def transformation_fn_source(self) -> Optional[str]:
+        """Get the transformation function source code for streaming feature views.
+
+        For draft FVs (with ``stream_config``), returns the source from the config.
+        For reconstructed FVs (via ``get_feature_view``), returns the source from
+        stored metadata.  Returns ``None`` for non-streaming FVs.
+
+        Returns:
+            The plain-text source code string, or ``None`` for non-streaming FVs.
+
+        Example::
+
+            >>> fv = fs.get_feature_view("realtime_txn_features", "v1")
+            >>> print(fv.transformation_fn_source)
+            def normalize_txn(df):
+                df["amount_cents"] = (df["amount"] * 100).astype(int)
+                df["is_large"] = df["amount"] > 1000
+                return df
+        """
+        if self._stream_config is not None:
+            return self._stream_config.get_function_source()
+        return self._transformation_fn_source
+
+    @property
     def is_rollup(self) -> bool:
         """Check if this feature view is a rollup of another tiled feature view.
 
@@ -1169,6 +1253,7 @@ class FeatureView(lineage_node.LineageNode):
 
     @property
     def output_schema(self) -> StructType:
+        assert self._infer_schema_df is not None
         try:
             return self._infer_schema_df.schema
         except SnowparkSQLException as e:
@@ -1196,7 +1281,13 @@ class FeatureView(lineage_node.LineageNode):
         entity_names = [e.name.identifier() for e in self.entities]
         ts_col = self.timestamp_col.identifier() if self.timestamp_col is not None else _TIMESTAMP_COL_PLACEHOLDER
         is_iceberg = self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG
-        return _FeatureViewMetadata(entity_names, ts_col, is_tiled=self.is_tiled, is_iceberg=is_iceberg)
+        return _FeatureViewMetadata(
+            entity_names,
+            ts_col,
+            is_tiled=self.is_tiled,
+            is_iceberg=is_iceberg,
+            is_streaming=self.is_streaming,
+        )
 
     def _get_query(self) -> str:
         assert self._feature_df is not None, "_get_query called without feature_df"
@@ -1264,6 +1355,60 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         return session.sql(schema_query)
 
+    def _initialize_from_feature_df(
+        self,
+        feature_df: Optional[DataFrame],
+        *,
+        cluster_by: Optional[list[str]] = None,
+        infer_schema_df: Optional[DataFrame] = None,
+    ) -> None:
+        """Initialize all state derived from the feature DataFrame.
+
+        Consolidates the fields that depend on ``feature_df`` into one method.
+        Called from ``__init__`` for batch FVs, and from ``register_feature_view``
+        for streaming FVs (after the udf_transformed table is created).
+
+        Args:
+            feature_df: The Snowpark DataFrame to derive state from.
+            cluster_by: Explicit clustering columns, or ``None`` to auto-derive.
+            infer_schema_df: Override for schema inference (used by ``_construct_feature_view``).
+        """
+        self._feature_df = feature_df
+        self._infer_schema_df = infer_schema_df if infer_schema_df is not None else feature_df
+        self._query = self._get_query()
+
+        feature_names = self._get_feature_names()
+        self._feature_desc = OrderedDict((f, "") for f in feature_names) if feature_names is not None else None
+
+        # For tiled FVs, re-initialize with aggregation output names (not source column names)
+        if self.is_tiled and self._aggregation_specs:
+            self._feature_desc = OrderedDict(
+                (SqlIdentifier(spec.get_sql_column_name()), "") for spec in self._aggregation_specs
+            )
+
+        if cluster_by is not None:
+            self._cluster_by = [SqlIdentifier(col) for col in cluster_by]
+        else:
+            self._cluster_by = self._get_default_cluster_by()
+
+    @property
+    def ordered_entity_columns(self) -> list[str]:
+        """Deduplicated entity join key column names, preserving order.
+
+        Returns:
+            List of resolved (uppercased) join key names from all entities,
+            with duplicates removed while preserving the order of first occurrence.
+        """
+        cols: list[str] = []
+        seen: set[str] = set()
+        for e in self._entities:
+            for jk in e.join_keys:
+                resolved = jk.resolved()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    cols.append(resolved)
+        return cols
+
     def _validate(self) -> None:
         if _FEATURE_VIEW_NAME_DELIMITER in self._name:
             raise ValueError(
@@ -1287,6 +1432,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 if ts_col not in df_cols:
                     raise ValueError(f"timestamp_col {ts_col} is not found in input dataframe.")
 
+                assert self._infer_schema_df is not None
                 col_type = self._infer_schema_df.schema[ts_col].datatype
                 if not isinstance(col_type, (DateType, TimeType, TimestampType, _NumericType)):
                     raise ValueError(f"Invalid data type for timestamp_col {ts_col}: {col_type}.")
@@ -1348,7 +1494,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         Raises:
             ValueError: If window or offset is not a multiple of feature_granularity.
         """
-        from snowflake.ml.feature_store.aggregation import interval_to_seconds
+        from snowflake.ml.feature_store.interval_utils import interval_to_seconds
 
         granularity_seconds = interval_to_seconds(self._feature_granularity)  # type: ignore[arg-type]
 
@@ -1400,6 +1546,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             seen_aliases[alias] = 1
 
     def _get_column_names(self) -> Optional[list[SqlIdentifier]]:
+        assert self._infer_schema_df is not None
         try:
             return to_sql_identifiers(self._infer_schema_df.columns)
         except SnowparkSQLException as e:
@@ -1656,7 +1803,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         feature_granularity: Optional[str] = None,
         aggregation_specs: Optional[list[AggregationSpec]] = None,
         storage_config: Optional[StorageConfig] = None,
+        is_streaming: bool = False,
     ) -> FeatureView:
+        # For reconstructed FVs, always go through the batch path in __init__
+        # (even for streaming FVs — they use _is_streaming_marker, not stream_config)
         fv = FeatureView(
             name=name,
             entities=entities,
@@ -1670,6 +1820,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             feature_granularity=feature_granularity,
             _aggregation_specs=aggregation_specs,
             storage_config=storage_config,
+            _is_streaming_marker=is_streaming,
         )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
@@ -1722,12 +1873,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         from snowflake.ml.feature_store.tile_sql_generator import TilingSqlGenerator
 
-        join_keys = [str(k) for e in self._entities for k in e.join_keys]
+        join_keys = [k for e in self._entities for k in e.join_keys]
+        assert self._timestamp_col is not None
 
         generator = TilingSqlGenerator(
             source_query=self._query,
             join_keys=join_keys,
-            timestamp_col=str(self._timestamp_col),
+            timestamp_col=self._timestamp_col,
             feature_granularity=self._feature_granularity,  # type: ignore[arg-type]
             features=self._aggregation_specs,  # type: ignore[arg-type]
         )
@@ -1760,6 +1912,40 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
             online_name = f"{physical_name}{_ONLINE_TABLE_SUFFIX}"
             return SqlIdentifier(online_name, case_sensitive=True)
+
+    @staticmethod
+    def _get_udf_transformed_table_name(
+        feature_view_name: Union[SqlIdentifier, str], version: Optional[Union[FeatureViewVersion, str]] = None
+    ) -> SqlIdentifier:
+        """Get the udf_transformed table name without qualification.
+
+        Follows the same pattern as ``_get_online_table_name``: appends
+        ``$UDF_TRANSFORMED`` to the physical name.
+
+        Args:
+            feature_view_name: Offline feature view name.  When *version*
+                is ``None``, this must already be the physical
+                ``SqlIdentifier`` (e.g., ``"MY_FV$V1"``).
+            version: Feature view version.  If not provided,
+                *feature_view_name* must be a ``SqlIdentifier``.
+
+        Returns:
+            The udf_transformed table name as a ``SqlIdentifier``.
+        """
+        if version is None:
+            assert isinstance(feature_view_name, SqlIdentifier), "Single argument must be SqlIdentifier"
+            udf_name = f"{feature_view_name.resolved()}{_UDF_TRANSFORMED_TABLE_SUFFIX}"
+            return SqlIdentifier(udf_name, case_sensitive=True)
+        else:
+            fv_name = (
+                feature_view_name
+                if isinstance(feature_view_name, SqlIdentifier)
+                else SqlIdentifier(feature_view_name, case_sensitive=True)
+            )
+            fv_version = version if isinstance(version, FeatureViewVersion) else FeatureViewVersion(version)
+            physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
+            udf_name = f"{physical_name}{_UDF_TRANSFORMED_TABLE_SUFFIX}"
+            return SqlIdentifier(udf_name, case_sensitive=True)
 
 
 lineage_node.DOMAIN_LINEAGE_REGISTRY["feature_view"] = FeatureView

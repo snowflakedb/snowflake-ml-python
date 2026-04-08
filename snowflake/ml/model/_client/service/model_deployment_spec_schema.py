@@ -51,7 +51,8 @@ class Output(BaseModel):
 
 
 class Job(BaseModel):
-    name: str
+    name: Optional[str] = None
+    name_prefix: Optional[str] = None
     compute_pool: str
     cpu: Optional[str] = None
     memory: Optional[str] = None

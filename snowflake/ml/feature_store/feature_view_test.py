@@ -1,8 +1,13 @@
 """Unit tests for feature_view module."""
 
+from __future__ import annotations
+
 import json
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from unittest.mock import MagicMock
+
+if TYPE_CHECKING:
+    from snowflake.ml.feature_store.feature_store import FeatureStore
 
 from absl.testing import absltest, parameterized
 
@@ -854,6 +859,86 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         end = query.index("$$", start)
         parsed = json.loads(query[start:end])
         self.assertEqual(parsed["metadata"]["version"], "v42")
+
+
+class UnicodeColumnSqlGenerationTest(absltest.TestCase):
+    """Verify SQL generation properly quotes Unicode (Japanese) column names."""
+
+    def _create_feature_store(self) -> FeatureStore:
+        from snowflake.ml.feature_store.feature_store import (
+            FeatureStore,
+            _FeatureStoreConfig,
+        )
+
+        fs = object.__new__(FeatureStore)
+        fs._config = _FeatureStoreConfig(
+            database=SqlIdentifier("TEST_DB"),
+            schema=SqlIdentifier("TEST_SCHEMA"),
+        )
+        return fs
+
+    def _create_mock_fv(self, join_key_str: str, timestamp_col_str: str, fv_name: str = "jp_fv") -> MagicMock:
+        entity = MagicMock()
+        entity.join_keys = [SqlIdentifier(join_key_str)]
+
+        fv = MagicMock()
+        fv.entities = [entity]
+        fv.timestamp_col = SqlIdentifier(timestamp_col_str)
+        fv.is_tiled = False
+        fv.version = "v1"
+        fv.name = fv_name
+        fv.aggregation_specs = None
+        fv.fully_qualified_name.return_value = "TEST_DB.TEST_SCHEMA.JP_FV$v1"
+        return fv
+
+    def test_cte_query_quotes_japanese_columns(self) -> None:
+        """_build_cte_query must produce properly quoted Japanese identifiers."""
+        fs = self._create_feature_store()
+        fv = self._create_mock_fv('"顧客ID"', '"記録時刻"')
+
+        feature_columns = ['"色", "高さ", "重さ"']
+
+        query = fs._build_cte_query(
+            feature_views=[fv],
+            feature_columns=feature_columns,
+            spine_ref="SELECT * FROM spine_table",
+            spine_timestamp_col=SqlIdentifier('"記録時刻"'),
+        )
+
+        for ident in ['"色"', '"高さ"', '"重さ"', '"顧客ID"', '"記録時刻"']:
+            self.assertIn(ident, query, f"Missing quoted identifier {ident} in generated SQL")
+
+        for bare in ['""色""', '""高さ""', '""重さ""', '""顧客ID""', '""記録時刻""']:
+            self.assertNotIn(bare, query, f"Double-quoted identifier {bare} found in generated SQL")
+
+    def test_cte_query_quotes_japanese_columns_no_timestamp(self) -> None:
+        """_build_cte_query LEFT JOIN path (no timestamp) must quote Japanese identifiers."""
+        fs = self._create_feature_store()
+        fv = self._create_mock_fv('"顧客ID"', '"記録時刻"')
+        fv.timestamp_col = None
+
+        feature_columns = ['"色", "高さ"']
+
+        query = fs._build_cte_query(
+            feature_views=[fv],
+            feature_columns=feature_columns,
+            spine_ref="SELECT * FROM spine_table",
+            spine_timestamp_col=None,
+        )
+
+        self.assertIn('"顧客ID"', query)
+        self.assertIn('"色"', query)
+        self.assertNotIn('""顧客ID""', query)
+
+    def test_feature_columns_use_identifier_not_resolved(self) -> None:
+        """Verify SqlIdentifier.identifier() is used for feature_columns, not resolved()."""
+        col = SqlIdentifier('"色"')
+        self.assertEqual(col.identifier(), '"色"')
+        self.assertEqual(col.resolved(), "色")
+
+        cols = [SqlIdentifier('"色"'), SqlIdentifier('"高さ"'), SqlIdentifier('"重さ"')]
+        result = ", ".join(c.identifier() for c in cols)
+        self.assertEqual(result, '"色", "高さ", "重さ"')
 
 
 if __name__ == "__main__":

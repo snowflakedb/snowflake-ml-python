@@ -106,6 +106,44 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             job_spec=JobSpec(job_name=job_name, replicas=2, function_name="predict"),
         )
 
+    def test_job_name_prefix(self) -> None:
+        """Test batch inference with job_name_prefix provided."""
+        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+
+        job = self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name_prefix="CUSTOM_PREFIX"),
+            expected_predictions=expected_predictions,
+        )
+
+        # Verify the job name starts with the custom prefix
+        self.assertTrue(
+            job.name.startswith("CUSTOM_PREFIX_"),
+            f"Expected job name to start with 'CUSTOM_PREFIX_', got '{job.name}'",
+        )
+
+    def test_without_job_name_or_prefix(self) -> None:
+        """Test batch inference with neither job_name nor job_name_prefix provided."""
+        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+
+        job = self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(),
+            expected_predictions=expected_predictions,
+        )
+
+        # GS uses BATCH_INFERENCE_ as the default prefix for server-generated job names
+        self.assertTrue(
+            job.name.startswith("BATCH_INFERENCE_"),
+            f"Expected job name to start with 'BATCH_INFERENCE_', got '{job.name}'",
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

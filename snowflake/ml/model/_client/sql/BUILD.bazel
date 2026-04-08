@@ -32,7 +32,10 @@ py_library(
 py_test(
     name = "model_test",
     srcs = ["model_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -57,7 +60,10 @@ py_library(
 py_test(
     name = "model_version_test",
     srcs = ["model_version_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":model_version",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -80,7 +86,10 @@ py_library(
 py_test(
     name = "stage_test",
     srcs = ["stage_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":stage",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -102,7 +111,10 @@ py_library(
 py_test(
     name = "tag_test",
     srcs = ["tag_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":tag",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -127,7 +139,10 @@ py_library(
 py_test(
     name = "service_test",
     srcs = ["service_test.py"],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":service",
         "//snowflake/ml/_internal/utils:sql_identifier",

@@ -29,7 +29,10 @@ py_library(
 py_test(
     name = "hrid_generator_test",
     srcs = ["hrid_generator_test.py"],
-    tags = ["feature:core"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
     deps = [
         ":hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",

@@ -97,9 +97,6 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
         cls._original_hf_endpoint = None
         os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
         os.environ["HF_HOME"] = cls.cache_dir.name
-        if "HF_ENDPOINT" in os.environ:
-            cls._original_hf_endpoint = os.environ["HF_ENDPOINT"]
-            del os.environ["HF_ENDPOINT"]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -112,8 +109,6 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
         else:
             os.environ.pop("HF_HOME", None)
         cls.cache_dir.cleanup()
-        if cls._original_hf_endpoint:
-            os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
         super().tearDownClass()
 
     # ========================================================================

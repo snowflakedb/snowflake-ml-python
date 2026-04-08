@@ -561,7 +561,7 @@ class OrdinalEncoder(base.BaseTransformer):
         transformed_dataset = self._handle_unknown_in_transform(transformed_dataset)
         # Reorder columns. Passthrough columns are added at the right to the output of the transformers.
         transformed_dataset = transformed_dataset[self.output_cols + passthrough_columns]
-        return transformed_dataset
+        return transformed_dataset  # type: ignore[no-any-return]
 
     def _create_unfitted_sklearn_object(self) -> preprocessing.OrdinalEncoder:
         sklearn_args = self.get_sklearn_args(

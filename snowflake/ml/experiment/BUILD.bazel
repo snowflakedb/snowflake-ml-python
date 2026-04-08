@@ -14,7 +14,10 @@ py_test(
     name = "experiment_info_test",
     srcs = ["_experiment_info_test.py"],
     main = "_experiment_info_test.py",
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         ":experiment_info",
         "//snowflake/ml/test_utils:mock_progress",
@@ -39,7 +42,10 @@ py_library(
 py_test(
     name = "experiment_tracking_test",
     srcs = ["experiment_tracking_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [
         ":experiment_tracking",
     ],
@@ -53,7 +59,10 @@ py_library(
 py_test(
     name = "utils_test",
     srcs = ["utils_test.py"],
-    tags = ["feature:experiment_tracking"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
     deps = [":utils"],
 )
 

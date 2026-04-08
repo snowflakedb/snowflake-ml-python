@@ -1,4 +1,6 @@
+import datetime
 import uuid
+from typing import Any
 
 import pandas as pd
 from absl.testing import absltest
@@ -330,6 +332,51 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
             # temperature_used should be the default 1.0
             self.assertAlmostEqual(row["TEMPERATURE_USED"], 1.0, places=5)
 
+    def _assert_unknown_param_raises_error(self, mv: "registry.ModelVersion") -> None:
+        """Verify that mv.run() with an unknown param name raises an error."""
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        with self.assertRaises(ValueError) as context:
+            mv.run(input_df, function_name="predict", params={"unknown_param": 42})
+
+        self.assertIn("Unknown parameter(s)", str(context.exception))
+
+    def _assert_wrong_type_raises_error(self, mv: "registry.ModelVersion") -> None:
+        """Verify that mv.run() with a wrong param type raises an error."""
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        with self.assertRaises(ValueError) as context:
+            mv.run(input_df, function_name="predict", params={"temperature": "not_a_float"})
+
+        self.assertIn("not compatible with dtype", str(context.exception))
+
+    def _assert_case_insensitive_param_succeeds(self, mv: "registry.ModelVersion") -> None:
+        """Verify that mv.run() with a case-insensitive param name succeeds."""
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        result = mv.run(input_df, function_name="predict", params={"TEMPERATURE": 2.0})
+
+        self.assertEqual(len(result), 3)
+        pd.testing.assert_series_equal(
+            result["output"].reset_index(drop=True),
+            pd.Series([2.0, 4.0, 6.0], name="output"),
+            check_dtype=False,
+        )
+        self.assertTrue(all(result["temperature_used"] == 2.0))
+
+    def _assert_duplicate_case_params_raises_error(self, mv: "registry.ModelVersion") -> None:
+        """Verify that mv.run() with duplicate param names differing only in case raises an error."""
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        with self.assertRaises(ValueError) as context:
+            mv.run(
+                input_df,
+                function_name="predict",
+                params={"Temperature": 1.0, "temperature": 2.0},
+            )
+
+        self.assertIn("Duplicate parameter(s)", str(context.exception))
+
     def test_warehouse_inference_with_params(self) -> None:
         """Test warehouse inference with DemoModelWithParams across all param scenarios.
 
@@ -338,6 +385,10 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         - Varying params across rows raise an appropriate error
         - NULL/missing params fall back to defaults
         - Explicit SQL NULL falls back to defaults
+        - Unknown param name raises error
+        - Wrong param type raises error
+        - Case-insensitive param name succeeds
+        - Duplicate case param names raise error
         """
         mv = self._log_model_with_params()
 
@@ -345,6 +396,10 @@ class TestCustomModelWithParamsWarehouseInteg(common_test_base.CommonTestBase):
         self._assert_varying_params_raises_error(mv)
         self._assert_null_params_uses_default(mv)
         self._assert_explicit_sql_null_uses_default(mv)
+        self._assert_unknown_param_raises_error(mv)
+        self._assert_wrong_type_raises_error(mv)
+        self._assert_case_insensitive_param_succeeds(mv)
+        self._assert_duplicate_case_params_raises_error(mv)
 
     def test_warehouse_inference_with_list_params(self) -> None:
         """Test warehouse inference with DemoModelWithListParam (unhashable type).
@@ -827,6 +882,328 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
             check_dtype=False,
         )
         self.assertTrue(all(result_sorted["top_k_used"] == 50))
+
+
+_DEFAULT_TIMESTAMP = datetime.datetime(2024, 1, 1, 12, 0, 0)
+_DEFAULT_WEIGHTS = [1.0, 2.0, 3.0]
+_DEFAULT_NESTED_LIST = [[1, 2], [3, 4]]
+_DEFAULT_CONFIG = {"mode": "standard", "threshold": 0.5}
+
+
+class DemoModelWithAllDataTypes(custom_model.CustomModel):
+    """Custom model that accepts scalar, shaped, and dict params."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        int_param: int = 42,
+        bool_param: bool = True,
+        string_param: str = "default",
+        bytes_param: bytes = b"default",
+        timestamp_param: datetime.datetime = _DEFAULT_TIMESTAMP,
+        weights_param: list[float] = _DEFAULT_WEIGHTS,  # noqa: B006
+        nested_list: list[list[int]] = _DEFAULT_NESTED_LIST,  # noqa: B006
+        config: dict = _DEFAULT_CONFIG,  # noqa: B006
+    ) -> pd.DataFrame:
+        n = len(input_df)
+        bytes_str = bytes_param.hex() if isinstance(bytes_param, bytes) else str(bytes_param)
+        ts_str = str(timestamp_param)
+        mode = config.get("mode", "standard")
+        threshold = config.get("threshold", 0.5)
+        return pd.DataFrame(
+            {
+                "input_value": input_df["value"].tolist(),
+                "received_int": [int_param] * n,
+                "received_bool": [bool_param] * n,
+                "received_string": [string_param] * n,
+                "received_bytes": [bytes_str] * n,
+                "received_timestamp": [ts_str] * n,
+                "received_weights": [weights_param] * n,
+                "received_nested_list": [nested_list] * n,
+                "received_mode": [mode] * n,
+                "received_threshold": [threshold] * n,
+            }
+        )
+
+
+class TestCustomModelWithAllDataTypesWarehouseInteg(common_test_base.CommonTestBase):
+    """Integration tests for warehouse inference with multiple param data types.
+
+    Tests that INT, BOOL, STRING, BYTES, TIMESTAMP, shaped float list,
+    shaped 2D int list, and dict (ParamGroupSpec) params are correctly
+    handled through the warehouse UDF path.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._run_id = uuid.uuid4().hex
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        super().tearDown()
+
+    def _log_model_with_all_data_types(self) -> "registry.ModelVersion":
+        """Log a model with scalar, shaped, and dict data type params."""
+        model = DemoModelWithAllDataTypes(custom_model.ModelContext())
+
+        sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="value", dtype=model_signature.DataType.FLOAT)],
+            outputs=[
+                model_signature.FeatureSpec(name="input_value", dtype=model_signature.DataType.FLOAT),
+                model_signature.FeatureSpec(name="received_int", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="received_bool", dtype=model_signature.DataType.BOOL),
+                model_signature.FeatureSpec(name="received_string", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(name="received_bytes", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(name="received_timestamp", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(
+                    name="received_weights",
+                    dtype=model_signature.DataType.DOUBLE,
+                    shape=(3,),
+                ),
+                model_signature.FeatureSpec(
+                    name="received_nested_list",
+                    dtype=model_signature.DataType.INT64,
+                    shape=(2, 2),
+                ),
+                model_signature.FeatureSpec(name="received_mode", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(
+                    name="received_threshold",
+                    dtype=model_signature.DataType.DOUBLE,
+                ),
+            ],
+            params=[
+                model_signature.ParamSpec(
+                    name="int_param",
+                    dtype=model_signature.DataType.INT64,
+                    default_value=42,
+                ),
+                model_signature.ParamSpec(
+                    name="bool_param",
+                    dtype=model_signature.DataType.BOOL,
+                    default_value=True,
+                ),
+                model_signature.ParamSpec(
+                    name="string_param",
+                    dtype=model_signature.DataType.STRING,
+                    default_value="default",
+                ),
+                model_signature.ParamSpec(
+                    name="bytes_param",
+                    dtype=model_signature.DataType.BYTES,
+                    default_value=b"default",
+                ),
+                model_signature.ParamSpec(
+                    name="timestamp_param",
+                    dtype=model_signature.DataType.TIMESTAMP_NTZ,
+                    default_value=_DEFAULT_TIMESTAMP,
+                ),
+                model_signature.ParamSpec(
+                    name="weights_param",
+                    dtype=model_signature.DataType.DOUBLE,
+                    default_value=list(_DEFAULT_WEIGHTS),
+                    shape=(3,),
+                ),
+                model_signature.ParamSpec(
+                    name="nested_list",
+                    dtype=model_signature.DataType.INT64,
+                    default_value=_DEFAULT_NESTED_LIST,
+                    shape=(2, 2),
+                ),
+                model_signature.ParamGroupSpec(
+                    name="config",
+                    specs=[
+                        model_signature.ParamSpec(
+                            name="mode",
+                            dtype=model_signature.DataType.STRING,
+                            default_value="standard",
+                        ),
+                        model_signature.ParamSpec(
+                            name="threshold",
+                            dtype=model_signature.DataType.DOUBLE,
+                            default_value=0.5,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_all_types_test_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"embed_local_ml_library": True},
+        )
+        return mv
+
+    def _assert_params_match(self, result: pd.DataFrame, expected: dict[str, Any], label: str = "") -> None:
+        """Verify that received param values match expected values."""
+        tag = f"[{label}] " if label else ""
+        row = result.iloc[0]
+        for key, expected_value in expected.items():
+            actual = row[key]
+            if isinstance(expected_value, float):
+                self.assertAlmostEqual(float(actual), expected_value, places=5, msg=f"{tag}{key}")
+            elif isinstance(expected_value, list):
+                actual_list = actual.tolist() if hasattr(actual, "tolist") else actual
+                self.assertEqual(actual_list, expected_value, f"{tag}{key}")
+            else:
+                self.assertEqual(actual, expected_value, f"{tag}{key}")
+
+    def test_warehouse_inference_all_data_types(self) -> None:
+        """Test warehouse inference with all param data types (scalar + shaped + dict).
+
+        Logs a single model and validates:
+        - All params provided — verify each received value
+        - No params — verify defaults for every type
+        - Partial params — verify mix of overrides + defaults
+        - Dict param partial override — verify deep-merge with defaults
+        - Direct SQL with typed params (INT, BOOL, STRING)
+        """
+        mv = self._log_model_with_all_data_types()
+        input_df = pd.DataFrame({"value": [10.0]})
+
+        # --- All params provided ---
+        custom_ts = datetime.datetime(2025, 6, 15, 8, 30, 0)
+        result = mv.run(
+            input_df,
+            function_name="predict",
+            params={
+                "int_param": 99,
+                "bool_param": False,
+                "string_param": "custom",
+                "bytes_param": b"hello",
+                "timestamp_param": custom_ts,
+                "weights_param": [4.5, 3.5, 2.5],
+                "nested_list": [[4, 3], [2, 1]],
+                "config": {"mode": "turbo", "threshold": 0.9},
+            },
+        )
+        self.assertEqual(len(result), 1)
+        self._assert_params_match(
+            result,
+            {
+                "input_value": 10.0,
+                "received_int": 99,
+                "received_bool": False,
+                "received_string": "custom",
+                "received_bytes": b"hello".hex(),
+                "received_timestamp": str(custom_ts),
+                "received_weights": [4.5, 3.5, 2.5],
+                "received_nested_list": [[4, 3], [2, 1]],
+                "received_mode": "turbo",
+                "received_threshold": 0.9,
+            },
+            label="full_params",
+        )
+
+        # --- No params (defaults) ---
+        result = mv.run(input_df, function_name="predict")
+        self.assertEqual(len(result), 1)
+        self._assert_params_match(
+            result,
+            {
+                "input_value": 10.0,
+                "received_int": 42,
+                "received_bool": True,
+                "received_string": "default",
+                "received_bytes": b"default".hex(),
+                "received_timestamp": str(_DEFAULT_TIMESTAMP),
+                "received_weights": _DEFAULT_WEIGHTS,
+                "received_nested_list": _DEFAULT_NESTED_LIST,
+                "received_mode": "standard",
+                "received_threshold": 0.5,
+            },
+            label="default_params",
+        )
+
+        # --- Partial params (only int and string overridden) ---
+        result = mv.run(
+            input_df,
+            function_name="predict",
+            params={"int_param": 7, "string_param": "partial"},
+        )
+        self.assertEqual(len(result), 1)
+        self._assert_params_match(
+            result,
+            {
+                "received_int": 7,
+                "received_bool": True,
+                "received_string": "partial",
+                "received_bytes": b"default".hex(),
+                "received_timestamp": str(_DEFAULT_TIMESTAMP),
+                "received_weights": _DEFAULT_WEIGHTS,
+                "received_nested_list": _DEFAULT_NESTED_LIST,
+                "received_mode": "standard",
+                "received_threshold": 0.5,
+            },
+            label="partial_params",
+        )
+
+        # --- Dict param partial override (only threshold overridden) ---
+        result = mv.run(
+            input_df,
+            function_name="predict",
+            params={"config": {"threshold": 0.99}},
+        )
+        self.assertEqual(len(result), 1)
+        self._assert_params_match(
+            result,
+            {
+                "received_int": 42,
+                "received_mode": "standard",
+                "received_threshold": 0.99,
+            },
+            label="dict_partial_override",
+        )
+
+        # --- Direct SQL with typed params (INT, BOOL, STRING; NULL for bytes/timestamp) ---
+        model_name = mv.model_name
+        version_name = mv.version_name
+
+        sql = f"""
+            WITH MODEL_VERSION_ALIAS AS MODEL {model_name} VERSION {version_name},
+            test_data AS (
+                SELECT 10.0::FLOAT AS value
+            )
+            SELECT
+                MODEL_VERSION_ALIAS!PREDICT(
+                    value, 99, false, 'custom', NULL, NULL, NULL, NULL, NULL
+                ):received_int::INT AS received_int,
+                MODEL_VERSION_ALIAS!PREDICT(
+                    value, 99, false, 'custom', NULL, NULL, NULL, NULL, NULL
+                ):received_bool::BOOLEAN AS received_bool,
+                MODEL_VERSION_ALIAS!PREDICT(
+                    value, 99, false, 'custom', NULL, NULL, NULL, NULL, NULL
+                ):received_string::STRING AS received_string
+            FROM test_data
+        """
+
+        rows = self.session.sql(sql).collect()
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["RECEIVED_INT"], 99)
+        self.assertEqual(row["RECEIVED_BOOL"], False)
+        self.assertEqual(row["RECEIVED_STRING"], "custom")
 
 
 if __name__ == "__main__":

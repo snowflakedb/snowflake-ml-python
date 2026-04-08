@@ -5,6 +5,7 @@ from snowflake.ml._internal import init_utils
 from .access_manager import setup_feature_store
 from .feature import Feature
 from .feature_view import RollupConfig
+from .stream_config import StreamConfig
 from .stream_source import StreamSource
 
 pkg_dir = os.path.dirname(__file__)
@@ -17,5 +18,6 @@ __all__ = list(exportable_classes.keys()) + [
     "setup_feature_store",
     "Feature",
     "RollupConfig",
+    "StreamConfig",
     "StreamSource",
 ]

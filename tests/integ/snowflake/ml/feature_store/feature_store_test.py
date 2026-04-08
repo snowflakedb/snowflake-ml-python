@@ -616,7 +616,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG", "STREAM_CONFIG"],
         )
 
         # Validate ONLINE_CONFIG column separately: it may be None or a disabled JSON
@@ -1077,7 +1077,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
         )
 
         # delete feature view
@@ -1103,7 +1103,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
         )
 
         # test get feature view obj
@@ -1648,6 +1648,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": [],
                 "ONLINE_CONFIG": [],
                 "STORAGE_CONFIG": [],
+                "STREAM_CONFIG": [],
             },
             sort_cols=["NAME"],
         )
@@ -1710,7 +1711,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
         )
 
         compare_dataframe(
@@ -1728,7 +1729,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
         )
 
         compare_dataframe(
@@ -1746,7 +1747,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
         )
 
         compare_dataframe(
@@ -1764,7 +1765,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
         )
 
         compare_dataframe(
@@ -1782,7 +1783,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
         )
 
         # Verify STORAGE_CONFIG column shows correct format for all feature views
@@ -1826,6 +1827,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": [],
                 "ONLINE_CONFIG": [],
                 "STORAGE_CONFIG": [],
+                "STREAM_CONFIG": [],
             },
             sort_cols=["NAME"],
         )

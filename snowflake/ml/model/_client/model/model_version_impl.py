@@ -1,7 +1,6 @@
 import enum
 import pathlib
 import tempfile
-import uuid
 import warnings
 from typing import Any, Callable, Optional, Union, overload
 
@@ -27,7 +26,6 @@ from snowflake.snowpark import Session, async_job, dataframe
 
 _TELEMETRY_PROJECT = "MLOps"
 _TELEMETRY_SUBPROJECT = "ModelManagement"
-_BATCH_INFERENCE_JOB_ID_PREFIX = "BATCH_INFERENCE_"
 _BATCH_INFERENCE_TEMPORARY_FOLDER = "_temporary"
 VLLM_SUPPORTED_TASKS = [
     "text-generation",
@@ -526,7 +524,7 @@ class ModelVersion(lineage_node.LineageNode):
     @telemetry.send_api_usage_telemetry(
         project=_TELEMETRY_PROJECT,
         subproject=_TELEMETRY_SUBPROJECT,
-        func_params_to_log=["function_name", "service_name"],
+        func_params_to_log=["function_name", "service_name", "params"],
     )
     def run(
         self,
@@ -817,12 +815,6 @@ class ModelVersion(lineage_node.LineageNode):
         except Exception as e:
             raise RuntimeError(f"Failed to process input data: {e}")
 
-        if job_spec.job_name is None:
-            # Same as the MLJob ID generation logic with a different prefix
-            job_name = f"{_BATCH_INFERENCE_JOB_ID_PREFIX}{str(uuid.uuid4()).replace('-', '_').upper()}"
-        else:
-            job_name = job_spec.job_name
-
         target_function_info = self._get_function_info(function_name=job_spec.function_name)
 
         if (
@@ -850,7 +842,8 @@ class ModelVersion(lineage_node.LineageNode):
             cpu_requests=job_spec.cpu_requests,
             memory_requests=job_spec.memory_requests,
             gpu_requests=job_spec.gpu_requests,
-            job_name=job_name,
+            job_name=job_spec.job_name,
+            job_name_prefix=job_spec.job_name_prefix,
             replicas=job_spec.replicas,
             # input and output
             input_stage_location=input_stage_location,

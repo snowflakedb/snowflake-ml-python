@@ -38,6 +38,7 @@ from snowflake.ml.feature_store.spec.enums import (
 from snowflake.ml.feature_store.spec.models import FSColumn, Source
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.snowpark.types import (
+    BooleanType,
     DataType,
     DecimalType,
     DoubleType,
@@ -319,6 +320,76 @@ class StreamingBuilderNoAggTest(absltest.TestCase):
         self.assertIsNone(result.spec.feature_granularity_sec)
         self.assertIsNone(result.spec.feature_aggregation_method)
         self.assertEqual(len(result.offline_configs), 1)
+
+    def test_passthrough_features_from_udf_transformed(self) -> None:
+        """Non-time-aggregated streaming FV generates passthrough features from UDF_TRANSFORMED columns."""
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.StreamingFeatureView,
+                database="DB",
+                schema="SCH",
+                name="raw_stream",
+                version="v1",
+            )
+            .set_offline_configs([_udf_transformed_config()])
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+            )
+            .set_sources([_make_stream_source()])
+            .set_udf(**_simple_udf_args())
+            .build()
+        )
+        # Passthrough features auto-generated from UDF_TRANSFORMED columns
+        # USER_ID is entity (excluded), AMOUNT is the passthrough feature
+        self.assertEqual(len(result.spec.features), 1)
+        feat = result.spec.features[0]
+        self.assertEqual(feat.source_column.name, "AMOUNT")
+        self.assertEqual(feat.output_column.name, "AMOUNT")
+        self.assertIsNone(feat.function)
+        self.assertIsNone(feat.window_sec)
+
+    def test_passthrough_excludes_entity_and_timestamp(self) -> None:
+        """Passthrough features exclude entity columns and timestamp field."""
+        # UDF_TRANSFORMED has USER_ID and AMOUNT; entity=USER_ID, timestamp=EVENT_TIME
+        # Only AMOUNT should be a passthrough feature (EVENT_TIME not in the config columns)
+        udf_config = SnowflakeTableInfo(
+            table_type=TableType.UDF_TRANSFORMED,
+            database="DB",
+            schema="SCH",
+            table="UDF_TBL",
+            columns=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                    StructField("AMOUNT", DoubleType()),
+                    StructField("IS_LARGE", BooleanType()),
+                ]
+            ),
+        )
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.StreamingFeatureView,
+                database="DB",
+                schema="SCH",
+                name="stream_fv",
+                version="v1",
+            )
+            .set_offline_configs([udf_config])
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+            )
+            .set_sources([_make_stream_source()])
+            .set_udf(**_simple_udf_args())
+            .build()
+        )
+        feature_names = [f.source_column.name for f in result.spec.features]
+        self.assertNotIn("USER_ID", feature_names)  # entity excluded
+        self.assertNotIn("EVENT_TIME", feature_names)  # timestamp excluded
+        self.assertIn("AMOUNT", feature_names)
+        self.assertIn("IS_LARGE", feature_names)
+        self.assertEqual(len(result.spec.features), 2)
 
 
 # ============================================================================

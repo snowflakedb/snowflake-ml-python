@@ -49,7 +49,10 @@ py_test(
         "torch",
         "tensorflow",
     ],
-    tags = ["feature:data"],
+    tags = [
+        "feature:data",
+        "short_regress",
+    ],
     deps = [
         ":data_connector",
         "//snowflake/ml/fileset:parquet_test_util",

@@ -12,7 +12,9 @@ These APIs are available everywhere you can use Snowflake ML, including Snowsigh
    experiment
    feature_store
    fileset
+   jobs
    model
+   model_batch
    modeling
    monitoring
    registry

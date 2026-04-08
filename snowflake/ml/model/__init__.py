@@ -10,11 +10,11 @@ from snowflake.ml.model.volatility import Volatility
 
 __all__ = [
     "CodePath",
+    "ExportMode",
+    "HuggingFacePipelineModel",
     "Model",
     "ModelVersion",
-    "ExportMode",
     "TransformersPipeline",
-    "HuggingFacePipelineModel",
     "Volatility",
 ]
 

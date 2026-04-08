@@ -258,14 +258,23 @@ py_test(
     ],
 )
 
+py_library(
+    name = "registry_param_test_base",
+    testonly = True,
+    srcs = ["registry_param_test_base.py"],
+    deps = [
+        ":registry_model_deployment_test_base",
+    ],
+)
+
 py_test(
-    name = "registry_inference_params_test",
+    name = "registry_custom_model_params_test",
     timeout = "eternal",
-    srcs = ["registry_inference_params_test.py"],
+    srcs = ["registry_custom_model_params_test.py"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
-        ":registry_model_deployment_test_base",
+        ":registry_param_test_base",
     ],
 )
 

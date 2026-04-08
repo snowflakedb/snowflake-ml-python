@@ -187,21 +187,6 @@ class ModelParameterReconciler:
 
         is_warehouse_runnable = self._is_warehouse_runnable(conda_dep_dict)
         only_spcs = target_platform_set == set(target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY)
-        has_both_platforms = target_platform_set == set(target_platform.BOTH_WAREHOUSE_AND_SNOWPARK_CONTAINER_SERVICES)
-
-        # Handle case where user explicitly requested explainability
-        if enable_explainability:
-            if only_spcs or not is_warehouse_runnable:
-                raise ValueError(
-                    "`enable_explainability` cannot be set to True when the model cannot run in Warehouse."
-                )
-            elif has_both_platforms:
-                warnings.warn(
-                    ("Explain function will only be available for model deployed to Warehouse."),
-                    category=UserWarning,
-                    stacklevel=2,
-                )
-
         # Handle case where explainability is not specified (None) - set default behavior
         if enable_explainability is None:
             if only_spcs or not is_warehouse_runnable:

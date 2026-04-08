@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Callable, Optional, cast, final
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
 
 import pandas as pd
 from typing_extensions import TypeGuard, Unpack
@@ -178,6 +178,8 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
     ) -> custom_model.CustomModel:
         from snowflake.ml.model import custom_model
 
+        load_use_gpu = kwargs.get("use_gpu", False)
+
         def _create_custom_model(
             raw_model: "torch.jit.ScriptModule",
             model_meta: model_meta_api.ModelMetadata,
@@ -191,33 +193,40 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
                     model_meta_schema.TorchScriptModelBlobOptions, model_meta.models[model_meta.name].options
                 )["multiple_inputs"]
 
-                @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                # TorchScript methods have strict compiled signatures — only forward
+                # kwargs that the method actually declares (skip 'self').
+                method_schema = getattr(raw_model, target_method).schema
+                accepted_params = {arg.name for arg in method_schema.arguments} - {"self"}
+
+                @custom_model._internal_inference_api
+                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **forward_kwargs: Any) -> pd.DataFrame:
                     if X.isnull().any(axis=None):
                         raise ValueError("Tensor cannot handle null values.")
 
                     import torch
+
+                    filtered_kwargs = {k: v for k, v in forward_kwargs.items() if k in accepted_params}
 
                     raw_model.eval()
 
                     if multiple_inputs:
                         st = pytorch_handler.SeqOfPyTorchTensorHandler.convert_from_df(X, signature.inputs)
 
-                        if kwargs.get("use_gpu", False):
+                        if load_use_gpu:
                             st = [element.cuda() for element in st]
 
                         with torch.no_grad():
-                            res = getattr(raw_model, target_method)(*st)
+                            res = getattr(raw_model, target_method)(*st, **filtered_kwargs)
 
                         if not isinstance(res, tuple):
                             res = [res]
                     else:
                         t = pytorch_handler.PyTorchTensorHandler.convert_from_df(X, signature.inputs)
-                        if kwargs.get("use_gpu", False):
+                        if load_use_gpu:
                             t = t.cuda()
 
                         with torch.no_grad():
-                            res = getattr(raw_model, target_method)(t)
+                            res = getattr(raw_model, target_method)(t, **filtered_kwargs)
                     return model_signature_utils.rename_pandas_df(
                         model_signature._convert_local_data_to_df(res, ensure_serializable=True),
                         features=signature.outputs,
@@ -225,14 +234,14 @@ class TorchScriptHandler(_base.BaseModelHandler["torch.jit.ScriptModule"]):
 
                 return fn
 
-            type_method_dict = {}
+            torchscript_type_dict: dict[str, Any] = {"_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
+                torchscript_type_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 
             _TorchScriptModel = type(
                 "_TorchScriptModel",
                 (custom_model.CustomModel,),
-                type_method_dict,
+                torchscript_type_dict,
             )
 
             return _TorchScriptModel

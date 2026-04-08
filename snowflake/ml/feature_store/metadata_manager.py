@@ -42,6 +42,7 @@ class MetadataType(str, Enum):
     FEATURE_SPECS = "FEATURE_SPECS"
     FEATURE_DESCS = "FEATURE_DESCS"
     STREAM_SOURCE_CONFIG = "STREAM_SOURCE_CONFIG"
+    STREAM_CONFIG = "STREAM_CONFIG"
 
 
 @dataclass
@@ -64,6 +65,45 @@ class AggregationMetadata:
         return cls(
             feature_granularity=data["feature_granularity"],
             features=[AggregationSpec.from_dict(f) for f in data["features"]],
+        )
+
+
+@dataclass
+class StreamingMetadata:
+    """Streaming configuration metadata for streaming feature views.
+
+    Stored in the metadata table (not the tag) to avoid 256-char tag limit.
+    """
+
+    stream_source_name: str
+    transformation_fn_name: str
+    transformation_fn_source: Optional[str] = None  # Full source code of the UDF
+    backfill_start_time: Optional[str] = None  # ISO format, or None if no filter
+    backfill_query_id: Optional[str] = None  # AsyncJob query_id from backfill
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        d: dict[str, Any] = {
+            "stream_source_name": self.stream_source_name,
+            "transformation_fn_name": self.transformation_fn_name,
+        }
+        if self.transformation_fn_source is not None:
+            d["transformation_fn_source"] = self.transformation_fn_source
+        if self.backfill_start_time is not None:
+            d["backfill_start_time"] = self.backfill_start_time
+        if self.backfill_query_id is not None:
+            d["backfill_query_id"] = self.backfill_query_id
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> StreamingMetadata:
+        """Create from dictionary."""
+        return cls(
+            stream_source_name=data["stream_source_name"],
+            transformation_fn_name=data["transformation_fn_name"],
+            transformation_fn_source=data.get("transformation_fn_source"),
+            backfill_start_time=data.get("backfill_start_time"),
+            backfill_query_id=data.get("backfill_query_id"),
         )
 
 
@@ -326,6 +366,56 @@ class FeatureStoreMetadataManager:
             AND VERSION = '{version}'
             """
         ).collect(statement_params=self._telemetry_stmp)
+
+    # =========================================================================
+    # Streaming Feature View Metadata
+    # =========================================================================
+
+    def save_streaming_metadata(
+        self,
+        fv_name: str,
+        version: str,
+        metadata: StreamingMetadata,
+    ) -> None:
+        """Save streaming metadata for a streaming feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+            metadata: Streaming metadata to save.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.STREAM_CONFIG,
+            metadata=metadata.to_dict(),
+        )
+
+    def get_streaming_metadata(
+        self,
+        fv_name: str,
+        version: str,
+    ) -> Optional[StreamingMetadata]:
+        """Get streaming metadata for a streaming feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+
+        Returns:
+            StreamingMetadata if found, None otherwise.
+        """
+        data = self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.STREAM_CONFIG,
+        )
+        if data is None:
+            return None
+        return StreamingMetadata.from_dict(data)
 
     # =========================================================================
     # Stream Source

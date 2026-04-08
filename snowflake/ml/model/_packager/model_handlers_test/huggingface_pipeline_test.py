@@ -17,12 +17,15 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import (
     huggingface as hf_pipeline_handler,
 )
 from snowflake.ml.model._packager.model_handlers.huggingface import (
     TransformersPipelineHandler,
+    _handler as hf_handler_module,
 )
+from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model._signatures import utils
 from snowflake.ml.model.models import huggingface as hf_base, huggingface_pipeline
 
@@ -1317,6 +1320,50 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         # Verify output structure
         self.assertEqual(len(inferred_sig.outputs), 1)
         self.assertEqual(inferred_sig.outputs[0].name, "labels")
+
+    def test_asr_scalar_feature_group_output_is_not_rewrapped(self) -> None:
+        """Test that scalar ASR FeatureGroupSpec outputs remain dict-shaped for a single input row."""
+
+        class FakeAsrPipeline:
+            def __init__(self) -> None:
+                self.task = "automatic-speech-recognition"
+                self.calls: list[bytes] = []
+
+            def __call__(self, audio: bytes) -> dict[str, str]:
+                self.calls.append(audio)
+                return {"text": "decoded"}
+
+        fake_pipeline = FakeAsrPipeline()
+        signature = utils.huggingface_pipeline_signature_auto_infer(
+            task="automatic-speech-recognition",
+            params={},
+        )
+        self.assertIsNotNone(signature)
+        assert signature is not None
+
+        meta = model_meta.ModelMetadata(
+            name="fake_asr",
+            env=model_env.ModelEnv(),
+            model_type="huggingface_pipeline",
+            signatures={"__call__": signature},
+        )
+
+        def mock_is_transformers_type(obj: Any, class_name: str) -> bool:
+            return obj is fake_pipeline and class_name == "AutomaticSpeechRecognitionPipeline"
+
+        with mock.patch.object(hf_handler_module, "_is_transformers_type", side_effect=mock_is_transformers_type):
+            custom_model = TransformersPipelineHandler.convert_as_custom_model(
+                raw_model=fake_pipeline,
+                model_meta=meta,
+            )
+
+            res = custom_model(pd.DataFrame({"audio": [b"fake audio"]}))  # type: ignore[operator]
+
+        pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+        self.assertIsInstance(res["outputs"][0], dict)
+        self.assertNotIsInstance(res["outputs"][0], list)
+        self.assertEqual(res["outputs"][0]["text"], "decoded")
+        self.assertEqual(fake_pipeline.calls, [b"fake audio"])
 
     def test_image_pipeline_bytes_to_pil_conversion(self) -> None:
         """Test that image pipelines correctly convert bytes to PIL Images."""

@@ -143,7 +143,11 @@ class SFFileSystem(fsspec.AbstractFileSystem):
         """
         state_dictionary = {_FILESYSTEM_KWARGS_KEY: self._kwargs}
 
-        return partial(self.__class__, **{_RECREATE_FROM_SERIALIZED: True}), (), state_dictionary
+        return (
+            partial(self.__class__, **{_RECREATE_FROM_SERIALIZED: True}),  # type: ignore[arg-type]
+            (),
+            state_dictionary,
+        )
 
     def __setstate__(self, state_dict: dict[str, Any]) -> None:
         """Sets the dictionary state at deserialization time, and rebuilds a snowflake connection.

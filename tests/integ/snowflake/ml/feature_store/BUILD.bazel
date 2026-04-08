@@ -48,6 +48,7 @@ py_test(
     srcs = [
         "feature_store_test.py",
     ],
+    imports = ["."],
     shard_count = 16,
     tags = [
         "feature:feature_store",
@@ -84,6 +85,7 @@ py_test(
     srcs = [
         "feature_store_large_scale_test.py",
     ],
+    imports = ["."],
     shard_count = 2,
     tags = [
         "feature:feature_store",
@@ -105,6 +107,7 @@ py_test(
     srcs = [
         "feature_store_dataset_perf_test.py",
     ],
+    imports = ["."],
     tags = [
         "feature:feature_store",
         "manual",  # Run manually due to large data size and long duration
@@ -123,6 +126,7 @@ py_test(
     srcs = [
         "feature_store_case_sensitivity_test.py",
     ],
+    imports = ["."],
     shard_count = 8,
     tags = [
         "feature:feature_store",
@@ -142,6 +146,7 @@ py_test(
     srcs = [
         "feature_store_access_test.py",
     ],
+    imports = ["."],
     shard_count = 16,
     tags = [
         "feature:feature_store",
@@ -162,6 +167,7 @@ py_test(
     srcs = [
         "feature_store_compatibility_test.py",
     ],
+    imports = ["."],
     shard_count = 1,
     tags = [
         "feature:feature_store",
@@ -181,6 +187,7 @@ py_test(
     srcs = [
         "feature_sharing_test.py",
     ],
+    imports = ["."],
     tags = [
         "feature:feature_store",
         "short_regress",
@@ -199,6 +206,7 @@ py_test(
     srcs = [
         "feature_store_example_helper_test.py",
     ],
+    imports = ["."],
     tags = [
         "feature:feature_store",
         "short_regress",
@@ -218,6 +226,7 @@ py_test(
     srcs = [
         "feature_store_online_management_test.py",
     ],
+    imports = ["."],
     shard_count = 8,
     tags = [
         "feature:feature_store",
@@ -237,6 +246,7 @@ py_test(
     srcs = [
         "feature_store_online_read_refresh_test.py",
     ],
+    imports = ["."],
     shard_count = 8,
     tags = [
         "feature:feature_store",
@@ -256,6 +266,7 @@ py_test(
     srcs = [
         "feature_store_rollback_test.py",
     ],
+    imports = ["."],
     shard_count = 1,
     tags = [
         "feature:feature_store",
@@ -275,6 +286,7 @@ py_test(
     srcs = [
         "feature_store_stream_source_test.py",
     ],
+    imports = ["."],
     shard_count = 4,
     tags = [
         "feature:feature_store",
@@ -294,6 +306,7 @@ py_test(
     srcs = [
         "feature_store_tiled_aggregation_test.py",
     ],
+    imports = ["."],
     shard_count = 4,
     tags = [
         "feature:feature_store",
@@ -313,6 +326,7 @@ py_test(
     srcs = [
         "feature_store_rollup_test.py",
     ],
+    imports = ["."],
     shard_count = 4,
     tags = [
         "feature:feature_store",
@@ -332,7 +346,25 @@ py_test(
     srcs = [
         "feature_store_spec_oft_test.py",
     ],
+    imports = ["."],
     shard_count = 4,
+    tags = ["feature:feature_store"],
+    deps = [
+        ":common_utils",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_test(
+    name = "feature_store_streaming_fv_test",
+    timeout = "eternal",
+    srcs = [
+        "feature_store_streaming_fv_test.py",
+    ],
+    imports = ["."],
+    shard_count = 1,
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",

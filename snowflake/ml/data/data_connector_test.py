@@ -76,7 +76,7 @@ class DataConnectorTest(parameterized.TestCase):
         # Column 1 - scalar data: (data_loader_batch, native_batch, 1)
         # Column 2 - 2D numerical data: (data_loader_batch, native_batch, 2)
         dims = () + (data_loader_batch,) if data_loader_batch is not None else ()
-        dims = dims + (native_batch,) if native_batch is not None else dims
+        dims = dims + (native_batch,) if native_batch is not None else dims  # type: ignore[assignment]
 
         expected_data_dims = {
             "col1": torch.Size(dims + (2,)),

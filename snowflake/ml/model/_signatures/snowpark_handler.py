@@ -138,7 +138,7 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
 
         sp_df = sp_df.with_columns(column_names, columns)
 
-        return sp_df
+        return sp_df  # type: ignore[no-any-return]
 
     @staticmethod
     def _is_quoted_identifiers_ignore_case_enabled(

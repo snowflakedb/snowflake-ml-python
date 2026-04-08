@@ -1,7 +1,7 @@
 import json
 import logging
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from packaging import version
 
@@ -57,13 +57,11 @@ class PlatformCapabilities:
     def clear_mock_features(cls) -> None:
         cls._mock_features = None
 
-    # For contextmanager, we need to have return type Iterator[Never]. However, Never type is introduced only in
-    # Python 3.11. So, we are ignoring the type for this method.
     _dummy_features: dict[str, Any] = {"dummy": "dummy"}
 
-    @classmethod  # type: ignore[arg-type]
+    @classmethod
     @contextmanager
-    def mock_features(cls, features: dict[str, Any] = _dummy_features) -> None:  # type: ignore[misc]
+    def mock_features(cls, features: dict[str, Any] = _dummy_features) -> Iterator[None]:
         logger.debug(f"Setting mock features: {features}")
         cls.set_mock_features(features)
         try:

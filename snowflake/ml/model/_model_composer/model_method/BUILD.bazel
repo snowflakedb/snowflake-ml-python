@@ -47,7 +47,10 @@ py_test(
     data = [
         ":function_fixtures",
     ],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":function_generator",
         ":model_method",
@@ -78,7 +81,10 @@ py_test(
     data = [
         ":function_fixtures",
     ],
-    tags = ["feature:model_registry"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
     deps = [
         ":function_generator",
         ":model_method",

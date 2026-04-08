@@ -126,6 +126,7 @@ class _FeatureStoreObjTypes(Enum):
     FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
     TRAINING_DATA = "TRAINING_DATA"
     ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
+    UDF_TRANSFORMED_TABLE = "UDF_TRANSFORMED_TABLE"
     INTERNAL_METADATA_TABLE = "INTERNAL_METADATA_TABLE"
 
     @classmethod
@@ -174,6 +175,7 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("cluster_by", StringType()),
         StructField("online_config", StringType()),
         StructField("storage_config", StringType()),
+        StructField("stream_config", StringType()),
     ]
 )
 
@@ -616,6 +618,8 @@ class FeatureStore:
                 pass
 
         created_resources = []
+        streaming_preamble = None
+        streaming_ref_count_incremented = False
         try:
             fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
             refresh_freq = feature_view.refresh_freq
@@ -643,6 +647,35 @@ class FeatureStore:
                 desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
                 desc = "" if desc is None else f"COMMENT '{desc}'"
                 return f"{col.name} {desc}"
+
+            # Streaming preamble: create udf_transformed table, then complete FV initialization
+            if feature_view.is_streaming:
+                from snowflake.ml.feature_store.streaming_registration import (
+                    run_streaming_preamble,
+                )
+
+                streaming_preamble = run_streaming_preamble(
+                    session=self._session,
+                    feature_view=feature_view,
+                    version=version,
+                    feature_view_name=feature_view_name,
+                    overwrite=overwrite,
+                    metadata_manager=self._metadata_manager,
+                    telemetry_stmp=self._telemetry_stmp,
+                    get_stream_source_fn=self.get_stream_source,
+                    get_fully_qualified_name_fn=self._get_fully_qualified_name,
+                )
+                created_resources.append((_FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE, streaming_preamble.fq_udf_table))
+                created_resources.append(
+                    (_FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE, streaming_preamble.fq_backfill_table)
+                )
+
+                # Complete FeatureView initialization with the transformed schema.
+                # After this, feature_view.query, output_schema, feature_names all
+                # reflect the udf_transformed table — existing code paths work as-is.
+                udf_df = self._session.table(streaming_preamble.fq_udf_table)
+                feature_view._initialize_from_feature_df(udf_df)
+                feature_view._validate()
 
             # For tiled feature views, skip column definitions since the tiling query
             # produces different columns (TILE_START, partial aggregates)
@@ -680,6 +713,7 @@ class FeatureStore:
                 )
 
             # Step 2: Create online feature table if requested
+            # (for streaming FVs, the existing POSTGRES path builds the streaming spec internally)
             if feature_view.online:
                 online_table_name = self._create_online_feature_table(
                     feature_view, feature_view_name, version=str(version), overwrite=overwrite
@@ -708,13 +742,39 @@ class FeatureStore:
                 # Save specs and descs atomically in a single statement
                 self._metadata_manager.save_feature_view_metadata(feature_view.name, version, agg_metadata, descs)
 
+            # Step 4: Streaming postamble (metadata + ref_count + async backfill)
+            if streaming_preamble is not None:
+                from snowflake.ml.feature_store.streaming_registration import (
+                    run_streaming_postamble,
+                )
+
+                run_streaming_postamble(
+                    session=self._session,
+                    feature_view=feature_view,
+                    version=version,
+                    preamble=streaming_preamble,
+                    metadata_manager=self._metadata_manager,
+                )
+                streaming_ref_count_incremented = True
+
         except Exception as e:
             # We can't rollback in case of overwrite.
             if not overwrite:
                 self._rollback_created_resources(created_resources)
-                # Also cleanup metadata for tiled FVs (safe even if not saved yet)
-                if feature_view.is_tiled:
+                # Cleanup metadata (covers both tiled and streaming FVs)
+                if feature_view.is_tiled or streaming_preamble is not None:
                     self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), version)
+                # Only decrement ref_count if postamble successfully incremented it
+                if streaming_preamble is not None and streaming_ref_count_incremented:
+                    try:
+                        self._metadata_manager.decrement_stream_source_ref_count(
+                            streaming_preamble.resolved_source_name
+                        )
+                    except Exception as rollback_err:
+                        logger.warning(
+                            f"Best-effort rollback: failed to decrement stream source ref_count "
+                            f"for {streaming_preamble.resolved_source_name}: {rollback_err}"
+                        )
 
             if isinstance(e, snowml_exceptions.SnowflakeMLException):
                 raise
@@ -1545,6 +1605,24 @@ class FeatureStore:
                         f"Failed to delete online feature table {fully_qualified_online_name}: {e}"
                     ),
                 )
+
+        # Clean up streaming FV resources (udf_transformed table + ref count)
+        if feature_view.is_streaming:
+            from snowflake.ml.feature_store.streaming_registration import (
+                cleanup_streaming_feature_view,
+            )
+
+            feature_view_name = FeatureView._get_physical_name(feature_view.name, feature_view.version)
+            cleanup_streaming_feature_view(
+                session=self._session,
+                feature_view_name=feature_view_name,
+                version=str(feature_view.version),
+                fv_name=str(feature_view.name),
+                fv_metadata=feature_view._metadata(),
+                metadata_manager=self._metadata_manager,
+                get_fully_qualified_name_fn=self._get_fully_qualified_name,
+                telemetry_stmp=self._telemetry_stmp,
+            )
 
         # Delete aggregation metadata and feature descriptions if exist
         self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), str(feature_view.version))
@@ -2413,6 +2491,10 @@ class FeatureStore:
                     self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {resource_name}").collect(
                         statement_params=self._telemetry_stmp
                     )
+                elif resource_type == _FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE:
+                    self._session.sql(f"DROP TABLE IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
                 logger.info(f"Rollback: Successfully dropped {resource_type.value} {resource_name}")
             except Exception as rollback_error:
                 # Log but don't fail the rollback process
@@ -2813,19 +2895,18 @@ class FeatureStore:
         table_name = feature_view.fully_qualified_name()
 
         # Get join keys from entities
-        join_keys: list[str] = []
+        join_keys: list[SqlIdentifier] = []
         for entity in feature_view.entities:
-            join_keys.extend([str(k) for k in entity.join_keys])
+            join_keys.extend(entity.join_keys)
 
-        quoted_keys = [f'"{k}"' for k in join_keys]
-        quoted_keys_str = ", ".join(quoted_keys)
+        join_keys_str = ", ".join(join_keys)
 
         # Build WHERE clause for key filtering (if any)
         where_clause, _ = self._build_where_clause_for_keys(feature_view, keys)
 
         # Step 1: Create spine CTE with unique entities + CURRENT_TIMESTAMP
         spine_cte = f"""
-            SELECT DISTINCT {quoted_keys_str},
+            SELECT DISTINCT {join_keys_str},
                    CURRENT_TIMESTAMP() AS "_QUERY_TS"
             FROM {table_name}{where_clause}
         """
@@ -2838,7 +2919,7 @@ class FeatureStore:
         generator = MergingSqlGenerator(
             tile_table=table_name,
             join_keys=join_keys,
-            timestamp_col=str(feature_view.timestamp_col),
+            timestamp_col=feature_view.timestamp_col,
             feature_granularity=feature_view.feature_granularity,
             features=feature_view.aggregation_specs,
             spine_timestamp_col="_QUERY_TS",
@@ -2861,7 +2942,7 @@ class FeatureStore:
 
         feature_cols_str = ", ".join(all_feature_cols)
         # CTE name format matches generator: FV{index:03d}
-        final_select = f"SELECT {quoted_keys_str}, {feature_cols_str} FROM FV000"
+        final_select = f"SELECT {join_keys_str}, {feature_cols_str} FROM FV000"
 
         full_query = f"WITH {', '.join(cte_parts)} {final_select}"
         return self._session.sql(full_query)
@@ -3684,13 +3765,14 @@ class FeatureStore:
 
             # Handle tiled feature views using MergingSqlGenerator
             if feature_view.is_tiled and spine_timestamp_col is not None:
+                assert feature_timestamp_col is not None
                 generator = MergingSqlGenerator(
                     tile_table=feature_view.fully_qualified_name(),
-                    join_keys=[str(k) for k in fv_join_keys],
-                    timestamp_col=str(feature_timestamp_col),
+                    join_keys=fv_join_keys,
+                    timestamp_col=feature_timestamp_col,
                     feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
                     features=feature_view.aggregation_specs,  # type: ignore[arg-type]
-                    spine_timestamp_col=str(spine_timestamp_col),
+                    spine_timestamp_col=spine_timestamp_col,
                     fv_index=i,
                 )
                 # Add all CTEs from the merging generator
@@ -3703,10 +3785,15 @@ class FeatureStore:
                 spine_dedup_cols_set = set(fv_join_keys)
                 if spine_timestamp_col not in spine_dedup_cols_set:
                     spine_dedup_cols_set.add(spine_timestamp_col)
-                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in spine_dedup_cols_set)
+                spine_dedup_cols_str = ", ".join(col.identifier() for col in spine_dedup_cols_set)
 
                 # Build the JOIN condition using only this feature view's join keys
-                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+                join_conditions_dedup = [
+                    f"SPINE_DEDUP.{col.identifier()} = FEATURE.{col.identifier()}" for col in fv_join_keys
+                ]
+
+                quoted_spine_ts = spine_timestamp_col.identifier()
+                quoted_fv_ts = feature_timestamp_col.identifier()
 
                 if include_feature_view_timestamp_col:
                     f_ts_col_alias = identifier.concat_names(
@@ -3729,16 +3816,18 @@ class FeatureStore:
         SELECT {join_keys_str}, {feature_timestamp_col}, {feature_columns[i]}
         FROM {feature_view.fully_qualified_name()}
     ) FEATURE
-    MATCH_CONDITION (SPINE_DEDUP."{spine_timestamp_col}" >= FEATURE."{feature_timestamp_col}")
+    MATCH_CONDITION (SPINE_DEDUP.{quoted_spine_ts} >= FEATURE.{quoted_fv_ts})
     ON {" AND ".join(join_conditions_dedup)}
 )"""
                 )
             else:
                 # Build the deduplicated spine columns list (just join keys, no timestamp)
-                spine_dedup_cols_str = ", ".join(f'"{col}"' for col in fv_join_keys)
+                spine_dedup_cols_str = ", ".join(col.identifier() for col in fv_join_keys)
 
                 # Build the JOIN condition using only this feature view's join keys
-                join_conditions_dedup = [f'SPINE_DEDUP."{col}" = FEATURE."{col}"' for col in fv_join_keys]
+                join_conditions_dedup = [
+                    f"SPINE_DEDUP.{col.identifier()} = FEATURE.{col.identifier()}" for col in fv_join_keys
+                ]
 
                 ctes.append(
                     f"""{cte_name} AS (
@@ -3764,10 +3853,11 @@ class FeatureStore:
         for i, cte_name in enumerate(cte_names):
             feature_view = feature_views[i]
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
-            join_conditions = [f'SPINE."{col}" = {cte_name}."{col}"' for col in fv_join_keys]
+            join_conditions = [f"SPINE.{col.identifier()} = {cte_name}.{col.identifier()}" for col in fv_join_keys]
             # Only include spine timestamp in join condition if both spine and FV have timestamps
             if spine_timestamp_col is not None and feature_view.timestamp_col is not None:
-                join_conditions.append(f'SPINE."{spine_timestamp_col}" = {cte_name}."{spine_timestamp_col}"')
+                ts_id = spine_timestamp_col.identifier()
+                join_conditions.append(f"SPINE.{ts_id} = {cte_name}.{ts_id}")
 
             if (
                 include_feature_view_timestamp_col
@@ -3879,7 +3969,7 @@ FROM SPINE{' '.join(join_clauses)}
                 cols = feature.names
             else:
                 cols = feature.feature_names
-            feature_columns.append(", ".join(col.resolved() for col in cols))
+            feature_columns.append(", ".join(col.identifier() for col in cols))
         # TODO (SNOW-2396184): remove this check and the non-ASOF join path as ASOF join is enabled by default now.
         if self._asof_join_enabled is None:
             self._asof_join_enabled = self._is_asof_join_enabled()
@@ -3930,7 +4020,7 @@ FROM SPINE{' '.join(join_clauses)}
                         if prefix:
                             feature_cols_list = []
                             for col in cols:
-                                col_name = col.resolved()
+                                col_name = col.identifier()
                                 alias = identifier.concat_names([prefix, col_name])
                                 feature_cols_list.append(f"r_{layer}.{col_name} AS {alias}")
                             feature_cols_str = ", ".join(feature_cols_list)
@@ -3945,7 +4035,7 @@ FROM SPINE{' '.join(join_clauses)}
                             FROM ({query}) l_{layer}
                             ASOF JOIN (
                                 SELECT {join_keys_str}, {feature.timestamp_col},
-                                    {', '.join(col.resolved() for col in cols)}
+                                    {', '.join(col.identifier() for col in cols)}
                                 FROM {join_table_name}
                             ) r_{layer}
                             MATCH_CONDITION (l_{layer}.{spine_timestamp_col} >= r_{layer}.{feature.timestamp_col})
@@ -3968,7 +4058,7 @@ FROM SPINE{' '.join(join_clauses)}
                     if prefix:
                         feature_cols_list = []
                         for col in cols:
-                            col_name = col.resolved()
+                            col_name = col.identifier()
                             alias = identifier.concat_names([prefix, col_name])
                             feature_cols_list.append(f"r_{layer}.{col_name} AS {alias}")
                         feature_cols_str = ", ".join(feature_cols_list)
@@ -3981,7 +4071,7 @@ FROM SPINE{' '.join(join_clauses)}
                             {feature_cols_str}
                         FROM ({query}) l_{layer}
                         LEFT JOIN (
-                            SELECT {join_keys_str}, {', '.join(col.resolved() for col in cols)}
+                            SELECT {join_keys_str}, {', '.join(col.identifier() for col in cols)}
                             FROM {join_table_name}
                         ) r_{layer}
                         ON {' AND '.join([f'l_{layer}.{k} = r_{layer}.{k}' for k in join_keys])}
@@ -4442,6 +4532,27 @@ FROM SPINE{' '.join(join_clauses)}
             storage_config_json = _DEFAULT_STORAGE_CONFIG_JSON
         values.append(storage_config_json)
 
+        # Stream config from metadata table (only for streaming FVs).
+        # Schema: {"stream_source": str, "transformation_fn": str,
+        #          "backfill_start_time"?: str, "backfill_query_id"?: str}
+        if fv_metadata.is_streaming:
+            streaming_meta = self._metadata_manager.get_streaming_metadata(name, version)
+            if streaming_meta:
+                stream_config_data: dict[str, Any] = {
+                    "stream_source": streaming_meta.stream_source_name,
+                    "transformation_fn": streaming_meta.transformation_fn_name,
+                }
+                if streaming_meta.backfill_start_time is not None:
+                    stream_config_data["backfill_start_time"] = streaming_meta.backfill_start_time
+                if streaming_meta.backfill_query_id is not None:
+                    stream_config_data["backfill_query_id"] = streaming_meta.backfill_query_id
+                stream_config_json = json.dumps(stream_config_data)
+            else:
+                stream_config_json = json.dumps({"stream_source": "unknown"})
+        else:
+            stream_config_json = None
+        values.append(stream_config_json)
+
         output_values.append(values)
 
     def _determine_online_config_from_oft(
@@ -4636,7 +4747,15 @@ FROM SPINE{' '.join(join_clauses)}
                 storage_config=storage_config,
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
+                is_streaming=fv_metadata.is_streaming,
             )
+
+            # For streaming FVs, attach the function source from metadata
+            if fv_metadata.is_streaming:
+                streaming_meta = self._metadata_manager.get_streaming_metadata(name.identifier(), version)
+                if streaming_meta and streaming_meta.transformation_fn_source:
+                    fv._transformation_fn_source = streaming_meta.transformation_fn_source
+
             return fv
         else:
             df = self._session.sql(query)
@@ -4667,6 +4786,7 @@ FROM SPINE{' '.join(join_clauses)}
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
                 storage_config=storage_config,
+                is_streaming=fv_metadata.is_streaming,
             )
             return fv
 
@@ -4733,6 +4853,9 @@ FROM SPINE{' '.join(join_clauses)}
                 original_exception=ValueError("OnlineConfig is required to create online feature table"),
             )
         target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._DEFAULT_TARGET_LAG
+        # StreamingFeatureView OFTs require TARGET_LAG='0 seconds' for real-time serving
+        if feature_view.is_streaming:
+            target_lag_value = "0 seconds"
         target_lag_clause = f"TARGET_LAG='{target_lag_value}'"
 
         warehouse_clause = ""
@@ -4765,12 +4888,40 @@ FROM SPINE{' '.join(join_clauses)}
                     ),
                 ) from e
 
-            spec = self._build_batch_feature_view_spec(
-                feature_view=feature_view,
-                feature_view_name=feature_view_name,
-                version=version,
-                target_lag=target_lag_value,
-            )
+            if feature_view.is_streaming:
+                from snowflake.ml.feature_store.streaming_registration import (
+                    _build_streaming_feature_view_spec,
+                )
+
+                assert feature_view.stream_config is not None  # guaranteed by is_streaming
+                stream_source = self.get_stream_source(feature_view.stream_config.get_stream_source_name())
+
+                # For tiled streaming FVs, output_schema is the aggregated DT schema.
+                # We need the raw UDF_TRANSFORMED schema for the spec builder's feature resolution.
+                udf_table_name = FeatureView._get_udf_transformed_table_name(feature_view_name)
+                fq_udf_table = self._get_fully_qualified_name(udf_table_name)
+                if feature_view.is_tiled:
+                    udf_transformed_schema = self._session.table(fq_udf_table).schema
+                else:
+                    udf_transformed_schema = feature_view.output_schema
+
+                spec = _build_streaming_feature_view_spec(
+                    feature_view=feature_view,
+                    feature_view_name=feature_view_name,
+                    version=version,
+                    target_lag=target_lag_value,
+                    stream_source=stream_source,
+                    udf_transformed_schema=udf_transformed_schema,
+                    database=self._config.database.resolved(),
+                    schema=self._config.schema.resolved(),
+                )
+            else:
+                spec = self._build_batch_feature_view_spec(
+                    feature_view=feature_view,
+                    feature_view_name=feature_view_name,
+                    version=version,
+                    target_lag=target_lag_value,
+                )
             spec_json = spec.to_json()
             source_clause = f"FROM SPECIFICATION $${spec_json}$$"
         else:

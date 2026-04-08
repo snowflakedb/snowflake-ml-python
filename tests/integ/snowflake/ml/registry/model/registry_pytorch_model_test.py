@@ -263,6 +263,76 @@ class TestRegistryPytorchModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"multiple_inputs": True},
         )
 
+    def test_torchscript_with_params_forwarding(self) -> None:
+        """Params are forwarded to a TorchScript model's forward method."""
+
+        @torch.jit.script
+        def scaled_forward(
+            x: torch.Tensor, weight: torch.Tensor, bias: torch.Tensor, scale: float = 1.0
+        ) -> torch.Tensor:
+            return (x @ weight.t() + bias) * scale
+
+        class ScaledModel(torch.nn.Module):
+            def __init__(self) -> None:
+                super().__init__()
+                self.linear = torch.nn.Linear(10, 1, dtype=torch.float64)
+
+            # `scale` is the keyword argument under test: it should be forwarded
+            # from ParamSpec through the handler to the model's forward method.
+            def forward(self, tensor: torch.Tensor, scale: float = 1.0) -> torch.Tensor:
+                return scaled_forward(tensor, self.linear.weight, self.linear.bias, scale)
+
+        model = ScaledModel()
+        model.eval()
+        model_script = torch.jit.script(model)
+
+        data_x = torch.rand(100, 10, dtype=torch.float64)
+        x_df = pytorch_handler.PyTorchTensorHandler.convert_to_df(data_x, ensure_serializable=False)
+        y_default = model_script.forward(data_x).detach()
+        y_scaled = model_script.forward(data_x, scale=2.0).detach()
+
+        sig = model_signature.infer_signature(
+            data_x,
+            y_default,
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+
+        name = "model_test_torchscript_params_forwarding"
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=model_script,
+            model_name=name,
+            version_name=version,
+            sample_input_data=data_x,
+            conda_dependencies=conda_dependencies,
+            signatures={"forward": sig},
+            options={"embed_local_ml_library": True},
+        )
+
+        res_default = mv.run(x_df[:10], function_name="forward")
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(res_default),
+            y_default[:10],
+            check_dtype=False,
+        )
+
+        res_scaled = mv.run(x_df[:10], function_name="forward", params={"scale": 2.0})
+        torch.testing.assert_close(
+            pytorch_handler.PyTorchTensorHandler.convert_from_df(res_scaled),
+            y_scaled[:10],
+            check_dtype=False,
+        )
+
+        self.registry.delete_model(model_name=name)
+        self.assertNotIn(mv.model_name, [m.name for m in self.registry.models()])
+
     def test_pytorch_with_params_forwarding(self) -> None:
         """Params are forwarded to a PyTorch model's forward method."""
 

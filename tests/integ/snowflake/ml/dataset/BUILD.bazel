@@ -25,7 +25,6 @@ py_test(
     shard_count = 6,
     tags = [
         "feature:feature_store",
-        "short_regress",
     ],
     deps = [
         ":dataset_integ_test_base",
@@ -43,7 +42,6 @@ py_test(
     shard_count = 4,
     tags = [
         "feature:feature_store",
-        "short_regress",
     ],
     deps = [
         ":dataset_integ_test_base",

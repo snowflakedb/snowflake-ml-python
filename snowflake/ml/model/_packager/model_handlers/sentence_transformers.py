@@ -392,7 +392,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model = sentence_transformers.SentenceTransformer(
             model_blob_file_or_dir_path,
             device=cls._get_device_config(**kwargs),
-            **additional_kwargs,
+            **additional_kwargs,  # type: ignore[arg-type]
         )
         return model
 

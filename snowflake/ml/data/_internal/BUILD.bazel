@@ -15,7 +15,10 @@ py_library(
 py_test(
     name = "arrow_ingestor_test",
     srcs = ["arrow_ingestor_test.py"],
-    tags = ["feature:data"],
+    tags = [
+        "feature:data",
+        "short_regress",
+    ],
     deps = [
         ":arrow_ingestor",
         "//snowflake/ml/fileset:parquet_test_util",

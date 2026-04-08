@@ -27,6 +27,8 @@ class ParseIntervalTest(parameterized.TestCase):
         ("60s", 60, "SECOND"),
         ("60 seconds", 60, "SECOND"),
         ("  1h  ", 1, "HOUR"),  # whitespace handling
+        ("0s", 0, "SECOND"),
+        ("0 seconds", 0, "SECOND"),
     )
     def test_parse_interval_valid(self, interval: str, expected_value: int, expected_unit: str) -> None:
         """Test parse_interval with valid inputs."""
@@ -41,7 +43,6 @@ class ParseIntervalTest(parameterized.TestCase):
         "1",
         "1x",
         "-1h",
-        "0h",
     )
     def test_parse_interval_invalid(self, interval: str) -> None:
         """Test parse_interval with invalid inputs."""
@@ -156,6 +157,16 @@ class AggregationSpecTest(absltest.TestCase):
                 function=AggregationType.SUM,
                 source_column="amount",
                 window="invalid",
+                output_column="amount_sum",
+            )
+
+    def test_zero_window_raises(self) -> None:
+        """Test that zero-length aggregation window is rejected."""
+        with self.assertRaisesRegex(ValueError, "Aggregation window must be positive"):
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="0s",
                 output_column="amount_sum",
             )
 

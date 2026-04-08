@@ -97,6 +97,10 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_document_qa,
         )
 
+    @absltest.skip(
+        "Requires torch>=2.6 for torch.load with weights_only=True (CVE security fix). "
+        "Re-enable when inference image upgrades torch."
+    )
     def test_visual_question_answering(self) -> None:
         from transformers import pipeline
 
@@ -334,6 +338,10 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_object_detection,
         )
 
+    @absltest.skip(
+        "Requires torch>=2.6 for torch.load with weights_only=True (CVE security fix). "
+        "Re-enable when inference image upgrades torch."
+    )
     def test_zero_shot_image_classification(self) -> None:
         from transformers import pipeline
 

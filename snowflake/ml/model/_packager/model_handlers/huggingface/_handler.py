@@ -3,13 +3,10 @@ import json
 import logging
 import os
 import shutil
-import time
-import uuid
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
 import cloudpickle
-import numpy as np
 import pandas as pd
 from packaging import version
 from typing_extensions import TypeGuard, Unpack
@@ -23,6 +20,10 @@ from snowflake.ml.model import (
 )
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers.huggingface import (
+    _openai_chat_wrapper,
+    _utils as _hf_utils,
+)
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -42,47 +43,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    import torch
     import transformers
-
-
-def get_requirements_from_task(task: str, spcs_only: bool = False) -> list[model_env.ModelDependency]:
-    # Text
-    if task in [
-        "fill-mask",
-        "ner",
-        "token-classification",
-        "question-answering",
-        "summarization",
-        "table-question-answering",
-        "text-classification",
-        "sentiment-analysis",
-        "text-generation",
-        "text2text-generation",
-        "zero-shot-classification",
-    ] or task.startswith("translation"):
-        return (
-            [model_env.ModelDependency(requirement="tokenizers>=0.13.3", pip_name="tokenizers")]
-            if spcs_only
-            else [model_env.ModelDependency(requirement="tokenizers", pip_name="tokenizers")]
-        )
-
-    return []
-
-
-def _resolve_chat_params(row: pd.Series, kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Resolve chat completion params from kwargs (ParamSpec) or DataFrame row columns."""
-    src = kwargs if kwargs else row
-    return {
-        "max_completion_tokens": src.get("max_completion_tokens", None),
-        "temperature": src.get("temperature", None),
-        "stop_strings": src.get("stop", None),
-        "n": src.get("n", 1),
-        "stream": src.get("stream", False),
-        "top_p": src.get("top_p", 1.0),
-        "frequency_penalty": src.get("frequency_penalty", None),
-        "presence_penalty": src.get("presence_penalty", None),
-    }
 
 
 def _is_transformers_type(obj: Any, class_name: str) -> bool:
@@ -91,18 +52,6 @@ def _is_transformers_type(obj: Any, class_name: str) -> bool:
 
     cls = getattr(transformers, class_name, None)
     return cls is not None and isinstance(obj, cls)
-
-
-def sanitize_output(data: Any) -> Any:
-    if isinstance(data, np.number):
-        return data.item()
-    if isinstance(data, np.ndarray):
-        return sanitize_output(data.tolist())
-    if isinstance(data, list):
-        return [sanitize_output(x) for x in data]
-    if isinstance(data, dict):
-        return {k: sanitize_output(v) for k, v in data.items()}
-    return data
 
 
 @final
@@ -326,7 +275,7 @@ class TransformersPipelineHandler(
 
         pkgs_requirements = [
             model_env.ModelDependency(requirement="transformers>=4.32.1", pip_name="transformers"),
-        ] + get_requirements_from_task(
+        ] + _hf_utils.get_requirements_from_task(
             task, spcs_only=(not type_utils.LazyType("transformers.Pipeline").isinstance(model))
         )
         if framework is None or framework == "pt":
@@ -558,12 +507,12 @@ class TransformersPipelineHandler(
                         # if the signature is default text-generation signature
                         # then use the HuggingFaceOpenAICompatibleModel to wrap the pipeline
                         if signature in openai_signatures._OPENAI_CHAT_SIGNATURE_SPECS:
-                            wrapped_model = HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
+                            wrapped_model = _openai_chat_wrapper.HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
 
                             temp_res = X.apply(
                                 lambda row: wrapped_model.generate_chat_completion(
                                     messages=row["messages"],
-                                    **_resolve_chat_params(row, kwargs),
+                                    **_hf_utils._resolve_chat_params(row, kwargs),
                                 ),
                                 axis=1,
                             ).to_list()
@@ -671,8 +620,10 @@ class TransformersPipelineHandler(
                     #   - Conversation object
                     #       (legacy transformers <4.42) → wrap
                     #   - list[list[dict]] with FeatureGroupSpec → already correct, don't wrap
-                    _is_group_output = len(signature.outputs) == 1 and isinstance(
-                        signature.outputs[0], model_signature_core.FeatureGroupSpec
+                    _is_group_output = (
+                        len(signature.outputs) == 1
+                        and isinstance(signature.outputs[0], model_signature_core.FeatureGroupSpec)
+                        and signature.outputs[0]._shape is not None
                     )
                     # TODO (SNOW-3107908): Create subclass handlers for all tasks to keep it manageable.
                     _needs_wrap = (
@@ -708,9 +659,9 @@ class TransformersPipelineHandler(
                         res = pd.DataFrame(temp_res)
 
                     if hasattr(res, "map"):
-                        res = res.map(sanitize_output)
+                        res = res.map(_hf_utils.sanitize_output)
                     else:
-                        res = res.applymap(sanitize_output)
+                        res = res.applymap(_hf_utils.sanitize_output)
 
                     return model_signature_utils.rename_pandas_df(data=res, features=signature.outputs)
 
@@ -767,278 +718,3 @@ class TransformersPipelineHandler(
         hg_pipe_model = _HFPipelineModel(custom_model.ModelContext())
 
         return hg_pipe_model
-
-
-class HuggingFaceOpenAICompatibleModel:
-    """
-    A class to wrap a Hugging Face text generation model and provide an
-    OpenAI-compatible chat completion interface.
-    """
-
-    def __init__(self, pipeline: "transformers.Pipeline") -> None:
-        """
-        Initializes the model and tokenizer.
-
-        Args:
-            pipeline (transformers.pipeline): The Hugging Face pipeline to wrap.
-        """
-
-        self.pipeline = pipeline
-        self.model = self.pipeline.model
-        self.tokenizer = self.pipeline.tokenizer
-        self.model_name = self.pipeline.model.name_or_path
-
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-
-    def _apply_chat_template(self, messages: list[dict[str, Any]]) -> str:
-        """
-        Applies a chat template to a list of messages.
-
-        Args:
-            messages (list[dict]): A list of message dictionaries.
-
-        Returns:
-            The formatted prompt string ready for model input.
-        """
-
-        final_messages = []
-        for message in messages:
-            if isinstance(message.get("content", ""), str):
-                final_messages.append({"role": message.get("role", "user"), "content": message.get("content", "")})
-            else:
-                # extract only the text from the content
-                # sample data:
-                # {
-                #     "role": "user",
-                #     "content": [
-                #         {"type": "text", "text": "Hello, how are you?"}, # extracted
-                #         {"type": "image", "image": "https://example.com/image.png"}, # not extracted
-                #     ],
-                # }
-                for content_part in message.get("content", []):
-                    if content_part.get("type", "") == "text":
-                        final_messages.append(
-                            {"role": message.get("role", "user"), "content": content_part.get("text", "")}
-                        )
-                    # TODO: implement other content types
-
-        # Use the tokenizer's apply_chat_template method.
-        # We ensured a template exists in __init__.
-        if hasattr(self.tokenizer, "apply_chat_template"):
-            return self.tokenizer.apply_chat_template(  # type: ignore[no-any-return]
-                final_messages,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-
-        # Fallback for very old transformers without apply_chat_template
-        # Manually apply ChatML-like formatting
-        prompt = ""
-        for message in final_messages:
-            role = message.get("role", "user")
-            content = message.get("content", "")
-            prompt += f"<|im_start|>{role}\n{content}<|im_end|>\n"
-        prompt += "<|im_start|>assistant\n"
-        return prompt
-
-    def _get_stopping_criteria(self, stop_strings: list[str]) -> "transformers.StoppingCriteriaList":
-
-        import transformers
-
-        class StopStringsStoppingCriteria(transformers.StoppingCriteria):
-            def __init__(self, stop_strings: list[str], tokenizer: Any) -> None:
-                self.stop_strings = stop_strings
-                self.tokenizer = tokenizer
-
-            def __call__(self, input_ids: "torch.Tensor", scores: "torch.Tensor", **kwargs: Any) -> bool:
-                # Decode the generated text for each sequence
-                for i in range(input_ids.shape[0]):
-                    generated_text = self.tokenizer.decode(input_ids[i], skip_special_tokens=True)
-                    # Check if any stop string appears in the generated text
-                    for stop_str in self.stop_strings:
-                        if stop_str in generated_text:
-                            return True
-                return False
-
-        return transformers.StoppingCriteriaList([StopStringsStoppingCriteria(stop_strings, self.tokenizer)])
-
-    def generate_chat_completion(
-        self,
-        messages: list[dict[str, Any]],
-        max_completion_tokens: Optional[int] = None,
-        stream: Optional[bool] = False,
-        stop_strings: Optional[list[str]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        frequency_penalty: Optional[float] = None,
-        presence_penalty: Optional[float] = None,
-        n: int = 1,
-    ) -> dict[str, Any]:
-        """
-        Generates a chat completion response in an OpenAI-compatible format.
-
-        Args:
-            messages (list[dict]): A list of message dictionaries, e.g.,
-                                   [{"role": "system", "content": "You are a helpful assistant."},
-                                    {"role": "user", "content": "What is deep learning?"}]
-            max_completion_tokens (int): The maximum number of completion tokens to generate.
-            stop_strings (list[str]): A list of strings to stop generation.
-            temperature (float): The temperature for sampling. 0 means greedy decoding.
-            top_p (float): The top-p value for nucleus sampling.
-            stream (bool): Whether to stream the generation (not yet supported).
-            frequency_penalty (float): The frequency penalty for sampling (maps to repetition_penalty).
-            presence_penalty (float): The presence penalty for sampling (not directly supported).
-            n (int): The number of samples to generate.
-
-        Returns:
-            dict: An OpenAI-compatible dictionary representing the chat completion.
-        """
-        # Apply chat template to convert messages into a single prompt string
-        prompt_text = self._apply_chat_template(messages)
-
-        # Tokenize the prompt
-        inputs = self.tokenizer(
-            prompt_text,
-            return_tensors="pt",
-            padding=True,
-        ).to(self.model.device)
-        prompt_tokens = inputs.input_ids.shape[1]
-
-        if stream:
-            logger.warning(
-                "Streaming is not supported using transformers.Pipeline implementation. Ignoring stream=True."
-            )
-            stream = False
-
-        if presence_penalty is not None:
-            logger.warning(
-                "Presence penalty is not supported using transformers.Pipeline implementation."
-                " Ignoring presence_penalty."
-            )
-            presence_penalty = None
-
-        import transformers
-
-        transformers_version = version.parse(transformers.__version__)
-
-        # Stop strings are supported in transformers >= 4.43.0
-        can_handle_stop_strings = transformers_version >= version.parse("4.43.0")
-
-        # Determine sampling based on temperature (following serve.py logic)
-        # Default temperature to 1.0 if not specified
-        actual_temperature = temperature if temperature is not None else 1.0
-        do_sample = actual_temperature > 0.0
-
-        # Set up generation config following best practices from serve.py
-        generation_config = transformers.GenerationConfig(
-            max_new_tokens=max_completion_tokens if max_completion_tokens is not None else 1024,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            do_sample=do_sample,
-        )
-
-        # Only set temperature and top_p if sampling is enabled
-        if do_sample:
-            generation_config.temperature = actual_temperature
-            if top_p is not None:
-                generation_config.top_p = top_p
-
-        # Handle repetition penalty (mapped from frequency_penalty)
-        if frequency_penalty is not None:
-            # OpenAI's frequency_penalty is typically in range [-2.0, 2.0]
-            # HuggingFace's repetition_penalty is typically > 0, with 1.0 = no penalty
-            # We need to convert: frequency_penalty=0 -> repetition_penalty=1.0
-            # Higher frequency_penalty should increase repetition_penalty
-            generation_config.repetition_penalty = 1.0 + (frequency_penalty if frequency_penalty > 0 else 0)
-
-        # For multiple completions (n > 1), use sampling not beam search
-        if n > 1:
-            generation_config.num_return_sequences = n
-            # Force sampling on for multiple sequences
-            if not do_sample:
-                logger.warning("Forcing do_sample=True for n>1. Consider setting temperature > 0 for better diversity.")
-                generation_config.do_sample = True
-                generation_config.temperature = 1.0
-        else:
-            generation_config.num_return_sequences = 1
-
-        # Handle stop strings if provided
-        stopping_criteria = None
-        if stop_strings and not can_handle_stop_strings:
-            logger.warning("Stop strings are not supported in transformers < 4.41.0. Ignoring stop strings.")
-
-        if stop_strings and can_handle_stop_strings:
-            stopping_criteria = self._get_stopping_criteria(stop_strings)
-            output_ids = self.model.generate(
-                inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                generation_config=generation_config,
-                # Pass tokenizer for proper handling of stop strings
-                tokenizer=self.tokenizer,
-                stopping_criteria=stopping_criteria,
-            )
-        else:
-            output_ids = self.model.generate(
-                inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                generation_config=generation_config,
-            )
-
-        # Generate text
-        # Handle the case where output might be 1D if n=1
-        if output_ids.dim() == 1:
-            output_ids = output_ids.unsqueeze(0)
-
-        generated_texts = []
-        completion_tokens = 0
-        total_tokens = prompt_tokens
-
-        for output_id in output_ids:
-            # The output_ids include the input prompt
-            # Decode the generated text, excluding the input prompt
-            # so we slice to get only new tokens
-            generated_tokens = output_id[prompt_tokens:]
-            generated_text = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
-
-            # Trim stop strings from generated text if they appear
-            # The stop criteria would stop generating further tokens, so we need to trim the generated text
-            if stop_strings and can_handle_stop_strings:
-                for stop_str in stop_strings:
-                    if stop_str in generated_text:
-                        # Find the first occurrence and trim everything from there
-                        stop_idx = generated_text.find(stop_str)
-                        generated_text = generated_text[:stop_idx]
-                        break  # Stop after finding the first stop string
-
-            generated_texts.append(generated_text)
-
-            # Calculate completion tokens
-            completion_tokens += len(generated_tokens)
-            total_tokens += len(generated_tokens)
-
-        choices = []
-        for i, generated_text in enumerate(generated_texts):
-            choices.append(
-                {
-                    "index": i,
-                    "message": {"role": "assistant", "content": generated_text},
-                    "logprobs": None,  # Not directly supported in this basic implementation
-                    "finish_reason": "stop",  # Assuming stop for simplicity
-                }
-            )
-
-        # Construct OpenAI-compatible response
-        response = {
-            "id": f"chatcmpl-{uuid.uuid4().hex}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": self.model_name,
-            "choices": choices,
-            "usage": {
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": total_tokens,
-            },
-        }
-        return response

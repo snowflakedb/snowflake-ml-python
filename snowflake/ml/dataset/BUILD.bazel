@@ -33,7 +33,11 @@ py_library(
 py_test(
     name = "dataset_metadata_test",
     srcs = ["dataset_metadata_test.py"],
-    tags = ["feature:feature_store"],
+    imports = ["."],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":dataset",
         "//snowflake/ml/feature_store:feature_store_lib",
