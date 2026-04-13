@@ -197,24 +197,22 @@ class MLJobLauncherTests(parameterized.TestCase):
         # Even with pickling error, main() should still return the result directly
         self.assertEqual(str(result), "100")
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
-    def test_wait_for_instances_target_instances_one_or_less(self, mock_common_util: mock.MagicMock) -> None:
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
+    def test_wait_for_instances_target_instances_one_or_less(self, mock_get_num_ray_nodes: mock.MagicMock) -> None:
         """Test that wait_for_instances returns immediately when target_instances <= 1."""
         # Should return immediately without checking Ray nodes
         mljob_launcher.wait_for_instances(1, 1)
-        mock_common_util.get_num_ray_nodes.assert_not_called()
+        mock_get_num_ray_nodes.assert_not_called()
 
         # Test with target_instances = 0, which should raise ValueError
         with self.assertRaises(ValueError):
             mljob_launcher.wait_for_instances(1, 0)
-        mock_common_util.get_num_ray_nodes.assert_not_called()
+        mock_get_num_ray_nodes.assert_not_called()
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
-    def test_wait_for_instances_target_met_immediately(self, mock_common_util: mock.MagicMock) -> None:
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
+    def test_wait_for_instances_target_met_immediately(self, mock_get_num_ray_nodes: mock.MagicMock) -> None:
         """Test that wait_for_instances returns immediately when target instances are already available."""
-        mock_common_util.get_num_ray_nodes.return_value = 5
+        mock_get_num_ray_nodes.return_value = 5
 
         start_time = time.time()
         mljob_launcher.wait_for_instances(2, 5)
@@ -222,37 +220,35 @@ class MLJobLauncherTests(parameterized.TestCase):
 
         # Should return very quickly
         self.assertLess(elapsed, 0.1)
-        mock_common_util.get_num_ray_nodes.assert_called_once()
+        mock_get_num_ray_nodes.assert_called_once()
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
     @mock.patch("time.sleep")
     def test_wait_for_instances_target_met_after_wait(
-        self, mock_sleep: mock.MagicMock, mock_common_util: mock.MagicMock
+        self, mock_sleep: mock.MagicMock, mock_get_num_ray_nodes: mock.MagicMock
     ) -> None:
         """Test that wait_for_instances waits and returns when target instances become available."""
         # Simulate nodes becoming available over time (not enough minimum instances initially)
-        mock_common_util.get_num_ray_nodes.side_effect = [1, 2, 5]
+        mock_get_num_ray_nodes.side_effect = [1, 2, 5]
 
         mljob_launcher.wait_for_instances(2, 5, timeout=60, check_interval=10, min_wait_time=5)
 
         # Should have checked 3 times
-        self.assertEqual(mock_common_util.get_num_ray_nodes.call_count, 3)
+        self.assertEqual(mock_get_num_ray_nodes.call_count, 3)
         # Should have slept twice (between checks)
         self.assertEqual(mock_sleep.call_count, 2)
         # Check exponential backoff: first sleep is 1s, second is 2s
         mock_sleep.assert_any_call(1)
         mock_sleep.assert_any_call(2)
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
     @mock.patch("time.sleep")
     def test_wait_for_instances_minimum_met_after_min_wait_time(
-        self, mock_sleep: mock.MagicMock, mock_common_util: mock.MagicMock
+        self, mock_sleep: mock.MagicMock, mock_get_num_ray_nodes: mock.MagicMock
     ) -> None:
         """Test that wait_for_instances returns when minimum instances are met after min_wait_time."""
         # Simulate having enough minimum instances but not target instances
-        mock_common_util.get_num_ray_nodes.return_value = 3
+        mock_get_num_ray_nodes.return_value = 3
 
         # Mock time.time to simulate elapsed time > min_wait_time
         with mock.patch("time.time") as mock_time:
@@ -263,23 +259,22 @@ class MLJobLauncherTests(parameterized.TestCase):
             mljob_launcher.wait_for_instances(2, 5, min_wait_time=5, timeout=60, check_interval=10)
 
         # Should have checked once and returned
-        self.assertEqual(mock_common_util.get_num_ray_nodes.call_count, 1)
+        self.assertEqual(mock_get_num_ray_nodes.call_count, 1)
         mock_sleep.assert_not_called()
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
     @mock.patch("time.sleep")
     def test_wait_for_instances_exponential_backoff(
-        self, mock_sleep: mock.MagicMock, mock_common_util: mock.MagicMock
+        self, mock_sleep: mock.MagicMock, mock_get_num_ray_nodes: mock.MagicMock
     ) -> None:
         """Test that wait_for_instances uses exponential backoff up to max check_interval."""
         # Simulate nodes never becoming available until the end
-        mock_common_util.get_num_ray_nodes.side_effect = [1, 1, 1, 1, 1, 5]
+        mock_get_num_ray_nodes.side_effect = [1, 1, 1, 1, 1, 5]
 
         mljob_launcher.wait_for_instances(2, 5, timeout=60, check_interval=8)
 
         # Should have checked 6 times
-        self.assertEqual(mock_common_util.get_num_ray_nodes.call_count, 6)
+        self.assertEqual(mock_get_num_ray_nodes.call_count, 6)
         # Should have slept 5 times (between checks)
         self.assertEqual(mock_sleep.call_count, 5)
 
@@ -295,13 +290,14 @@ class MLJobLauncherTests(parameterized.TestCase):
 
         self.assertIn("Minimum instances (5) cannot be greater than target instances (3)", str(cm.exception))
 
-    @mock.patch.dict("sys.modules", {"common_utils": mock.MagicMock()})
-    @mock.patch("common_utils.common_util")
+    @mock.patch.object(mljob_launcher, "get_num_ray_nodes")
     @mock.patch("time.sleep")
-    def test_wait_for_instances_timeout(self, mock_sleep: mock.MagicMock, mock_common_util: mock.MagicMock) -> None:
+    def test_wait_for_instances_timeout(
+        self, mock_sleep: mock.MagicMock, mock_get_num_ray_nodes: mock.MagicMock
+    ) -> None:
         """Test that wait_for_instances raises TimeoutError when timeout is reached."""
         # Simulate nodes never becoming available
-        mock_common_util.get_num_ray_nodes.return_value = 1
+        mock_get_num_ray_nodes.return_value = 1
 
         with mock.patch("time.time") as mock_time:
             # Simulate timeout being reached

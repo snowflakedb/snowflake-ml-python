@@ -64,6 +64,7 @@ class Job(BaseModel):
     input: Input
     output: Output
     replicas: Optional[int] = None
+    sync: Optional[bool] = None
     inference_engine_spec: Optional[InferenceEngineSpec] = None
 
 

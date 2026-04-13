@@ -351,6 +351,131 @@ class ValidateParamsTest(absltest.TestCase):
             param_utils.validate_params({"config": {"lr": 0.1, "LR": 0.2}}, signature_params)
         self.assertIn("duplicate case-insensitive key", str(ctx.exception))
 
+    def test_shaped_param_group_spec_valid_fixed_length(self) -> None:
+        """Test validation passes for a shaped ParamGroupSpec with fixed-length list of dicts."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        param_utils.validate_params({"configs": [{"lr": 0.1}, {"lr": 0.2}]}, signature_params)
+
+    def test_shaped_param_group_spec_valid_variable_length(self) -> None:
+        """Test validation passes for a shaped ParamGroupSpec with variable-length dimension (-1)."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(-1,),
+            ),
+        ]
+        param_utils.validate_params({"configs": [{"lr": 0.1}]}, signature_params)
+        param_utils.validate_params({"configs": [{"lr": 0.1}, {"lr": 0.2}, {"lr": 0.3}]}, signature_params)
+        param_utils.validate_params({"configs": []}, signature_params)
+
+    def test_shaped_param_group_spec_valid_multi_dimensional(self) -> None:
+        """Test validation passes for a multi-dimensional shaped ParamGroupSpec."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="matrix",
+                specs=[core.ParamSpec(name="val", dtype=core.DataType.INT32, default_value=0)],
+                shape=(2, 3),
+            ),
+        ]
+        param_utils.validate_params(
+            {
+                "matrix": [
+                    [{"val": 1}, {"val": 2}, {"val": 3}],
+                    [{"val": 4}, {"val": 5}, {"val": 6}],
+                ]
+            },
+            signature_params,
+        )
+
+    def test_shaped_param_group_spec_none_value(self) -> None:
+        """Test that None is valid for a shaped ParamGroupSpec param."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        param_utils.validate_params({"configs": None}, signature_params)
+
+    def test_shaped_param_group_spec_not_a_list(self) -> None:
+        """Test error when a non-list value is provided for a shaped ParamGroupSpec."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"configs": {"lr": 0.1}}, signature_params)
+        self.assertIn("expected a list", str(ctx.exception))
+
+    def test_shaped_param_group_spec_wrong_length(self) -> None:
+        """Test error when list length doesn't match the fixed shape dimension."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"configs": [{"lr": 0.1}]}, signature_params)
+        self.assertIn("expected length 2", str(ctx.exception))
+
+    def test_shaped_param_group_spec_invalid_leaf_dict(self) -> None:
+        """Test error when a leaf dict inside a valid shape structure has invalid content."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(-1,),
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"configs": [{"lr": 0.1}, {"bad_key": 0.2}]}, signature_params)
+        self.assertIn("Unknown key(s)", str(ctx.exception))
+        self.assertIn("configs[1]", str(ctx.exception))
+
+    def test_shaped_param_group_spec_leaf_not_dict(self) -> None:
+        """Test error when a leaf in a shaped structure is not a dict."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params({"configs": [{"lr": 0.1}, "not_a_dict"]}, signature_params)
+        self.assertIn("expected a dict", str(ctx.exception))
+        self.assertIn("configs[1]", str(ctx.exception))
+
+    def test_shaped_param_group_spec_multi_dim_wrong_inner_length(self) -> None:
+        """Test error for wrong inner dimension length in a multi-dimensional shape."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="matrix",
+                specs=[core.ParamSpec(name="val", dtype=core.DataType.INT32, default_value=0)],
+                shape=(2, 3),
+            ),
+        ]
+        with self.assertRaises(exceptions.SnowflakeMLException) as ctx:
+            param_utils.validate_params(
+                {"matrix": [[{"val": 1}, {"val": 2}], [{"val": 3}, {"val": 4}, {"val": 5}]]},
+                signature_params,
+            )
+        self.assertIn("expected length 3", str(ctx.exception))
+        self.assertIn("matrix[0]", str(ctx.exception))
+
 
 class ResolveParamsTest(absltest.TestCase):
     """Tests for resolve_params function."""
@@ -616,6 +741,91 @@ class ResolveParamsTest(absltest.TestCase):
         result_dict = {str(name): value for name, value in result}
         self.assertEqual(result_dict["TEMPERATURE"], 0.5)
         self.assertEqual(result_dict["CONFIG"], {"top_k": 10})
+
+    def test_shaped_param_group_spec_defaults(self) -> None:
+        """Test that shaped ParamGroupSpec defaults are resolved as nested lists of dicts."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[
+                    core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                    core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                ],
+                shape=(2,),
+            ),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(
+            result_dict["CONFIGS"],
+            [{"lr": 0.01, "momentum": 0.9}, {"lr": 0.01, "momentum": 0.9}],
+        )
+
+    def test_shaped_param_group_spec_variable_length_defaults(self) -> None:
+        """Test that variable-length shaped ParamGroupSpec defaults to an empty list."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(-1,),
+            ),
+        ]
+        result = param_utils.resolve_params(None, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["CONFIGS"], [])
+
+    def test_shaped_param_group_spec_full_override(self) -> None:
+        """Test that a list override fully replaces the shaped ParamGroupSpec default."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[
+                    core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                    core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                ],
+                shape=(2,),
+            ),
+        ]
+        override = [{"lr": 0.1, "momentum": 0.5}, {"lr": 0.2, "momentum": 0.8}]
+        result = param_utils.resolve_params({"configs": override}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertEqual(result_dict["CONFIGS"], override)
+
+    def test_shaped_param_group_spec_none_override(self) -> None:
+        """Test that None override replaces the shaped ParamGroupSpec default."""
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)],
+                shape=(2,),
+            ),
+        ]
+        result = param_utils.resolve_params({"configs": None}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        self.assertIsNone(result_dict["CONFIGS"])
+
+    def test_shaped_param_group_spec_no_deep_merge(self) -> None:
+        """Test that shaped ParamGroupSpec list overrides are NOT deep-merged.
+
+        Unlike unshaped ParamGroupSpec (where partial dicts are merged with defaults),
+        list overrides fully replace the default. Users must provide complete dicts
+        for each element.
+        """
+        signature_params = [
+            core.ParamGroupSpec(
+                name="configs",
+                specs=[
+                    core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01),
+                    core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9),
+                ],
+                shape=(-1,),
+            ),
+        ]
+        partial_override = [{"lr": 0.1}]
+        result = param_utils.resolve_params({"configs": partial_override}, signature_params)
+        result_dict = {str(name): value for name, value in result}
+        # List override replaces entirely — no deep merge fills in "momentum"
+        self.assertEqual(result_dict["CONFIGS"], [{"lr": 0.1}])
 
 
 class ValidateAndResolveParamsTest(absltest.TestCase):

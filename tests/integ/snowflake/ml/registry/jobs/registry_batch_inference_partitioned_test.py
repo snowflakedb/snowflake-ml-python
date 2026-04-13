@@ -309,11 +309,6 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             os.environ.pop("TRANSFORMERS_CACHE", None)
         cls.cache_dir.cleanup()
 
-    def setUp(self) -> None:
-        super().setUp()
-        if not self._has_image_override():
-            self.skipTest("Skipping: image override env vars not set.")
-
     def _compare_with_warehouse(
         self,
         output_stage_location: str,

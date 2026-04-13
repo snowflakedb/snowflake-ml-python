@@ -9,6 +9,40 @@ py_library(
 )
 
 py_library(
+    name = "batch_inference_serialization",
+    srcs = ["batch_inference_serialization.py"],
+    deps = [
+        ":batch_inference_specs",
+    ],
+)
+
+py_library(
+    name = "batch_inference_definition",
+    srcs = ["batch_inference_definition.py"],
+    deps = [
+        ":batch_inference_serialization",
+        ":batch_inference_specs",
+        ":model_version_impl",
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+    ],
+)
+
+py_test(
+    name = "batch_inference_definition_test",
+    srcs = ["batch_inference_definition_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":batch_inference_definition",
+        ":batch_inference_specs",
+        "//snowflake/ml/model:inference_engine",
+    ],
+)
+
+py_library(
     name = "model_impl",
     srcs = ["model_impl.py"],
     deps = [

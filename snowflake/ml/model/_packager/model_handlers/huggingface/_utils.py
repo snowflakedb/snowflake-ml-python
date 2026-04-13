@@ -48,6 +48,14 @@ def _resolve_chat_params(row: pd.Series, kwargs: dict[str, Any]) -> dict[str, An
     }
 
 
+def is_transformers_type(obj: Any, class_name: str) -> bool:
+    """Safely check isinstance against a transformers class that may not exist in all versions."""
+    import transformers
+
+    cls = getattr(transformers, class_name, None)
+    return cls is not None and isinstance(obj, cls)
+
+
 def sanitize_output(data: Any) -> Any:
     if isinstance(data, np.number):
         return data.item()

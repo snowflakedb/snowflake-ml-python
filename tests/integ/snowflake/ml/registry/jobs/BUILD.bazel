@@ -57,6 +57,17 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_definition_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_definition_test.py"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/batch",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_failure_mode_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_failure_mode_test.py"],

@@ -300,6 +300,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 input_file_pattern="*",
                 column_handling=None,
                 params=None,
+                block=False,
             )
             file_path_str = mds.save()
 
@@ -335,6 +336,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                                 "output_stage_location": "output_stage_location",
                                 "completion_filename": "completion_filename",
                             },
+                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
                         },
                     },
                 )
@@ -364,6 +366,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 output_stage_location="output_stage_location",
                 completion_filename="completion_filename",
                 input_file_pattern="*",
+                block=False,
             )
             file_path_str = mds.save()
 
@@ -394,6 +397,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                                 "output_stage_location": "output_stage_location",
                                 "completion_filename": "completion_filename",
                             },
+                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
                         },
                     },
                 )
@@ -421,6 +425,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 output_stage_location="output_stage_location",
                 completion_filename="completion_filename",
                 input_file_pattern="*",
+                block=False,
             )
             file_path_str = mds.save()
 
@@ -624,6 +629,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 input_file_pattern="*",
                 column_handling=None,
                 params=None,
+                block=False,
             )
 
         mds_job = model_deployment_spec.ModelDeploymentSpec()
@@ -645,6 +651,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             column_handling=None,
             params=None,
             num_workers=1,
+            block=False,
         )
         with self.assertRaisesRegex(ValueError, "Cannot add a service spec when a job spec already exists"):
             mds_job.add_service_spec(
@@ -883,6 +890,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 warehouse=sql_identifier.SqlIdentifier("warehouse"),
                 gpu="4",
                 replicas=2,
+                block=False,
             )
             mds.add_inference_engine_spec(
                 inference_engine=inference_engine.InferenceEngine.VLLM,
@@ -916,6 +924,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                                 "completion_filename": "_SUCCESS",
                             },
                             "replicas": 2,
+                            # TODO(SNOW-3321349): Add "sync": False once server-side support is rolled out.
                             "inference_engine_spec": {
                                 "inference_engine_name": "vllm",
                                 "inference_engine_args": [
@@ -966,6 +975,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
             completion_filename="_SUCCESS",
             input_file_pattern="*.parquet",
             warehouse=sql_identifier.SqlIdentifier("warehouse"),
+            block=False,
         )
         mds.add_inference_engine_spec(
             inference_engine=inference_engine.InferenceEngine.VLLM,
@@ -1015,6 +1025,7 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 column_handling=None,
                 params=None,
                 partition_columns=["PARTITION_COL"],
+                block=False,
             )
             file_path_str = mds.save()
 

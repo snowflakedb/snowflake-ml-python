@@ -86,14 +86,88 @@ def _validate_param_group_value(
         group_spec: The ParamGroupSpec defining the expected structure.
         value: The user-provided value to validate.
         param_path: Dot-separated path for error messages (e.g., "config.sampling").
-
-    Raises:
-        SnowflakeMLException: If the value is not a dict, contains unknown keys,
-            or child values fail type validation.
     """
     if value is None:
         return
 
+    # Shaped groups (e.g. shape=(2,)) represent a list of dicts.
+    # Validate by recursively unwrapping list dimensions first,
+    # then checking each leaf dict against the spec's children.
+    if group_spec.shape is not None:
+        _validate_shaped_param_group_value(group_spec, value, param_path, group_spec.shape)
+        return
+
+    # Unshaped groups represent a single dict — validate directly.
+    _validate_param_group_dict(group_spec, value, param_path)
+
+
+def _validate_shaped_param_group_value(
+    group_spec: core.ParamGroupSpec,
+    value: Any,
+    param_path: str,
+    remaining_shape: tuple[int, ...],
+) -> None:
+    """Validate a shaped ParamGroupSpec value by unwrapping list dimensions.
+
+    Each dimension in the shape corresponds to one level of list nesting.
+    Once all dimensions are unwrapped, each leaf is validated as a dict.
+
+    Args:
+        group_spec: The ParamGroupSpec defining the expected structure.
+        value: The user-provided value to validate.
+        param_path: Path for error messages (e.g., "config.items[0][2]").
+            May include both dot-separated segments and bracket indices.
+        remaining_shape: Remaining shape dimensions to unwrap.
+
+    Raises:
+        SnowflakeMLException: If the value structure doesn't match the shape.
+    """
+    # All shape dimensions consumed — validate the leaf value as a dict.
+    if not remaining_shape:
+        _validate_param_group_dict(group_spec, value, param_path)
+        return
+
+    # Current dimension expects a list wrapper.
+    if not isinstance(value, list):
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Parameter '{param_path}' expected a list (shape={group_spec.shape}), " f"got {type(value).__name__}."
+            ),
+        )
+
+    # -1 means variable length (skip length check); otherwise enforce exact match.
+    expected_len = remaining_shape[0]
+    if expected_len != -1 and len(value) != expected_len:
+        raise exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Parameter '{param_path}' expected length {expected_len}, got {len(value)}."
+            ),
+        )
+
+    # Recurse into each element with the next dimension.
+    for i, elem in enumerate(value):
+        _validate_shaped_param_group_value(group_spec, elem, f"{param_path}[{i}]", remaining_shape[1:])
+
+
+def _validate_param_group_dict(
+    group_spec: core.ParamGroupSpec,
+    value: Any,
+    param_path: str,
+) -> None:
+    """Validate that a value is a dict matching the group spec's children.
+
+    Args:
+        group_spec: The ParamGroupSpec defining the expected structure.
+        value: The user-provided value to validate.
+        param_path: Dot-separated path for error messages (e.g., "config.sampling").
+
+    Raises:
+        SnowflakeMLException: If the value is not a dict, contains unknown keys,
+            non-string keys, duplicate case-insensitive keys, or child values
+            fail type validation.
+    """
     if not isinstance(value, dict):
         raise exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,

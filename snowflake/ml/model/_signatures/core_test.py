@@ -1050,6 +1050,53 @@ ModelSignature(
         self.assertIsInstance(sig.params[0], core.ParamSpec)
         self.assertEqual(sig.params[0].default_value, 1.0)
 
+    def test_param_spec_from_mlflow_spec_preserves_shape(self) -> None:
+        """Test that ParamSpec.from_mlflow_spec forwards shape from MLflow."""
+        import mlflow
+
+        param = mlflow.types.ParamSpec("ids", mlflow.types.DataType.long, [1, 2, 3], (-1,))
+
+        result = core.ParamSpec.from_mlflow_spec(param)
+
+        self.assertIsInstance(result, core.ParamSpec)
+        self.assertEqual(result.name, "ids")
+        self.assertEqual(result.dtype, core.DataType.INT64)
+        self.assertEqual(result.default_value, [1, 2, 3])
+        self.assertEqual(result.shape, (-1,))
+
+    def test_param_spec_from_mlflow_spec_scalar_shape_is_none(self) -> None:
+        """Test that ParamSpec.from_mlflow_spec preserves None shape for scalars."""
+        import mlflow
+
+        param = mlflow.types.ParamSpec("temperature", mlflow.types.DataType.double, 1.0)
+
+        result = core.ParamSpec.from_mlflow_spec(param)
+
+        self.assertIsNone(result.shape)
+        self.assertEqual(result.default_value, 1.0)
+
+    def test_from_mlflow_sig_with_shaped_scalar_param(self) -> None:
+        """Test from_mlflow_sig with shaped scalar param."""
+        import mlflow
+
+        input_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "x")])
+        output_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "y")])
+        param_schema = mlflow.types.ParamSchema(
+            [
+                mlflow.types.ParamSpec("ids", mlflow.types.DataType.long, [1, 2, 3], (-1,)),
+                mlflow.types.ParamSpec("temperature", mlflow.types.DataType.double, 1.0),
+            ]
+        )
+
+        mlflow_sig = mlflow.models.ModelSignature(inputs=input_schema, outputs=output_schema, params=param_schema)
+        sig = core.ModelSignature.from_mlflow_sig(mlflow_sig)
+
+        self.assertEqual(len(sig.params), 2)
+        self.assertEqual(sig.params[0].shape, (-1,))
+        self.assertEqual(sig.params[0].default_value, [1, 2, 3])
+        self.assertEqual(sig.params[1].shape, None)
+        self.assertEqual(sig.params[1].default_value, 1.0)
+
 
 class ConvertMlflowColTypeTest(absltest.TestCase):
     """Tests for _convert_mlflow_col_type."""

@@ -6,6 +6,7 @@ py_library(
     name = "batch",
     srcs = ["__init__.py"],
     deps = [
+        "//snowflake/ml/model/_client/model:batch_inference_definition",
         "//snowflake/ml/model/_client/model:batch_inference_specs",
     ],
 )

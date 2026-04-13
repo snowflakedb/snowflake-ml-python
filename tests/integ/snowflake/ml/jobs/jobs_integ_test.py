@@ -909,6 +909,77 @@ class JobManagerTest(JobTestBase):
         self.assertEqual(job.status, "DONE", job.get_logs(verbose=True))
         self.assertIn(expected_string, job.get_logs(verbose=True))
 
+    def test_spec_overrides_disallowed_keys_warns(self) -> None:
+        """spec_overrides with unsupported keys at spec or container level should log warnings."""
+        with self.assertLogs("snowflake.ml.jobs.job_definition", level="WARNING") as log:
+
+            @jobs.remote(
+                self.compute_pool,
+                stage_name="payload_stage",
+                session=self.session,
+                spec_overrides={
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": constants.DEFAULT_CONTAINER_NAME,
+                                "image": f"{constants.DEFAULT_IMAGE_REPO}/{constants.DEFAULT_IMAGE_CPU}:1.7.1",
+                                "args": [
+                                    "bash",
+                                    "/mnt/job_stage/system/startup.sh",
+                                ],
+                            }
+                        ],
+                        "volumes": [{"name": "data-volume", "source": "memory"}],
+                        "endpoints": [{"name": "my-endpoint", "port": 8080}],
+                    }
+                },
+            )
+            def test_function() -> None:
+                return None
+
+        # Both spec-level and container-level unsupported keys should have triggered warnings
+        combined = "\n".join(log.output)
+        self.assertIn("volumes", combined)  # spec-level disallowed key
+        self.assertIn("endpoints", combined)  # spec-level disallowed key
+        self.assertIn("image", combined)  # container-level disallowed key
+        self.assertIn("args", combined)  # container-level disallowed key
+
+    def test_spec_overrides_allowed_keys_passes(self) -> None:
+        """spec_overrides with only name and secrets should not trigger any warning.
+
+        We use a non-existent secret intentionally. The failure will come from Snowflake
+        (SnowparkSQLException) not from our validation, which confirms that
+        spec_overrides with only allowed keys is accepted by our code.
+        """
+
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            session=self.session,
+            spec_overrides={
+                "spec": {
+                    "containers": [
+                        {
+                            "name": constants.DEFAULT_CONTAINER_NAME,
+                            "secrets": [
+                                {
+                                    "snowflakeSecret": "NONEXISTENT_SECRET_FOR_VALIDATION_TEST",
+                                    "envVarName": "TEST_SECRET_ENV_VAR",
+                                    "secretKeyRef": "secret_string",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            },
+        )
+        def test_function() -> None:
+            return None
+
+        # Our validation passes; the error (if any) comes from Snowflake, not our code.
+        with self.assertRaises(sp_exceptions.SnowparkSQLException):
+            test_function()
+
     def test_submit_job_fully_qualified_name(self) -> None:
         temp_schema = self.dbm.create_random_schema(prefix=f"{test_constants._TEST_SCHEMA}_EXT")
         self.dbm.use_schema(self.schema)  # Stay on default schema

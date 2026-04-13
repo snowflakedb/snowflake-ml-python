@@ -129,5 +129,5 @@ class FeatureFlags:
     ENABLE_RUNTIME_VERSIONS = _FeatureFlag("MLRS_ENABLE_RUNTIME_VERSIONS", default=True)
     ENABLE_STAGE_MOUNT_V2 = _FeatureFlag(
         "MLRS_ENABLE_STAGE_MOUNT_V2",
-        default=_enabled_in_clouds(SnowflakeCloudType.GCP),
+        default=True,
     )

@@ -1,6 +1,22 @@
 # Release History
 
-## 1.34.0
+## 1.35.0
+
+### New Features
+
+### Bug Fixes
+
+* Registry: Fixed `ParamSpec.from_mlflow_spec` dropping `shape`, which caused shaped scalar params
+  (e.g., array of ints) from MLflow to fail validation during model import.
+
+### Behavior Changes
+
+* ML Jobs: `spec_overrides` now validates container keys and warns when keys other than `name` and `secrets`
+  are provided. Additional keys are not officially supported and may not behave as expected.
+
+### Deprecations
+
+## 1.34.0 (2026-04-08)
 
 ### New Features
 

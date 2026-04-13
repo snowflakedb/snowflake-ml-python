@@ -1,5 +1,3 @@
-import io
-import json
 import logging
 import os
 import shutil
@@ -12,18 +10,10 @@ from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
-from snowflake.ml.model import (
-    custom_model,
-    model_signature,
-    openai_signatures,
-    type_hints as model_types,
-)
+from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
-from snowflake.ml.model._packager.model_handlers.huggingface import (
-    _openai_chat_wrapper,
-    _utils as _hf_utils,
-)
+from snowflake.ml.model._packager.model_handlers.huggingface import _utils as _hf_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -45,13 +35,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import transformers
 
-
-def _is_transformers_type(obj: Any, class_name: str) -> bool:
-    """Safely check isinstance against a transformers class that may not exist in all versions."""
-    import transformers
-
-    cls = getattr(transformers, class_name, None)
-    return cls is not None and isinstance(obj, cls)
+    from snowflake.ml.model._packager.model_handlers.huggingface._task_handler import (
+        HuggingFaceTaskHandler,
+    )
 
 
 @final
@@ -468,217 +454,6 @@ class TransformersPipelineHandler(
 
         from snowflake.ml.model import custom_model
 
-        def _create_custom_model(
-            raw_model: "transformers.Pipeline",
-            model_meta: model_meta_api.ModelMetadata,
-        ) -> type[custom_model.CustomModel]:
-            def fn_factory(
-                raw_model: "transformers.Pipeline",
-                signature: model_signature.ModelSignature,
-                target_method: str,
-            ) -> Callable[..., pd.DataFrame]:
-                @custom_model._internal_inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
-                    # These zero-shot pipelines cannot take a list of dict as input like other multi input
-                    # pipelines, thus dealing separately.
-                    if (
-                        _is_transformers_type(raw_model, "ZeroShotAudioClassificationPipeline")
-                        or _is_transformers_type(raw_model, "ZeroShotClassificationPipeline")
-                        or _is_transformers_type(raw_model, "ZeroShotImageClassificationPipeline")
-                        or _is_transformers_type(raw_model, "ZeroShotObjectDetectionPipeline")
-                    ):
-
-                        def process_zero_shot_row(row: pd.Series) -> Any:
-                            input_val = row[signature.inputs[0].name]
-                            # Convert bytes to PIL for image-based zero-shot pipelines
-                            if _is_transformers_type(
-                                raw_model, "ZeroShotImageClassificationPipeline"
-                            ) or _is_transformers_type(raw_model, "ZeroShotObjectDetectionPipeline"):
-                                from PIL import Image
-
-                                input_val = Image.open(io.BytesIO(input_val))
-                            return getattr(raw_model, target_method)(
-                                input_val, candidate_labels=row["candidate_labels"]
-                            )
-
-                        temp_res = X.apply(process_zero_shot_row, axis=1).to_list()
-                    elif raw_model.task == "text-generation":
-                        # verify when the target method is __call__ and
-                        # if the signature is default text-generation signature
-                        # then use the HuggingFaceOpenAICompatibleModel to wrap the pipeline
-                        if signature in openai_signatures._OPENAI_CHAT_SIGNATURE_SPECS:
-                            wrapped_model = _openai_chat_wrapper.HuggingFaceOpenAICompatibleModel(pipeline=raw_model)
-
-                            temp_res = X.apply(
-                                lambda row: wrapped_model.generate_chat_completion(
-                                    messages=row["messages"],
-                                    **_hf_utils._resolve_chat_params(row, kwargs),
-                                ),
-                                axis=1,
-                            ).to_list()
-                        else:
-                            if len(signature.inputs) > 1:
-                                input_data = X.to_dict("records")
-                            # If it is only expecting one argument, Then it is expecting a list of something.
-                            else:
-                                input_data = X[signature.inputs[0].name].to_list()
-                            temp_res = getattr(raw_model, target_method)(input_data)
-                    elif _is_transformers_type(raw_model, "ImageClassificationPipeline"):
-                        # Image classification expects PIL Images. Convert bytes to PIL Images.
-                        from PIL import Image
-
-                        input_col = signature.inputs[0].name
-                        images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
-                        temp_res = getattr(raw_model, target_method)(images)
-                    elif (
-                        _is_transformers_type(raw_model, "ImageToTextPipeline")
-                        or _is_transformers_type(raw_model, "ImageFeatureExtractionPipeline")
-                        or _is_transformers_type(raw_model, "ObjectDetectionPipeline")
-                        or _is_transformers_type(raw_model, "DocumentQuestionAnsweringPipeline")
-                        or _is_transformers_type(raw_model, "VisualQuestionAnsweringPipeline")
-                    ):
-                        # Image pipelines that need bytes→PIL conversion.
-                        # HuggingFace's load_image() does not accept raw bytes.
-                        from PIL import Image
-
-                        input_col = signature.inputs[0].name
-                        if len(signature.inputs) > 1:
-                            # Multi-input: convert image bytes to PIL, pass other columns as-is
-                            def process_image_row(row: pd.Series) -> Any:
-                                pil_image = Image.open(io.BytesIO(row[input_col]))
-                                kwargs = {k: row[k] for k in row.index if k != input_col}
-                                return getattr(raw_model, target_method)(pil_image, **kwargs)
-
-                            temp_res = X.apply(process_image_row, axis=1).to_list()
-                        else:
-                            # Single-input: convert all image bytes to PIL
-                            images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
-                            temp_res = getattr(raw_model, target_method)(images)
-                    elif _is_transformers_type(raw_model, "AutomaticSpeechRecognitionPipeline"):
-                        # ASR pipeline accepts a single audio input (bytes, str, np.ndarray, or dict),
-                        # not a list. Process each audio input individually.
-                        input_col = signature.inputs[0].name
-                        audio_inputs = X[input_col].to_list()
-                        temp_res = [getattr(raw_model, target_method)(audio) for audio in audio_inputs]
-                    elif _is_transformers_type(raw_model, "VideoClassificationPipeline"):
-                        # Video classification expects file paths. Write bytes to temp files,
-                        # process them, and clean up.
-                        import tempfile
-
-                        input_col = signature.inputs[0].name
-                        video_bytes_list = X[input_col].to_list()
-                        temp_file_paths = []
-                        temp_files = []
-                        try:
-                            # TODO: parallelize this if needed
-                            for video_bytes in video_bytes_list:
-                                temp_file = tempfile.NamedTemporaryFile()
-                                temp_file.write(video_bytes)
-                                temp_file_paths.append(temp_file.name)
-                                temp_files.append(temp_file)
-                            temp_res = getattr(raw_model, target_method)(temp_file_paths)
-                        finally:
-                            for f in temp_files:
-                                f.close()
-                    else:
-                        # TODO: remove conversational pipeline code
-                        # For others, we could offer the whole dataframe as a list.
-                        # Some of them may need some conversion
-                        if _is_transformers_type(raw_model, "ConversationalPipeline"):
-                            input_data = [
-                                transformers.Conversation(
-                                    text=conv_data["user_inputs"][0],
-                                    past_user_inputs=conv_data["user_inputs"][1:],
-                                    generated_responses=conv_data["generated_responses"],
-                                )
-                                for conv_data in X.to_dict("records")
-                            ]
-                        else:
-                            if _is_transformers_type(raw_model, "TableQuestionAnsweringPipeline"):
-                                X["table"] = X["table"].apply(json.loads)
-
-                            # Most pipelines if it is expecting more than one arguments,
-                            # it is expecting a list of dict, where each dict has keys corresponding to the argument.
-                            if len(signature.inputs) > 1:
-                                input_data = X.to_dict("records")
-                            # If it is only expecting one argument, Then it is expecting a list of something.
-                            else:
-                                input_data = X[signature.inputs[0].name].to_list()
-                        temp_res = getattr(raw_model, target_method)(input_data)
-
-                    # Some huggingface pipelines omit the outer list when there is only 1 input,
-                    # making the output not aligned with the auto-inferred signature.
-                    #
-                    # Expected output shape is list[result], one result per input row.
-                    # When the outer list is dropped for a single input we need to re-wrap.
-                    #
-                    # Cases:
-                    #   - bare dict
-                    #       (e.g. text-classification → {"label": ..., "score": ...}) → wrap
-                    #   - list[dict] with FeatureGroupSpec output
-                    #       (e.g. fill-mask → [{"token": "a"}, {"token": "b"}]) → outer list was dropped, wrap
-                    #   - Conversation object
-                    #       (legacy transformers <4.42) → wrap
-                    #   - list[list[dict]] with FeatureGroupSpec → already correct, don't wrap
-                    _is_group_output = (
-                        len(signature.outputs) == 1
-                        and isinstance(signature.outputs[0], model_signature_core.FeatureGroupSpec)
-                        and signature.outputs[0]._shape is not None
-                    )
-                    # TODO (SNOW-3107908): Create subclass handlers for all tasks to keep it manageable.
-                    _needs_wrap = (
-                        isinstance(temp_res, dict)
-                        or _is_transformers_type(temp_res, "Conversation")
-                        or (
-                            X.shape[0] == 1
-                            and _is_group_output
-                            and isinstance(temp_res, list)
-                            and len(temp_res) > 0
-                            and not isinstance(temp_res[0], list)
-                        )
-                    )
-                    if _needs_wrap:
-                        temp_res = [temp_res]
-
-                    if len(temp_res) == 0:
-                        return pd.DataFrame()
-
-                    if _is_transformers_type(raw_model, "ConversationalPipeline"):
-                        temp_res = [[conv.generated_responses] for conv in temp_res]
-
-                    # To concat those who outputs a list with one input.
-                    # if `signature.outputs` is single valued and is a FeatureGroupSpec,
-                    # we create a DataFrame with one column and the values are stored as a dictionary.
-                    # Otherwise, we create a DataFrame with the output as the column.
-                    if len(signature.outputs) == 1 and isinstance(
-                        signature.outputs[0], model_signature_core.FeatureGroupSpec
-                    ):
-                        # creating a dataframe with one column
-                        res = pd.DataFrame({signature.outputs[0].name: temp_res})
-                    else:
-                        res = pd.DataFrame(temp_res)
-
-                    if hasattr(res, "map"):
-                        res = res.map(_hf_utils.sanitize_output)
-                    else:
-                        res = res.applymap(_hf_utils.sanitize_output)
-
-                    return model_signature_utils.rename_pandas_df(data=res, features=signature.outputs)
-
-                return fn
-
-            type_method_dict: dict[str, Any] = {"_allows_kwargs": True}
-            for target_method_name, sig in model_meta.signatures.items():
-                type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
-
-            _HFPipelineModel = type(
-                "_HFPipelineModel",
-                (custom_model.CustomModel,),
-                type_method_dict,
-            )
-
-            return _HFPipelineModel
-
         if isinstance(raw_model, huggingface_pipeline.HuggingFacePipelineModel) or isinstance(
             raw_model, huggingface_base.TransformersPipeline
         ):
@@ -718,3 +493,140 @@ class TransformersPipelineHandler(
         hg_pipe_model = _HFPipelineModel(custom_model.ModelContext())
 
         return hg_pipe_model
+
+
+_ZERO_SHOT_TASKS = frozenset(
+    {
+        "zero-shot-audio-classification",
+        "zero-shot-classification",
+        "zero-shot-image-classification",
+        "zero-shot-object-detection",
+    }
+)
+
+_VISION_TASKS = frozenset(
+    {
+        "image-classification",
+        "image-to-text",
+        "image-feature-extraction",
+        "object-detection",
+        "document-question-answering",
+        "visual-question-answering",
+    }
+)
+
+
+def _get_task_handler(raw_model: "transformers.Pipeline") -> "HuggingFaceTaskHandler":
+    """Return the appropriate task handler for the given pipeline.
+
+    Args:
+        raw_model: The HuggingFace pipeline to select a handler for.
+
+    Returns:
+        A HuggingFaceTaskHandler instance for the pipeline.
+    """
+    from snowflake.ml.model._packager.model_handlers.huggingface import (
+        _default,
+        conversational,
+        speech,
+        text_generation,
+        video,
+        vision,
+        zero_shot,
+    )
+
+    if raw_model.task == "text-generation":
+        return text_generation.TextGenerationTaskHandler()
+
+    if raw_model.task in _ZERO_SHOT_TASKS:
+        return zero_shot.ZeroShotTaskHandler()
+
+    if raw_model.task in _VISION_TASKS:
+        return vision.VisionTaskHandler()
+
+    if raw_model.task == "automatic-speech-recognition":
+        return speech.SpeechTaskHandler()
+
+    if raw_model.task == "video-classification":
+        return video.VideoTaskHandler()
+
+    if raw_model.task == "conversational":
+        return conversational.ConversationalTaskHandler()
+
+    return _default.DefaultTaskHandler()
+
+
+def _postprocess_result(
+    temp_res: list[Any],
+    signature: model_signature.ModelSignature,
+) -> pd.DataFrame:
+    """Shared post-processing: build DataFrame, sanitize numpy types, rename columns."""
+    if len(temp_res) == 0:
+        return pd.DataFrame()
+
+    if len(signature.outputs) == 1 and isinstance(signature.outputs[0], model_signature_core.FeatureGroupSpec):
+        res = pd.DataFrame({signature.outputs[0].name: temp_res})
+    else:
+        res = pd.DataFrame(temp_res)
+
+    if hasattr(res, "map"):
+        res = res.map(_hf_utils.sanitize_output)
+    else:
+        res = res.applymap(_hf_utils.sanitize_output)
+
+    return model_signature_utils.rename_pandas_df(data=res, features=signature.outputs)
+
+
+def _fn_factory(
+    raw_model: "transformers.Pipeline",
+    signature: model_signature.ModelSignature,
+    target_method: str,
+) -> Callable[..., pd.DataFrame]:
+    """Create an inference function for the given pipeline, signature, and target method.
+
+    Dispatches to the appropriate HuggingFaceTaskHandler based on the pipeline type,
+    then applies shared post-processing.
+
+    Args:
+        raw_model: The HuggingFace pipeline.
+        signature: The model signature for this method.
+        target_method: The pipeline method to call.
+
+    Returns:
+        A callable inference function.
+    """
+    task_handler = _get_task_handler(raw_model)
+
+    @custom_model._internal_inference_api
+    def fn(self: custom_model.CustomModel, X: pd.DataFrame, **kwargs: Any) -> pd.DataFrame:
+        temp_res = task_handler.run_inference(raw_model, signature, target_method, X, **kwargs)
+
+        if task_handler._needs_list_wrapping(raw_model, signature, temp_res, X.shape[0]):
+            temp_res = [temp_res]
+
+        if len(temp_res) == 0:
+            return pd.DataFrame()
+
+        temp_res = task_handler._format_result(raw_model, temp_res)
+
+        return _postprocess_result(temp_res, signature)
+
+    return fn
+
+
+def _create_custom_model(
+    raw_model: "transformers.Pipeline",
+    model_meta: model_meta_api.ModelMetadata,
+) -> type[custom_model.CustomModel]:
+    """Dynamically create a CustomModel subclass with inference methods for each signature."""
+    type_method_dict: dict[str, Any] = {"_allows_kwargs": True}
+    for target_method_name, sig in model_meta.signatures.items():
+        type_method_dict[target_method_name] = _fn_factory(raw_model, sig, target_method_name)
+
+    _HFPipelineModel = type(
+        "_HFPipelineModel",
+        (custom_model.CustomModel,),
+        type_method_dict,
+    )
+
+    return _HFPipelineModel

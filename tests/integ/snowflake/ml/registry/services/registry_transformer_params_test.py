@@ -3,7 +3,7 @@
 Tests that ParamSpec parameters (temperature, n, stop, etc.) are correctly
 handled across all invocation paths: mv.run, REST flat, REST split, REST records.
 
-Uses TinyLlama (supports both object and string content formats) so both
+Uses SmolLM2-135M-Instruct (supports both object and string content formats) so both
 ParamSpec signatures are tested. Deploys one model per (engine × logging × signature)
 combination, then reuses each across subtests covering full/partial/default params,
 extra columns, and invalid inputs.
@@ -31,7 +31,7 @@ from tests.integ.snowflake.ml.registry.services import (
 
 logger = logging.getLogger(__name__)
 
-_TINY_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+_SMALL_MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
 
 # All OpenAI params — n=2 so we can verify params actually reach the model
 # (2 choices in response proves n was honoured).
@@ -212,7 +212,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
         model = huggingface.TransformersPipeline(
             task="text-generation",
-            model=_TINY_MODEL,
+            model=_SMALL_MODEL,
             compute_pool_for_log=compute_pool_for_log,
         )
         messages = _get_messages(signature)
