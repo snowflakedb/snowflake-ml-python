@@ -10,13 +10,13 @@ too_many_cols, too_few_cols, extra_cols).
 
 Coverage matrix (38 subtests + 7 TODO, 2 deployments):
 
-    Invocation   | full | partial | default | none* | invalid_name | invalid_type | too_many | too_few | extra_cols
-    -------------|------|---------|---------|-------|--------------|--------------|----------|---------|----------
-    mv.run       |  Y   |   Y     |   Y     |  Y*   | Y (VE)       |   Y (VE)     |   N/A    |  N/A    |   N/A
-    REST flat    |  Y   |   Y     |   Y     |  Y*   |    N/A       |   Y (400)    |  Y (400) | Y (400) |   N/A
-    REST split   |  Y   |   Y     |   Y     |  Y*   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
-    REST records |  Y   |   Y     |   Y     |  Y*   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
-    REST wide    |  Y   |   Y     |   Y     |  Y*   |   TODO†      |   Y (400)    |  TODO†   |  N/A    |   N/A
+    Invocation   | full | partial | default | none | invalid_name | invalid_type | too_many | too_few | extra_cols
+    -------------|------|---------|---------|------|--------------|--------------|----------|---------|----------
+    mv.run       |  Y   |   Y     |   Y     |  Y   | Y (VE)       |   Y (VE)     |   N/A    |  N/A    |   N/A
+    REST flat    |  Y   |   Y     |   Y     |  Y   |    N/A       |   Y (400)    |  Y (400) | Y (400) |   N/A
+    REST split   |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
+    REST records |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    | Y (200)
+    REST wide    |  Y   |   Y     |   Y     |  Y   |   TODO†      |   Y (400)    |  TODO†   |  N/A    |   N/A
 
     † = commented out — server currently ignores silently instead of returning 400
 
@@ -24,8 +24,6 @@ Coverage matrix (38 subtests + 7 TODO, 2 deployments):
     - mv.run / multi_row_with_params: params applied consistently across all rows
     - REST flat / varying_params_across_rows: TODO† — should reject varying rows
     - REST wide / trailing_positional_params: params after feature dict use defaults
-
-    * = conditional on _has_image_override()
 """
 
 import datetime
@@ -50,6 +48,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_TIMESTAMP = datetime.datetime(2024, 1, 1, 12, 0, 0)
 _DEFAULT_WEIGHTS = [1.0, 2.0, 3.0]
 _DEFAULT_NESTED_LIST = [[1, 2], [3, 4]]
+_DEFAULT_MODELS = [{"name": "default", "weight": 1}, {"name": "default", "weight": 1}]
 
 
 def _format_timestamp(dt: datetime.datetime) -> str:
@@ -136,12 +135,25 @@ _FULL_PARAMS: dict[str, Any] = {
     "timestamp_param": datetime.datetime(2025, 1, 2, 3, 4, 5),
     "weights_param": [4.5, 3.5, 2.5],
     "nested_list": [[4, 3], [2, 1]],
+    "config": {
+        "temperature": 2.0,
+        "top_k": 10,
+        "use_cache": False,
+        "stop_token": "STOP",
+        "penalties": [0.9, 0.1],
+        "sampling": {"seed": 123, "strategy": "beam"},
+        "models": [{"name": "fast", "weight": 10}, {"name": "slow", "weight": 5}],
+    },
 }
 
 _PARTIAL_PARAMS: dict[str, Any] = {
     "timestamp_param": datetime.datetime(2025, 1, 2, 3, 4, 5),
     "weights_param": [4.5, 3.5, 2.5],
     "nested_list": [[4, 3], [2, 1]],
+    "config": {
+        "temperature": 3.0,
+        "sampling": {"strategy": "beam"},
+    },
 }
 
 _NONE_PARAMS: dict[str, Any] = {
@@ -191,6 +203,14 @@ _DEFAULT_EXPECTED: dict[str, Any] = {
     "received_timestamp": _DEFAULT_TIMESTAMP_STR,
     "received_weights": _DEFAULT_WEIGHTS,
     "received_nested_list": _DEFAULT_NESTED_LIST,
+    "received_temperature": 1.0,
+    "received_top_k": 50,
+    "received_use_cache": True,
+    "received_stop_token": "END",
+    "received_penalties": [0.5, 0.3],
+    "received_seed": 42,
+    "received_strategy": "greedy",
+    "received_models": _DEFAULT_MODELS,
 }
 
 _FULL_EXPECTED: dict[str, Any] = {
@@ -214,6 +234,14 @@ _FULL_EXPECTED: dict[str, Any] = {
     "received_timestamp": _format_timestamp(datetime.datetime(2025, 1, 2, 3, 4, 5)),
     "received_weights": [4.5, 3.5, 2.5],
     "received_nested_list": [[4, 3], [2, 1]],
+    "received_temperature": 2.0,
+    "received_top_k": 10,
+    "received_use_cache": False,
+    "received_stop_token": "STOP",
+    "received_penalties": [0.9, 0.1],
+    "received_seed": 123,
+    "received_strategy": "beam",
+    "received_models": [{"name": "fast", "weight": 10}, {"name": "slow", "weight": 5}],
 }
 
 _PARTIAL_EXPECTED: dict[str, Any] = {
@@ -221,30 +249,52 @@ _PARTIAL_EXPECTED: dict[str, Any] = {
     "received_timestamp": _format_timestamp(datetime.datetime(2025, 1, 2, 3, 4, 5)),
     "received_weights": [4.5, 3.5, 2.5],
     "received_nested_list": [[4, 3], [2, 1]],
+    # Deep merge results: temperature overridden, sampling.strategy overridden,
+    # everything else (top_k, use_cache, stop_token, penalties, sampling.seed) keeps defaults
+    "received_temperature": 3.0,
+    "received_top_k": 50,
+    "received_use_cache": True,
+    "received_stop_token": "END",
+    "received_penalties": [0.5, 0.3],
+    "received_seed": 42,
+    "received_strategy": "beam",
+}
+
+_DEFAULT_CONFIG: dict[str, Any] = {
+    "temperature": 1.0,
+    "top_k": 50,
+    "use_cache": True,
+    "stop_token": "END",
+    "penalties": [0.5, 0.3],
+    "sampling": {"seed": 42, "strategy": "greedy"},
+    "models": _DEFAULT_MODELS,
 }
 
 # JSON-serializable version of all param defaults (bytes as hex, datetime as ISO).
 # Flat format requires ALL columns present, so this is used to fill missing columns.
-_REST_DEFAULT_PARAMS: dict[str, Any] = _serialize_for_rest(
-    {
-        "int8_param": 1,
-        "int16_param": 2,
-        "int32_param": 3,
-        "int64_param": 4,
-        "uint8_param": 5,
-        "uint16_param": 6,
-        "uint32_param": 7,
-        "uint64_param": 8,
-        "float_param": 1.5,
-        "double_param": 2.5,
-        "bool_param": True,
-        "string_param": "default",
-        "bytes_param": b"default",
-        "timestamp_param": _DEFAULT_TIMESTAMP,
-        "weights_param": _DEFAULT_WEIGHTS,
-        "nested_list": _DEFAULT_NESTED_LIST,
-    }
-)
+_REST_DEFAULT_PARAMS: dict[str, Any] = {
+    **_serialize_for_rest(
+        {
+            "int8_param": 1,
+            "int16_param": 2,
+            "int32_param": 3,
+            "int64_param": 4,
+            "uint8_param": 5,
+            "uint16_param": 6,
+            "uint32_param": 7,
+            "uint64_param": 8,
+            "float_param": 1.5,
+            "double_param": 2.5,
+            "bool_param": True,
+            "string_param": "default",
+            "bytes_param": b"default",
+            "timestamp_param": _DEFAULT_TIMESTAMP,
+            "weights_param": _DEFAULT_WEIGHTS,
+            "nested_list": _DEFAULT_NESTED_LIST,
+        }
+    ),
+    "config": _DEFAULT_CONFIG,
+}
 
 # ---------------------------------------------------------------------------
 # Wide model param variants (different model, different signature)
@@ -318,10 +368,14 @@ class ModelWithAllDataTypes(custom_model.CustomModel):
         timestamp_param: datetime.datetime = _DEFAULT_TIMESTAMP,
         weights_param: list[float] = _DEFAULT_WEIGHTS,
         nested_list: list[list[int]] = _DEFAULT_NESTED_LIST,
+        config: dict = _DEFAULT_CONFIG,  # noqa: B006
     ) -> pd.DataFrame:
         n = len(input)
         bytes_val = bytes_param.hex().upper() if isinstance(bytes_param, bytes) else bytes_param
         ts_val = _format_timestamp(_normalize_timestamp(timestamp_param))
+        cfg = config or {}
+        sampling = cfg.get("sampling", {}) or {}
+        models = cfg.get("models", _DEFAULT_MODELS)
         return pd.DataFrame(
             {
                 "input_value": input["value"].tolist(),
@@ -343,6 +397,14 @@ class ModelWithAllDataTypes(custom_model.CustomModel):
                 "received_timestamp": [ts_val] * n,
                 "received_weights": [weights_param] * n,
                 "received_nested_list": [nested_list] * n,
+                "received_temperature": [cfg.get("temperature", 1.0)] * n,
+                "received_top_k": [cfg.get("top_k", 50)] * n,
+                "received_use_cache": [cfg.get("use_cache", True)] * n,
+                "received_stop_token": [cfg.get("stop_token", "END")] * n,
+                "received_penalties": [cfg.get("penalties", [0.5, 0.3])] * n,
+                "received_seed": [sampling.get("seed", 42)] * n,
+                "received_strategy": [sampling.get("strategy", "greedy")] * n,
+                "received_models": [models] * n,
             }
         )
 
@@ -429,6 +491,23 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 model_signature.FeatureSpec(
                     name="received_nested_list", dtype=model_signature.DataType.INT64, shape=(2, 2)
                 ),
+                model_signature.FeatureSpec(name="received_temperature", dtype=model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec(name="received_top_k", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="received_use_cache", dtype=model_signature.DataType.BOOL),
+                model_signature.FeatureSpec(name="received_stop_token", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(
+                    name="received_penalties", dtype=model_signature.DataType.DOUBLE, shape=(2,)
+                ),
+                model_signature.FeatureSpec(name="received_seed", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="received_strategy", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureGroupSpec(
+                    name="received_models",
+                    specs=[
+                        model_signature.FeatureSpec(name="name", dtype=model_signature.DataType.STRING),
+                        model_signature.FeatureSpec(name="weight", dtype=model_signature.DataType.INT64),
+                    ],
+                    shape=(2,),
+                ),
             ],
             params=[
                 model_signature.ParamSpec(name="int8_param", dtype=model_signature.DataType.INT8, default_value=1),
@@ -466,6 +545,50 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                     dtype=model_signature.DataType.INT64,
                     default_value=_DEFAULT_NESTED_LIST,
                     shape=(2, 2),
+                ),
+                model_signature.ParamGroupSpec(
+                    name="config",
+                    specs=[
+                        model_signature.ParamSpec(
+                            name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=1.0
+                        ),
+                        model_signature.ParamSpec(name="top_k", dtype=model_signature.DataType.INT64, default_value=50),
+                        model_signature.ParamSpec(
+                            name="use_cache", dtype=model_signature.DataType.BOOL, default_value=True
+                        ),
+                        model_signature.ParamSpec(
+                            name="stop_token", dtype=model_signature.DataType.STRING, default_value="END"
+                        ),
+                        model_signature.ParamSpec(
+                            name="penalties",
+                            dtype=model_signature.DataType.DOUBLE,
+                            default_value=[0.5, 0.3],
+                            shape=(2,),
+                        ),
+                        model_signature.ParamGroupSpec(
+                            name="sampling",
+                            specs=[
+                                model_signature.ParamSpec(
+                                    name="seed", dtype=model_signature.DataType.INT64, default_value=42
+                                ),
+                                model_signature.ParamSpec(
+                                    name="strategy", dtype=model_signature.DataType.STRING, default_value="greedy"
+                                ),
+                            ],
+                        ),
+                        model_signature.ParamGroupSpec(
+                            name="models",
+                            specs=[
+                                model_signature.ParamSpec(
+                                    name="name", dtype=model_signature.DataType.STRING, default_value="default"
+                                ),
+                                model_signature.ParamSpec(
+                                    name="weight", dtype=model_signature.DataType.INT64, default_value=1
+                                ),
+                            ],
+                            shape=(2,),
+                        ),
+                    ],
                 ),
             ],
         )
@@ -519,6 +642,16 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
         self.assertEqual(row["received_timestamp"], expected["received_timestamp"], f"{tag}received_timestamp")
         self.assertEqual(row["received_weights"], expected["received_weights"], f"{tag}received_weights")
         self.assertEqual(row["received_nested_list"], expected["received_nested_list"], f"{tag}received_nested_list")
+        self.assertAlmostEqual(
+            row["received_temperature"], expected["received_temperature"], places=5, msg=f"{tag}received_temperature"
+        )
+        self.assertEqual(row["received_top_k"], expected["received_top_k"], f"{tag}received_top_k")
+        self.assertEqual(row["received_use_cache"], expected["received_use_cache"], f"{tag}received_use_cache")
+        self.assertEqual(row["received_stop_token"], expected["received_stop_token"], f"{tag}received_stop_token")
+        self.assertEqual(row["received_penalties"], expected["received_penalties"], f"{tag}received_penalties")
+        self.assertEqual(row["received_seed"], expected["received_seed"], f"{tag}received_seed")
+        self.assertEqual(row["received_strategy"], expected["received_strategy"], f"{tag}received_strategy")
+        self.assertEqual(row["received_models"], expected["received_models"], f"{tag}received_models")
 
     def _check_all_data_types_df(self, res: pd.DataFrame, expected: dict[str, Any], label: str = "") -> None:
         """Validate a DataFrame result (mv.run / REST flat path)."""
@@ -609,10 +742,9 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             res = mv.run(input_df, function_name="predict", service_name=service_name)
             self._check_all_data_types_df(res, _DEFAULT_EXPECTED, "mv_run/default")
 
-        if self._has_image_override():
-            with self.subTest("mv_run_flat/ none"):
-                res = mv.run(input_df, function_name="predict", service_name=service_name, params=_NONE_PARAMS)
-                self._check_all_data_types_df(res, _DEFAULT_EXPECTED, "mv_run/none")
+        with self.subTest("mv_run_flat/ none"):
+            res = mv.run(input_df, function_name="predict", service_name=service_name, params=_NONE_PARAMS)
+            self._check_all_data_types_df(res, _DEFAULT_EXPECTED, "mv_run/none")
 
         with self.subTest("mv_run_flat/ invalid_name"):
             with self.assertRaisesRegex(ValueError, r"Unknown parameter"):
@@ -661,13 +793,12 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
             self._check_all_data_types_df(res_df, _to_raw_expected(_DEFAULT_EXPECTED), "flat/default")
 
-        if self._has_image_override():
-            with self.subTest("rest_flat / none"):
-                flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_NONE_PARAMS)}
-                response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label="flat/none")
-                res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
-                # bytes_param=None → server resolves default as actual bytes → model does .hex().upper() → uppercase hex
-                self._check_all_data_types_df(res_df, _DEFAULT_EXPECTED, "flat/none")
+        with self.subTest("rest_flat / none"):
+            flat_params = {**_REST_DEFAULT_PARAMS, **_serialize_for_rest(_NONE_PARAMS)}
+            response = self._assert_rest_ok(endpoint, self._flat_payload(10.0, flat_params), label="flat/none")
+            res_df = pd.DataFrame([x[1] for x in response.json()["data"]])
+            # bytes_param=None → server resolves default as actual bytes → model does .hex().upper() → uppercase hex
+            self._check_all_data_types_df(res_df, _DEFAULT_EXPECTED, "flat/none")
 
         # Flat-specific edge cases (invalid_name is N/A for positional format)
         with self.subTest("rest_flat / invalid_type"):
@@ -723,13 +854,12 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 row, _to_raw_expected(_DEFAULT_EXPECTED, bytes_overridden=False), "split/default"
             )
 
-        if self._has_image_override():
-            with self.subTest("rest_split / none"):
-                payload = {**base, "params": _serialize_for_rest(_NONE_PARAMS)}
-                response = self._assert_rest_ok(endpoint, payload, label="split/none")
-                row = self._parse_rest_rows(response)[0]
-                # Explicit null → server resolves default as actual bytes → model hex-encodes
-                self._check_all_data_types(row, _DEFAULT_EXPECTED, "split/none")
+        with self.subTest("rest_split / none"):
+            payload = {**base, "params": _serialize_for_rest(_NONE_PARAMS)}
+            response = self._assert_rest_ok(endpoint, payload, label="split/none")
+            row = self._parse_rest_rows(response)[0]
+            # Explicit null → server resolves default as actual bytes → model hex-encodes
+            self._check_all_data_types(row, _DEFAULT_EXPECTED, "split/none")
 
         # TODO: Go proxy silently ignores unknown params instead of returning 400.
         #  Uncomment once the proxy validates param names.
@@ -792,13 +922,12 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
                 row, _to_raw_expected(_DEFAULT_EXPECTED, bytes_overridden=False), "records/default"
             )
 
-        if self._has_image_override():
-            with self.subTest("rest_records / none"):
-                payload = {**base, "params": _serialize_for_rest(_NONE_PARAMS)}
-                response = self._assert_rest_ok(endpoint, payload, label="records/none")
-                row = self._parse_rest_rows(response)[0]
-                # Explicit null → server resolves default as actual bytes → model hex-encodes
-                self._check_all_data_types(row, _DEFAULT_EXPECTED, "records/none")
+        with self.subTest("rest_records / none"):
+            payload = {**base, "params": _serialize_for_rest(_NONE_PARAMS)}
+            response = self._assert_rest_ok(endpoint, payload, label="records/none")
+            row = self._parse_rest_rows(response)[0]
+            # Explicit null → server resolves default as actual bytes → model hex-encodes
+            self._check_all_data_types(row, _DEFAULT_EXPECTED, "records/none")
 
         # TODO: Go proxy silently ignores unknown params instead of returning 400.
         #  Uncomment once the proxy validates param names.
@@ -853,11 +982,10 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             res = mv.run(input_df, function_name="predict", service_name=service_name)
             self._check_wide(res.iloc[0], _WIDE_DEFAULT_EXPECTED, "mv_run_wide/default")
 
-        if self._has_image_override():
-            with self.subTest("mv_run_wide / none"):
-                res = mv.run(input_df, function_name="predict", service_name=service_name, params=_WIDE_NONE_PARAMS)
-                # None params → server substitutes defaults
-                self._check_wide(res.iloc[0], _WIDE_DEFAULT_EXPECTED, "mv_run_wide/none")
+        with self.subTest("mv_run_wide / none"):
+            res = mv.run(input_df, function_name="predict", service_name=service_name, params=_WIDE_NONE_PARAMS)
+            # None params → server substitutes defaults
+            self._check_wide(res.iloc[0], _WIDE_DEFAULT_EXPECTED, "mv_run_wide/none")
 
         with self.subTest("mv_run_wide / invalid_name"):
             with self.assertRaisesRegex(ValueError, r"Unknown parameter"):
@@ -889,14 +1017,11 @@ class TestRegistryCustomModelParamsInteg(registry_param_test_base.ParamTestBase)
             row = self._parse_rest_rows(response)[0]
             self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/default")
 
-        if self._has_image_override():
-            with self.subTest("rest_wide / none"):
-                response = self._assert_rest_ok(
-                    endpoint, self._build_wide_payload(_WIDE_NONE_PARAMS), label="wide/none"
-                )
-                row = self._parse_rest_rows(response)[0]
-                # None params → server substitutes defaults
-                self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/none")
+        with self.subTest("rest_wide / none"):
+            response = self._assert_rest_ok(endpoint, self._build_wide_payload(_WIDE_NONE_PARAMS), label="wide/none")
+            row = self._parse_rest_rows(response)[0]
+            # None params → server substitutes defaults
+            self._check_wide(row, _WIDE_DEFAULT_EXPECTED, "wide/none")
 
         # TODO: Server silently ignores unknown keys in the wide dict instead of returning 400.
         #  Uncomment once the inference server validates param names in wide format.

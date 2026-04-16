@@ -2120,6 +2120,7 @@ class ModelVersionImplTest(absltest.TestCase):
             cpu_requests="4",
             memory_requests="8Gi",
             replicas=10,
+            block=True,
         )
 
         mock_job = mock.MagicMock(spec=job.MLJob)
@@ -2161,6 +2162,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name="CUSTOM_JOB_NAME",
                 job_name_prefix=None,
                 replicas=10,
+                block=True,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
                 column_handling=None,
@@ -2243,6 +2245,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name="TEST_JOB",
                 job_name_prefix=None,
                 replicas=None,
+                block=False,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
                 column_handling=test_column_handling,
@@ -2320,6 +2323,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name="TEST_JOB",
                 job_name_prefix=None,
                 replicas=None,
+                block=False,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
                 column_handling=None,
@@ -2404,6 +2408,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name="TEST_JOB",
                 job_name_prefix=None,
                 replicas=None,
+                block=False,
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",
                 column_handling=test_column_handling,
@@ -2685,6 +2690,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 job_name=None,
                 job_name_prefix=None,
                 replicas=None,  # JobSpec default
+                block=False,  # JobSpec default
                 input_stage_location="@output_stage/_temporary/",
                 input_file_pattern="*",  # InputSpec default
                 column_handling=None,

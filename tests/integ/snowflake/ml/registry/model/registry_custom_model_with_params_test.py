@@ -791,7 +791,15 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
         model = DemoModelWithDictParam(custom_model.ModelContext())
 
         sample_input = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
-        sample_output = model.predict(sample_input, config={"temperature": 1.0, "top_k": 50})
+        sample_output = model.predict(
+            sample_input,
+            config={
+                "temperature": 1.0,
+                "top_k": 50,
+                "nested_list": [[1, 2], [3, 4]],
+                "nested_dict": [{"a": 1, "b": 2}, {"a": 1, "b": 2}],
+            },
+        )
 
         params = [
             model_signature.ParamGroupSpec(
@@ -806,6 +814,20 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
                         name="top_k",
                         dtype=model_signature.DataType.INT32,
                         default_value=50,
+                    ),
+                    model_signature.ParamSpec(
+                        name="nested_list",
+                        dtype=model_signature.DataType.INT32,
+                        default_value=[[1, 2], [3, 4]],
+                        shape=(2, 2),
+                    ),
+                    model_signature.ParamGroupSpec(
+                        name="nested_dict",
+                        specs=[
+                            model_signature.ParamSpec(name="a", dtype=model_signature.DataType.INT32, default_value=1),
+                            model_signature.ParamSpec(name="b", dtype=model_signature.DataType.INT32, default_value=2),
+                        ],
+                        shape=(2,),
                     ),
                 ],
             ),
@@ -839,7 +861,14 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
         result = mv.run(
             input_df,
             function_name="predict",
-            params={"config": {"temperature": 2.0, "top_k": 10}},
+            params={
+                "config": {
+                    "temperature": 2.0,
+                    "top_k": 10,
+                    "nested_list": [[10, 20], [30, 40]],
+                    "nested_dict": [{"a": 10, "b": 20}, {"a": 30, "b": 40}],
+                },
+            },
         )
 
         self.assertEqual(len(result), 3)
@@ -850,6 +879,9 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
             check_dtype=False,
         )
         self.assertTrue(all(result_sorted["top_k_used"] == 10))
+        for _, row in result_sorted.iterrows():
+            self.assertEqual(row["nested_list_used"], [[10, 20], [30, 40]])
+            self.assertEqual(row["nested_dict_used"], [{"a": 10, "b": 20}, {"a": 30, "b": 40}])
 
     def test_dict_params_with_defaults(self) -> None:
         """Test that dict params use defaults when not provided."""

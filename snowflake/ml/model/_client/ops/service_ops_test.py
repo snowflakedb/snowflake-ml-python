@@ -14,7 +14,10 @@ from snowflake.ml._internal import file_utils, platform_capabilities
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine, model_signature
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import (
+    batch_inference_serialization,
+    batch_inference_specs,
+)
 from snowflake.ml.model._client.ops import deployment_step, service_ops
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql
@@ -1458,6 +1461,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests="4GiB",
                 gpu_requests=None,
                 replicas=1,
+                block=False,
             )
 
             # Verify all method calls
@@ -1498,6 +1502,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory="4GiB",
                 gpu=None,
                 replicas=1,
+                block=False,
             )
 
             mock_add_image_build_spec.assert_called_once_with(
@@ -1605,6 +1610,7 @@ class ServiceOpsTest(parameterized.TestCase):
                     memory_requests="4GiB",
                     gpu_requests=None,
                     replicas=1,
+                    block=False,
                 )
 
                 # Verify stage operations
@@ -1696,6 +1702,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
                 statement_params=self.m_statement_params,
             )
 
@@ -1721,6 +1728,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory=None,
                 gpu=None,
                 replicas=None,
+                block=False,
             )
 
             # Verify image build spec called with None for image repo
@@ -1924,6 +1932,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests="4",
                 replicas=1,
+                block=False,
                 statement_params=self.m_statement_params,
                 inference_engine_args=inference_engine_args,
             )
@@ -2023,6 +2032,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
                 statement_params=self.m_statement_params,
                 inference_engine_args=None,  # No inference engine args
             )
@@ -2102,6 +2112,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
             )
 
             # Verify params were encoded and passed to add_job_spec
@@ -2177,6 +2188,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
             )
 
             # Verify column_handling was encoded and passed to add_job_spec
@@ -2191,7 +2203,7 @@ class ServiceOpsTest(parameterized.TestCase):
 
     def test_encode_params_none(self) -> None:
         """Test _encode_params returns None when input is None."""
-        result = service_ops.ServiceOperator._encode_params(None)
+        result = batch_inference_serialization.encode_params(None)
         self.assertIsNone(result)
 
     def test_encode_params_basic_types(self) -> None:
@@ -2200,7 +2212,7 @@ class ServiceOpsTest(parameterized.TestCase):
         import json
 
         params = {"temperature": 0.7, "max_tokens": 100, "prompt": "hello"}
-        result = service_ops.ServiceOperator._encode_params(params)
+        result = batch_inference_serialization.encode_params(params)
 
         self.assertIsNotNone(result)
         assert result is not None  # Type narrowing for mypy
@@ -2213,7 +2225,7 @@ class ServiceOpsTest(parameterized.TestCase):
         import json
 
         params = {"data": b"\x00\x01\x02\xff"}
-        result = service_ops.ServiceOperator._encode_params(params)
+        result = batch_inference_serialization.encode_params(params)
 
         self.assertIsNotNone(result)
         assert result is not None  # Type narrowing for mypy
@@ -2228,7 +2240,7 @@ class ServiceOpsTest(parameterized.TestCase):
 
         test_datetime = datetime.datetime(2025, 1, 15, 10, 30, 0)
         params = {"timestamp": test_datetime}
-        result = service_ops.ServiceOperator._encode_params(params)
+        result = batch_inference_serialization.encode_params(params)
 
         self.assertIsNotNone(result)
         assert result is not None  # Type narrowing for mypy
@@ -2249,7 +2261,7 @@ class ServiceOpsTest(parameterized.TestCase):
             },
             "items": [b"\x01", b"\x02", {"inner": b"\x03"}],
         }
-        result = service_ops.ServiceOperator._encode_params(params)
+        result = batch_inference_serialization.encode_params(params)
 
         self.assertIsNotNone(result)
         assert result is not None  # Type narrowing for mypy
@@ -2312,6 +2324,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
             )
 
             # Verify partition_columns was passed to add_job_spec
@@ -2386,6 +2399,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 memory_requests=None,
                 gpu_requests=None,
                 replicas=None,
+                block=False,
                 job_name_prefix="CUSTOM_PREFIX",
             )
 

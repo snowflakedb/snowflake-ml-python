@@ -956,6 +956,7 @@ class ParamSpec(BaseParamSpec):
             name=param_spec.name,
             dtype=DataType.from_numpy_type(param_spec.dtype.to_numpy()),
             default_value=param_spec.default,
+            shape=param_spec.shape,
         )
 
 

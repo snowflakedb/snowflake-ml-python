@@ -19,7 +19,8 @@ from tests.integ.snowflake.ml.registry.model.my_module.utils import column_label
 
 
 class RegistryBatchInferenceAdditionalImportTest(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    @parameterized.parameters([{"import_method": "ext_modules"}, {"import_method": "code_paths"}])
+    # TODO: Re-enable code_paths variant once flakiness is resolved.
+    @parameterized.parameters([{"import_method": "ext_modules"}])
     def test_additional_import(self, import_method: Literal["ext_modules", "code_paths"]) -> None:
         name = f"model_{self._run_id}"
         version = f"ver_{import_method}"

@@ -845,6 +845,7 @@ class ModelVersion(lineage_node.LineageNode):
             job_name=job_spec.job_name,
             job_name_prefix=job_spec.job_name_prefix,
             replicas=job_spec.replicas,
+            block=job_spec.block,
             # input and output
             input_stage_location=input_stage_location,
             input_file_pattern="*",

@@ -250,6 +250,25 @@ def save_mljob_result(result_obj: Any, is_error: bool, path: str) -> None:
         save_mljob_result_v1(result_obj, is_error, path)
 
 
+def get_active_ray_nodes() -> list[dict[str, Any]]:
+    import ray
+
+    if not ray.is_initialized():
+        ray.init(
+            address="auto",
+            ignore_reinit_error=True,
+            log_to_driver=False,
+            logging_level="CRITICAL",
+        )
+    nodes = ray.nodes()
+    alive_nodes = [n for n in nodes if n["Alive"]]
+    return alive_nodes
+
+
+def get_num_ray_nodes() -> int:
+    return len(get_active_ray_nodes())
+
+
 def wait_for_instances(
     min_instances: int,
     target_instances: int,
@@ -320,9 +339,6 @@ def wait_for_instances(
         #   target_instances = 100  => min_wait_time = 19.9
         min_wait_time = min(3 * math.log2(target_instances), timeout / 10)  # Clamp to timeout / 10
 
-    # mljob_launcher runs inside the CR where mlruntime libraries are available, so we can import common_util directly
-    from common_utils import common_util as mlrs_util
-
     start_time = time.time()
     current_interval = max(min(1, check_interval), 0.1)  # Default 1s, minimum 0.1s
     logger.info(
@@ -333,7 +349,7 @@ def wait_for_instances(
     )
 
     while (elapsed := time.time() - start_time) < timeout:
-        total_nodes = mlrs_util.get_num_ray_nodes()
+        total_nodes = get_num_ray_nodes()
         if total_nodes >= target_instances:
             # Best case scenario: target_instances are already available
             logger.info(f"Target instance requirement met: {total_nodes} instances available after {elapsed:.1f}s")

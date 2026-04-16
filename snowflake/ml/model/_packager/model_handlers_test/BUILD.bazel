@@ -214,6 +214,7 @@ py_test(
     shard_count = 2,
     tags = [
         "feature:model_registry",
+        "short_regress",
     ],
     deps = [
         "//snowflake/ml/model/_packager:model_packager",

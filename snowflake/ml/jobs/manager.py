@@ -222,7 +222,6 @@ def submit_file(
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
-            spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
             runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
                 e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
@@ -286,7 +285,6 @@ def submit_directory(
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
-            spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
             runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
                 e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,
@@ -352,7 +350,6 @@ def submit_from_stage(
             env_vars (dict): Environment variables to set in container.
             enable_metrics (bool): Whether to enable metrics publishing for the job.
             query_warehouse (str): The query warehouse to use. Defaults to session warehouse.
-            spec_overrides (dict): A dictionary of overrides for the service spec.
             imports (list[Union[tuple[str, str], tuple[str]]]): A list of additional payloads used in the job.
             runtime_environment (str): The runtime image to use. Only support image tag or full image URL,
                 e.g. "1.7.1" or "image_repo/image_name:image_tag". When it refers to a full image URL,

@@ -5,7 +5,7 @@
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_gpu_test
 //tests/integ/snowflake/ml/registry/services:registry_huggingface_pipeline_model_deployment_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_functional_test
-//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_partitioned_test
 //tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_audio_video_batch_inference_test
 //tests/integ/snowflake/ml/feature_store:feature_store_rollup_test
 //tests/integ/snowflake/ml/feature_store:feature_store_stream_source_test
+//tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_definition_test

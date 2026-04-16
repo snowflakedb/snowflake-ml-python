@@ -238,13 +238,100 @@ py_library(
 )
 
 py_library(
+    name = "huggingface_task_handler",
+    srcs = ["huggingface/_task_handler.py"],
+    deps = [
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_default_handler",
+    srcs = ["huggingface/_default.py"],
+    deps = [
+        ":huggingface_task_handler",
+        ":huggingface_utils",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_text_generation_handler",
+    srcs = ["huggingface/text_generation.py"],
+    deps = [
+        ":huggingface_openai_chat_wrapper",
+        ":huggingface_task_handler",
+        ":huggingface_utils",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:openai_signatures",
+    ],
+)
+
+py_library(
+    name = "huggingface_zero_shot_handler",
+    srcs = ["huggingface/zero_shot.py"],
+    deps = [
+        ":huggingface_task_handler",
+        ":huggingface_utils",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_vision_handler",
+    srcs = ["huggingface/vision.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_speech_handler",
+    srcs = ["huggingface/speech.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_video_handler",
+    srcs = ["huggingface/video.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_conversational_handler",
+    srcs = ["huggingface/conversational.py"],
+    deps = [
+        ":huggingface_task_handler",
+        ":huggingface_utils",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
     name = "huggingface_handler",
     srcs = ["huggingface/_handler.py"],
     deps = [
         ":_base",
         ":_utils",
+        ":huggingface_conversational_handler",
+        ":huggingface_default_handler",
         ":huggingface_openai_chat_wrapper",
+        ":huggingface_speech_handler",
+        ":huggingface_text_generation_handler",
         ":huggingface_utils",
+        ":huggingface_video_handler",
+        ":huggingface_vision_handler",
+        ":huggingface_zero_shot_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",

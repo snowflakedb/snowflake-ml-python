@@ -269,10 +269,10 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
     ) -> None:
         self._test_text_generation(None, use_default_repo=True)
 
-    def test_text_generation_with_model_logging_tiny_llama(self) -> None:
-        """Test text generation with TinyLlama model."""
+    def test_text_generation_with_model_logging_smollm2(self) -> None:
+        """Test text generation with SmolLM2-135M-Instruct model."""
         self._test_with_model_logging(
-            model_name="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            model_name="HuggingFaceTB/SmolLM2-135M-Instruct",
             requires_token=False,
         )
 

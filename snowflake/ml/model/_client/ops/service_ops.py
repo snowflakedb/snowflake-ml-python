@@ -1,7 +1,4 @@
-import base64
 import dataclasses
-import datetime
-import json
 import logging
 import pathlib
 import re
@@ -12,14 +9,15 @@ import warnings
 from collections.abc import Sequence
 from typing import Any, Optional, Union, cast
 
-from pydantic import TypeAdapter
-
 from snowflake import snowpark
 from snowflake.ml._internal import file_utils, platform_capabilities as pc
 from snowflake.ml._internal.utils import identifier, service_logger, sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import inference_engine as inference_engine_module, type_hints
-from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._client.model import (
+    batch_inference_serialization,
+    batch_inference_specs,
+)
 from snowflake.ml.model._client.ops import deployment_step, param_utils
 from snowflake.ml.model._client.service import model_deployment_spec
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
@@ -28,6 +26,9 @@ from snowflake.snowpark import async_job, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
+
+LOG_POLL_INTERVAL_SECONDS = 5
+STOP_WAIT_SECONDS = 1
 module_logger.propagate = False
 
 _UTF8_ENCODING = "utf-8"
@@ -441,7 +442,7 @@ class ServiceOperator:
                 # Signal the log thread to stop and wait for it
                 stop_event.set()
                 if "log_thread" in locals() and log_thread.is_alive():
-                    log_thread.join(timeout=5)  # Give it a few seconds to finish gracefully
+                    log_thread.join(timeout=LOG_POLL_INTERVAL_SECONDS)  # Give it a few seconds to finish gracefully
 
                 # Re-raise the exception to propagate the error
                 raise RuntimeError(error_msg) from e
@@ -754,7 +755,11 @@ class ServiceOperator:
         # to collect any remaining output.
         while not async_job.is_done() and not (stop_event and stop_event.is_set()):
             if model_inference_service_exists:
-                time.sleep(5)
+                # Use Event.wait() so the sleep is immediately interrupted when stop_event is set.
+                if stop_event:
+                    stop_event.wait(STOP_WAIT_SECONDS)
+                else:
+                    time.sleep(LOG_POLL_INTERVAL_SECONDS)
                 continue
 
             try:
@@ -777,7 +782,11 @@ class ServiceOperator:
 
                 if not (is_snowpark_sql_exception and (contains_msg or matches_pattern)):
                     module_logger.warning(f"Caught an exception when logging: {repr(ex)}")
-                time.sleep(5)
+                # Use Event.wait() so the sleep is immediately interrupted when stop_event is set.
+                if stop_event:
+                    stop_event.wait(STOP_WAIT_SECONDS)
+                else:
+                    time.sleep(LOG_POLL_INTERVAL_SECONDS)
 
         if model_inference_service_exists:
             module_logger.info(
@@ -937,52 +946,6 @@ class ServiceOperator:
         except exceptions.SnowparkSQLException:
             return False
 
-    @staticmethod
-    def _encode_params(params: Optional[dict[str, Any]]) -> Optional[str]:
-        """Encode params dictionary to a base64 string.
-
-        Args:
-            params: Optional dictionary of model inference parameters.
-
-        Returns:
-            Base64 encoded JSON string of the params, or None if input is None.
-        """
-        if params is None:
-            return None
-
-        def serialize_value(v: Any) -> Any:
-            """Convert non-JSON-serializable types to JSON-compatible formats."""
-            if isinstance(v, bytes):
-                return v.hex()
-            if isinstance(v, datetime.datetime):
-                return v.isoformat()
-            if isinstance(v, list):
-                return [serialize_value(item) for item in v]
-            if isinstance(v, dict):
-                return {k: serialize_value(val) for k, val in v.items()}
-            return v
-
-        serializable_params = {k: serialize_value(v) for k, v in params.items()}
-        return base64.b64encode(json.dumps(serializable_params).encode(_UTF8_ENCODING)).decode(_UTF8_ENCODING)
-
-    @staticmethod
-    def _encode_column_handling(
-        column_handling: Optional[dict[str, batch_inference_specs.ColumnHandlingOptions]],
-    ) -> Optional[str]:
-        """Validate and encode column_handling to a base64 string.
-
-        Args:
-            column_handling: Optional dictionary mapping column names to file encoding options.
-
-        Returns:
-            Base64 encoded JSON string of the column handling options, or None if input is None.
-        """
-        if column_handling is None:
-            return None
-        adapter = TypeAdapter(dict[str, batch_inference_specs.ColumnHandlingOptions])
-        validated_input = adapter.validate_python(column_handling)
-        return base64.b64encode(adapter.dump_json(validated_input)).decode(_UTF8_ENCODING)
-
     def invoke_batch_job_method(
         self,
         *,
@@ -1008,14 +971,15 @@ class ServiceOperator:
         memory_requests: Optional[str],
         gpu_requests: Optional[str],
         replicas: Optional[int],
+        block: bool,
         job_name_prefix: Optional[str] = None,
         statement_params: Optional[dict[str, Any]] = None,
         inference_engine_args: Optional[InferenceEngineArgs] = None,
     ) -> job.MLJob[Any]:
         # Validate and encode params
         param_utils.validate_params(params, signature_params)
-        params_encoded = self._encode_params(params)
-        column_handling_encoded = self._encode_column_handling(column_handling)
+        params_encoded = batch_inference_serialization.encode_params(params)
+        column_handling_encoded = batch_inference_serialization.encode_column_handling(column_handling)
 
         database_name = self._database_name
         schema_name = self._schema_name
@@ -1069,6 +1033,7 @@ class ServiceOperator:
             memory=memory_requests,
             gpu=gpu_requests,
             replicas=replicas,
+            block=block,
         )
 
         if inference_engine_args:

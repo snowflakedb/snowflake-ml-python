@@ -30,6 +30,35 @@ from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _Args = ParamSpec("_Args")
 _ReturnValue = TypeVar("_ReturnValue")
+
+_ALLOWED_CONTAINER_KEYS = {"name", "secrets"}
+_ALLOWED_SPEC_KEYS = {"containers"}
+
+logger = logging.getLogger(__name__)
+
+
+def _validate_spec_overrides(spec_overrides: Any) -> None:
+    """Warn if spec_overrides contains keys beyond the officially supported set."""
+    spec = spec_overrides.get("spec", {})
+
+    disallowed_spec_keys = set(spec.keys()) - _ALLOWED_SPEC_KEYS
+    if disallowed_spec_keys:
+        logger.warning(
+            f"'spec_overrides.spec' keys {sorted(disallowed_spec_keys)} are not officially supported. "
+            f"Only {sorted(_ALLOWED_SPEC_KEYS)} are recommended. "
+            f"Additional keys may work but are not guaranteed — please validate your configuration carefully."
+        )
+
+    for container in spec.get("containers", []):
+        disallowed_container_keys = set(container.keys()) - _ALLOWED_CONTAINER_KEYS
+        if disallowed_container_keys:
+            logger.warning(
+                f"'spec_overrides' container keys {sorted(disallowed_container_keys)} are not officially supported. "
+                f"Only {sorted(_ALLOWED_CONTAINER_KEYS)} are recommended. "
+                f"Additional keys may work but are not guaranteed — please validate your configuration carefully."
+            )
+
+
 JOB_ID_PREFIX = "MLJOB_"
 _PROJECT = "MLJob"
 logger = logging.getLogger(__name__)
@@ -252,6 +281,8 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         external_access_integrations = kwargs.pop("external_access_integrations", None)
         env_vars = kwargs.pop("env_vars", None)
         spec_overrides = kwargs.pop("spec_overrides", None)
+        if spec_overrides is not None:
+            _validate_spec_overrides(spec_overrides)
         enable_metrics = kwargs.pop("enable_metrics", True)
         query_warehouse = kwargs.pop("query_warehouse", None)
         imports = kwargs.pop("imports", None)

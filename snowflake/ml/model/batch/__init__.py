@@ -1,3 +1,6 @@
+from snowflake.ml.model._client.model.batch_inference_definition import (
+    BatchInferenceDefinition,
+)
 from snowflake.ml.model._client.model.batch_inference_specs import (
     ColumnHandlingOptions,
     FileEncoding,
@@ -9,11 +12,12 @@ from snowflake.ml.model._client.model.batch_inference_specs import (
 )
 
 __all__ = [
-    "InputSpec",
+    "BatchInferenceDefinition",
+    "ColumnHandlingOptions",
+    "FileEncoding",
     "InputFormat",
+    "InputSpec",
     "JobSpec",
     "OutputSpec",
     "SaveMode",
-    "FileEncoding",
-    "ColumnHandlingOptions",
 ]

@@ -136,6 +136,9 @@ class JobSpec(BaseModel):
             string values. Use CPU if None.
         replicas (Optional[int]): Number of SPCS job nodes used for distributed inference.
             If not specified, defaults to 1 replica.
+        block (bool): Whether the SPCS batch inference job runs synchronously
+            or asynchronously. When True, the call blocks until the job completes. When
+            False, the call returns immediately after job creation. Defaults to False.
 
     Example:
         >>> job_spec = JobSpec(
@@ -159,6 +162,7 @@ class JobSpec(BaseModel):
     memory_requests: Optional[str] = None
     gpu_requests: Optional[str] = None
     replicas: Optional[int] = None
+    block: bool = False
 
     @model_validator(mode="after")
     def _validate_job_name_exclusivity(self) -> "JobSpec":

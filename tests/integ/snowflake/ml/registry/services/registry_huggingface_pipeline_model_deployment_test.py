@@ -204,7 +204,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
         if compute_pool_for_log is compute_pool.DEFAULT_CPU_COMPUTE_POOL:
             # test the default behavior, do not pass compute_pool_for_log
             model = huggingface.TransformersPipeline(
-                model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                model="HuggingFaceTB/SmolLM2-135M-Instruct",
                 task="text-generation",
             )
         else:
@@ -212,13 +212,13 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             # 1. the remote logging behavior, pass compute_pool_for_log
             # 2. the local mode behavior, pass None
             model = huggingface.TransformersPipeline(
-                model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+                model="HuggingFaceTB/SmolLM2-135M-Instruct",
                 task="text-generation",
                 compute_pool_for_log=compute_pool_for_log,
             )
         mv = self.registry.log_model(
             model=model,
-            model_name="tinyllama_remote_log",
+            model_name="smollm2_remote_log",
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
         )

@@ -144,6 +144,25 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             f"Expected job name to start with 'BATCH_INFERENCE_', got '{job.name}'",
         )
 
+    def test_sync_job(self) -> None:
+        """Test batch inference with block=True runs synchronously."""
+        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+
+        job = self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(block=True),
+            # blocking=False means the client does not poll for completion;
+            # the server-side sync (block=True) already waits for the job to finish.
+            blocking=False,
+        )
+
+        # With block=True, the server waits for job completion before returning,
+        # so the job should already be DONE immediately.
+        self.assertEqual(job.status, "DONE")
+
 
 if __name__ == "__main__":
     absltest.main()

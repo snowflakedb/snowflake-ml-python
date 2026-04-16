@@ -219,6 +219,7 @@ class ModelDeploymentSpec:
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         replicas: Optional[int] = None,
+        block: bool,
     ) -> "ModelDeploymentSpec":
         """Add job specification to the deployment spec.
 
@@ -243,6 +244,7 @@ class ModelDeploymentSpec:
             num_workers: Number of workers.
             max_batch_rows: Maximum batch rows for inference.
             replicas: Number of replicas.
+            block: Whether the job runs synchronously or asynchronously.
 
         Raises:
             ValueError: If a service spec already exists.
@@ -285,6 +287,8 @@ class ModelDeploymentSpec:
                 completion_filename=completion_filename,
             ),
             replicas=replicas,
+            # TODO(SNOW-3321349): Change to sync=block once server-side support is fully rolled out.
+            sync=True if block else None,
             **self._inference_spec,
         )
         return self

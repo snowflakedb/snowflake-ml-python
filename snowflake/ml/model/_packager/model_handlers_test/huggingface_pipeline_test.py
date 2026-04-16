@@ -23,7 +23,6 @@ from snowflake.ml.model._packager.model_handlers import (
 )
 from snowflake.ml.model._packager.model_handlers.huggingface import (
     TransformersPipelineHandler,
-    _handler as hf_handler_module,
 )
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model._signatures import utils
@@ -1348,16 +1347,12 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
             signatures={"__call__": signature},
         )
 
-        def mock_is_transformers_type(obj: Any, class_name: str) -> bool:
-            return obj is fake_pipeline and class_name == "AutomaticSpeechRecognitionPipeline"
+        custom_model = TransformersPipelineHandler.convert_as_custom_model(
+            raw_model=fake_pipeline,
+            model_meta=meta,
+        )
 
-        with mock.patch.object(hf_handler_module, "_is_transformers_type", side_effect=mock_is_transformers_type):
-            custom_model = TransformersPipelineHandler.convert_as_custom_model(
-                raw_model=fake_pipeline,
-                model_meta=meta,
-            )
-
-            res = custom_model(pd.DataFrame({"audio": [b"fake audio"]}))  # type: ignore[operator]
+        res = custom_model(pd.DataFrame({"audio": [b"fake audio"]}))  # type: ignore[operator]
 
         pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
         self.assertIsInstance(res["outputs"][0], dict)

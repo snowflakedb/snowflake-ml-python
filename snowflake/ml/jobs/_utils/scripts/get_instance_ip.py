@@ -38,9 +38,16 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
     Returns:
         tuple[str, str]: A tuple containing (instance_id, ip_address) of the head instance.
     """
-    from snowflake.runtime.utils import session_utils
+    try:
+        from snowflake import snowpark
+        from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
+    except ImportError:
+        from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 
-    session = session_utils.get_session()
+    config = SnowflakeLoginOptions()
+    config["client_session_keep_alive"] = "True"
+    session = snowpark.Session.builder.configs(config).create()  # noqa: F841
+
     result = session.sql(f"show service instances in service {service_name}").collect()
 
     if not result:

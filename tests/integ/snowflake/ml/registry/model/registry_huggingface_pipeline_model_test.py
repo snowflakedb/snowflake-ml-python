@@ -357,7 +357,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-generation",
-            model="Qwen/Qwen2.5-0.5B",
+            model="HuggingFaceTB/SmolLM2-135M-Instruct",
         )
 
         x_df = pd.DataFrame(
