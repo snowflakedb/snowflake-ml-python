@@ -9,6 +9,10 @@
 
 ### Bug Fixes
 
+* Registry: Pin `transformers<5` when saving HuggingFace pipeline models that use tasks removed in
+  `transformers 5.x` (`image-to-text`, `visual-question-answering`, `conversational`), preventing
+  deployment failures from missing pipeline classes.
+
 ### Behavior Changes
 
 * Registry: Logging a model with `pip_requirements` and no `artifact_repository_map` now raises a `ValueError`
@@ -23,9 +27,6 @@
 
 ### Bug Fixes
 
-* Registry: Pin `transformers<5` when saving HuggingFace pipeline models that use tasks removed in
-  `transformers 5.x` (`image-to-text`, `visual-question-answering`, `conversational`), preventing
-  deployment failures from missing pipeline classes.
 * Registry: Fixed `ParamSpec.from_mlflow_spec` dropping `shape`, which caused shaped scalar params
   (e.g., array of ints) from MLflow to fail validation during model import.
 
