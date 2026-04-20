@@ -323,11 +323,11 @@ class InferStructTypeTest(parameterized.TestCase):
         self.assertIsInstance(schema.fields[0].datatype, TimestampType)
 
     def test_string_column(self) -> None:
-        """Test object/string maps to StringType(16777216)."""
+        """Test object/string maps to StringType() with no length."""
         pdf = pd.DataFrame({"col": ["a", "b", "c"]})
         schema = _infer_structtype_from_pandas(pdf)
         self.assertIsInstance(schema.fields[0].datatype, StringType)
-        self.assertEqual(schema.fields[0].datatype.length, 16777216)
+        self.assertIsNone(schema.fields[0].datatype.length)
 
     def test_multiple_columns(self) -> None:
         """Test inference of multiple columns with different types."""

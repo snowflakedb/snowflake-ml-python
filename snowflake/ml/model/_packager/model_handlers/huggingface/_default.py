@@ -1,13 +1,10 @@
-import json
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+from typing_extensions import override
 
 from snowflake.ml.model import model_signature
-from snowflake.ml.model._packager.model_handlers.huggingface import (
-    _task_handler,
-    _utils as _hf_utils,
-)
+from snowflake.ml.model._packager.model_handlers.huggingface import _task_handler
 from snowflake.ml.model._signatures import core as model_signature_core
 
 if TYPE_CHECKING:
@@ -15,12 +12,9 @@ if TYPE_CHECKING:
 
 
 class DefaultTaskHandler(_task_handler.HuggingFaceTaskHandler):
-    """Catch-all handler for pipelines not yet covered by a dedicated handler.
+    """Minimal fallback handler for pipelines not covered by a dedicated handler."""
 
-    Handles table QA, text classification, fill-mask, NER, summarization,
-    translation, and any other standard pipeline that accepts list input.
-    """
-
+    @override
     def run_inference(
         self,
         raw_model: "transformers.Pipeline",
@@ -29,9 +23,6 @@ class DefaultTaskHandler(_task_handler.HuggingFaceTaskHandler):
         X: pd.DataFrame,
         **kwargs: Any,
     ) -> Any:
-        if _hf_utils.is_transformers_type(raw_model, "TableQuestionAnsweringPipeline"):
-            X["table"] = X["table"].apply(json.loads)
-
         # Most pipelines expecting more than one argument take a list of dicts,
         # where each dict has keys corresponding to the arguments.
         if len(signature.inputs) > 1:
@@ -41,6 +32,7 @@ class DefaultTaskHandler(_task_handler.HuggingFaceTaskHandler):
             input_data = X[signature.inputs[0].name].to_list()
         return getattr(raw_model, target_method)(input_data)
 
+    @override
     def _needs_list_wrapping(
         self,
         raw_model: "transformers.Pipeline",

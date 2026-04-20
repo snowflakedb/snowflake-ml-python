@@ -114,9 +114,34 @@ py_test(
 )
 
 py_test(
+    name = "registry_pip_only_gpu_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_pip_only_gpu_batch_inference_test.py"],
+    optional_dependencies = ["torch"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/_packager/model_env",
+        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+    ],
+)
+
+py_test(
     name = "registry_custom_model_with_params_batch_inference_test",
     timeout = "eternal",
     srcs = ["registry_custom_model_with_params_batch_inference_test.py"],
+    shard_count = 2,
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_backwards_compat_batch_inference_test",
+    timeout = "eternal",
+    srcs = ["registry_backwards_compat_batch_inference_test.py"],
     shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [

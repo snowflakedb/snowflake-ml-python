@@ -32,7 +32,6 @@ from snowflake.snowpark.types import (
 
 ALLOWED_MODULES: set[str] = {"numpy", "pandas", "re", "copy"}
 
-
 _DANGEROUS_BUILTINS = frozenset({"__import__", "eval", "exec", "compile"})
 
 
@@ -101,7 +100,7 @@ def _infer_structtype_from_pandas(pdf: pd.DataFrame) -> StructType:
         - ``float64`` / ``Float64``  -> ``DoubleType()``         = ``FLOAT``
         - ``bool`` / ``boolean``     -> ``BooleanType()``        = ``BOOLEAN``
         - ``datetime64[ns]``         -> ``TimestampType()``      = ``TIMESTAMP_NTZ``
-        - ``object`` / everything else -> ``StringType(16777216)`` = ``VARCHAR``
+        - ``object`` / everything else -> ``StringType(DEFAULT_INFERRED_STRING_LENGTH)`` = ``VARCHAR``
 
     Args:
         pdf: A pandas DataFrame whose dtypes will be inspected.
@@ -128,7 +127,7 @@ def _infer_structtype_from_pandas(pdf: pd.DataFrame) -> StructType:
         elif pd.api.types.is_datetime64_any_dtype(dtype):
             sf_type = TimestampType()
         else:
-            sf_type = StringType(16777216)
+            sf_type = StringType()
         fields.append(StructField(str(col_name), sf_type))
     return StructType(fields)
 

@@ -23,6 +23,7 @@ from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.aggregation import AggregationSpec
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
+from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 from snowflake.ml.feature_store.tile_sql_generator import _TILE_START_COL
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
@@ -424,6 +425,7 @@ class FeatureView(lineage_node.LineageNode):
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         features: Optional[list[Feature]] = None,
+        feature_aggregation_method: Optional[FeatureAggregationMethod] = None,
         rollup_config: Optional[RollupConfig] = None,
         storage_config: Optional[StorageConfig] = None,
         stream_config: Optional[StreamConfig] = None,
@@ -477,6 +479,11 @@ class FeatureView(lineage_node.LineageNode):
             features: List of aggregation feature definitions using the ``Feature`` class.
                 Required when ``feature_granularity`` is specified. Defines the aggregations
                 to compute (e.g., SUM, COUNT, LAST_N) with their windows.
+            feature_aggregation_method: The aggregation method for tiled streaming feature views.
+                Supports ``FeatureAggregationMethod.TILES`` (default) or
+                ``FeatureAggregationMethod.CONTINUOUS``.  Only applicable to streaming feature
+                views with ``feature_granularity`` and ``features`` set.  Raises ``ValueError``
+                if specified on batch or rollup feature views.
             rollup_config: Configuration for rolling up a tiled FeatureView to a coarser entity
                 level. When specified, this FeatureView will aggregate features from the source
                 FeatureView using the provided entity mapping. Cannot be used together with
@@ -579,6 +586,7 @@ class FeatureView(lineage_node.LineageNode):
         self._timestamp_col: Optional[SqlIdentifier] = None
         self._feature_granularity: Optional[str] = None
         self._aggregation_specs: Optional[list[AggregationSpec]] = None
+        self._feature_aggregation_method: Optional[FeatureAggregationMethod] = None
         self._infer_schema_df: Optional[DataFrame] = None
         self._query: str = ""
         self._feature_desc: Optional[OrderedDict[SqlIdentifier, str]] = None
@@ -587,6 +595,8 @@ class FeatureView(lineage_node.LineageNode):
 
         # --- Branch: Rollup FV ---
         if rollup_config is not None:
+            if feature_aggregation_method is not None:
+                raise ValueError("feature_aggregation_method is only supported for streaming feature views.")
             target_keys = [str(k) for e in entities for k in e.join_keys]
             rollup_config.validate(target_keys)
 
@@ -614,6 +624,15 @@ class FeatureView(lineage_node.LineageNode):
                 self._aggregation_specs = [f.to_spec() for f in features]
             self._refresh_freq = refresh_freq
 
+            if feature_aggregation_method is not None and not (feature_granularity and features):
+                raise ValueError("feature_aggregation_method requires feature_granularity and features to be set.")
+            if feature_granularity and features:
+                self._feature_aggregation_method = (
+                    feature_aggregation_method
+                    if feature_aggregation_method is not None
+                    else FeatureAggregationMethod.TILES
+                )
+
             # Warn if non-time-aggregated streaming FV has refresh_freq (a VIEW is more efficient)
             if self._aggregation_specs is None and refresh_freq is not None:
                 warnings.warn(
@@ -625,6 +644,8 @@ class FeatureView(lineage_node.LineageNode):
 
         # --- Branch: Batch FV (standard) ---
         else:
+            if feature_aggregation_method is not None:
+                raise ValueError("feature_aggregation_method is only supported for streaming feature views.")
             self._timestamp_col = SqlIdentifier(timestamp_col) if timestamp_col is not None else None
             self._feature_granularity = feature_granularity
             self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
@@ -667,6 +688,8 @@ class FeatureView(lineage_node.LineageNode):
                 (SqlIdentifier(spec.get_sql_column_name()), "") for spec in self._aggregation_specs
             )
         self._storage_config: Optional[StorageConfig] = storage_config
+
+        self._postgres_online_query_url: Optional[str] = None
 
         # Column aliasing for dataset generation (ephemeral, in-memory only)
         self._column_alias: Optional[str] = None
@@ -1069,6 +1092,11 @@ class FeatureView(lineage_node.LineageNode):
     def aggregation_specs(self) -> Optional[list[AggregationSpec]]:
         """Get the aggregation specifications (internal use)."""
         return self._aggregation_specs
+
+    @property
+    def feature_aggregation_method(self) -> Optional[FeatureAggregationMethod]:
+        """Get the aggregation method (TILES or CONTINUOUS). Only applicable to tiled streaming FVs."""
+        return self._feature_aggregation_method
 
     @property
     def storage_config(self) -> Optional[StorageConfig]:

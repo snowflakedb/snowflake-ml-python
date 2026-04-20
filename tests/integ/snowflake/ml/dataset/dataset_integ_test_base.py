@@ -1,12 +1,12 @@
 import random
 from typing import Any, Callable, Generator
+from uuid import uuid4
 
 import numpy as np
 from absl.testing import absltest
 from numpy import typing as npt
 
 from snowflake.ml import dataset
-from snowflake.ml.utils import sql_client
 from snowflake.snowpark._internal import utils as snowpark_utils
 from tests.integ.snowflake.ml.fileset import fileset_integ_utils
 from tests.integ.snowflake.ml.test_utils import (
@@ -22,7 +22,7 @@ random.seed(0)
 class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
     """Integration tests for Snowflake Dataset."""
 
-    DS_INTEG_TEST_DB: str
+    DS_INTEG_TEST_DB_PREFIX: str
     DS_INTEG_TEST_SCHEMA: str
 
     def setUp(self) -> None:
@@ -42,9 +42,11 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
         cls.query = fileset_integ_utils.get_fileset_query(cls.num_rows)
         cls.test_table = "test_table"
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            cls.dbm.create_database(cls.DS_INTEG_TEST_DB, creation_mode=sql_client.CreationMode(if_not_exists=True))
-            cls.dbm.cleanup_schemas(cls.DS_INTEG_TEST_SCHEMA, cls.DS_INTEG_TEST_DB)
-            cls.dbm.use_database(cls.DS_INTEG_TEST_DB)
+            run_id = uuid4().hex[:8].upper()
+            cls._test_db_name = f"{cls.DS_INTEG_TEST_DB_PREFIX}_{run_id}"
+            cls.dbm.cleanup_databases(prefix=cls.DS_INTEG_TEST_DB_PREFIX)
+            cls.dbm.create_database(cls._test_db_name)
+            cls.dbm.use_database(cls._test_db_name)
 
             cls.db = cls.session.get_current_database()
             cls.schema = cls.dbm.create_random_schema(cls.DS_INTEG_TEST_SCHEMA)
@@ -57,7 +59,7 @@ class TestSnowflakeDatasetBase(common_test_base.CommonTestBase):
     @classmethod
     def tearDownClass(cls) -> None:
         if not snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            cls.dbm.drop_schema(cls.schema, if_exists=True)
+            cls.dbm.drop_database(cls._test_db_name, if_exists=True)
             cls.session.close()
         super().tearDownClass()
 

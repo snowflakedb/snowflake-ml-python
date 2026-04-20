@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 from unittest import mock
 
 import yaml
@@ -12,11 +12,14 @@ from snowflake.ml.model._client.model.batch_inference_specs import (
 
 
 class BatchInferenceDefinitionTest(absltest.TestCase):
-    def _create_mock_model_version(self, target_method: str = "predict") -> mock.MagicMock:
+    def _create_mock_model_version(
+        self, target_method: str = "predict", session_warehouse: Optional[str] = "SESSION_WH"
+    ) -> mock.MagicMock:
         mv = mock.MagicMock()
         mv.fully_qualified_model_name = "MY_DB.MY_SCHEMA.MY_MODEL"
         mv.version_name = "V1"
         mv._get_function_info.return_value = {"target_method": target_method}
+        mv._service_ops._session.get_current_warehouse.return_value = session_warehouse
         return mv
 
     def _create_mock_dataframe(self) -> mock.MagicMock:
@@ -164,15 +167,34 @@ class BatchInferenceDefinitionTest(absltest.TestCase):
         self.assertNotIn("name", spec["job"])
         self.assertEqual(spec["job"]["name_prefix"], "MY_DB.MY_SCHEMA.MY_PREFIX_")
 
-    def test_to_sql_missing_warehouse_raises(self) -> None:
+    def test_missing_warehouse_and_no_session_warehouse_raises(self) -> None:
         from snowflake.ml.model._client.model.batch_inference_definition import (
             BatchInferenceDefinition,
         )
 
-        mv = self._create_mock_model_version()
+        mv = self._create_mock_model_version(session_warehouse=None)
         df = self._create_mock_dataframe()
         output_spec = OutputSpec(stage_location="@MY_DB.MY_SCHEMA.MY_STAGE/output/")
         job_spec = JobSpec()  # no warehouse
+
+        with self.assertRaises(ValueError):
+            BatchInferenceDefinition(
+                model_version=mv,
+                X=df,
+                compute_pool="GPU_POOL",
+                output_spec=output_spec,
+                job_spec=job_spec,
+            )
+
+    def test_warehouse_falls_back_to_session_warehouse(self) -> None:
+        from snowflake.ml.model._client.model.batch_inference_definition import (
+            BatchInferenceDefinition,
+        )
+
+        mv = self._create_mock_model_version(session_warehouse="SESSION_WH")
+        df = self._create_mock_dataframe()
+        output_spec = OutputSpec(stage_location="@MY_DB.MY_SCHEMA.MY_STAGE/output/")
+        job_spec = JobSpec()  # no warehouse — should fall back to session
 
         defn = BatchInferenceDefinition(
             model_version=mv,
@@ -182,8 +204,8 @@ class BatchInferenceDefinitionTest(absltest.TestCase):
             job_spec=job_spec,
         )
 
-        with self.assertRaises(ValueError):
-            defn.to_sql()
+        spec = self._extract_spec_from_sql(defn.to_sql())
+        self.assertEqual(spec["job"]["warehouse"], "SESSION_WH")
 
     def test_to_sql_with_inference_engine(self) -> None:
         from snowflake.ml.model._client.model.batch_inference_definition import (

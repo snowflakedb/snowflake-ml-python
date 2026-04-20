@@ -126,11 +126,11 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         name = f"model_{inspect.stack()[1].function}"
         version = f"ver_{self._run_id}"
 
-        # Set embed_local_ml_library to True explicitly because if we set target_platforms to
-        # SNOWPARK_CONTAINER_SERVICES, we will skip the logic which automatically sets it to
-        # True when the snowml package is not available in the Snowflake Anaconda Channel.
+        # Default embed_local_ml_library to True because target_platforms=SNOWPARK_CONTAINER_SERVICES
+        # skips the logic that automatically sets it when snowml is not in the Snowflake Anaconda Channel.
+        # Callers can override to False for backwards-compatibility tests with pinned older versions.
         options = options or {}
-        options["embed_local_ml_library"] = True
+        options.setdefault("embed_local_ml_library", True)
         mv = self.registry.log_model(
             model=model,
             model_name=name,

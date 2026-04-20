@@ -1,7 +1,7 @@
-import tempfile
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+from typing_extensions import override
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_handlers.huggingface import _task_handler
@@ -11,13 +11,10 @@ if TYPE_CHECKING:
     import transformers
 
 
-class VideoTaskHandler(_task_handler.HuggingFaceTaskHandler):
-    """Handles video classification pipelines.
+class QuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
+    """Handles extractive question answering pipelines."""
 
-    Video classification expects file paths. Bytes are written to temp files,
-    processed, then cleaned up.
-    """
-
+    @override
     def run_inference(
         self,
         raw_model: "transformers.Pipeline",
@@ -26,22 +23,10 @@ class VideoTaskHandler(_task_handler.HuggingFaceTaskHandler):
         X: pd.DataFrame,
         **kwargs: Any,
     ) -> Any:
-        input_col = signature.inputs[0].name
-        video_bytes_list = X[input_col].to_list()
-        temp_file_paths: list[str] = []
-        temp_files = []
-        try:
-            for video_bytes in video_bytes_list:
-                temp_file = tempfile.NamedTemporaryFile()
-                temp_file.write(video_bytes)
-                temp_file.flush()
-                temp_file_paths.append(temp_file.name)
-                temp_files.append(temp_file)
-            return getattr(raw_model, target_method)(temp_file_paths)
-        finally:
-            for f in temp_files:
-                f.close()
+        input_data = X.to_dict(orient="records")
+        return getattr(raw_model, target_method)(input_data)
 
+    @override
     def _needs_list_wrapping(
         self,
         raw_model: "transformers.Pipeline",
@@ -49,6 +34,9 @@ class VideoTaskHandler(_task_handler.HuggingFaceTaskHandler):
         result: Any,
         input_size: int,
     ) -> bool:
+        # Single-input batch mode can return a bare dict. Also handle
+        # FeatureGroupSpec outputs where the outer list is dropped for
+        # single inputs.
         _is_group_output = (
             len(signature.outputs) == 1
             and isinstance(signature.outputs[0], model_signature_core.FeatureGroupSpec)

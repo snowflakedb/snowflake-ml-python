@@ -11,12 +11,8 @@ from snowflake.ml.model._packager.model_handlers.huggingface._handler import (
 from snowflake.ml.model._packager.model_handlers.huggingface._openai_chat_wrapper import (
     HuggingFaceOpenAICompatibleModel,
 )
-from snowflake.ml.model._packager.model_handlers.huggingface._utils import (
-    get_requirements_from_task,
-)
 
 __all__ = [
     "TransformersPipelineHandler",
     "HuggingFaceOpenAICompatibleModel",
-    "get_requirements_from_task",
 ]

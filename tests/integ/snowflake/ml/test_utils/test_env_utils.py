@@ -1,19 +1,43 @@
 import functools
+import os
+from typing import Any, Mapping, Union
 
 from packaging import requirements, version
 
 from snowflake.ml._internal import env, env_utils
 from snowflake.ml._internal.utils import connection_params, snowflake_env
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.snowpark import session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 
+def _ensure_session_has_warehouse(sess: session.Session, login_opts: Mapping[str, Any]) -> None:
+    """Activate a warehouse when the connector left the session without one (common if omitted from snowsql config)."""
+    if sess.get_current_warehouse():
+        return
+    wh = os.getenv("SNOWFLAKE_WAREHOUSE", "").strip()
+    if not wh:
+        raw = login_opts.get("warehouse")
+        if isinstance(raw, str):
+            wh = raw.strip()
+        elif raw is not None:
+            wh = str(raw).strip()
+    if not wh:
+        raise RuntimeError(
+            'Snowpark session has no active warehouse. Add `warehouse = "..."` to the active '
+            "[connections.*] section in ~/.snowsql/config, or set environment variable "
+            "SNOWFLAKE_WAREHOUSE before running tests."
+        )
+    sess.sql(f"USE WAREHOUSE {SqlIdentifier(wh)}").collect()
+
+
 def get_available_session() -> session.Session:
-    return (
-        session._get_active_session()
-        if snowpark_utils.is_in_stored_procedure()  # type: ignore[no-untyped-call] #
-        else session.Session.builder.configs(connection_params.SnowflakeLoginOptions()).create()
-    )
+    if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        return session._get_active_session()
+    opts: dict[str, Union[str, bytes]] = dict(connection_params.SnowflakeLoginOptions())
+    sess = session.Session.builder.configs(opts).create()
+    _ensure_session_has_warehouse(sess, opts)
+    return sess
 
 
 @functools.lru_cache

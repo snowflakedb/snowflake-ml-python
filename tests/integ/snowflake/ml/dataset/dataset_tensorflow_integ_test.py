@@ -18,7 +18,7 @@ random.seed(0)
 class TestSnowflakeDataseTensorflow(dataset_integ_test_base.TestSnowflakeDatasetBase):
     """Integration tests for Snowflake Dataset."""
 
-    DS_INTEG_TEST_DB = "SNOWML_DATASET_TF_TEST_DB"
+    DS_INTEG_TEST_DB_PREFIX = "SNOWML_DATASET_TF_TEST_DB"
     DS_INTEG_TEST_SCHEMA = "DATASET_TF_TEST"
 
     @parameterized.parameters(  # type: ignore[misc]

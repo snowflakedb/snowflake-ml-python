@@ -29,7 +29,7 @@ random.seed(0)
 class TestSnowflakeDataset(dataset_integ_test_base.TestSnowflakeDatasetBase):
     """Integration tests for Snowflake Dataset."""
 
-    DS_INTEG_TEST_DB = "SNOWML_DATASET_TEST_DB"
+    DS_INTEG_TEST_DB_PREFIX = "SNOWML_DATASET_TEST_DB"
     DS_INTEG_TEST_SCHEMA = "DATASET_TEST"
 
     @common_test_base.CommonTestBase.sproc_test(local=True, additional_packages=["pytorch"])

@@ -151,13 +151,32 @@ class ModelParameterReconciler:
         self, artifact_repository_map: Optional[dict[str, str]]
     ) -> None:
         """Validate pip_requirements compatibility with warehouse deployment."""
-        if self._pip_requirements and not artifact_repository_map and self._targets_warehouse(self._target_platforms):
+        # NOTE: Equivalent validation also runs in MLFlowHandler.save_model in
+        # snowflake/ml/model/_packager/model_handlers/mlflow.py for the MLflow-specific
+        # case where pip requirements are parsed from the MLflow model's conda.yaml.
+        # Keep the two in sync if changing behavior here.
+        if not self._pip_requirements or artifact_repository_map:
+            return
+
+        # If target_platforms is None, print the warning and allow proceeding.
+        # If target_platforms is explicitly set and includes warehouse, raise an error.
+        if self._target_platforms is None:
             warnings.warn(
                 "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse "
                 "without specifying `artifact_repository_map`. This model can be run in Snowpark Container "
                 "Services. See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container.",
                 category=UserWarning,
                 stacklevel=1,
+            )
+        elif self._targets_warehouse(self._target_platforms):
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Models with `pip_requirements` require an `artifact_repository_map` to run in a "
+                    "Snowflake Warehouse. Either provide an `artifact_repository_map` or set "
+                    '`target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`. '
+                    "See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container."
+                ),
             )
 
     @staticmethod

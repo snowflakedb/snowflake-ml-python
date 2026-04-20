@@ -38,7 +38,7 @@ class PipOnlyModel(custom_model.CustomModel):
 
     @custom_model.inference_api
     def check_env(self, input: pd.DataFrame) -> pd.DataFrame:
-        """Check if the environment is using pip-only path (uv/venv) instead of conda.
+        """Check if the environment is using a pip-only path (venv) instead of conda.
 
         Returns environment info to verify:
         - uses_venv: True if running from /opt/venv
@@ -105,36 +105,10 @@ class PipOnlyPyTorchModel(custom_model.CustomModel):
 
 
 class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
-    """Integration tests for pip-only model deployment using the BuildKit inference image builder.
+    """Integration tests for pip-only model deployment.
 
-    Overrides the builder image to use INFERENCE_IMAGE_BUILDER_PATH (sf-inference-image-builder-amd64)
-    instead of BUILDER_IMAGE_PATH (sf-kaniko-amd64, which is deprecated and does not support pip-only models).
+    Uses the same Kaniko builder override as ``RegistryModelDeploymentTestBase`` (``BUILDER_IMAGE_PATH``).
     """
-
-    def _has_image_override(self) -> bool:
-        image_paths = [
-            self.INFERENCE_IMAGE_BUILDER_PATH,
-            self.BASE_CPU_IMAGE_PATH,
-            self.BASE_GPU_IMAGE_PATH,
-            self.MODEL_LOGGER_PATH,
-        ]
-        if all(image_paths):
-            return True
-        elif not any(image_paths):
-            return False
-        else:
-            raise ValueError(
-                "Please set or unset INFERENCE_IMAGE_BUILDER_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, "
-                "and MODEL_LOGGER_PATH at the same time."
-            )
-
-    def _get_image_override_session_params(self) -> dict[str, str]:
-        params = super()._get_image_override_session_params()
-        # Pip-only models require the BuildKit inference image builder (sf-inference-image-builder-amd64).
-        # Kaniko (sf-kaniko-amd64) is deprecated and does not support the pip-only packaging path.
-        if self.INFERENCE_IMAGE_BUILDER_PATH is not None:
-            params[self._BUILDER_SESSION_PARAM] = self.INFERENCE_IMAGE_BUILDER_PATH
-        return params
 
     def _assert_pip_only_predict_result(self, py_ver: str, expected: pd.DataFrame) -> Callable[[pd.DataFrame], None]:
         """Assert predict result matches expected and runtime python_version matches requested py_ver."""
@@ -146,7 +120,7 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         return fn
 
     def _assert_pip_only_env(self, res: pd.DataFrame) -> None:
-        """Assert that the deployed service is using pip-only path (uv/venv)."""
+        """Assert that the deployed service is using a pip-only path (venv)."""
         self.assertTrue(
             res["uses_venv"].iloc[0],
             f"Expected to use /opt/venv but got python_executable={res['python_executable'].iloc[0]}",
@@ -161,14 +135,14 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         )
 
     def test_pip_only_model(self) -> None:
-        """Test end-to-end deployment of a pip-only model using inference_image_builder.
+        """Test end-to-end deployment of a pip-only model.
 
         Verifies:
         1. Model prediction works correctly
-        2. Environment uses pip-only path (uv/venv) instead of conda
+        2. Environment uses a pip-only path (venv) instead of conda
         """
         if not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
+            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
 
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
         pip_only_model = PipOnlyModel(custom_model.ModelContext())
@@ -204,7 +178,7 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         and that a GPU model runs inference correctly on a GPU compute pool.
         """
         if not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
+            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
 
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         pip_only_model = PipOnlyModel(custom_model.ModelContext())
@@ -239,10 +213,10 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
 
         Verifies:
         1. Model runs with the correct Python version
-        2. Environment uses pip-only path (uv/venv)
+        2. Environment uses a pip-only path (venv)
         """
         if not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
+            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
 
         import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
@@ -277,7 +251,7 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         3. torch.cuda.is_available() returns True on the deployed service
         """
         if not self._has_image_override():
-            self.skipTest("Skipping inference_image_builder test: image override not enabled.")
+            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
 
         import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 

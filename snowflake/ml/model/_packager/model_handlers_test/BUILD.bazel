@@ -72,6 +72,7 @@ py_test(
     ],
     deps = [
         "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:target_platform",
         "//snowflake/ml/model/_packager:model_packager",
     ],
 )

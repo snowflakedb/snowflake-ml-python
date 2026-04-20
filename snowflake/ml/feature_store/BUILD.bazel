@@ -31,6 +31,7 @@ py_library(
         "feature_view.py",
         "interval_utils.py",
         "metadata_manager.py",
+        "online_service.py",
         "request_source.py",
         "spec/__init__.py",
         "spec/builder.py",
@@ -77,6 +78,15 @@ py_test(
 )
 
 py_test(
+    name = "online_service_test",
+    srcs = ["online_service_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "aggregation_test",
     srcs = ["aggregation_test.py"],
     tags = [
@@ -103,6 +113,18 @@ py_test(
 py_test(
     name = "feature_store_stream_source_test",
     srcs = ["feature_store_stream_source_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_oft_online_config_test",
+    srcs = ["feature_store_oft_online_config_test.py"],
     tags = [
         "feature:feature_store",
         "short_regress",

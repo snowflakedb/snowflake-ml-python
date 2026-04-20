@@ -5,6 +5,7 @@ from snowflake.ml._internal import init_utils
 from .access_manager import setup_feature_store
 from .feature import Feature
 from .feature_view import RollupConfig
+from .spec.enums import FeatureAggregationMethod
 from .stream_config import StreamConfig
 from .stream_source import StreamSource
 
@@ -17,6 +18,7 @@ for k, v in exportable_classes.items():
 __all__ = list(exportable_classes.keys()) + [
     "setup_feature_store",
     "Feature",
+    "FeatureAggregationMethod",
     "RollupConfig",
     "StreamConfig",
     "StreamSource",

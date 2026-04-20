@@ -1,5 +1,5 @@
 ---
-exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch)
+exclude: ^(.*egg.info.*|.*/parameters.py$|.*\.py_template|.*/experimental/.*|.*/fixtures/.*|docs/source/_themes/.*|.*\.patch|.*/static/swagger-ui-bundle\.js$|.*/static/swagger-ui\.css$)
 repos:
   - repo: local
     hooks:

@@ -22,6 +22,7 @@ from snowflake.ml.feature_store.spec.models import (
     _make_fs_column,
     _sanitize_json_for_dollar_quoting,
     validate_schema_types,
+    validate_spec_oft_offline_table_schema,
 )
 from snowflake.snowpark.types import (
     ArrayType,
@@ -75,10 +76,13 @@ class MakeFSColumnTest(parameterized.TestCase):
         self.assertEqual(col.type, "TimestampType")
         self.assertIsNone(col.timezone)
 
-    def test_timestamp_type_with_tz(self) -> None:
-        col = _make_fs_column("ts", TimestampType(TimestampTimeZone.TZ))
-        self.assertEqual(col.type, "TimestampType")
-        self.assertEqual(col.timezone, str(TimestampTimeZone.TZ))
+    def test_timestamp_type_tz_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TIMESTAMP_NTZ"):
+            _make_fs_column("ts", TimestampType(TimestampTimeZone.TZ))
+
+    def test_timestamp_type_ltz_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TIMESTAMP_NTZ"):
+            _make_fs_column("ts", TimestampType(TimestampTimeZone.LTZ))
 
     def test_unsupported_type_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "Unsupported type.*ArrayType"):
@@ -420,6 +424,35 @@ class ValidateSchemaTypesTest(parameterized.TestCase):
         self.assertIn("Supported types:", msg)
         self.assertIn("LongType", msg)
         self.assertIn("DoubleType", msg)
+
+    def test_timestamp_ntz_passes(self) -> None:
+        """Explicit TIMESTAMP_NTZ passes validation."""
+        schema = StructType([StructField("TS", TimestampType(TimestampTimeZone.NTZ))])
+        validate_schema_types(schema)
+
+    def test_timestamp_ltz_rejected(self) -> None:
+        """TIMESTAMP_LTZ is rejected with guidance to cast to NTZ."""
+        schema = StructType([StructField("TS", TimestampType(TimestampTimeZone.LTZ))])
+        with self.assertRaisesRegex(ValueError, "TIMESTAMP_NTZ"):
+            validate_schema_types(schema)
+
+    def test_timestamp_tz_rejected(self) -> None:
+        """TIMESTAMP_TZ is rejected with guidance to cast to NTZ."""
+        schema = StructType([StructField("TS", TimestampType(TimestampTimeZone.TZ))])
+        with self.assertRaisesRegex(ValueError, "TIMESTAMP_NTZ"):
+            validate_schema_types(schema)
+
+
+class ValidateSpecOftOfflineTableSchemaTest(absltest.TestCase):
+    """``validate_spec_oft_offline_table_schema`` matches OFT offline table / FSColumn rules."""
+
+    def test_same_rejection_as_validate_schema_types(self) -> None:
+        schema = StructType([StructField("X", ArrayType(StringType()))])
+        with self.assertRaises(ValueError) as ctx_pg:
+            validate_spec_oft_offline_table_schema(schema)
+        with self.assertRaises(ValueError) as ctx_base:
+            validate_schema_types(schema)
+        self.assertEqual(str(ctx_pg.exception), str(ctx_base.exception))
 
 
 # ============================================================================

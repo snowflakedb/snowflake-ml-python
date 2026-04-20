@@ -495,7 +495,7 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         online_config = json.loads(online_rows[0]["ONLINE_CONFIG"])
         self.assertTrue(online_config["enable"])
 
-        # Verify that runtime metadata fields are included for enabled online feature views
+        # Verify that Online Service metadata fields are included for enabled online feature views
         self.assertIn("refresh_mode", online_config)
         self.assertIn("scheduling_state", online_config)
         self.assertEqual(online_config["target_lag"], "16 seconds")

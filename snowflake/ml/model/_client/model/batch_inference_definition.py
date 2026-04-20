@@ -60,6 +60,16 @@ class BatchInferenceDefinition:
         target_function_info = model_version._get_function_info(function_name=function_name)
         self._function_name: str = target_function_info["target_method"]
 
+        # Resolve warehouse at definition time so it's baked into the YAML spec,
+        # matching run_batch() fallback behavior.
+        if self._job_spec.warehouse is not None:
+            self._warehouse: str = self._job_spec.warehouse
+        else:
+            session_warehouse = model_version._service_ops._session.get_current_warehouse()
+            if session_warehouse is None:
+                raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
+            self._warehouse = session_warehouse
+
         # Serialize DataFrame queries for session-free replay
         self._queries: list[str] = list(X.queries["queries"])
         self._post_actions: list[str] = list(X.queries["post_actions"])
@@ -83,18 +93,9 @@ class BatchInferenceDefinition:
     def _build_spec_dict(self) -> dict[str, Any]:
         """Construct the full deployment spec dictionary.
 
-        Raises:
-            ValueError: If warehouse is not set in the job spec.
-
         Returns:
             A dictionary matching the ModelJobDeploymentSpec schema.
         """
-        if self._job_spec.warehouse is None:
-            raise ValueError(
-                "warehouse must be set in JobSpec for task-based batch inference. "
-                "The session warehouse is not available in DAGTask context."
-            )
-
         # Model section
         models = [{"name": self._fully_qualified_model_name, "version": self._version_name}]
 
@@ -164,7 +165,7 @@ class BatchInferenceDefinition:
         # Job section
         job_dict: dict[str, Any] = {
             "compute_pool": self._compute_pool,
-            "warehouse": self._job_spec.warehouse,
+            "warehouse": self._warehouse,
             "function_name": function_name,
             "input": input_dict,
             "output": output_dict,

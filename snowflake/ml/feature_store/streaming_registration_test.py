@@ -29,6 +29,7 @@ from snowflake.ml.feature_store.streaming_registration import (
 from snowflake.snowpark.types import (
     DecimalType,
     DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -1106,6 +1107,14 @@ class BuildStreamingSpecTest(absltest.TestCase):
         mock_udf_df.columns = [f.name for f in udf_schema.fields]
         fv._initialize_from_feature_df(mock_udf_df)
 
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
         spec = _build_streaming_feature_view_spec(
             feature_view=fv,
             feature_view_name=SqlIdentifier("TEST_FV$v1"),
@@ -1113,6 +1122,7 @@ class BuildStreamingSpecTest(absltest.TestCase):
             target_lag="0 seconds",
             stream_source=stream_source,
             udf_transformed_schema=udf_schema,
+            tiled_materialized_schema=tiled_dt_schema,
             database="DB",
             schema="SCH",
         )
@@ -1140,6 +1150,14 @@ class BuildStreamingSpecTest(absltest.TestCase):
         mock_udf_df.columns = [f.name for f in udf_schema.fields]
         fv._initialize_from_feature_df(mock_udf_df)
 
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
         spec = _build_streaming_feature_view_spec(
             feature_view=fv,
             feature_view_name=SqlIdentifier("TEST_FV$v1"),
@@ -1147,6 +1165,7 @@ class BuildStreamingSpecTest(absltest.TestCase):
             target_lag="0 seconds",
             stream_source=stream_source,
             udf_transformed_schema=udf_schema,
+            tiled_materialized_schema=tiled_dt_schema,
             database="DB",
             schema="SCH",
         )
@@ -1156,6 +1175,186 @@ class BuildStreamingSpecTest(absltest.TestCase):
         output_col_names = {f["output_column"]["name"] for f in features}
         self.assertIn("TOTAL_AMOUNT_24H", output_col_names)
         self.assertIn("TXN_COUNT_1H", output_col_names)
+
+    def test_tiled_requires_materialized_dt_schema(self) -> None:
+        fv = self._make_tiled_streaming_fv()
+        stream_source = _make_stream_source()
+        udf_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.schema = udf_schema
+        mock_udf_df.columns = [f.name for f in udf_schema.fields]
+        fv._initialize_from_feature_df(mock_udf_df)
+
+        with self.assertRaisesRegex(ValueError, "tiled_materialized_schema"):
+            _build_streaming_feature_view_spec(
+                feature_view=fv,
+                feature_view_name=SqlIdentifier("TEST_FV$v1"),
+                version="v1",
+                target_lag="0 seconds",
+                stream_source=stream_source,
+                udf_transformed_schema=udf_schema,
+                database="DB",
+                schema="SCH",
+            )
+
+    def test_non_tiled_rejects_tiled_materialized_schema(self) -> None:
+        fv = self._make_non_tiled_streaming_fv()
+        stream_source = _make_stream_source()
+        udf_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.schema = udf_schema
+        mock_udf_df.columns = [f.name for f in udf_schema.fields]
+        fv._initialize_from_feature_df(mock_udf_df)
+        fake_tiled = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "must not set tiled_materialized_schema"):
+            _build_streaming_feature_view_spec(
+                feature_view=fv,
+                feature_view_name=SqlIdentifier("TEST_FV$v1"),
+                version="v1",
+                target_lag="0 seconds",
+                stream_source=stream_source,
+                udf_transformed_schema=udf_schema,
+                tiled_materialized_schema=fake_tiled,
+                database="DB",
+                schema="SCH",
+            )
+
+    def test_tiled_spec_uses_fv_aggregation_method(self) -> None:
+        """Tiled streaming FV spec uses the FV's feature_aggregation_method, not hardcoded TILES."""
+        from snowflake.ml.feature_store.feature import Feature
+        from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
+
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=_make_mock_backfill_df(),
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1h",
+            features=[
+                Feature.sum("AMOUNT", "24h").alias("total_amount_24h"),
+            ],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+        stream_source = _make_stream_source()
+        udf_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.schema = udf_schema
+        mock_udf_df.columns = [f.name for f in udf_schema.fields]
+        fv._initialize_from_feature_df(mock_udf_df)
+
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+            ]
+        )
+        spec = _build_streaming_feature_view_spec(
+            feature_view=fv,
+            feature_view_name=SqlIdentifier("TEST_FV$v1"),
+            version="v1",
+            target_lag="0 seconds",
+            stream_source=stream_source,
+            udf_transformed_schema=udf_schema,
+            tiled_materialized_schema=tiled_dt_schema,
+            database="DB",
+            schema="SCH",
+        )
+        spec_dict = spec.to_dict()
+        self.assertEqual(spec_dict["spec"]["feature_aggregation_method"], "continuous")
+
+    def test_tiled_spec_default_uses_tiles(self) -> None:
+        """Tiled streaming FV without explicit method defaults to TILES in the spec."""
+        from snowflake.ml.feature_store.feature import Feature
+        from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
+
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=_make_mock_backfill_df(),
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1h",
+            features=[
+                Feature.sum("AMOUNT", "24h").alias("total_amount_24h"),
+            ],
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.TILES)
+
+        stream_source = _make_stream_source()
+        udf_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.schema = udf_schema
+        mock_udf_df.columns = [f.name for f in udf_schema.fields]
+        fv._initialize_from_feature_df(mock_udf_df)
+
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+            ]
+        )
+        spec = _build_streaming_feature_view_spec(
+            feature_view=fv,
+            feature_view_name=SqlIdentifier("TEST_FV$v1"),
+            version="v1",
+            target_lag="0 seconds",
+            stream_source=stream_source,
+            udf_transformed_schema=udf_schema,
+            tiled_materialized_schema=tiled_dt_schema,
+            database="DB",
+            schema="SCH",
+        )
+        spec_dict = spec.to_dict()
+        self.assertEqual(spec_dict["spec"]["feature_aggregation_method"], "tiles")
 
 
 if __name__ == "__main__":

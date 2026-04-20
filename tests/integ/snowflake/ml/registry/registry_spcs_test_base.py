@@ -32,7 +32,6 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     PROXY_IMAGE_PATH = os.getenv("PROXY_IMAGE_PATH", None)
     MODEL_LOGGER_PATH = os.getenv("MODEL_LOGGER_PATH", None)
     VLLM_IMAGE_PATH = os.getenv("VLLM_IMAGE_PATH", None)
-    INFERENCE_IMAGE_BUILDER_PATH = os.getenv("INFERENCE_IMAGE_BUILDER_PATH", None)
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""

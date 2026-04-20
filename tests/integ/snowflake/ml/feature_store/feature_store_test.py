@@ -1376,6 +1376,16 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         with self.assertRaisesRegex(ValueError, "Failed to find FeatureView .*"):
             fs.read_feature_view("my_fv", "v2")
 
+        # Test the warehouse override.
+        try:
+            self._session.sql("UNSET WAREHOUSE").collect()
+            # Current session now has no warehouse, but read_feature_view should
+            # still work.
+            df = fs.read_feature_view(my_fv)
+            self.assertEqual(len(df.collect()), 2)
+        finally:
+            self._session.use_warehouse(self._test_warehouse_name)
+
     def test_register_with_cron_expr(self) -> None:
         fs = self._create_feature_store()
 

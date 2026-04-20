@@ -224,6 +224,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                     pip_name="sentence-transformers",
                 ),
                 model_env.ModelDependency(requirement="transformers", pip_name="transformers"),
+                model_env.ModelDependency(requirement="tokenizers", pip_name="tokenizers"),
                 model_env.ModelDependency(requirement="pytorch", pip_name="torch"),
             ],
             check_local_version=True,

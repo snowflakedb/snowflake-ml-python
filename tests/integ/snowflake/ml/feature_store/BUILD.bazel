@@ -117,6 +117,7 @@ py_test(
         ":common_utils",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
 
@@ -341,19 +342,57 @@ py_test(
 )
 
 py_test(
-    name = "feature_store_spec_oft_test",
+    name = "feature_store_spec_oft_e2e_integ_test",
     timeout = "eternal",
     srcs = [
-        "feature_store_spec_oft_test.py",
+        "feature_store_batch_online_read_integ_test.py",
+        "feature_store_spec_oft_e2e_integ_test.py",
+        "feature_store_stream_ingest_integ_test.py",
+        "feature_store_streaming_fv_test.py",
     ],
     imports = ["."],
     shard_count = 4,
-    tags = ["feature:feature_store"],
+    tags = [
+        "exclusive",
+        "feature:feature_store",
+    ],
     deps = [
         ":common_utils",
+        ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "online_service_integ_test",
+    timeout = "eternal",
+    srcs = [
+        "online_service_integ_test.py",
+    ],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+    ],
+)
+
+py_library(
+    name = "feature_store_streaming_fv_integ_base",
+    testonly = True,
+    srcs = ["feature_store_streaming_fv_integ_base.py"],
+    deps = [
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )
 
@@ -368,8 +407,55 @@ py_test(
     tags = ["feature:feature_store"],
     deps = [
         ":common_utils",
+        ":feature_store_streaming_fv_integ_base",
         ":fs_integ_test_base",
         "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "feature_store_stream_ingest_integ_test",
+    timeout = "eternal",
+    srcs = ["feature_store_stream_ingest_integ_test.py"],
+    shard_count = 1,
+    # Same Snowflake schema as batch online-read integ; must not run in parallel.
+    tags = [
+        "exclusive",
+        "feature:feature_store",
+    ],
+    deps = [
+        ":feature_store_streaming_fv_integ_base",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
+    ],
+)
+
+py_test(
+    name = "feature_store_batch_online_read_integ_test",
+    timeout = "eternal",
+    srcs = ["feature_store_batch_online_read_integ_test.py"],
+    shard_count = 1,
+    # Same Snowflake schema as stream-ingest integ; must not run in parallel.
+    tags = [
+        "exclusive",
+        "feature:feature_store",
+    ],
+    deps = [
+        ":common_utils",
+        ":feature_store_streaming_fv_integ_base",
+        ":fs_integ_test_base",
+        "//snowflake/ml/feature_store:feature_store_lib",
+        "//snowflake/ml/utils:connection_params",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+        "//tests/integ/snowflake/ml/test_utils:external_volume_manager",
+        "//tests/integ/snowflake/ml/test_utils:test_env_utils",
     ],
 )

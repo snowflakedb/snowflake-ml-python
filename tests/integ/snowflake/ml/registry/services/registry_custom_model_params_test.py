@@ -150,6 +150,8 @@ _PARTIAL_PARAMS: dict[str, Any] = {
     "timestamp_param": datetime.datetime(2025, 1, 2, 3, 4, 5),
     "weights_param": [4.5, 3.5, 2.5],
     "nested_list": [[4, 3], [2, 1]],
+    # Deep merge: override temperature at top level + strategy in nested sampling dict.
+    # Unspecified keys (top_k, use_cache, stop_token, penalties, sampling.seed) keep defaults.
     "config": {
         "temperature": 3.0,
         "sampling": {"strategy": "beam"},
@@ -173,6 +175,7 @@ _NONE_PARAMS: dict[str, Any] = {
     "timestamp_param": None,
     "weights_param": None,
     "nested_list": None,
+    "config": None,
 }
 
 _INVALID_NAME_PARAMS: dict[str, Any] = {"unknown_param": 42}
