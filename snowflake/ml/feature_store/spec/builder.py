@@ -1,11 +1,10 @@
 """FeatureViewSpecBuilder — constructs validated JSON payloads for OFT creation specification.
 
-This is the single entry point for internal SDK code to build feature view specs.
+This is the single entry point for internal SDK code to build feature view
+specs.  Supports all :class:`FeatureViewKind` values; each kind has its own
+required inputs (see ``_validate_*`` methods).
 
-Usage::
-
-    from snowflake.ml.feature_store.spec.builder import FeatureViewSpecBuilder
-    from snowflake.ml.feature_store.spec.enums import *
+Example — StreamingFeatureView::
 
     spec_obj = (
         FeatureViewSpecBuilder(
@@ -15,11 +14,34 @@ Usage::
         .set_sources([stream_source])
         .set_udf(name=..., engine=..., output_columns=[...], function_definition=...)
         .set_features([agg_spec_1, agg_spec_2])
-        .set_properties(entity_columns=[...], ...)
+        .set_properties(entity_columns=[...], timestamp_field=..., ...)
         .set_offline_configs([...])
         .build()
     )
-    spec_dict = spec_obj.to_dict()
+
+Example — RealtimeFeatureView (no offline_configs, features come from UDF outputs)::
+
+    spec_obj = (
+        FeatureViewSpecBuilder(FeatureViewKind.RealtimeFeatureView, ...)
+        .set_sources([request_source, user_fv])
+        .set_udf(name=..., engine=..., output_columns=[...], function_definition=...)
+        .set_properties(entity_columns=[...])
+        .build()
+    )
+
+Example — FeatureGroup (FV sources only, features passthrough, optional prefixing)::
+
+    spec_obj = (
+        FeatureViewSpecBuilder(FeatureViewKind.FeatureGroup, ...)
+        .set_sources([user_fv_v1, user_fv_v2, txn_fv])
+        .set_source_prefixes({
+            ("USER_FV", "v1"): "USER_FV_v1_",
+            ("USER_FV", "v2"): "USER_FV_v2_",
+            ("TXN_FV", "v1"): "TXN_FV_v1_",
+        })
+        .set_properties(entity_columns=[...])
+        .build()
+    )
 """
 
 from __future__ import annotations
@@ -131,6 +153,8 @@ SourceInput = Union[StreamSource, RequestSource, "FeatureView", "FeatureViewSlic
 class FeatureViewSpecBuilder:
     """Builds a validated FeatureView spec payload for the Go backend.
 
+    Supports all :class:`FeatureViewKind` values: ``BatchFeatureView``,
+    ``StreamingFeatureView``, ``RealtimeFeatureView``, and ``FeatureGroup``.
     All methods use the ``set_*`` convention. Accepts raw inputs — Snowpark types,
     StreamSource objects, user-facing Feature objects. Constructs spec-internal
     Pydantic models internally. Validates cross-model rules at ``build()`` time.
@@ -169,6 +193,7 @@ class FeatureViewSpecBuilder:
         self._sources: list[Source] = []
         self._agg_specs: list[AggregationSpec] = []
         self._udf: Optional[UDF] = None
+        self._source_prefix_map: dict[tuple[str, Optional[str]], str] = {}
 
         # Properties
         self._entity_columns: list[str] = []
@@ -337,6 +362,37 @@ class FeatureViewSpecBuilder:
         self._agg_specs = features
         return self
 
+    def set_source_prefixes(
+        self,
+        prefix_map: dict[tuple[str, Optional[str]], str],
+    ) -> FeatureViewSpecBuilder:
+        """Set per-source column prefixes for FeatureGroup output column naming.
+
+        Only meaningful for ``FeatureViewKind.FeatureGroup``; ignored for
+        other kinds.  When resolving passthrough features, columns from
+        sources listed in *prefix_map* have their ``output_column.name``
+        prefixed with the given string while ``source_column.name`` retains
+        the original upstream column name.  Sources not present in the map
+        (or mapped to an empty string) get no prefix.
+
+        Keys are ``(source_name, source_version)`` tuples so that distinct
+        versions of the same upstream feature view (e.g., ``USER_FV@v1`` and
+        ``USER_FV@v2``) can be disambiguated with different prefixes.
+        ``source_version`` mirrors :attr:`Source.source_version` and will be
+        a non-None string for FEATURES sources in a FeatureGroup.
+
+        Args:
+            prefix_map: Mapping from ``(source_name, source_version)`` to
+                prefix string including trailing underscore (e.g.,
+                ``{("USER_FV", "v1"): "USER_FV_v1_"}``). Omit an entry or use
+                an empty string for explicit no-prefix.
+
+        Returns:
+            self for method chaining.
+        """
+        self._source_prefix_map = dict(prefix_map)
+        return self
+
     # -----------------------------------------------------------------------
     # build
     # -----------------------------------------------------------------------
@@ -356,6 +412,10 @@ class FeatureViewSpecBuilder:
 
         # 2. Resolve user features → spec features
         spec_features = self._resolve_features()
+
+        # 2b. Reject duplicate output column names (e.g., unprefixed
+        #     FeatureGroup sources that expose the same feature name).
+        self._validate_unique_output_columns(spec_features)
 
         # 3. Auto-populate metadata
         metadata = Metadata(
@@ -581,34 +641,86 @@ class FeatureViewSpecBuilder:
     def _resolve_passthrough_features(self) -> list[Feature]:
         """Auto-generate identity features for FVs without time-aggregated features.
 
-        Each non-entity, non-timestamp column in the appropriate offline config
-        becomes a passthrough feature where ``source_column == output_column``
-        with no aggregation function or window.
+        Each non-entity column (and, where applicable, non-timestamp column)
+        in the appropriate source becomes a passthrough feature with no
+        aggregation function or window.  By default ``source_column`` and
+        ``output_column`` are the same; the FeatureGroup path may rename
+        ``output_column`` via :meth:`set_source_prefixes`.
 
-        The source config is determined explicitly by kind:
+        The source is determined explicitly by kind:
           - **Batch**: ``BATCH_SOURCE`` offline config.
           - **Streaming**: ``UDF_TRANSFORMED`` offline config.
-          - **Realtime**: no passthrough features.
+          - **Realtime**: UDF's ``output_columns``.
+          - **FeatureGroup**: union of columns from all ``FEATURES`` sources,
+            with ``output_column.name`` optionally prefixed per source via
+            :meth:`set_source_prefixes`.  Entity columns are not present in
+            ``source.columns`` in production flows (they are filtered out by
+            ``_convert_feature_view``); the exclude check is defensive.
 
         Returns:
             List of passthrough Feature models, or empty list if the
-            appropriate offline config is not present.
+            appropriate source is not present.
+
+        Raises:
+            ValueError: If the feature view kind does not support
+                passthrough feature resolution.  # noqa: DAR402
         """
         if self._kind == FeatureViewKind.BatchFeatureView:
             config = self._find_offline_config(TableType.BATCH_SOURCE)
+            if config is None:
+                return []
+            exclude: set[str] = set(self._entity_columns)
+            if self._timestamp_field:
+                exclude.add(self._timestamp_field)
+            return [Feature(source_column=col, output_column=col) for col in config.columns if col.name not in exclude]
+
         elif self._kind == FeatureViewKind.StreamingFeatureView:
             config = self._find_offline_config(TableType.UDF_TRANSFORMED)
-        else:
-            return []
+            if config is None:
+                return []
+            exclude = set(self._entity_columns)
+            if self._timestamp_field:
+                exclude.add(self._timestamp_field)
+            return [Feature(source_column=col, output_column=col) for col in config.columns if col.name not in exclude]
 
-        if config is None:
-            return []
+        elif self._kind == FeatureViewKind.RealtimeFeatureView:
+            # RealtimeFV has no timestamp_field (validated in _validate_realtime).
+            if self._udf is None:
+                return []
+            exclude = set(self._entity_columns)
+            return [
+                Feature(source_column=col, output_column=col)
+                for col in self._udf.output_columns
+                if col.name not in exclude
+            ]
 
-        exclude: set[str] = set(self._entity_columns)
-        if self._timestamp_field:
-            exclude.add(self._timestamp_field)
+        elif self._kind == FeatureViewKind.FeatureGroup:
+            # FeatureGroup has no timestamp_field (validated in _validate_feature_group).
+            exclude = set(self._entity_columns)
+            spec_features: list[Feature] = []
+            for source in self._sources:
+                if source.source_type != SourceType.FEATURES:
+                    continue
+                prefix = self._source_prefix_map.get((source.name, source.source_version), "")
+                if source.selected_features is not None:
+                    # Preserve the caller's requested ordering (FeatureViewSlice
+                    # intentionally preserves feature order) by iterating
+                    # selected_features rather than source.columns.
+                    col_by_name = {c.name: c for c in source.columns}
+                    ordered_cols = [col_by_name[n] for n in source.selected_features if n in col_by_name]
+                else:
+                    ordered_cols = list(source.columns)
+                for col in ordered_cols:
+                    if col.name in exclude:
+                        continue
+                    if prefix:
+                        output_col = col.model_copy(update={"name": f"{prefix}{col.name}"})
+                    else:
+                        output_col = col
+                    spec_features.append(Feature(source_column=col, output_column=output_col))
+            return spec_features
 
-        return [Feature(source_column=col, output_column=col) for col in config.columns if col.name not in exclude]
+        raise ValueError(f"Passthrough features are not supported for kind: {self._kind.value}")
 
     # -----------------------------------------------------------------------
     # Validation
@@ -625,7 +737,11 @@ class FeatureViewSpecBuilder:
         elif kind == FeatureViewKind.BatchFeatureView:
             self._validate_batch(table_types, source_types)
         elif kind == FeatureViewKind.RealtimeFeatureView:
-            self._validate_realtime(table_types, source_types)
+            self._validate_realtime(source_types)
+        elif kind == FeatureViewKind.FeatureGroup:
+            self._validate_feature_group(source_types)
+        else:
+            raise ValueError(f"No validator wired up for FeatureViewKind: {kind.value}")
 
         # PG online store only supports a subset of aggregation functions.
         self._validate_pg_aggregations()
@@ -677,8 +793,9 @@ class FeatureViewSpecBuilder:
 
     def _validate_batch(self, table_types: list[TableType], source_types: list[SourceType]) -> None:
         """Validate rules specific to BatchFeatureView."""
-        # Exactly 1 BatchSource offline config
-        if len(self._offline_configs) != 1 or table_types != [TableType.BATCH_SOURCE]:
+        if len(self._offline_configs) != 1:
+            raise ValueError("BatchFeatureView requires exactly 1 offline config")
+        if table_types != [TableType.BATCH_SOURCE]:
             raise ValueError("BatchFeatureView requires exactly 1 BatchSource offline config")
 
         # No UDF
@@ -703,32 +820,111 @@ class FeatureViewSpecBuilder:
             if self._sources:
                 raise ValueError("Non-tiled BatchFeatureView must not have sources")
 
-    def _validate_realtime(self, table_types: list[TableType], source_types: list[SourceType]) -> None:
-        """Validate rules specific to RealtimeFeatureView."""
-        # No offline configs
+    def _validate_realtime(self, source_types: list[SourceType]) -> None:
+        """Validate rules specific to RealtimeFeatureView.
+
+        RealtimeFeatureView rules:
+          - No offline configs (computed at request time)
+          - Exactly 1 Request source plus 0+ Features sources; no Stream/Batch
+          - UDF required; features are derived from its output_columns
+          - No aggregation (no agg_method, no granularity_sec, no agg features)
+          - No timestamp_field
+
+        Args:
+            source_types: Source types present on the builder.
+
+        Raises:
+            ValueError: If any RealtimeFeatureView rule is violated.  # noqa: DAR402
+        """
         if len(self._offline_configs) != 0:
             raise ValueError("RealtimeFeatureView must not have offline configs")
 
-        # Exactly 1 Request source, 0+ Features sources, no Stream/Batch
         request_count = source_types.count(SourceType.REQUEST)
         if request_count != 1:
-            raise ValueError(f"RealtimeFeatureView requires exactly 1 Request source, " f"got {request_count}")
-        # No Stream sources allowed
+            raise ValueError(f"RealtimeFeatureView requires exactly 1 Request source, got {request_count}")
         if SourceType.STREAM in source_types:
             raise ValueError("RealtimeFeatureView must not have Stream sources")
-        # No Batch sources allowed
         if SourceType.BATCH in source_types:
             raise ValueError("RealtimeFeatureView must not have Batch sources")
 
-        # UDF required
         if self._udf is None:
             raise ValueError("RealtimeFeatureView requires a UDF")
 
-        # No aggregation
         if self._agg_method is not None:
             raise ValueError("RealtimeFeatureView must not have an agg_method")
         if self._granularity_sec is not None:
             raise ValueError("RealtimeFeatureView must not have granularity_sec")
+        if self._agg_specs:
+            raise ValueError("RealtimeFeatureView must not have aggregation features (set_features)")
+        if self._timestamp_field is not None:
+            raise ValueError("RealtimeFeatureView must not have a timestamp_field")
+
+    def _validate_feature_group(self, source_types: list[SourceType]) -> None:
+        """Validate rules specific to FeatureGroup.
+
+        FeatureGroup rules:
+          - No offline configs (reads from upstream FVs' storage)
+          - At least 1 source, all must be FEATURES type
+          - No UDF
+          - No aggregation (no agg_method, no granularity_sec, no agg features)
+          - No timestamp_field
+
+        Args:
+            source_types: Source types present on the builder.
+
+        Raises:
+            ValueError: If any FeatureGroup rule is violated.  # noqa: DAR402
+        """
+        if len(self._offline_configs) != 0:
+            raise ValueError("FeatureGroup must not have offline configs")
+
+        if not self._sources:
+            raise ValueError("FeatureGroup requires at least 1 Features source")
+
+        non_features = sorted({st.value for st in source_types if st != SourceType.FEATURES})
+        if non_features:
+            raise ValueError(f"FeatureGroup must only have Features sources, got disallowed types: {non_features}")
+
+        if self._udf is not None:
+            raise ValueError("FeatureGroup must not have a UDF")
+
+        if self._agg_method is not None:
+            raise ValueError("FeatureGroup must not have an agg_method")
+        if self._granularity_sec is not None:
+            raise ValueError("FeatureGroup must not have granularity_sec")
+        if self._agg_specs:
+            raise ValueError("FeatureGroup must not have aggregation features (set_features)")
+        if self._timestamp_field is not None:
+            raise ValueError("FeatureGroup must not have a timestamp_field")
+
+    def _validate_unique_output_columns(self, features: list[Feature]) -> None:
+        """Reject specs whose resolved features contain duplicate output names.
+
+        Duplicates can arise e.g. when two FeatureGroup sources expose a
+        feature with the same name and no prefixing is applied, or when
+        a prefix yields a name that collides with an existing one.
+
+        Args:
+            features: The resolved spec features to check.
+
+        Raises:
+            ValueError: If any output_column name appears more than once.
+        """
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for feat in features:
+            name = feat.output_column.name
+            if name in seen:
+                duplicates.append(name)
+            else:
+                seen.add(name)
+        if duplicates:
+            hint = (
+                " For FeatureGroup, use set_source_prefixes(...) to disambiguate features from different sources."
+                if self._kind == FeatureViewKind.FeatureGroup
+                else " Check your AggregationSpec output_column values for collisions."
+            )
+            raise ValueError(f"Duplicate output column name(s) in resolved features: {sorted(set(duplicates))}.{hint}")
 
     def _validate_pg_aggregations(self) -> None:
         """Reject aggregation functions not supported by the PG online store."""

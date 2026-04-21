@@ -42,6 +42,7 @@ from snowflake.snowpark.types import (
     DataType,
     DecimalType,
     DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
@@ -111,6 +112,47 @@ def _batch_source_config() -> SnowflakeTableInfo:
                 StructField("AMOUNT", DoubleType()),
             ]
         ),
+    )
+
+
+def _tiled_dt_schema_for_supported_pg_agg(agg_type: AggregationType) -> StructType:
+    """Minimal tiled DT schema matching ``TilingSqlGenerator`` partial columns for *agg_type* on AMOUNT."""
+    keys = [
+        StructField("USER_ID", StringType()),
+        StructField("TILE_START", TimestampType()),
+    ]
+    if agg_type == AggregationType.SUM:
+        extra = [StructField("_PARTIAL_SUM_AMOUNT", DoubleType())]
+    elif agg_type == AggregationType.COUNT:
+        extra = [StructField("_PARTIAL_COUNT_AMOUNT", LongType())]
+    elif agg_type == AggregationType.MIN:
+        extra = [StructField("_PARTIAL_MIN_AMOUNT", DoubleType())]
+    elif agg_type == AggregationType.MAX:
+        extra = [StructField("_PARTIAL_MAX_AMOUNT", DoubleType())]
+    elif agg_type == AggregationType.AVG:
+        extra = [
+            StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+            StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+        ]
+    elif agg_type in (AggregationType.STD, AggregationType.VAR):
+        extra = [
+            StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+            StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            StructField("_PARTIAL_SUM_SQ_AMOUNT", DoubleType()),
+        ]
+    else:
+        raise ValueError(f"unsupported agg_type for PG tiled schema helper: {agg_type}")
+    return StructType(keys + extra)
+
+
+def _tiled_batch_offline_config_amt_sum() -> SnowflakeTableInfo:
+    """Batch FV with tiles: materialized DT schema; table_type is still BatchSource."""
+    return SnowflakeTableInfo(
+        table_type=TableType.BATCH_SOURCE,
+        database="DB",
+        schema="SCH",
+        table="TILED_TBL",
+        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
     )
 
 
@@ -472,7 +514,7 @@ class BatchBuilderTest(absltest.TestCase):
                 name="batch_tiled",
                 version="v1",
             )
-            .set_offline_configs([_batch_source_config()])
+            .set_offline_configs([_tiled_batch_offline_config_amt_sum()])
             .set_properties(
                 entity_columns=["USER_ID"],
                 granularity="1h",
@@ -505,6 +547,7 @@ class BatchBuilderTest(absltest.TestCase):
         self.assertEqual(result.spec.feature_aggregation_method, FeatureAggregationMethod.TILES)
         self.assertEqual(result.spec.feature_granularity_sec, 3600)
         self.assertEqual(len(result.spec.features), 1)
+        self.assertEqual(result.offline_configs[0].table_type, TableType.BATCH_SOURCE)
         # BATCH source is builder-internal — must not appear in output
         self.assertEqual(result.spec.sources, [])
 
@@ -554,6 +597,19 @@ class RealtimeBuilderTest(absltest.TestCase):
         self.assertIn(SourceType.FEATURES, source_types)
         self.assertIsNotNone(result.spec.udf)
         self.assertIsNone(result.spec.feature_aggregation_method)
+
+        # Passthrough features are derived from the UDF's output_columns,
+        # NOT from the FV source (which exposes SCORE, not RISK_SCORE).
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["RISK_SCORE"])
+        self.assertNotIn("SCORE", feature_names)
+        feat = result.spec.features[0]
+        self.assertEqual(feat.source_column.name, "RISK_SCORE")
+        self.assertEqual(feat.output_column.name, "RISK_SCORE")
+        self.assertEqual(feat.source_column, feat.output_column)
+        self.assertEqual(feat.source_column.type, "DoubleType")
+        self.assertIsNone(feat.function)
+        self.assertIsNone(feat.window_sec)
 
 
 # ============================================================================
@@ -1073,7 +1129,23 @@ class FeatureResolutionTest(absltest.TestCase):
             name="fv",
             version="v1",
         )
-        builder.set_offline_configs([_batch_source_config()])
+        builder.set_offline_configs(
+            [
+                SnowflakeTableInfo(
+                    table_type=TableType.BATCH_SOURCE,
+                    database="DB",
+                    schema="SCH",
+                    table="T",
+                    columns=StructType(
+                        [
+                            StructField("USER_ID", StringType()),
+                            StructField("TILE_START", TimestampType()),
+                            StructField("_PARTIAL_SUM_REVENUE", DoubleType()),
+                        ]
+                    ),
+                )
+            ]
+        )
         builder.set_sources(
             [
                 BatchSource(
@@ -1665,6 +1737,45 @@ class FeatureResolutionTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "BATCH_SOURCE"):
             builder._resolve_features()
 
+    def test_duplicate_output_column_rejected_on_streaming(self) -> None:
+        """The generic duplicate-output check also fires for non-FG kinds."""
+        builder = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.StreamingFeatureView,
+                database="DB",
+                schema="SCH",
+                name="fv",
+                version="v1",
+            )
+            .set_offline_configs([_udf_transformed_config(), _tiled_config()])
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+            )
+            .set_sources([_make_stream_source()])
+            .set_udf(**_simple_udf_args())
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.SUM,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="COLLIDING",
+                    ),
+                    AggregationSpec(
+                        function=AggregationType.MAX,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="COLLIDING",
+                    ),
+                ]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, r"Duplicate output column name.*COLLIDING"):
+            builder.build()
+
 
 # ============================================================================
 # Validation Tests — Streaming
@@ -1868,7 +1979,7 @@ class BatchValidationTest(absltest.TestCase):
         """Tiled batch FV must have exactly 1 Batch source, no others."""
         builder = (
             self._base_builder()
-            .set_offline_configs([_batch_source_config()])
+            .set_offline_configs([_tiled_batch_offline_config_amt_sum()])
             .set_properties(
                 entity_columns=["USER_ID"],
                 agg_method=FeatureAggregationMethod.TILES,
@@ -1883,7 +1994,7 @@ class BatchValidationTest(absltest.TestCase):
         """Tiled batch FV with no sources → rejected."""
         builder = (
             self._base_builder()
-            .set_offline_configs([_batch_source_config()])
+            .set_offline_configs([_tiled_batch_offline_config_amt_sum()])
             .set_properties(
                 entity_columns=["USER_ID"],
                 agg_method=FeatureAggregationMethod.TILES,
@@ -1929,7 +2040,7 @@ class BatchValidationTest(absltest.TestCase):
     def test_tiles_requires_granularity(self) -> None:
         builder = (
             self._base_builder()
-            .set_offline_configs([_batch_source_config()])
+            .set_offline_configs([_tiled_batch_offline_config_amt_sum()])
             .set_properties(
                 entity_columns=["USER_ID"],
                 agg_method=FeatureAggregationMethod.TILES,
@@ -1943,7 +2054,7 @@ class BatchValidationTest(absltest.TestCase):
         """Batch tiled FV without a BatchSource in set_sources should fail validation."""
         builder = (
             self._base_builder()
-            .set_offline_configs([_batch_source_config()])
+            .set_offline_configs([_tiled_batch_offline_config_amt_sum()])
             .set_properties(
                 entity_columns=["USER_ID"],
                 agg_method=FeatureAggregationMethod.TILES,
@@ -1991,8 +2102,8 @@ class BatchValidationTest(absltest.TestCase):
                             table_type=TableType.BATCH_SOURCE,
                             database="DB",
                             schema="SCH",
-                            table="BATCH_TBL",
-                            columns=batch_schema,
+                            table="TILED_TBL",
+                            columns=_tiled_dt_schema_for_supported_pg_agg(agg_type),
                         )
                     ]
                 )
@@ -2034,8 +2145,8 @@ class BatchValidationTest(absltest.TestCase):
                         table_type=TableType.BATCH_SOURCE,
                         database="DB",
                         schema="SCH",
-                        table="BATCH_TBL",
-                        columns=batch_schema,
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
                     )
                 ]
             )
@@ -2079,8 +2190,8 @@ class BatchValidationTest(absltest.TestCase):
                         table_type=TableType.BATCH_SOURCE,
                         database="DB",
                         schema="SCH",
-                        table="BATCH_TBL",
-                        columns=batch_schema,
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
                     )
                 ]
             )
@@ -2315,6 +2426,45 @@ class RealtimeValidationTest(absltest.TestCase):
             ),
         ]
         with self.assertRaisesRegex(ValueError, "must not have granularity_sec"):
+            builder.build()
+
+    def test_no_agg_features(self) -> None:
+        """RealtimeFV must not have aggregation features via set_features()."""
+        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+        ]
+        builder.set_features(
+            [
+                AggregationSpec(
+                    function=AggregationType.SUM,
+                    source_column="X",
+                    window="24h",
+                    output_column="X_SUM_24H",
+                )
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "RealtimeFeatureView must not have aggregation features"):
+            builder.build()
+
+    def test_no_timestamp_field(self) -> None:
+        builder = (
+            self._base_builder()
+            .set_properties(entity_columns=["USER_ID"], timestamp_field="EVENT_TIME")
+            .set_udf(**_simple_udf_args())
+        )
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "RealtimeFeatureView must not have a timestamp_field"):
             builder.build()
 
 
@@ -2561,6 +2711,704 @@ class IntervalConversionTest(parameterized.TestCase):
             target_lag=interval,
         )
         self.assertEqual(builder._target_lag_sec, expected)
+
+
+# ============================================================================
+# Realtime Feature View Passthrough Feature Tests
+# ============================================================================
+
+
+def _make_rt_builder(
+    *,
+    entity_columns: Optional[list[str]] = None,
+    timestamp_field: Optional[str] = None,
+) -> FeatureViewSpecBuilder:
+    """Helper to construct a Realtime builder with sources + properties set."""
+    builder = FeatureViewSpecBuilder(
+        FeatureViewKind.RealtimeFeatureView,
+        database="DB",
+        schema="SCH",
+        name="rt_fv",
+        version="v1",
+    )
+    builder.set_properties(
+        entity_columns=entity_columns if entity_columns is not None else ["USER_ID"],
+        timestamp_field=timestamp_field,
+    )
+    builder.set_sources([_request_source()])
+    return builder
+
+
+class RealtimePassthroughFeaturesTest(absltest.TestCase):
+    """Tests for _resolve_passthrough_features on RealtimeFeatureView."""
+
+    def test_features_derived_from_udf_output_columns(self) -> None:
+        builder = _make_rt_builder(entity_columns=["USER_ID"])
+        builder.set_udf(
+            name="score_fn",
+            engine="pandas",
+            output_columns=[
+                ("USER_ID", StringType()),
+                ("RISK_SCORE", DoubleType()),
+                ("RISK_BUCKET", StringType()),
+            ],
+            function_definition="def score_fn(df): return df",
+        )
+
+        features = builder._resolve_passthrough_features()
+
+        feature_names = [f.output_column.name for f in features]
+        # USER_ID is an entity column → excluded.
+        self.assertEqual(feature_names, ["RISK_SCORE", "RISK_BUCKET"])
+        for f in features:
+            # Passthrough: source_column is the same FSColumn instance as output_column.
+            self.assertEqual(f.source_column, f.output_column)
+            self.assertIsNone(f.function)
+            self.assertIsNone(f.window_sec)
+            self.assertIsNone(f.offset_sec)
+
+    def test_entity_columns_excluded(self) -> None:
+        builder = _make_rt_builder(entity_columns=["USER_ID", "MERCHANT_ID"])
+        builder.set_udf(
+            name="score_fn",
+            engine="pandas",
+            output_columns=[
+                ("USER_ID", StringType()),
+                ("MERCHANT_ID", StringType()),
+                ("RISK_SCORE", DoubleType()),
+            ],
+            function_definition="def score_fn(df): return df",
+        )
+
+        features = builder._resolve_passthrough_features()
+
+        self.assertEqual([f.output_column.name for f in features], ["RISK_SCORE"])
+
+    def test_no_udf_returns_empty(self) -> None:
+        builder = _make_rt_builder(entity_columns=["USER_ID"])
+
+        features = builder._resolve_passthrough_features()
+
+        self.assertEqual(features, [])
+
+    def test_udf_with_only_entity_columns_returns_empty(self) -> None:
+        builder = _make_rt_builder(entity_columns=["USER_ID"])
+        builder.set_udf(
+            name="score_fn",
+            engine="pandas",
+            output_columns=[("USER_ID", StringType())],
+            function_definition="def score_fn(df): return df",
+        )
+
+        features = builder._resolve_passthrough_features()
+
+        self.assertEqual(features, [])
+
+    def test_column_type_metadata_preserved(self) -> None:
+        builder = _make_rt_builder(entity_columns=["USER_ID"])
+        builder.set_udf(
+            name="score_fn",
+            engine="pandas",
+            output_columns=[
+                ("USER_ID", StringType()),
+                ("AMOUNT_CENTS", DecimalType(18, 4)),
+                ("RISK_LABEL", StringType(64)),
+                ("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+            ],
+            function_definition="def score_fn(df): return df",
+        )
+
+        features = builder._resolve_passthrough_features()
+        by_name = {f.output_column.name: f.output_column for f in features}
+
+        amount = by_name["AMOUNT_CENTS"]
+        self.assertEqual(amount.type, "DecimalType")
+        self.assertEqual(amount.precision, 18)
+        self.assertEqual(amount.scale, 4)
+
+        label = by_name["RISK_LABEL"]
+        self.assertEqual(label.type, "StringType")
+        self.assertEqual(label.length, 64)
+
+        ts = by_name["EVENT_TIME"]
+        self.assertEqual(ts.type, "TimestampType")
+
+
+# ============================================================================
+# FeatureGroup Helpers / Fixtures
+# ============================================================================
+
+
+def _fg_features_source(
+    *,
+    name: str = "USER_FV",
+    columns: Optional[list[FSColumn]] = None,
+    selected_features: Optional[list[str]] = None,
+    source_version: Optional[str] = "v1",
+) -> Source:
+    """Build a Source with source_type=FEATURES directly (bypassing FV mocks)."""
+    if columns is None:
+        columns = [
+            FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
+            FSColumn(name="AVG_TXN_AMOUNT", type="DoubleType"),
+        ]
+    return Source(
+        name=name,
+        source_type=SourceType.FEATURES,
+        columns=columns,
+        source_version=source_version,
+        selected_features=selected_features,
+    )
+
+
+def _make_fg_builder(
+    *,
+    sources: list[Source],
+    entity_columns: Optional[list[str]] = None,
+    prefix_map: Optional[dict[tuple[str, Optional[str]], str]] = None,
+    name: str = "fg",
+    version: str = "v1",
+) -> FeatureViewSpecBuilder:
+    """Helper to construct a FeatureGroup builder with pre-built Source objects.
+
+    Bypasses set_sources (which expects user-facing types) by injecting Source
+    instances directly into the builder's internal state; avoids mocking
+    FeatureView/FeatureViewSlice for spec-builder unit tests.
+    """
+    builder = FeatureViewSpecBuilder(
+        FeatureViewKind.FeatureGroup,
+        database="DB",
+        schema="SCH",
+        name=name,
+        version=version,
+    )
+    builder.set_properties(entity_columns=entity_columns or ["USER_ID"])
+    builder._sources = list(sources)
+    if prefix_map is not None:
+        builder.set_source_prefixes(prefix_map)
+    return builder
+
+
+# ============================================================================
+# FeatureGroup Builder Tests
+# ============================================================================
+
+
+class FeatureGroupBuilderTest(absltest.TestCase):
+    """Build a FeatureGroup spec end-to-end."""
+
+    def test_single_features_source(self) -> None:
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+        ).build()
+
+        self.assertEqual(result.kind, FeatureViewKind.FeatureGroup)
+        self.assertEqual(len(result.offline_configs), 0)
+        self.assertEqual(len(result.spec.sources), 1)
+        self.assertEqual(result.spec.sources[0].source_type, SourceType.FEATURES)
+        self.assertIsNone(result.spec.udf)
+        self.assertIsNone(result.spec.feature_aggregation_method)
+        self.assertIsNone(result.spec.feature_granularity_sec)
+
+        # Passthrough: 2 columns from the source, no entity exclusion needed.
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["TOTAL_SPEND_30D", "AVG_TXN_AMOUNT"])
+        for f in result.spec.features:
+            # No prefix → output_column == source_column.
+            self.assertEqual(f.source_column, f.output_column)
+
+    def test_multiple_features_sources(self) -> None:
+        user_src = _fg_features_source(
+            name="USER_FV",
+            columns=[
+                FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
+            ],
+        )
+        txn_src = _fg_features_source(
+            name="TXN_FV",
+            columns=[
+                FSColumn(name="TXN_COUNT_24H", type="DecimalType", precision=38, scale=0),
+                FSColumn(name="LAST_AMOUNT", type="DoubleType"),
+            ],
+            source_version="v2",
+        )
+
+        result = _make_fg_builder(sources=[user_src, txn_src]).build()
+
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["TOTAL_SPEND_30D", "TXN_COUNT_24H", "LAST_AMOUNT"])
+
+    def test_feature_view_slice_only_selected_features(self) -> None:
+        src = _fg_features_source(
+            name="USER_FV",
+            columns=[
+                FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
+                FSColumn(name="AVG_TXN_AMOUNT", type="DoubleType"),
+                FSColumn(name="LAST_LOGIN_TS", type="TimestampType"),
+            ],
+            selected_features=["TOTAL_SPEND_30D"],
+        )
+
+        result = _make_fg_builder(sources=[src]).build()
+
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["TOTAL_SPEND_30D"])
+
+    def test_entity_columns_excluded_from_features(self) -> None:
+        src = _fg_features_source(
+            name="USER_FV",
+            columns=[
+                FSColumn(name="USER_ID", type="StringType"),
+                FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
+            ],
+        )
+
+        result = _make_fg_builder(
+            sources=[src],
+            entity_columns=["USER_ID"],
+        ).build()
+
+        feature_names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(feature_names, ["TOTAL_SPEND_30D"])
+
+    def test_source_with_only_entity_columns_contributes_zero_features(self) -> None:
+        src = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="USER_ID", type="StringType")],
+        )
+
+        result = _make_fg_builder(
+            sources=[src],
+            entity_columns=["USER_ID"],
+        ).build()
+
+        self.assertEqual(result.spec.features, [])
+        # Source still appears (validation only requires >=1 source).
+        self.assertEqual(len(result.spec.sources), 1)
+
+    @mock.patch(
+        "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
+        side_effect=lambda fv: Source(
+            name=str(fv.name),
+            source_type=SourceType.FEATURES,
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
+            source_version=str(fv.version),
+        ),
+    )
+    def test_end_to_end_via_set_sources(self, _mock_convert: mock.MagicMock) -> None:
+        """Build an FG from real FeatureView objects (through set_sources)."""
+        fv = _mock_feature_view(name="USER_FV", version="v1")
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.FeatureGroup,
+                database="DB",
+                schema="SCH",
+                name="fg",
+                version="v1",
+            )
+            .set_properties(entity_columns=["USER_ID"])
+            .set_sources([fv])
+            .set_source_prefixes({("USER_FV", "v1"): "USER_FV_v1_"})
+            .build()
+        )
+
+        self.assertEqual(result.kind, FeatureViewKind.FeatureGroup)
+        self.assertEqual(len(result.spec.sources), 1)
+        self.assertEqual(result.spec.sources[0].source_type, SourceType.FEATURES)
+        self.assertEqual([f.output_column.name for f in result.spec.features], ["USER_FV_v1_SCORE"])
+        self.assertEqual(result.spec.features[0].source_column.name, "SCORE")
+
+
+# ============================================================================
+# FeatureGroup Validation Tests
+# ============================================================================
+
+
+class FeatureGroupValidationTest(absltest.TestCase):
+    """Validation rules specific to FeatureGroup."""
+
+    def test_rejects_offline_configs(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder.set_offline_configs([_udf_transformed_config()])
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have offline configs"):
+            builder.build()
+
+    def test_rejects_udf(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder.set_udf(
+            name="bad_udf",
+            engine="pandas",
+            output_columns=[("X", DoubleType())],
+            function_definition="def bad_udf(df): return df",
+        )
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have a UDF"):
+            builder.build()
+
+    def test_rejects_request_source_mixed_with_features(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        # Inject a REQUEST source alongside FEATURES.
+        builder._sources.append(
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="TXN_AMOUNT", type="DoubleType")],
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must only have Features sources"):
+            builder.build()
+
+    def test_rejects_stream_source_mixed_with_features(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._sources.append(
+            Source(
+                name="TXN_EVENTS",
+                source_type=SourceType.STREAM,
+                columns=[FSColumn(name="AMOUNT", type="DoubleType")],
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must only have Features sources"):
+            builder.build()
+
+    def test_rejects_batch_source_mixed_with_features(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._sources.append(
+            Source(
+                name="batch",
+                source_type=SourceType.BATCH,
+                columns=[FSColumn(name="AMOUNT", type="DoubleType")],
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must only have Features sources"):
+            builder.build()
+
+    def test_rejects_empty_sources(self) -> None:
+        builder = _make_fg_builder(sources=[])
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup requires at least 1 Features source"):
+            builder.build()
+
+    def test_rejects_agg_method(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._agg_method = FeatureAggregationMethod.TILES
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have an agg_method"):
+            builder.build()
+
+    def test_rejects_granularity(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._granularity_sec = 3600
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have granularity_sec"):
+            builder.build()
+
+    def test_rejects_agg_features(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder.set_features(
+            [
+                AggregationSpec(
+                    function=AggregationType.SUM,
+                    source_column="TOTAL_SPEND_30D",
+                    window="24h",
+                    output_column="TOTAL_SPEND_24H",
+                )
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have aggregation features"):
+            builder.build()
+
+    def test_rejects_timestamp_field(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._timestamp_field = "EVENT_TIME"
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have a timestamp_field"):
+            builder.build()
+
+    def test_rejects_duplicate_output_column_names(self) -> None:
+        # Two FEATURES sources expose the same column name → collision
+        # without prefixing should surface at build() time.
+        src_a = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="TOTAL_SPEND_30D", type="DoubleType")],
+        )
+        src_b = _fg_features_source(
+            name="TXN_FV",
+            columns=[FSColumn(name="TOTAL_SPEND_30D", type="DoubleType")],
+        )
+        builder = _make_fg_builder(sources=[src_a, src_b])
+
+        with self.assertRaisesRegex(ValueError, "Duplicate output column name"):
+            builder.build()
+
+    def test_rejects_duplicate_after_prefix_collision(self) -> None:
+        # A prefix that collides with an existing (unprefixed) column
+        # should also be rejected.
+        src_a = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="p_AMT", type="DoubleType")],
+        )
+        src_b = _fg_features_source(
+            name="TXN_FV",
+            columns=[FSColumn(name="AMT", type="DoubleType")],
+        )
+        builder = _make_fg_builder(
+            sources=[src_a, src_b],
+            prefix_map={("TXN_FV", "v1"): "p_"},
+        )
+
+        with self.assertRaisesRegex(ValueError, "Duplicate output column name.*p_AMT"):
+            builder.build()
+
+
+# ============================================================================
+# FeatureGroup Prefix Tests
+# ============================================================================
+
+
+class FeatureGroupPrefixTest(absltest.TestCase):
+    """source_column / output_column prefix resolution for FeatureGroup."""
+
+    def test_no_prefix_source_equals_output(self) -> None:
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+        ).build()
+
+        for f in result.spec.features:
+            self.assertEqual(f.source_column, f.output_column)
+            self.assertEqual(f.source_column.name, f.output_column.name)
+
+    def test_auto_prefix_applied(self) -> None:
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+            prefix_map={("USER_FV", "v1"): "USER_FV_v1_"},
+        ).build()
+
+        names = [(f.source_column.name, f.output_column.name) for f in result.spec.features]
+        self.assertEqual(
+            names,
+            [
+                ("TOTAL_SPEND_30D", "USER_FV_v1_TOTAL_SPEND_30D"),
+                ("AVG_TXN_AMOUNT", "USER_FV_v1_AVG_TXN_AMOUNT"),
+            ],
+        )
+
+    def test_with_name_prefix_overrides_default(self) -> None:
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+            prefix_map={("USER_FV", "v1"): "user_"},
+        ).build()
+
+        for f in result.spec.features:
+            self.assertTrue(
+                f.output_column.name.startswith("user_"),
+                f"expected 'user_' prefix on {f.output_column.name}",
+            )
+            # Source column retains the original (unprefixed) name.
+            self.assertFalse(f.source_column.name.startswith("user_"))
+
+    def test_empty_string_prefix_means_no_prefix(self) -> None:
+        # An explicit empty-string prefix maps to a no-op.
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+            prefix_map={("USER_FV", "v1"): ""},
+        ).build()
+
+        for f in result.spec.features:
+            self.assertEqual(f.source_column, f.output_column)
+
+    def test_mixed_with_name_and_auto_prefix(self) -> None:
+        user_src = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="TOTAL_SPEND_30D", type="DoubleType")],
+        )
+        txn_src = _fg_features_source(
+            name="TXN_FV",
+            columns=[FSColumn(name="TXN_COUNT", type="DoubleType")],
+            source_version="v2",
+        )
+
+        result = _make_fg_builder(
+            sources=[user_src, txn_src],
+            prefix_map={
+                ("USER_FV", "v1"): "user_",
+                ("TXN_FV", "v2"): "TXN_FV_v2_",
+            },
+        ).build()
+
+        by_output = {f.output_column.name: f for f in result.spec.features}
+        self.assertIn("user_TOTAL_SPEND_30D", by_output)
+        self.assertIn("TXN_FV_v2_TXN_COUNT", by_output)
+        # Source columns keep original names regardless of prefix.
+        self.assertEqual(by_output["user_TOTAL_SPEND_30D"].source_column.name, "TOTAL_SPEND_30D")
+        self.assertEqual(by_output["TXN_FV_v2_TXN_COUNT"].source_column.name, "TXN_COUNT")
+
+    def test_unmapped_source_falls_back_to_no_prefix(self) -> None:
+        # When prefix_map omits a source, it should NOT raise — just no prefix.
+        user_src = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="TOTAL_SPEND_30D", type="DoubleType")],
+        )
+        txn_src = _fg_features_source(
+            name="TXN_FV",
+            columns=[FSColumn(name="TXN_COUNT", type="DoubleType")],
+        )
+
+        result = _make_fg_builder(
+            sources=[user_src, txn_src],
+            prefix_map={("USER_FV", "v1"): "user_"},  # TXN_FV omitted
+        ).build()
+
+        names = [(f.source_column.name, f.output_column.name) for f in result.spec.features]
+        self.assertEqual(
+            names,
+            [
+                ("TOTAL_SPEND_30D", "user_TOTAL_SPEND_30D"),
+                ("TXN_COUNT", "TXN_COUNT"),  # no prefix for unmapped source
+            ],
+        )
+
+    def test_prefix_preserves_column_type_metadata(self) -> None:
+        src = _fg_features_source(
+            name="USER_FV",
+            columns=[
+                FSColumn(name="AMOUNT_CENTS", type="DecimalType", precision=18, scale=4),
+                FSColumn(name="LABEL", type="StringType", length=64),
+            ],
+        )
+
+        result = _make_fg_builder(
+            sources=[src],
+            prefix_map={("USER_FV", "v1"): "p_"},
+        ).build()
+
+        by_output = {f.output_column.name: f.output_column for f in result.spec.features}
+        amount = by_output["p_AMOUNT_CENTS"]
+        self.assertEqual(amount.type, "DecimalType")
+        self.assertEqual(amount.precision, 18)
+        self.assertEqual(amount.scale, 4)
+
+        label = by_output["p_LABEL"]
+        self.assertEqual(label.type, "StringType")
+        self.assertEqual(label.length, 64)
+
+    def test_set_source_prefixes_returns_self(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        result = builder.set_source_prefixes({("USER_FV", "v1"): "p_"})
+        self.assertIs(result, builder)
+
+    def test_same_name_different_versions_disambiguated_by_version(self) -> None:
+        # Two sources with the same name but different versions (e.g., USER_FV@v1
+        # and USER_FV@v2) must be prefixable independently via the
+        # (name, version) key.
+        src_v1 = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
+            source_version="v1",
+        )
+        src_v2 = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
+            source_version="v2",
+        )
+
+        result = _make_fg_builder(
+            sources=[src_v1, src_v2],
+            prefix_map={
+                ("USER_FV", "v1"): "USER_FV_v1_",
+                ("USER_FV", "v2"): "USER_FV_v2_",
+            },
+        ).build()
+
+        names = [f.output_column.name for f in result.spec.features]
+        self.assertEqual(names, ["USER_FV_v1_SCORE", "USER_FV_v2_SCORE"])
+
+    def test_feature_view_slice_order_preserved(self) -> None:
+        # FeatureViewSlice preserves caller-requested feature order; the
+        # builder must emit passthrough features in that order rather than
+        # in schema (source.columns) order.
+        src = _fg_features_source(
+            name="USER_FV",
+            columns=[
+                FSColumn(name="A", type="DoubleType"),
+                FSColumn(name="B", type="DoubleType"),
+                FSColumn(name="C", type="DoubleType"),
+            ],
+            selected_features=["C", "A"],  # intentional reverse/partial order
+        )
+
+        result = _make_fg_builder(sources=[src]).build()
+
+        self.assertEqual([f.output_column.name for f in result.spec.features], ["C", "A"])
+
+
+# ============================================================================
+# FeatureGroup / Realtime Serialization Smoke Tests
+# ============================================================================
+
+
+class NewKindsSerializationTest(absltest.TestCase):
+    """Ensure to_dict()/to_json() emit the expected shape for new kinds."""
+
+    def test_feature_group_serialization_shape(self) -> None:
+        result = _make_fg_builder(
+            sources=[_fg_features_source(name="USER_FV")],
+            prefix_map={("USER_FV", "v1"): "u_"},
+        ).build()
+
+        d = result.to_dict()
+        self.assertEqual(d["kind"], "FeatureGroup")
+        self.assertNotIn("udf", d["spec"])
+        self.assertNotIn("feature_aggregation_method", d["spec"])
+        self.assertNotIn("feature_granularity_sec", d["spec"])
+        self.assertEqual(
+            [f["output_column"]["name"] for f in d["spec"]["features"]], ["u_TOTAL_SPEND_30D", "u_AVG_TXN_AMOUNT"]
+        )
+
+        # to_json() should be parseable round-trip.
+        import json
+
+        reloaded = json.loads(result.to_json())
+        self.assertEqual(reloaded["kind"], "FeatureGroup")
+
+    @mock.patch(
+        "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
+        side_effect=lambda fv: Source(
+            name=str(fv.name),
+            source_type=SourceType.FEATURES,
+            columns=[FSColumn(name="SCORE", type="DoubleType")],
+            source_version=str(fv.version),
+        ),
+    )
+    def test_realtime_serialization_shape(self, _mock_convert: mock.MagicMock) -> None:
+        result = (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.RealtimeFeatureView,
+                database="DB",
+                schema="SCH",
+                name="realtime_fv",
+                version="v1",
+            )
+            .set_properties(entity_columns=["USER_ID"])
+            .set_sources([_request_source(), _mock_feature_view()])
+            .set_udf(
+                name="score_fn",
+                engine="pandas",
+                output_columns=[("RISK_SCORE", DoubleType())],
+                function_definition="def score(txn, features): return 0.5",
+            )
+            .build()
+        )
+
+        d = result.to_dict()
+        self.assertEqual(d["kind"], "RealtimeFeatureView")
+        self.assertIn("udf", d["spec"])
+        self.assertEqual(d["spec"]["udf"]["name"], "score_fn")
+        self.assertEqual([f["output_column"]["name"] for f in d["spec"]["features"]], ["RISK_SCORE"])
 
 
 if __name__ == "__main__":

@@ -125,6 +125,11 @@ class ModelEnv:
             self._snowpark_ml_version = version.parse(snowpark_ml_version)
 
     @property
+    def target_platforms(self) -> Optional[list[model_types.TargetPlatform]]:
+        """The target platforms for this model, or None if not explicitly set."""
+        return self._target_platforms
+
+    @property
     def targets_warehouse(self) -> bool:
         """Returns True if warehouse is a target platform."""
         return self._target_platforms is None or model_types.TargetPlatform.WAREHOUSE in self._target_platforms

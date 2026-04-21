@@ -2,10 +2,13 @@ import os
 import random
 import tempfile
 import warnings
+from importlib import metadata as importlib_metadata
+from unittest import mock
 
 import pandas as pd
 import sentence_transformers
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
+from packaging import requirements
 from pandas.testing import assert_frame_equal
 
 from snowflake.ml.model import model_signature, type_hints as model_types
@@ -23,7 +26,7 @@ MODEL_NAMES = ["intfloat/e5-base-v2"]
 SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 
 
-class SentenceTransformerHandlerTest(absltest.TestCase):
+class SentenceTransformerHandlerTest(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
         self.cache_dir = tempfile.TemporaryDirectory()
@@ -800,6 +803,92 @@ class SentenceTransformerHandlerTest(absltest.TestCase):
             expected = model.encode(sentences["text"].tolist())
             self.assertEqual(len(result), len(sentences))
             self.assertEqual(len(result.iloc[0, 0]), len(expected[0]))
+
+    def test_save_model_captures_tokenizers_dependency(self) -> None:
+        """Verify that saving a SentenceTransformer model captures tokenizers as an explicit dependency.
+
+        tokenizers must be pinned alongside transformers to prevent version mismatches in deployment
+        environments (e.g. transformers==4.41.2 requires tokenizers>=0.19,<0.20).
+        """
+        import tokenizers
+        import transformers
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=pd.DataFrame({"text": ["test sentence"]}),
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("tokenizers", deps)
+            self.assertIn("transformers", deps)
+            self.assertIn("sentence-transformers", deps)
+
+            self.assertTrue(deps["tokenizers"].specifier.contains(tokenizers.__version__))
+            self.assertTrue(deps["transformers"].specifier.contains(transformers.__version__))
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"transformers_version": "4.41.2", "tokenizers_version": "0.19.1", "sentence_transformers_version": "2.7.0"},
+        {"transformers_version": "5.3.0", "tokenizers_version": "0.22.2", "sentence_transformers_version": "5.2.0"},
+    )
+    def test_save_model_pins_compatible_version_pairs(
+        self,
+        transformers_version: str,
+        tokenizers_version: str,
+        sentence_transformers_version: str,
+    ) -> None:
+        """Verify that tokenizers and transformers are pinned as a compatible pair for different version combos."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        original_distribution = importlib_metadata.distribution
+
+        def fake_distribution(name: str) -> importlib_metadata.Distribution:
+            versions = {
+                "tokenizers": tokenizers_version,
+                "transformers": transformers_version,
+                "sentence-transformers": sentence_transformers_version,
+            }
+            if name in versions:
+                dist = mock.MagicMock(spec=importlib_metadata.Distribution)
+                dist.version = versions[name]
+                return dist
+            return original_distribution(name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "snowflake.ml._internal.env_utils.importlib_metadata.distribution", side_effect=fake_distribution
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=model,
+                    sample_input_data=pd.DataFrame({"text": ["test sentence"]}),
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(),
+                )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertTrue(deps["tokenizers"].specifier.contains(tokenizers_version))
+            self.assertTrue(deps["transformers"].specifier.contains(transformers_version))
+            self.assertTrue(deps["sentence-transformers"].specifier.contains(sentence_transformers_version))
 
     def test_sentence_transformers(self) -> None:
         # Sample Data

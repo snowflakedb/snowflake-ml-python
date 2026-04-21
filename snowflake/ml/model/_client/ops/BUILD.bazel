@@ -16,9 +16,27 @@ py_library(
 )
 
 py_library(
+    name = "param_ops",
+    srcs = ["param_ops.py"],
+)
+
+py_test(
+    name = "param_ops_test",
+    srcs = ["param_ops_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":param_ops",
+    ],
+)
+
+py_library(
     name = "param_utils",
     srcs = ["param_utils.py"],
     deps = [
+        ":param_ops",
         "//snowflake/ml/_internal/exceptions",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_signatures:core",

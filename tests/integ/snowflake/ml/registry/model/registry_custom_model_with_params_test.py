@@ -817,15 +817,23 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
                     ),
                     model_signature.ParamSpec(
                         name="nested_list",
-                        dtype=model_signature.DataType.INT32,
+                        dtype=model_signature.DataType.INT64,
                         default_value=[[1, 2], [3, 4]],
                         shape=(2, 2),
                     ),
                     model_signature.ParamGroupSpec(
                         name="nested_dict",
                         specs=[
-                            model_signature.ParamSpec(name="a", dtype=model_signature.DataType.INT32, default_value=1),
-                            model_signature.ParamSpec(name="b", dtype=model_signature.DataType.INT32, default_value=2),
+                            model_signature.ParamSpec(
+                                name="a",
+                                dtype=model_signature.DataType.INT64,
+                                default_value=1,
+                            ),
+                            model_signature.ParamSpec(
+                                name="b",
+                                dtype=model_signature.DataType.INT64,
+                                default_value=2,
+                            ),
                         ],
                         shape=(2,),
                     ),
@@ -898,6 +906,8 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
             check_dtype=False,
         )
         self.assertTrue(all(result_sorted["top_k_used"] == 50))
+        self.assertEqual(result_sorted["nested_list_used"].tolist(), [[[1, 2], [3, 4]]] * 3)
+        self.assertEqual(result_sorted["nested_dict_used"].tolist(), [[{"a": 1, "b": 2}, {"a": 1, "b": 2}]] * 3)
 
     def test_dict_params_partial_override(self) -> None:
         """Test that partial dict override deep-merges with defaults."""
@@ -914,6 +924,8 @@ class TestCustomModelWithDictParamsWarehouseInteg(common_test_base.CommonTestBas
             check_dtype=False,
         )
         self.assertTrue(all(result_sorted["top_k_used"] == 50))
+        self.assertEqual(result_sorted["nested_list_used"].tolist(), [[[1, 2], [3, 4]]] * 3)
+        self.assertEqual(result_sorted["nested_dict_used"].tolist(), [[{"a": 1, "b": 2}, {"a": 1, "b": 2}]] * 3)
 
 
 _DEFAULT_TIMESTAMP = datetime.datetime(2024, 1, 1, 12, 0, 0)

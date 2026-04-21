@@ -41,11 +41,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )

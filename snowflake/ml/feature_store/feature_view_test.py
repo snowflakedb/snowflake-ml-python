@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import datetime
 import json
-from typing import TYPE_CHECKING, Optional
+from decimal import Decimal
+from typing import TYPE_CHECKING, Any, Optional
 from unittest.mock import MagicMock
 
 if TYPE_CHECKING:
     from snowflake.ml.feature_store.feature_store import FeatureStore
+    from snowflake.ml.feature_store.stream_config import StreamConfig
 
 from absl.testing import absltest, parameterized
 
@@ -27,13 +30,16 @@ from snowflake.ml.feature_store.spec.enums import (
     StoreType,
     TableType,
 )
+from snowflake.snowpark import Row
 from snowflake.snowpark.types import (
     DataType,
     DecimalType,
     DoubleType,
+    LongType,
     StringType,
     StructField,
     StructType,
+    TimestampTimeZone,
     TimestampType,
 )
 
@@ -490,7 +496,7 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
                 output_column="AMOUNT_COUNT_24H",
             ),
         ]
-        # For tiled FVs, output_schema is the raw feature_df schema (source columns)
+        # Tiled FVs: offline_configs describe the materialized DT (from Snowflake), not feature_df.
         fv = self._make_feature_view(
             columns=["USER_ID", "EVENT_TIME", "AMOUNT"],
             column_types=[StringType(), TimestampType(), DoubleType()],
@@ -499,11 +505,26 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
             feature_granularity="1h",
             aggregation_specs=agg_specs,
         )
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
         fs = self._make_mock_feature_store()
-        spec = fs._build_batch_feature_view_spec(fv, SqlIdentifier("DT_TILED"), "v1", "30s")
+        spec = fs._build_batch_feature_view_spec(
+            fv,
+            SqlIdentifier("DT_TILED"),
+            "v1",
+            "30s",
+            offline_materialized_schema=tiled_dt_schema,
+        )
 
         # Kind
         self.assertEqual(spec.kind, FeatureViewKind.BatchFeatureView)
+        self.assertEqual(spec.offline_configs[0].table_type, TableType.BATCH_SOURCE)
 
         # Properties
         self.assertEqual(spec.spec.ordered_entity_column_names, ["USER_ID"])
@@ -575,7 +596,6 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
                 output_column="AMOUNT_MAX_1H",
             ),
         ]
-        # For tiled FVs, output_schema is the raw feature_df schema (source columns)
         fv = self._make_feature_view(
             columns=["USER_ID", "EVENT_TIME", "AMOUNT"],
             column_types=[StringType(), TimestampType(), DoubleType()],
@@ -584,8 +604,23 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
             feature_granularity="1h",
             aggregation_specs=agg_specs,
         )
+        tiled_dt_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+                StructField("_PARTIAL_MAX_AMOUNT", DoubleType()),
+            ]
+        )
         fs = self._make_mock_feature_store()
-        spec = fs._build_batch_feature_view_spec(fv, SqlIdentifier("DT_TILED"), "v1", "30s")
+        spec = fs._build_batch_feature_view_spec(
+            fv,
+            SqlIdentifier("DT_TILED"),
+            "v1",
+            "30s",
+            offline_materialized_schema=tiled_dt_schema,
+        )
 
         self.assertEqual(len(spec.spec.features), 3)
         functions = [f.function for f in spec.spec.features]
@@ -685,7 +720,13 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
 class CreateOnlineFeatureTableTest(absltest.TestCase):
     """Tests for FeatureStore._create_online_feature_table SQL assembly."""
 
-    def _make_mock_feature_store(self, database: str = "TEST_DB", schema: str = "TEST_SCHEMA") -> MagicMock:
+    def _make_mock_feature_store(
+        self,
+        database: str = "TEST_DB",
+        schema: str = "TEST_SCHEMA",
+        *,
+        postgres_online_service_running: bool = False,
+    ) -> MagicMock:
         """Create a mock FeatureStore with methods needed for _create_online_feature_table."""
         from snowflake.ml.feature_store.feature_store import (
             FeatureStore,
@@ -711,11 +752,38 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         mock_fs._create_online_feature_table = unwrapped.__get__(mock_fs)
         mock_fs._build_batch_feature_view_spec = FeatureStore._build_batch_feature_view_spec.__get__(mock_fs)
 
-        # Mock session.sql(...).collect(...)
         mock_fs._session = MagicMock()
-        mock_fs._session.sql.return_value.collect.return_value = []
+        if postgres_online_service_running:
+            status_json = json.dumps(
+                {
+                    "status": "RUNNING",
+                    "message": "ok",
+                    "endpoints": [{"name": "query", "url": "https://example.com/query"}],
+                }
+            )
+
+            def sql_side_effect(query: str, *args: object, **kwargs: object) -> MagicMock:
+                mock_result = MagicMock()
+                qn = query.replace("\n", " ")
+                loc = f"{SqlIdentifier(database)}.{SqlIdentifier(schema)}"
+                if f"SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')" in qn:
+                    mock_result.collect.return_value = [Row(status_json)]
+                else:
+                    mock_result.collect.return_value = []
+                return mock_result
+
+            mock_fs._session.sql.side_effect = sql_side_effect
+        else:
+            mock_fs._session.sql.return_value.collect.return_value = []
 
         return mock_fs
+
+    def _first_online_feature_table_sql(self, mock_fs: MagicMock) -> str:
+        for call in mock_fs._session.sql.call_args_list:
+            q = call[0][0]
+            if isinstance(q, str) and "ONLINE FEATURE TABLE" in q.upper():
+                return q
+        raise AssertionError("No CREATE ONLINE FEATURE TABLE SQL found in mock session calls")
 
     def _make_feature_view(
         self,
@@ -796,11 +864,11 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             column_types=[StringType(), DoubleType()],
             store_type=OnlineStoreType.POSTGRES,
         )
-        fs = self._make_mock_feature_store()
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
 
         fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
 
-        query = fs._session.sql.call_args_list[0][0][0]
+        query = self._first_online_feature_table_sql(fs)
         self.assertIn("FROM SPECIFICATION $$", query)
         self.assertIn("$$", query)
         self.assertNotIn("FROM TEST_DB.TEST_SCHEMA.DT_NAME", query)
@@ -818,11 +886,11 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             column_types=[StringType(), DoubleType()],
             store_type=OnlineStoreType.POSTGRES,
         )
-        fs = self._make_mock_feature_store()
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
 
         fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
 
-        query = fs._session.sql.call_args_list[0][0][0]
+        query = self._first_online_feature_table_sql(fs)
 
         # Extract JSON between $$ delimiters
         start = query.index("$$") + 2
@@ -849,16 +917,189 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             column_types=[StringType(), DoubleType()],
             store_type=OnlineStoreType.POSTGRES,
         )
-        fs = self._make_mock_feature_store()
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
 
         fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v42")
 
-        query = fs._session.sql.call_args_list[0][0][0]
+        query = self._first_online_feature_table_sql(fs)
         # Extract and verify the version in the embedded spec
         start = query.index("$$") + 2
         end = query.index("$$", start)
         parsed = json.loads(query[start:end])
         self.assertEqual(parsed["metadata"]["version"], "v42")
+
+
+class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
+    """``Session.create_dataframe`` literal rules for Postgres Query API rows."""
+
+    def test_coerce_int_to_float_for_double(self) -> None:
+        from snowflake.ml.feature_store.feature_store import (
+            _coerce_row_values_for_snowpark_local_schema,
+        )
+
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        row = {"USER_ID": "k1", "AMOUNT": 999}
+        out = _coerce_row_values_for_snowpark_local_schema(row, schema)
+        self.assertEqual(out["USER_ID"], "k1")
+        self.assertIsInstance(out["AMOUNT"], float)
+        self.assertEqual(out["AMOUNT"], 999.0)
+
+    def test_coerce_int_to_decimal_for_count_column(self) -> None:
+        from snowflake.ml.feature_store.feature_store import (
+            _coerce_row_values_for_snowpark_local_schema,
+        )
+
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TXN_COUNT_2D", DecimalType(38, 0)),
+            ]
+        )
+        row = {"USER_ID": "k1", "TXN_COUNT_2D": 3}
+        out = _coerce_row_values_for_snowpark_local_schema(row, schema)
+        self.assertEqual(out["USER_ID"], "k1")
+        self.assertIsInstance(out["TXN_COUNT_2D"], Decimal)
+        self.assertEqual(out["TXN_COUNT_2D"], Decimal("3"))
+
+    def test_coerce_iso_timestamp_string_for_ntz(self) -> None:
+        from snowflake.ml.feature_store.feature_store import (
+            _coerce_row_values_for_snowpark_local_schema,
+        )
+
+        schema = StructType([StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ))])
+        row = {"EVENT_TIME": "2024-06-01T12:00:00Z"}
+        out = _coerce_row_values_for_snowpark_local_schema(row, schema)
+        self.assertIsInstance(out["EVENT_TIME"], datetime.datetime)
+        self.assertIsNone(out["EVENT_TIME"].tzinfo)
+
+
+class FeatureAggregationMethodTest(absltest.TestCase):
+    """Tests for the feature_aggregation_method parameter on FeatureView."""
+
+    def _make_mock_backfill_df(self) -> MagicMock:
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT * FROM SRC"]}
+        mock_df.columns = ["USER_ID", "AMOUNT", "EVENT_TIME"]
+        mock_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        return mock_df
+
+    def _make_stream_config(self) -> StreamConfig:
+        from snowflake.ml.feature_store.stream_config import StreamConfig
+
+        def _identity(df: Any) -> Any:
+            return df
+
+        return StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_identity,
+            backfill_df=self._make_mock_backfill_df(),
+        )
+
+    def test_streaming_tiled_defaults_to_tiles(self) -> None:
+        """Tiled streaming FV without explicit agg method defaults to TILES."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=[Feature.sum("AMOUNT", "2d")],
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.TILES)
+
+    def test_streaming_tiled_continuous_accepted(self) -> None:
+        """Tiled streaming FV with CONTINUOUS: accepted and stored."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=[Feature.sum("AMOUNT", "2d")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+    def test_streaming_tiled_tiles_explicit(self) -> None:
+        """Tiled streaming FV with explicit TILES."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1d",
+            features=[Feature.sum("AMOUNT", "2d")],
+            feature_aggregation_method=FeatureAggregationMethod.TILES,
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.TILES)
+
+    def test_streaming_non_tiled_rejects_agg_method(self) -> None:
+        """Non-tiled streaming FV with feature_aggregation_method raises ValueError."""
+        with self.assertRaisesRegex(ValueError, "feature_aggregation_method requires"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                stream_config=self._make_stream_config(),
+                timestamp_col="EVENT_TIME",
+                feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            )
+
+    def test_streaming_non_tiled_has_none(self) -> None:
+        """Non-tiled streaming FV: feature_aggregation_method is None."""
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+        )
+        self.assertIsNone(fv.feature_aggregation_method)
+
+    def test_batch_rejects_agg_method(self) -> None:
+        """Batch FV with feature_aggregation_method raises ValueError."""
+        mock_df = MagicMock()
+        mock_df.columns = ["USER_ID", "AMOUNT"]
+        mock_df.queries = {"queries": ["SELECT * FROM SRC"]}
+
+        with self.assertRaisesRegex(ValueError, "only supported for streaming"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                feature_df=mock_df,
+                feature_aggregation_method=FeatureAggregationMethod.TILES,
+            )
+
+    def test_rollup_rejects_agg_method(self) -> None:
+        """Rollup FV with feature_aggregation_method raises ValueError.
+
+        The check happens before RollupConfig validation, so we can use a
+        lightweight mock for rollup_config.
+        """
+        mock_rollup = MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "only supported for streaming"):
+            FeatureView(
+                name="rollup_fv",
+                entities=[Entity(name="dept", join_keys=["DEPT_ID"])],
+                rollup_config=mock_rollup,
+                feature_aggregation_method=FeatureAggregationMethod.TILES,
+            )
 
 
 class UnicodeColumnSqlGenerationTest(absltest.TestCase):

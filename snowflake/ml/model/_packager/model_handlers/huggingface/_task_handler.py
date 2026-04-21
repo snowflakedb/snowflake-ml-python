@@ -49,7 +49,6 @@ class HuggingFaceTaskHandler(ABC):
         """
         ...
 
-    @abstractmethod
     def _needs_list_wrapping(
         self,
         raw_model: "transformers.Pipeline",
@@ -60,15 +59,19 @@ class HuggingFaceTaskHandler(ABC):
         """Check if the result needs to be wrapped in a list for single-input cases.
 
         Some HuggingFace pipelines omit the outer list when there is only one input,
-        which breaks DataFrame construction.
+        which breaks DataFrame construction. Defaults to False; override in subclasses
+        where the pipeline drops the outer list for single inputs.
 
         Args:
             raw_model: The HuggingFace pipeline.
             signature: The model signature for this method.
             result: The raw inference result to check.
             input_size: Number of input rows.
+
+        Returns:
+            True if the outer list should be re-added for single-input cases; False otherwise.
         """
-        ...
+        return False
 
     def _format_result(
         self,

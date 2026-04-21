@@ -1,6 +1,7 @@
 import os
 import tempfile
 import uuid
+import warnings
 
 import mlflow
 import numpy as np
@@ -9,7 +10,12 @@ import torch
 from absl.testing import absltest
 from sklearn import datasets, ensemble, model_selection
 
-from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml._internal.exceptions import exceptions
+from snowflake.ml.model import (
+    model_signature,
+    target_platform,
+    type_hints as model_types,
+)
 from snowflake.ml.model._packager import model_packager
 
 
@@ -450,6 +456,152 @@ class MLFlowHandlerTest(absltest.TestCase):
             np.testing.assert_allclose(
                 np.expand_dims(predictions, axis=1), predict_method(pd.DataFrame(input_x)).to_numpy()
             )
+
+    def test_mlflow_model_pip_deps_warehouse_error(self) -> None:
+        """When an MLflow model has pip deps and explicitly targets WAREHOUSE
+        without artifact_repository_map, save_model should raise an error."""
+        db = datasets.load_diabetes()
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
+        with mlflow.start_run() as run:
+            rf = ensemble.RandomForestRegressor(n_estimators=100, max_depth=6, max_features=3)
+            rf.fit(X_train, y_train)
+            predictions = rf.predict(X_test)
+            signature = mlflow.models.signature.infer_signature(X_test, predictions)
+            mlflow.sklearn.log_model(
+                rf,
+                "model",
+                conda_env={
+                    "channels": ["conda-forge"],
+                    "dependencies": [
+                        "python=3.11.9",
+                        "pip<=24.0",
+                        {"pip": ["mlflow<4,>=3.3", "scikit-learn==1.6.1"]},
+                    ],
+                    "name": "mlflow-env",
+                },
+                signature=signature,
+            )
+            run_id = run.info.run_id
+
+        mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Explicitly targeting WAREHOUSE with pip deps and no artifact_repository_map should error
+            with self.assertRaises(exceptions.SnowflakeMLException):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model_wh"))
+                pk.save(
+                    name="model_wh",
+                    model=mlflow_pyfunc_model,
+                    target_platforms=[target_platform.TargetPlatform.WAREHOUSE],
+                    options={"relax_version": False},
+                )
+
+            # Targeting both WAREHOUSE and SPCS should also error
+            with self.assertRaises(exceptions.SnowflakeMLException):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model_both"))
+                pk.save(
+                    name="model_both",
+                    model=mlflow_pyfunc_model,
+                    target_platforms=[
+                        target_platform.TargetPlatform.WAREHOUSE,
+                        target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
+                    ],
+                    options={"relax_version": False},
+                )
+
+    def test_mlflow_model_pip_deps_no_target_platforms_warning(self) -> None:
+        """When an MLflow model has pip deps and target_platforms is None (default),
+        save_model should emit a warning."""
+        db = datasets.load_diabetes()
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
+        with mlflow.start_run() as run:
+            rf = ensemble.RandomForestRegressor(n_estimators=100, max_depth=6, max_features=3)
+            rf.fit(X_train, y_train)
+            predictions = rf.predict(X_test)
+            signature = mlflow.models.signature.infer_signature(X_test, predictions)
+            mlflow.sklearn.log_model(
+                rf,
+                "model",
+                conda_env={
+                    "channels": ["conda-forge"],
+                    "dependencies": [
+                        "python=3.11.9",
+                        "pip<=24.0",
+                        {"pip": ["mlflow<4,>=3.3", "scikit-learn==1.6.1"]},
+                    ],
+                    "name": "mlflow-env",
+                },
+                signature=signature,
+            )
+            run_id = run.info.run_id
+
+        mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # target_platforms=None with pip deps and no artifact_repository_map should warn
+            with self.assertWarnsRegex(UserWarning, "pip requirements that require `artifact_repository_map`"):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model_none"))
+                pk.save(
+                    name="model_none",
+                    model=mlflow_pyfunc_model,
+                    target_platforms=None,
+                    options={"relax_version": False},
+                )
+
+    def test_mlflow_model_pip_deps_no_warning_or_error(self) -> None:
+        """No warning or error when targeting SPCS-only or when artifact_repository_map is provided."""
+        db = datasets.load_diabetes()
+        X_train, X_test, y_train, y_test = model_selection.train_test_split(db.data, db.target)
+        with mlflow.start_run() as run:
+            rf = ensemble.RandomForestRegressor(n_estimators=100, max_depth=6, max_features=3)
+            rf.fit(X_train, y_train)
+            predictions = rf.predict(X_test)
+            signature = mlflow.models.signature.infer_signature(X_test, predictions)
+            mlflow.sklearn.log_model(
+                rf,
+                "model",
+                conda_env={
+                    "channels": ["conda-forge"],
+                    "dependencies": [
+                        "python=3.11.9",
+                        "pip<=24.0",
+                        {"pip": ["mlflow<4,>=3.3", "scikit-learn==1.6.1"]},
+                    ],
+                    "name": "mlflow-env",
+                },
+                signature=signature,
+            )
+            run_id = run.info.run_id
+
+        mlflow_pyfunc_model = mlflow.pyfunc.load_model(f"runs:/{run_id}/model")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Targeting SPCS-only should not trigger warning or error
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model_spcs"))
+                pk.save(
+                    name="model_spcs",
+                    model=mlflow_pyfunc_model,
+                    target_platforms=[target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                    options={"relax_version": False},
+                )
+            handler_warnings = [w for w in caught if "artifact_repository_map" in str(w.message)]
+            self.assertEmpty(handler_warnings)
+
+            # With artifact_repository_map provided should not trigger warning or error
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model_repo"))
+                pk.save(
+                    name="model_repo",
+                    model=mlflow_pyfunc_model,
+                    target_platforms=[target_platform.TargetPlatform.WAREHOUSE],
+                    artifact_repository_map={"pip": "my_db.my_schema.my_repo"},
+                    options={"relax_version": False},
+                )
+            handler_warnings = [w for w in caught if "artifact_repository_map" in str(w.message)]
+            self.assertEmpty(handler_warnings)
 
 
 if __name__ == "__main__":

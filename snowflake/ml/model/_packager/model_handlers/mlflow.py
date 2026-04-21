@@ -2,6 +2,7 @@ import logging
 import os
 import pathlib
 import tempfile
+import warnings
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast, final
 
 import numpy as np
@@ -9,6 +10,7 @@ import pandas as pd
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import file_utils, type_utils
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
@@ -263,6 +265,34 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
             )
         else:
             model_meta.env = _parse_mlflow_env(deps_uri, model_meta.env)
+
+        # NOTE: This pip_requirements + artifact_repository_map validation logic mirrors
+        # ModelParameterReconciler._validate_pip_requirements_warehouse_compatibility in
+        # snowflake/ml/registry/_manager/model_parameter_reconciler.py — keep them in sync.
+        # This handles the MLflow-specific case where pip requirements are parsed from the
+        # MLflow model's conda.yaml and not explicitly provided by the user.
+        if model_meta.env.pip_requirements and not model_meta.env.artifact_repository_map:
+            if not model_meta.env.target_platforms:
+                warnings.warn(
+                    "MLflow model has pip requirements that require `artifact_repository_map` to run in a "
+                    "Snowflake Warehouse. Without `artifact_repository_map`, this model will only be runnable "
+                    "in Snowpark Container Services. See "
+                    "https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
+                    f"Detected pip requirements: {model_meta.env.pip_requirements}",
+                    category=UserWarning,
+                    stacklevel=2,
+                )
+            elif model_meta.env.targets_warehouse:
+                raise exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "MLflow model has pip requirements that require `artifact_repository_map` to run in a "
+                        "Snowflake Warehouse. Either provide an `artifact_repository_map` or set "
+                        '`target_platforms=["SNOWPARK_CONTAINER_SERVICES"]`. '
+                        "See https://docs.snowflake.com/en/developer-guide/snowflake-ml/model-registry/container. "
+                        f"Detected pip requirements: {model_meta.env.pip_requirements}."
+                    ),
+                )
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
 

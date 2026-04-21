@@ -61,6 +61,17 @@ while getopts "ab:h" opt; do
     esac
 done
 
+# Force full type check if mypy version changed
+merge_base=$(git merge-base HEAD main 2>/dev/null || echo "")
+if [[ -n "${merge_base}" && -z "${affected_targets}" ]]; then
+    current_mypy=$(grep -A1 'name: mypy' requirements.yml | grep 'dev_version' | awk '{print $2}')
+    base_mypy=$(git show "${merge_base}:requirements.yml" | grep -A1 'name: mypy' | grep 'dev_version' | awk '{print $2}')
+    if [[ "${current_mypy}" != "${base_mypy}" ]]; then
+        echo "mypy version changed (${base_mypy} -> ${current_mypy}), running full type check"
+        affected_targets="//..."
+    fi
+fi
+
 echo "Using bazel: " "${bazel}"
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")
 trap 'rm -rf "${working_dir}"' EXIT

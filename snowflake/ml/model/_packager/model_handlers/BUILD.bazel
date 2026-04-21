@@ -250,9 +250,111 @@ py_library(
     srcs = ["huggingface/_default.py"],
     deps = [
         ":huggingface_task_handler",
-        ":huggingface_utils",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_fill_mask_handler",
+    srcs = ["huggingface/fill_mask.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_token_classification_handler",
+    srcs = ["huggingface/token_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_question_answering_handler",
+    srcs = ["huggingface/question_answering.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_summarization_handler",
+    srcs = ["huggingface/summarization.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_table_question_answering_handler",
+    srcs = ["huggingface/table_question_answering.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_text_classification_handler",
+    srcs = ["huggingface/text_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_text2text_generation_handler",
+    srcs = ["huggingface/text2text_generation.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_translation_handler",
+    srcs = ["huggingface/translation.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_image_text_to_text_handler",
+    srcs = ["huggingface/image_text_to_text.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_video_text_to_text_handler",
+    srcs = ["huggingface/video_text_to_text.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_audio_text_to_text_handler",
+    srcs = ["huggingface/audio_text_to_text.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
     ],
 )
 
@@ -269,18 +371,53 @@ py_library(
 )
 
 py_library(
-    name = "huggingface_zero_shot_handler",
-    srcs = ["huggingface/zero_shot.py"],
+    name = "huggingface_zero_shot_text_classification_handler",
+    srcs = ["huggingface/zero_shot_text_classification.py"],
     deps = [
         ":huggingface_task_handler",
-        ":huggingface_utils",
         "//snowflake/ml/model:model_signature",
     ],
 )
 
 py_library(
-    name = "huggingface_vision_handler",
-    srcs = ["huggingface/vision.py"],
+    name = "huggingface_zero_shot_image_classification_handler",
+    srcs = ["huggingface/zero_shot_image_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_zero_shot_object_detection_handler",
+    srcs = ["huggingface/zero_shot_object_detection.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_zero_shot_audio_classification_handler",
+    srcs = ["huggingface/zero_shot_audio_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_image_classification_handler",
+    srcs = ["huggingface/image_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_image_to_text_handler",
+    srcs = ["huggingface/image_to_text.py"],
     deps = [
         ":huggingface_task_handler",
         "//snowflake/ml/model:model_signature",
@@ -289,8 +426,8 @@ py_library(
 )
 
 py_library(
-    name = "huggingface_speech_handler",
-    srcs = ["huggingface/speech.py"],
+    name = "huggingface_image_feature_extraction_handler",
+    srcs = ["huggingface/image_feature_extraction.py"],
     deps = [
         ":huggingface_task_handler",
         "//snowflake/ml/model:model_signature",
@@ -298,8 +435,47 @@ py_library(
 )
 
 py_library(
-    name = "huggingface_video_handler",
-    srcs = ["huggingface/video.py"],
+    name = "huggingface_object_detection_handler",
+    srcs = ["huggingface/object_detection.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_document_question_answering_handler",
+    srcs = ["huggingface/document_question_answering.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_visual_question_answering_handler",
+    srcs = ["huggingface/visual_question_answering.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_signatures:core",
+    ],
+)
+
+py_library(
+    name = "huggingface_automatic_speech_recognition_handler",
+    srcs = ["huggingface/automatic_speech_recognition.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
+    name = "huggingface_video_classification_handler",
+    srcs = ["huggingface/video_classification.py"],
     deps = [
         ":huggingface_task_handler",
         "//snowflake/ml/model:model_signature",
@@ -323,15 +499,34 @@ py_library(
     deps = [
         ":_base",
         ":_utils",
+        ":huggingface_audio_text_to_text_handler",
+        ":huggingface_automatic_speech_recognition_handler",
         ":huggingface_conversational_handler",
         ":huggingface_default_handler",
+        ":huggingface_document_question_answering_handler",
+        ":huggingface_fill_mask_handler",
+        ":huggingface_image_classification_handler",
+        ":huggingface_image_feature_extraction_handler",
+        ":huggingface_image_text_to_text_handler",
+        ":huggingface_image_to_text_handler",
+        ":huggingface_object_detection_handler",
         ":huggingface_openai_chat_wrapper",
-        ":huggingface_speech_handler",
+        ":huggingface_question_answering_handler",
+        ":huggingface_summarization_handler",
+        ":huggingface_table_question_answering_handler",
+        ":huggingface_text2text_generation_handler",
+        ":huggingface_text_classification_handler",
         ":huggingface_text_generation_handler",
+        ":huggingface_token_classification_handler",
+        ":huggingface_translation_handler",
         ":huggingface_utils",
-        ":huggingface_video_handler",
-        ":huggingface_vision_handler",
-        ":huggingface_zero_shot_handler",
+        ":huggingface_video_classification_handler",
+        ":huggingface_video_text_to_text_handler",
+        ":huggingface_visual_question_answering_handler",
+        ":huggingface_zero_shot_audio_classification_handler",
+        ":huggingface_zero_shot_image_classification_handler",
+        ":huggingface_zero_shot_object_detection_handler",
+        ":huggingface_zero_shot_text_classification_handler",
         "//snowflake/ml/_internal:type_utils",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model:model_signature",

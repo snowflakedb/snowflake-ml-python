@@ -51,13 +51,17 @@ class AggregationMetadata:
 
     feature_granularity: str
     features: list[AggregationSpec]
+    feature_aggregation_method: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        d: dict[str, Any] = {
             "feature_granularity": self.feature_granularity,
             "features": [f.to_dict() for f in self.features],
         }
+        if self.feature_aggregation_method is not None:
+            d["feature_aggregation_method"] = self.feature_aggregation_method
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AggregationMetadata:
@@ -65,6 +69,7 @@ class AggregationMetadata:
         return cls(
             feature_granularity=data["feature_granularity"],
             features=[AggregationSpec.from_dict(f) for f in data["features"]],
+            feature_aggregation_method=data.get("feature_aggregation_method"),
         )
 
 

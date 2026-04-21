@@ -111,7 +111,8 @@ def _load_from_snowsql_config_file(connection_name: str, login_file: str = "") -
         logger.error(f"Connection name given but snowsql config file is not found at: {snowsql_config_file}")
         raise Exception("Snowflake SnowSQL config not found.")
 
-    config = configparser.ConfigParser(inline_comment_prefixes="#")
+    # strict=False: ~/.snowsql/config may repeat keys (e.g. warehouse added twice); last value wins.
+    config = configparser.ConfigParser(inline_comment_prefixes="#", strict=False)
 
     snowflake_connection_name = os.getenv("SNOWFLAKE_CONNECTION_NAME")
     if snowflake_connection_name is not None:

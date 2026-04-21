@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import (
@@ -34,11 +34,7 @@ from snowflake.ml.feature_store.spec.builder import (
     FeatureViewSpecBuilder,
     SnowflakeTableInfo,
 )
-from snowflake.ml.feature_store.spec.enums import (
-    FeatureAggregationMethod,
-    FeatureViewKind,
-    TableType,
-)
+from snowflake.ml.feature_store.spec.enums import FeatureViewKind, TableType
 from snowflake.ml.feature_store.spec.models import FeatureViewSpec
 from snowflake.ml.feature_store.stream_config import (
     _infer_structtype_from_pandas,
@@ -124,8 +120,6 @@ def run_streaming_preamble(
     Raises:
         ValueError: If the backfill probe returns zero rows.
     """
-    logging.warning("'StreamConfig' is in private preview since 1.8.5. Do not use it in production.")
-
     stream_config = feature_view.stream_config
     if stream_config is None:
         raise ValueError(f"FeatureView '{feature_view.name}' does not have a stream_config.")
@@ -348,6 +342,7 @@ def _build_streaming_feature_view_spec(
     udf_transformed_schema: StructType,
     database: str,
     schema: str,
+    tiled_materialized_schema: Optional[StructType] = None,
 ) -> FeatureViewSpec:
     """Build a ``StreamingFeatureView`` spec for OFT creation.
 
@@ -367,6 +362,9 @@ def _build_streaming_feature_view_spec(
             columns after transformation, before any aggregation).
         database: Database name.
         schema: Schema name.
+        tiled_materialized_schema: For tiled FVs, schema of the materialized tile
+            dynamic table from ``Session.table(fq_dt).schema``. Required when
+            ``feature_view.is_tiled``; must be ``None`` when not tiled.
 
     Returns:
         A validated ``FeatureViewSpec`` ready for serialization.
@@ -394,14 +392,21 @@ def _build_streaming_feature_view_spec(
 
     # For tiled streaming FVs, add a TILED offline config for the DT
     if feature_view.is_tiled:
+        if tiled_materialized_schema is None:
+            raise ValueError(
+                "Tiled streaming feature view spec requires tiled_materialized_schema "
+                "(Snowflake tile DT schema from Session.table(...).schema)."
+            )
         tiled_offline_config = SnowflakeTableInfo(
             table_type=TableType.TILED,
             database=database,
             schema=schema,
             table=feature_view_name.resolved(),
-            columns=feature_view.output_schema,
+            columns=tiled_materialized_schema,
         )
         offline_configs.append(tiled_offline_config)
+    elif tiled_materialized_schema is not None:
+        raise ValueError("Non-tiled streaming feature view must not set tiled_materialized_schema.")
 
     fn_source = stream_config.get_function_source()
     udf_output_cols = [(f.name, f.datatype) for f in udf_transformed_schema.fields]
@@ -426,7 +431,7 @@ def _build_streaming_feature_view_spec(
             entity_columns=entity_columns,
             timestamp_field=feature_view.timestamp_col.resolved(),  # type: ignore[union-attr]
             granularity=feature_view.feature_granularity if feature_view.is_tiled else None,
-            agg_method=FeatureAggregationMethod.TILES if feature_view.is_tiled else None,
+            agg_method=feature_view.feature_aggregation_method if feature_view.is_tiled else None,
             target_lag=target_lag,
         )
     )

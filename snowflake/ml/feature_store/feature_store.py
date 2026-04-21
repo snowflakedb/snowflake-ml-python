@@ -32,6 +32,7 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
+from snowflake.ml.feature_store import online_service
 from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
 from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
@@ -65,7 +66,7 @@ from snowflake.ml.feature_store.spec.enums import (
 )
 from snowflake.ml.feature_store.spec.models import (
     FeatureViewSpec,
-    validate_schema_types,
+    validate_spec_oft_offline_table_schema,
 )
 from snowflake.ml.feature_store.stream_source import (
     _LIST_STREAM_SOURCE_SCHEMA,
@@ -78,12 +79,17 @@ from snowflake.ml.feature_store.tile_sql_generator import (
 )
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import DataFrame, Row, Session, functions as F
+from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     ArrayType,
+    DecimalType,
+    DoubleType,
+    FloatType,
     StringType,
     StructField,
     StructType,
+    TimestampTimeZone,
     TimestampType,
 )
 
@@ -91,6 +97,141 @@ _Args = ParamSpec("_Args")
 _RT = TypeVar("_RT")
 
 logger = logging.getLogger(__name__)
+
+
+def _stream_source_schema_field_names(schema: StructType) -> list[str]:
+    return [f.name for f in schema.fields]
+
+
+def _coerce_row_values_for_snowpark_local_schema(row: dict[str, Any], schema: StructType) -> dict[str, Any]:
+    """Coerce local Python values before ``Session.create_dataframe(..., schema=...)``.
+
+    Args:
+        row: One row as a map of column name to value.
+        schema: Expected Snowpark :class:`StructType` for that row.
+
+    Returns:
+        Copy of ``row`` with per-field coercion for double/float, decimal, and timestamp dtypes.
+
+    Snowpark literal SQL for :class:`DoubleType` / :class:`FloatType` only accepts ``float``, not ``int``
+    (see ``datatype_mapper.to_sql``). Query API JSON numbers are often parsed as ``int``.
+
+    ISO-8601 timestamp strings from the Query API are converted to ``datetime`` because
+    ``to_sql`` for :class:`TimestampType` does not accept raw strings.
+
+    JSON integers for COUNT-style features must become :class:`decimal.Decimal` when the schema field is
+    :class:`DecimalType` — Snowpark literal SQL rejects plain ``int`` for ``NUMBER`` columns.
+    """
+    from decimal import Decimal
+
+    out = dict(row)
+    for field in schema.fields:
+        name = field.name
+        if name not in out:
+            continue
+        val = out[name]
+        if val is None:
+            continue
+        dt = field.datatype
+        if isinstance(dt, (DoubleType, FloatType)):
+            if isinstance(val, int) and not isinstance(val, bool):
+                out[name] = float(val)
+            elif isinstance(val, Decimal):
+                out[name] = float(val)
+        elif isinstance(dt, DecimalType):
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out[name] = Decimal(str(val))
+        elif isinstance(dt, TimestampType) and isinstance(val, str):
+            try:
+                s = val.replace("Z", "+00:00") if val.endswith("Z") else val
+                parsed = datetime.datetime.fromisoformat(s)
+                if dt.tz == TimestampTimeZone.NTZ and parsed.tzinfo is not None:
+                    parsed = parsed.replace(tzinfo=None)
+                out[name] = parsed
+            except ValueError:
+                pass
+    return out
+
+
+def _normalize_stream_ingest_records(
+    records: Union[list[dict[str, Any]], dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if isinstance(records, dict):
+        return [records]
+    if isinstance(records, list):
+        if not records:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("records must be non-empty for stream_ingest."),
+            )
+        rows: list[dict[str, Any]] = []
+        for i, row in enumerate(records):
+            if not isinstance(row, dict):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=TypeError(
+                        f"records must be a list of dicts; element {i} has type {type(row)!r}."
+                    ),
+                )
+            rows.append(row)
+        return rows
+    raise snowml_exceptions.SnowflakeMLException(
+        error_code=error_codes.INVALID_ARGUMENT,
+        original_exception=TypeError(f"records must be a dict or non-empty list[dict]; got {type(records)!r}."),
+    )
+
+
+def _validate_stream_ingest_record_keys(expected: list[str], row: dict[str, Any], row_index: int) -> None:
+    exp_set = set(expected)
+    keys = set(row.keys())
+    if keys != exp_set:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"Record {row_index} column keys must match StreamSource schema exactly: "
+                f"expected={expected!r}, missing={sorted(exp_set - keys)!r}, extra={sorted(keys - exp_set)!r}."
+            ),
+        )
+
+
+def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
+    """Map SHOW ONLINE FEATURE TABLES ``store_type`` to ``OnlineStoreType``.
+
+    Args:
+        row: A Snowpark ``Row`` from SHOW ONLINE FEATURE TABLES.
+
+    Returns:
+        OnlineStoreType: ``HYBRID_TABLE`` if missing or unrecognized.
+
+    When the column is absent (older Snowflake builds), defaults to ``HYBRID_TABLE``
+    to match ``OnlineConfig`` / ``from_json`` behavior without ``store_type``.
+    """
+    raw: Any = None
+    if "store_type" in row:
+        raw = row["store_type"]
+    elif "STORE_TYPE" in row:
+        raw = row["STORE_TYPE"]
+    else:
+        return OnlineStoreType.HYBRID_TABLE
+
+    if raw is None:
+        return OnlineStoreType.HYBRID_TABLE
+    s = str(raw).strip()
+    if not s:
+        return OnlineStoreType.HYBRID_TABLE
+
+    key = s.lower()
+    if key == OnlineStoreType.POSTGRES.value:
+        return OnlineStoreType.POSTGRES
+    if key == OnlineStoreType.HYBRID_TABLE.value:
+        return OnlineStoreType.HYBRID_TABLE
+
+    logger.warning(
+        "Unknown SHOW ONLINE FEATURE TABLES store_type %r; defaulting to hybrid_table",
+        raw,
+    )
+    return OnlineStoreType.HYBRID_TABLE
+
 
 _ENTITY_TAG_PREFIX = "SNOWML_FEATURE_STORE_ENTITY_"
 _FEATURE_STORE_OBJECT_TAG = "SNOWML_FEATURE_STORE_OBJECT"
@@ -219,24 +360,49 @@ def switch_warehouse(
     return wrapper
 
 
-def dispatch_decorator() -> (
-    Callable[
-        [Callable[Concatenate[FeatureStore, _Args], _RT]],
-        Callable[Concatenate[FeatureStore, _Args], _RT],
-    ]
-):
+def dispatch_decorator(
+    *,
+    skip_wh_switch: Optional[Callable[..., bool]] = None,
+    skip_telemetry: Optional[Callable[..., bool]] = None,
+) -> Callable[[Callable[Concatenate[FeatureStore, _Args], _RT]], Callable[Concatenate[FeatureStore, _Args], _RT],]:
     def decorator(
         f: Callable[Concatenate[FeatureStore, _Args], _RT],
     ) -> Callable[Concatenate[FeatureStore, _Args], _RT]:
-        @telemetry.send_api_usage_telemetry(project=_PROJECT)
-        @switch_warehouse
-        @functools.wraps(f)
-        def wrap(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
-            return f(self, *args, **kargs)
+        wrapped_with_wh = switch_warehouse(f)
+        if skip_wh_switch is not None:
 
-        return wrap
+            @functools.wraps(f)
+            def maybe_switch_wh(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
+                if skip_wh_switch(self, *args, **kargs):
+                    return f(self, *args, **kargs)
+                return wrapped_with_wh(self, *args, **kargs)
+
+            after_wh: Callable[Concatenate[FeatureStore, _Args], _RT] = maybe_switch_wh
+        else:
+            after_wh = wrapped_with_wh
+
+        wrapped_with_telemetry = telemetry.send_api_usage_telemetry(project=_PROJECT)(after_wh)
+        if skip_telemetry is not None:
+
+            @functools.wraps(f)
+            def maybe_telemetry(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
+                if skip_telemetry(self, *args, **kargs):
+                    return after_wh(self, *args, **kargs)
+                return wrapped_with_telemetry(self, *args, **kargs)
+
+            return maybe_telemetry
+
+        return wrapped_with_telemetry
 
     return decorator
+
+
+def _predicate_read_feature_view_skip_wh_switch(*args: Any, **kwargs: Any) -> bool:
+    return bool(kwargs.get("use_session_warehouse", False))
+
+
+def _predicate_read_feature_view_skip_telemetry(*args: Any, **kwargs: Any) -> bool:
+    return _get_store_type(kwargs.get("store_type", fv_mod.StoreType.OFFLINE)) == fv_mod.StoreType.ONLINE
 
 
 class FeatureStore:
@@ -643,6 +809,18 @@ class FeatureStore:
                 )
             tagging_clause_str = ",\n".join(tagging_clause)
 
+            if feature_view.online and feature_view.online_config is not None:
+                if feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
+                    logger.warning(
+                        "POSTGRES online store type is in private preview since 1.33.0. " "Do not use in production."
+                    )
+                    online_service.assert_online_service_running_with_query_endpoint(
+                        self._session,
+                        self._config.database,
+                        self._config.schema,
+                        statement_params=self._telemetry_stmp,
+                    )
+
             def create_col_desc(col: StructField) -> str:
                 desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
                 desc = "" if desc is None else f"COMMENT '{desc}'"
@@ -734,6 +912,11 @@ class FeatureStore:
                 agg_metadata = AggregationMetadata(
                     feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
                     features=feature_view.aggregation_specs,  # type: ignore[arg-type]
+                    feature_aggregation_method=(
+                        feature_view.feature_aggregation_method.value
+                        if feature_view.feature_aggregation_method is not None
+                        else None
+                    ),
                 )
                 # Convert SqlIdentifier keys to strings if descriptions exist
                 descs = None
@@ -889,8 +1072,10 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
-        if online_config is not None:
-            logging.warning("'online_config' is in private preview since 1.12.0. Do not use it in production.")
+        if online_config is not None and online_config.store_type == OnlineStoreType.POSTGRES:
+            logger.warning(
+                "POSTGRES online store type is in private preview since 1.33.0. " "Do not use in production."
+            )
 
         # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
@@ -931,6 +1116,7 @@ class FeatureStore:
         keys: Optional[list[list[str]]] = None,
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
     ) -> DataFrame:
         ...
 
@@ -942,10 +1128,14 @@ class FeatureStore:
         keys: Optional[list[list[str]]] = None,
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
     ) -> DataFrame:
         ...
 
-    @dispatch_decorator()  # type: ignore[misc]
+    @dispatch_decorator(  # type: ignore[misc]
+        skip_wh_switch=_predicate_read_feature_view_skip_wh_switch,
+        skip_telemetry=_predicate_read_feature_view_skip_telemetry,
+    )
     def read_feature_view(
         self,
         feature_view: Union[FeatureView, str],
@@ -954,6 +1144,7 @@ class FeatureStore:
         keys: Optional[list[list[str]]] = None,
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
     ) -> DataFrame:
         """
         Read values from a FeatureView from either offline or online store.
@@ -966,10 +1157,18 @@ class FeatureStore:
                 values in the same order as the entity join_keys. Works for both offline and online stores.
                 Example: [["user1"], ["user2"]] for single key,
                 [["user1", "item1"], ["user2", "item2"]] for composite keys.
-                If None, returns all data.
+                If None, returns all data (hybrid online tables only). For **Postgres**-backed online
+                feature views, ``keys`` must be **non-empty**; the Online Service Query API does not support
+                unbounded scans from SnowML.
             feature_names: Optional list of feature names to return. If None, returns all features.
-                Works consistently for both offline and online stores.
+                For **Postgres** online reads, a non-empty list is sent to the Query API as JSON
+                ``features`` so the service can return only those columns; the DataFrame still contains
+                only that subset (and join keys). Offline and hybrid online SQL paths use the same list
+                in the SELECT clause.
             store_type: Store to read from - StoreType.ONLINE or StoreType.OFFLINE (default).
+            use_session_warehouse: If True, uses the session's current warehouse instead of the
+                feature store's configured warehouse. Only applies to hybrid table online reads;
+                raises ValueError for Postgres online feature views.
 
         Returns:
             Snowpark DataFrame containing the FeatureView data.
@@ -1027,9 +1226,21 @@ class FeatureStore:
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
-        store_type = self._get_store_type(store_type)
+        store_type = _get_store_type(store_type)
 
         if store_type == fv_mod.StoreType.ONLINE:
+            if (
+                use_session_warehouse
+                and feature_view.online_config is not None
+                and feature_view.online_config.store_type == OnlineStoreType.POSTGRES
+            ):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "use_session_warehouse is not applicable for Postgres-backed online feature views. "
+                        "Postgres online reads use the Online Service Query API and do not involve a warehouse."
+                    ),
+                )
             return self._read_from_online_store(feature_view, keys, feature_names)
         elif store_type == fv_mod.StoreType.OFFLINE:
             return self._read_from_offline_store(feature_view, keys, feature_names)
@@ -1145,6 +1356,64 @@ class FeatureStore:
             results[0][0], results[0][1], self.list_entities().collect(statement_params=self._telemetry_stmp)
         )
 
+    @dispatch_decorator()
+    def create_online_service(self, producer_role: str, consumer_role: str) -> online_service.OnlineServiceResult:
+        """Create the Online Service for this store's schema.
+
+        Requires schema OWNERSHIP and account feature enablement. After SUCCESS, poll
+        :meth:`get_online_service_status` until ``RUNNING`` before using online feature
+        reads or stream ingestion.
+
+        Args:
+            producer_role: Role name granted producer privileges on the Online Service.
+            consumer_role: Role name granted consumer privileges on the Online Service.
+
+        Returns:
+            Parsed create result from the Online Service.
+        """
+        return online_service.create_online_service(
+            self._session,
+            self._config.database,
+            self._config.schema,
+            producer_role,
+            consumer_role,
+            statement_params=self._telemetry_stmp,
+        )
+
+    @dispatch_decorator()
+    def get_online_service_status(self) -> online_service.OnlineServiceStatus:
+        """Return Online Service status.
+
+        Poll this method after :meth:`create_online_service` until ``status`` is
+        ``RUNNING`` before using online feature reads or stream ingestion.
+
+        Returns:
+            OnlineServiceStatus with ``status``, ``message``, and ``endpoints``.
+        """
+        return online_service.get_online_service_status(
+            self._session,
+            self._config.database,
+            self._config.schema,
+            statement_params=self._telemetry_stmp,
+        )
+
+    @dispatch_decorator()
+    def drop_online_service(self) -> online_service.OnlineServiceResult:
+        """Drop the Online Service.
+
+        Stops the Online Service and releases its resources. Online feature reads
+        and stream ingestion will no longer be available after this call.
+
+        Returns:
+            OnlineServiceResult with ``status`` and ``message``.
+        """
+        return online_service.drop_online_service(
+            self._session,
+            self._config.database,
+            self._config.schema,
+            statement_params=self._telemetry_stmp,
+        )
+
     @overload
     def refresh_feature_view(
         self, feature_view: str, version: str, *, store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE
@@ -1210,7 +1479,7 @@ class FeatureStore:
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
 
-        store_type = self._get_store_type(store_type)
+        store_type = _get_store_type(store_type)
 
         if store_type == fv_mod.StoreType.ONLINE:
             # Refresh online feature table only
@@ -1221,6 +1490,18 @@ class FeatureStore:
                     category=UserWarning,
                 )
                 return
+
+            if (
+                feature_view.online_config is not None
+                and feature_view.online_config.store_type == fv_mod.OnlineStoreType.POSTGRES
+            ):
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "Manual refresh is not supported for Postgres online feature tables. "
+                        "Postgres online stores are refreshed automatically by the Online Service."
+                    ),
+                )
 
             # Use the unified method but specify online-only refresh
             self._update_feature_view_status(feature_view, "REFRESH", store_type=fv_mod.StoreType.ONLINE)
@@ -1316,7 +1597,7 @@ class FeatureStore:
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
 
-        store_type = self._get_store_type(store_type)
+        store_type = _get_store_type(store_type)
 
         if feature_view.status == FeatureViewStatus.STATIC:
             warnings.warn(
@@ -1785,6 +2066,7 @@ class FeatureStore:
     # =========================================================================
 
     @dispatch_decorator()
+    @snowpark_utils.private_preview(version="1.33.0")
     def register_stream_source(self, stream_source: StreamSource) -> StreamSource:
         """
         Register a StreamSource in the FeatureStore.
@@ -1822,7 +2104,6 @@ class FeatureStore:
             -------------------------------------------------------------------------------------...
 
         """
-        logging.warning("'StreamSource' is in private preview since 1.8.5. Do not use it in production.")
 
         if self._metadata_manager.stream_source_exists(stream_source.name.resolved()):
             warnings.warn(
@@ -1890,6 +2171,73 @@ class FeatureStore:
             )
 
         return StreamSource._from_dict(metadata)
+
+    @dispatch_decorator()
+    def stream_ingest(
+        self,
+        stream_source: Union[str, StreamSource],
+        records: Union[list[dict[str, Any]], dict[str, Any]],
+        *,
+        timeout_sec: float = 120.0,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> int:
+        """Send rows to the Online Service for ingestion.
+
+        Requires the ``SNOWFLAKE_PAT`` environment variable to be set with a valid
+        Snowflake Programmatic Access Token.
+
+        ``records`` may be one row as a dict or a non-empty ``list`` of row dicts.
+        Each row's keys must match the registered ``StreamSource`` schema exactly
+        (no missing or extra columns).
+
+        Args:
+            stream_source: Registered stream source name or a ``StreamSource`` instance.
+            records: Rows to ingest.
+            timeout_sec: Timeout in seconds for the ingest request.
+            statement_params: Optional Snowpark statement parameters (for example telemetry).
+
+        Returns:
+            Count of records accepted by the Online Service. On partial success, the returned
+            count may be less than the number of rows sent.
+
+        Raises:
+            SnowflakeMLException: If the Online Service or ingest endpoint is unavailable, ``SNOWFLAKE_PAT`` is
+                unset, the request fails, or rows do not match the stream source schema.
+        """
+        if isinstance(stream_source, StreamSource):
+            src = stream_source
+            stream_name_wire = stream_source.name.resolved()
+        else:
+            src = self.get_stream_source(str(stream_source))
+            stream_name_wire = src.name.resolved()
+
+        stmp = self._telemetry_stmp if statement_params is None else statement_params
+        st = online_service.assert_online_service_running_with_ingest_endpoint(
+            self._session,
+            self._config.database,
+            self._config.schema,
+            statement_params=stmp,
+        )
+        ingest_url = online_service.endpoint_url(st, "ingest")
+        if not ingest_url:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("Online Service returned no ingest endpoint."),
+            )
+        ingest_base = ingest_url
+
+        expected_cols = _stream_source_schema_field_names(src.schema)
+        rows = _normalize_stream_ingest_records(records)
+        for i, row in enumerate(rows):
+            _validate_stream_ingest_record_keys(expected_cols, row, i)
+
+        return online_service.stream_ingest_records(
+            self._session,
+            ingest_base,
+            stream_name_wire,
+            rows,
+            timeout_sec=timeout_sec,
+        )
 
     @dispatch_decorator()
     def list_stream_sources(self) -> DataFrame:
@@ -2947,6 +3295,75 @@ class FeatureStore:
         full_query = f"WITH {', '.join(cte_parts)} {final_select}"
         return self._session.sql(full_query)
 
+    def _postgres_online_read_struct_type(
+        self, feature_view: FeatureView, feature_names: Optional[list[str]]
+    ) -> StructType:
+        join_names = [k.resolved() for e in feature_view.entities for k in e.join_keys]
+        if feature_names:
+            wanted = set(join_names) | set(feature_names)
+            fields = [f for f in feature_view.output_schema.fields if f.name in wanted]
+        else:
+            fields = list(feature_view.output_schema.fields)
+        return StructType(fields)
+
+    def _empty_dataframe_for_postgres_online_read(
+        self, feature_view: FeatureView, feature_names: Optional[list[str]]
+    ) -> DataFrame:
+        return self._session.create_dataframe(
+            [], schema=self._postgres_online_read_struct_type(feature_view, feature_names)
+        )
+
+    def _read_postgres_online_via_query_api(
+        self,
+        feature_view: FeatureView,
+        keys: Optional[list[list[str]]],
+        feature_names: Optional[list[str]],
+    ) -> DataFrame:
+        query_url = getattr(feature_view, "_postgres_online_query_url", None)
+        if not query_url:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Online read for this Postgres-backed feature view requires a hydrated query endpoint. "
+                    "Call get_feature_view(name, version) again after the Online Service is RUNNING."
+                ),
+            )
+        if not keys:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Online read from a Postgres-backed feature view requires at least one row in `keys`; "
+                    "unbounded table scans are not supported via the Online Service Query API."
+                ),
+            )
+        if feature_view.version is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "Online read requires a registered feature view with a version for Postgres-backed online tables."
+                ),
+            )
+        self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
+
+        join_names = [k.resolved() for e in feature_view.entities for k in e.join_keys]
+        join_set = set(join_names)
+        join_key_field_types = {f.name: f.datatype for f in feature_view.output_schema.fields if f.name in join_set}
+
+        rows, schema = online_service.read_postgres_online_features(
+            self._session,
+            query_url,
+            str(feature_view.name),
+            str(feature_view.version),
+            join_names,
+            keys,
+            feature_names,
+            join_key_field_types=join_key_field_types,
+        )
+        if not rows:
+            return self._empty_dataframe_for_postgres_online_read(feature_view, feature_names)
+        coerced = [_coerce_row_values_for_snowpark_local_schema(r, schema) for r in rows]
+        return self._session.create_dataframe(coerced, schema=schema)
+
     def _read_from_online_store(
         self,
         feature_view: FeatureView,
@@ -2976,6 +3393,9 @@ class FeatureStore:
                     f"Online store is not enabled for feature view {feature_view.name}/{feature_view.version}"
                 ),
             )
+
+        if feature_view.online_config is not None and feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
+            return self._read_postgres_online_via_query_api(feature_view, keys, feature_names)
 
         fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
 
@@ -4508,7 +4928,7 @@ FROM SPINE{' '.join(join_clauses)}
         values.append(row["warehouse"] if "warehouse" in row else None)
         values.append(json.dumps(self._extract_cluster_by_columns(row["cluster_by"])) if "cluster_by" in row else None)
 
-        online_config_json = self._determine_online_config_from_oft(name, version, include_runtime_metadata=True)
+        online_config_json = self._determine_online_config_from_oft(name, version, include_online_service_metadata=True)
         values.append(online_config_json)
 
         # Use fv_metadata.is_iceberg to skip iceberg lookup for non-Iceberg FVs
@@ -4556,20 +4976,25 @@ FROM SPINE{' '.join(join_clauses)}
         output_values.append(values)
 
     def _determine_online_config_from_oft(
-        self, name: str, version: str, *, include_runtime_metadata: bool = False
+        self, name: str, version: str, *, include_online_service_metadata: bool = False
     ) -> str:
         """Determine online configuration by checking for corresponding online feature table.
+
+        When an online feature table exists, ``store_type`` is taken from the
+        ``SHOW ONLINE FEATURE TABLES`` row when that column is present; otherwise
+        ``OnlineStoreType.HYBRID_TABLE`` is used (same as older clients without the column).
 
         Args:
             name: Feature view name
             version: Feature view version
-            include_runtime_metadata: If True, includes additional runtime metadata
+            include_online_service_metadata: If True, includes additional Online Service metadata
                 (refresh_mode, scheduling_state) in the JSON for display purposes.
                 If False, returns only OnlineConfig-compatible JSON.
 
         Returns:
-            JSON string of OnlineConfig with enable=True and table's target_lag if online table exists,
-            otherwise default config with enable=False. When include_runtime_metadata=True,
+            JSON string of OnlineConfig with enable=True, table's target_lag, and store_type
+            (from SHOW when available) if online table exists,
+            otherwise default config with enable=False. When include_online_service_metadata=True,
             may include additional fields not part of OnlineConfig.
 
         Raises:
@@ -4608,9 +5033,13 @@ FROM SPINE{' '.join(join_clauses)}
             # Extract required fields using consistent pattern
             target_lag = extract_field(oft_row, "target_lag")
 
-            online_config = fv_mod.OnlineConfig(enable=True, target_lag=target_lag)
+            online_config = fv_mod.OnlineConfig(
+                enable=True,
+                target_lag=target_lag,
+                store_type=_store_type_from_oft_show_row(oft_row),
+            )
 
-            if include_runtime_metadata:
+            if include_online_service_metadata:
                 display_data = json.loads(online_config.to_json())
 
                 display_data["refresh_mode"] = extract_field(oft_row, "refresh_mode")
@@ -4749,6 +5178,12 @@ FROM SPINE{' '.join(join_clauses)}
                 aggregation_specs=aggregation_specs,
                 is_streaming=fv_metadata.is_streaming,
             )
+            self._hydrate_postgres_online_service(fv)
+
+            if agg_metadata and agg_metadata.feature_aggregation_method:
+                fv._feature_aggregation_method = FeatureAggregationMethod(agg_metadata.feature_aggregation_method)
+            elif is_tiled:
+                fv._feature_aggregation_method = FeatureAggregationMethod.TILES
 
             # For streaming FVs, attach the function source from metadata
             if fv_metadata.is_streaming:
@@ -4788,7 +5223,40 @@ FROM SPINE{' '.join(join_clauses)}
                 storage_config=storage_config,
                 is_streaming=fv_metadata.is_streaming,
             )
+            self._hydrate_postgres_online_service(fv)
             return fv
+
+    def _hydrate_postgres_online_service(self, fv: FeatureView) -> None:
+        """Set ``_postgres_online_query_url`` and warn when Postgres online reads are not ready."""
+        if not fv.online or fv.online_config is None or fv.online_config.store_type != OnlineStoreType.POSTGRES:
+            return
+        try:
+            st = online_service.fetch_online_service_status(
+                self._session,
+                self._config.database,
+                self._config.schema,
+                statement_params=self._telemetry_stmp,
+            )
+        except Exception as ex:
+            logger.warning("Could not fetch Online Service status during get_feature_view: %s", ex)
+            fv._postgres_online_query_url = None
+            warnings.warn(
+                online_service.online_service_not_ready_message(),
+                category=UserWarning,
+                stacklevel=3,
+            )
+            return
+        query_url = online_service.endpoint_url(st, "query")
+        if st.status == "RUNNING" and query_url:
+            # Temporary: SYSTEM$ may return host-only query URLs until server sends full https URLs.
+            fv._postgres_online_query_url = query_url
+            return
+        fv._postgres_online_query_url = None
+        warnings.warn(
+            online_service.online_service_not_ready_message(),
+            category=UserWarning,
+            stacklevel=3,
+        )
 
     def _fetch_column_descs(self, obj_type: str, obj_name: SqlIdentifier) -> dict[str, str]:
         res = self._session.sql(f"DESC {obj_type} {self._get_fully_qualified_name(obj_name)}").collect(
@@ -4812,8 +5280,8 @@ FROM SPINE{' '.join(join_clauses)}
         """Create online feature table for the feature view.
 
         For ``HYBRID_TABLE`` store type, creates the OFT via ``CREATE ... FROM <source_table>``.
-        For ``POSTGRES`` store type, builds a feature view spec and creates the OFT via
-        ``CREATE ... FROM SPECIFICATION $$<json>$$``.
+        For ``POSTGRES`` store type, builds a :class:`~snowflake.ml.feature_store.spec.models.FeatureViewSpec`
+        and creates the OFT via ``CREATE ... FROM SPECIFICATION $$<json>$$``.
 
         Args:
             feature_view: The FeatureView object for which to create the online feature table.
@@ -4875,15 +5343,27 @@ FROM SPINE{' '.join(join_clauses)}
         # Determine source clause based on online store type
         store_type = config.store_type
         if store_type == OnlineStoreType.POSTGRES:
-            # Validate schema types before building spec
+            online_service.assert_online_service_running_with_query_endpoint(
+                self._session,
+                self._config.database,
+                self._config.schema,
+                statement_params=self._telemetry_stmp,
+            )
+            # Validate offline columns for the OFT spec. Tiled FVs: introspect the materialized DT
+            # so offline_configs match the table; reject ARRAY/BINARY/etc. per spec rules.
+            pg_offline_dt_schema: Optional[StructType] = None
             try:
-                validate_schema_types(feature_view.output_schema)
+                if feature_view.is_tiled:
+                    pg_offline_dt_schema = self._session.table(source_table_name).schema
+                    validate_spec_oft_offline_table_schema(pg_offline_dt_schema)
+                else:
+                    validate_spec_oft_offline_table_schema(feature_view.output_schema)
             except ValueError as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT,
                     original_exception=ValueError(
                         f"Feature view '{feature_view.name}' contains column types not supported by "
-                        f"Postgres online store. {e} "
+                        f"online store. {e} "
                         f"Consider casting unsupported columns to a supported type before creating the feature view."
                     ),
                 ) from e
@@ -4896,8 +5376,6 @@ FROM SPINE{' '.join(join_clauses)}
                 assert feature_view.stream_config is not None  # guaranteed by is_streaming
                 stream_source = self.get_stream_source(feature_view.stream_config.get_stream_source_name())
 
-                # For tiled streaming FVs, output_schema is the aggregated DT schema.
-                # We need the raw UDF_TRANSFORMED schema for the spec builder's feature resolution.
                 udf_table_name = FeatureView._get_udf_transformed_table_name(feature_view_name)
                 fq_udf_table = self._get_fully_qualified_name(udf_table_name)
                 if feature_view.is_tiled:
@@ -4912,6 +5390,7 @@ FROM SPINE{' '.join(join_clauses)}
                     target_lag=target_lag_value,
                     stream_source=stream_source,
                     udf_transformed_schema=udf_transformed_schema,
+                    tiled_materialized_schema=pg_offline_dt_schema,
                     database=self._config.database.resolved(),
                     schema=self._config.schema.resolved(),
                 )
@@ -4921,11 +5400,11 @@ FROM SPINE{' '.join(join_clauses)}
                     feature_view_name=feature_view_name,
                     version=version,
                     target_lag=target_lag_value,
+                    offline_materialized_schema=pg_offline_dt_schema,
                 )
             spec_json = spec.to_json()
             source_clause = f"FROM SPECIFICATION $${spec_json}$$"
         else:
-            # HYBRID_TABLE: existing path
             source_clause = f"FROM {source_table_name}"
 
         # Create online feature table
@@ -4969,6 +5448,8 @@ FROM SPINE{' '.join(join_clauses)}
         feature_view_name: SqlIdentifier,
         version: str,
         target_lag: str,
+        *,
+        offline_materialized_schema: Optional[StructType] = None,
     ) -> FeatureViewSpec:
         """Build a validated FeatureView spec for a batch feature view.
 
@@ -4980,9 +5461,16 @@ FROM SPINE{' '.join(join_clauses)}
             feature_view_name: Physical name of the DT/View (already created).
             version: Feature view version string.
             target_lag: Resolved target lag string (e.g., ``"30s"``).
+            offline_materialized_schema: For tiled batch FVs, Snowpark schema of the materialized
+                dynamic table (from ``Session.table(fq_dt).schema``). Required when
+                ``feature_view.is_tiled``; must be ``None`` for non-tiled batch.
 
         Returns:
             FeatureViewSpec instance ready for serialization.
+
+        Raises:
+            ValueError: If tiled batch is missing *offline_materialized_schema*, or non-tiled batch
+                passes a non-``None`` *offline_materialized_schema*.
         """
         database = self._config.database.resolved()
         schema = self._config.schema.resolved()
@@ -4997,13 +5485,27 @@ FROM SPINE{' '.join(join_clauses)}
                     seen_entity_cols.add(resolved)
                     entity_columns.append(resolved)
 
+        if feature_view.is_tiled:
+            if offline_materialized_schema is None:
+                raise ValueError(
+                    "Tiled batch feature view spec requires offline_materialized_schema "
+                    "(Snowflake DT schema from Session.table(...).schema)."
+                )
+            offline_columns = offline_materialized_schema
+        else:
+            if offline_materialized_schema is not None:
+                raise ValueError("Non-tiled batch feature view spec must not set offline_materialized_schema.")
+            offline_columns = feature_view.output_schema
+        # Batch FVs always register the materialized table as BatchSource; Tiled/UDFTransformed are streaming-only.
+        offline_table_type = TableType.BATCH_SOURCE
+
         # Offline config: the DT/View that was just created
         offline_table_info = SnowflakeTableInfo(
-            table_type=TableType.BATCH_SOURCE,
+            table_type=offline_table_type,
             database=database,
             schema=schema,
             table=feature_view_name.resolved(),
-            columns=feature_view.output_schema,
+            columns=offline_columns,
         )
 
         builder = (
@@ -5399,15 +5901,16 @@ FROM SPINE{' '.join(join_clauses)}
 
         return f" WHERE {' OR '.join(where_conditions)}", params
 
-    def _get_store_type(self, store_type: Union[fv_mod.StoreType, str]) -> fv_mod.StoreType:
-        """Return a StoreType enum from a Union[StoreType, str].
 
-        Args:
-            store_type: Store type enum or string value.
+def _get_store_type(store_type: Union[fv_mod.StoreType, str]) -> fv_mod.StoreType:
+    """Return a StoreType enum from a Union[StoreType, str].
 
-        Returns:
-            StoreType enum value.
-        """
-        if isinstance(store_type, str):
-            return fv_mod.StoreType(store_type.lower())
-        return store_type
+    Args:
+        store_type: Store type enum or string value.
+
+    Returns:
+        StoreType enum value.
+    """
+    if isinstance(store_type, str):
+        return fv_mod.StoreType(store_type.lower())
+    return store_type

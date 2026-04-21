@@ -1,6 +1,27 @@
 # Release History
 
-## 1.35.0
+## 1.36.0
+
+### New Features
+
+* Feature Store: for latency-sensitive online feature view reads, set use_session_warehouse=True to
+  re-use the warehouse from the current session and achieve the best latency.
+
+### Bug Fixes
+
+* Registry: Pin `transformers<5` when saving HuggingFace pipeline models that use tasks removed in
+  `transformers 5.x` (`image-to-text`, `visual-question-answering`, `conversational`), preventing
+  deployment failures from missing pipeline classes.
+
+### Behavior Changes
+
+* Registry: Logging a model with `pip_requirements` and no `artifact_repository_map` now raises a `ValueError`
+  when `target_platforms` explicitly includes `"WAREHOUSE"`. Previously this combination would silently proceed,
+  resulting in the warehouse deployment being silently dropped.
+
+### Deprecations
+
+## 1.35.0 (2026-04-17)
 
 ### New Features
 

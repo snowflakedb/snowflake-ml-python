@@ -72,6 +72,35 @@ def validate_schema_types(schema: StructType) -> None:
         supported_names = sorted(t.__name__ for t in _SUPPORTED_TYPES)
         raise ValueError(f"Unsupported column types: {col_details}. " f"Supported types: {supported_names}")
 
+    non_ntz = []
+    for field in schema.fields:
+        if isinstance(field.datatype, TimestampType):
+            if field.datatype.tz not in (TimestampTimeZone.NTZ, TimestampTimeZone.DEFAULT):
+                non_ntz.append((field.name, str(field.datatype.tz)))
+
+    if non_ntz:
+        col_details = ", ".join(f"'{name}' ({tz})" for name, tz in non_ntz)
+        raise ValueError(
+            f"Timestamp columns must be TIMESTAMP_NTZ: {col_details}. " f"Consider casting to TIMESTAMP_NTZ."
+        )
+
+
+def validate_spec_oft_offline_table_schema(schema: StructType) -> None:
+    """Validate columns for a Snowflake table described in OFT ``offline_configs``.
+
+    Same rules as :func:`validate_schema_types`: only types that serialize to
+    :class:`FSColumn` in the unified FeatureView spec. Unsupported types (e.g.
+    ARRAY, BINARY, VARIANT) must fail before embedding the schema in
+    ``CREATE ONLINE FEATURE TABLE ... FROM SPECIFICATION``.
+
+    Call once per offline table whose schema is included in the spec (batch
+    view/DT, streaming UDF-transformed table, tile DT, etc.).
+
+    Args:
+        schema: Snowpark StructType describing the offline table columns.
+    """
+    validate_schema_types(schema)
+
 
 def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
     """Convert a (name, Snowpark DataType) pair to an FSColumn.
@@ -94,19 +123,16 @@ def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
             f"Unsupported type '{type(dt).__name__}' for column '{name}'. "
             f"Supported types: {sorted(t.__name__ for t in _SUPPORTED_TYPES)}"
         )
+    if isinstance(dt, TimestampType) and dt.tz not in (TimestampTimeZone.NTZ, TimestampTimeZone.DEFAULT):
+        raise ValueError(
+            f"Timestamp column '{name}' must be TIMESTAMP_NTZ, got {dt.tz}. " f"Consider casting to TIMESTAMP_NTZ."
+        )
     return FSColumn(
         name=name,
         type=type(dt).__name__,
         length=dt.length if isinstance(dt, StringType) and dt.length is not None else None,
         precision=dt.precision if isinstance(dt, DecimalType) else None,
         scale=dt.scale if isinstance(dt, DecimalType) else None,
-        timezone=(
-            str(dt.tz)
-            if isinstance(dt, TimestampType)
-            and dt.tz is not None
-            and dt.tz not in (TimestampTimeZone.NTZ, TimestampTimeZone.DEFAULT)
-            else None
-        ),
     )
 
 

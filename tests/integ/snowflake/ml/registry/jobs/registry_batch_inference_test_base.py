@@ -3,7 +3,7 @@ import inspect
 import json
 import logging
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 import pandas as pd
 from absl.testing import absltest
@@ -16,6 +16,10 @@ from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
 logger = logging.getLogger(__name__)
+
+# Which env-var bundle ``_has_image_override`` consults. Subclasses (e.g. pip-only batch tests)
+# set ``_BATCH_IMAGE_OVERRIDE_MODE`` instead of overriding ``_has_image_override``.
+BatchImageOverrideMode = Literal["full", "pip_only_batch"]
 
 
 def create_openai_chat_completion_output_validator(
@@ -82,6 +86,7 @@ def create_openai_chat_completion_output_validator(
 
 class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
     _INDEX_COL = "INDEX"
+    _BATCH_IMAGE_OVERRIDE_MODE: BatchImageOverrideMode = "full"
 
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
         overrides: dict[str, Optional[str]] = {
@@ -148,7 +153,7 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         name = model_name or f"model_{inspect.stack()[1].function}"
         version = version_name or f"ver_{self._run_id}"
         options = options or {}
-        options["embed_local_ml_library"] = True
+        options.setdefault("embed_local_ml_library", True)
         mv = self.registry.log_model(
             model=model,
             model_name=name,
@@ -177,27 +182,63 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
             skip_row_count_check=skip_row_count_check,
         )
 
-    def _has_image_override(self) -> bool:
-        image_paths = [
-            self.BUILDER_IMAGE_PATH,
-            self.BASE_BATCH_CPU_IMAGE_PATH,
-            self.BASE_BATCH_GPU_IMAGE_PATH,
-            self.RAY_ORCHESTRATOR_PATH,
-            self.PROXY_IMAGE_PATH,
-            self.VLLM_IMAGE_PATH,
-        ]
+    def _has_image_override(self, mode: Optional[BatchImageOverrideMode] = None) -> bool:
+        """Return whether session image overrides are enabled for the given mode.
 
-        all_set = all(path is not None for path in image_paths)
-        all_unset = all(path is None for path in image_paths)
+        Args:
+            mode: Which bundle of ``*_IMAGE_*PATH`` / ``*_PATH`` env vars must be set together.
+                If None, uses ``self._BATCH_IMAGE_OVERRIDE_MODE`` (``\"full\"`` on this base class;
+                pip-only tests set ``\"pip_only_batch\"``). If not None, that mode is used instead of
+                the class default.
 
-        if not all_set and not all_unset:
+        Returns:
+            True if the bundle is fully set, False if fully unset.
+
+        Raises:
+            ValueError: If the chosen mode's env vars are only partially set, or if ``mode`` (or
+                ``self._BATCH_IMAGE_OVERRIDE_MODE`` when ``mode`` is None) is not a known value.
+        """
+        effective_mode = mode if mode is not None else self._BATCH_IMAGE_OVERRIDE_MODE
+
+        if effective_mode == "full":
+            image_paths = [
+                self.BUILDER_IMAGE_PATH,
+                self.BASE_BATCH_CPU_IMAGE_PATH,
+                self.BASE_BATCH_GPU_IMAGE_PATH,
+                self.RAY_ORCHESTRATOR_PATH,
+                self.PROXY_IMAGE_PATH,
+                self.VLLM_IMAGE_PATH,
+            ]
+
+            all_set = all(path is not None for path in image_paths)
+            all_unset = all(path is None for path in image_paths)
+
+            if not all_set and not all_unset:
+                raise ValueError(
+                    "Please set or unset all batch inference image override environment variables at the same time: "
+                    "BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, "
+                    "RAY_ORCHESTRATOR_PATH, PROXY_IMAGE_PATH, and VLLM_IMAGE_PATH."
+                )
+
+            return all_set
+
+        if effective_mode == "pip_only_batch":
+            image_paths = [
+                self.BUILDER_IMAGE_PATH,
+                self.BASE_BATCH_CPU_IMAGE_PATH,
+                self.BASE_BATCH_GPU_IMAGE_PATH,
+                self.MODEL_LOGGER_PATH,
+            ]
+            if all(image_paths):
+                return True
+            if not any(image_paths):
+                return False
             raise ValueError(
-                "Please set or unset all batch inference image override environment variables at the same time: "
-                "BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, "
-                "RAY_ORCHESTRATOR_PATH, PROXY_IMAGE_PATH, and VLLM_IMAGE_PATH."
+                "Please set or unset BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, "
+                "BASE_BATCH_GPU_IMAGE_PATH, and MODEL_LOGGER_PATH at the same time."
             )
 
-        return all_set
+        raise ValueError(f"Unknown batch image override mode: {effective_mode!r}")
 
     def _deploy_batch_inference(
         self,

@@ -15,6 +15,7 @@ class FeatureViewKind(str, Enum):
     StreamingFeatureView = "StreamingFeatureView"
     RealtimeFeatureView = "RealtimeFeatureView"
     BatchFeatureView = "BatchFeatureView"
+    FeatureGroup = "FeatureGroup"
 
 
 class StoreType(str, Enum):

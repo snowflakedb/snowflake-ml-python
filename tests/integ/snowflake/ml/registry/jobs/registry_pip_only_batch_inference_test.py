@@ -36,7 +36,7 @@ class PipOnlyModel(custom_model.CustomModel):
 
     @custom_model.inference_api
     def check_env(self, input: pd.DataFrame) -> pd.DataFrame:
-        """Check if the environment is using pip-only path (uv/venv) instead of conda.
+        """Check if the environment is using a pip-only path (venv) instead of conda.
 
         Returns environment info to verify:
         - uses_venv: True if running from /opt/venv
@@ -67,35 +67,16 @@ class PipOnlyModel(custom_model.CustomModel):
 
 
 class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
-    """Integration tests for pip-only model batch inference using uv-based image builder.
+    """Integration tests for batch inference with pip-only models.
 
-    Overrides the builder image to use INFERENCE_IMAGE_BUILDER_PATH (sf-inference-image-builder-amd64)
-    instead of BUILDER_IMAGE_PATH (sf-kaniko-amd64, which is deprecated and does not support pip-only
-    models because its build.py does not handle a missing conda.yml).
+    Set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, and
+    MODEL_LOGGER_PATH together to run with image overrides.
     """
 
-    def _has_image_override(self) -> bool:
-        image_paths = [
-            self.INFERENCE_IMAGE_BUILDER_PATH,
-            self.BASE_BATCH_CPU_IMAGE_PATH,
-            self.BASE_BATCH_GPU_IMAGE_PATH,
-            self.MODEL_LOGGER_PATH,
-        ]
-        if all(image_paths):
-            return True
-        elif not any(image_paths):
-            return False
-        else:
-            raise ValueError(
-                "Please set or unset INFERENCE_IMAGE_BUILDER_PATH, BASE_BATCH_CPU_IMAGE_PATH, "
-                "BASE_BATCH_GPU_IMAGE_PATH, and MODEL_LOGGER_PATH at the same time."
-            )
+    _BATCH_IMAGE_OVERRIDE_MODE = "pip_only_batch"
 
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
         params = super()._get_batch_image_override_session_params()
-        # Pip-only models require the BuildKit inference image builder.
-        if self.INFERENCE_IMAGE_BUILDER_PATH is not None:
-            params["SPCS_MODEL_BUILD_CONTAINER_URL"] = self.INFERENCE_IMAGE_BUILDER_PATH
         params.pop("SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS", None)
         return params
 
@@ -188,11 +169,11 @@ class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.
         )
 
     def test_pip_only_batch_inference(self) -> None:
-        """Test end-to-end batch inference of a pip-only model using uv-based image builder.
+        """End-to-end batch inference with a pip-only model.
 
         Verifies:
         1. Model prediction works correctly
-        2. Environment uses pip-only path (uv/venv) instead of conda
+        2. Environment uses a pip-only path (venv) instead of conda
         """
         if not self._has_image_override():
             self.skipTest("Skipping pip-only batch inference test: image override not enabled.")
@@ -230,11 +211,11 @@ class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.
 
     @parameterized.parameters(*PIP_ONLY_PYTHON_VERSIONS)  # type: ignore[misc]
     def test_pip_only_batch_inference_python_versions(self, py_ver: str) -> None:
-        """E2E test: batch inference with pip-only model for each supported Python version (3.10, 3.11, 3.12).
+        """Batch inference with a pip-only model for each supported Python version (3.10, 3.11, 3.12).
 
         Verifies:
         1. Model runs with the correct Python version
-        2. Environment uses pip-only path (uv/venv)
+        2. Environment uses a pip-only path (venv)
         """
         current_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
         if py_ver != current_ver:

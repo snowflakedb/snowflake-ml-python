@@ -621,6 +621,35 @@ class ParamGroupSpecTest(absltest.TestCase):
         mixed = core.ParamGroupSpec(name="configs", specs=base_specs, shape=(2, -1))
         self.assertEqual(mixed.default_value, [[], []])
 
+    def test_param_group_spec_explicit_default_value(self) -> None:
+        """Test that explicit default_value takes precedence over computed default."""
+        p1 = core.ParamSpec(name="x", dtype=core.DataType.INT64, default_value=1)
+        explicit_default = [{"x": 10}, {"x": 20}]
+
+        pg = core.ParamGroupSpec(name="items", specs=[p1], shape=(2,), default_value=explicit_default)
+
+        self.assertEqual(pg.default_value, [{"x": 10}, {"x": 20}])
+
+    def test_param_group_spec_explicit_default_value_none_computes(self) -> None:
+        """Test that default_value=None falls back to computing from children."""
+        p1 = core.ParamSpec(name="lr", dtype=core.DataType.FLOAT, default_value=0.01)
+        p2 = core.ParamSpec(name="momentum", dtype=core.DataType.FLOAT, default_value=0.9)
+
+        pg = core.ParamGroupSpec(name="optimizer", specs=[p1, p2], default_value=None)
+
+        self.assertEqual(pg.default_value, {"lr": 0.01, "momentum": 0.9})
+
+    def test_param_group_spec_explicit_default_value_serialization(self) -> None:
+        """Test that explicit default_value survives to_dict/from_dict round-trip."""
+        p1 = core.ParamSpec(name="value", dtype=core.DataType.DOUBLE, default_value=1.0)
+        explicit_default = [{"value": 1.0}, {"value": 2.0}]
+
+        pg = core.ParamGroupSpec(name="items", specs=[p1], shape=(2,), default_value=explicit_default)
+
+        pg_roundtrip = core.ParamGroupSpec.from_dict(pg.to_dict())
+        self.assertEqual(pg_roundtrip.default_value, explicit_default)
+        self.assertEqual(pg, pg_roundtrip)
+
 
 class ModelSignatureTest(absltest.TestCase):
     def test_1(self) -> None:
@@ -1075,6 +1104,193 @@ ModelSignature(
         self.assertIsNone(result.shape)
         self.assertEqual(result.default_value, 1.0)
 
+    def test_param_group_spec_from_mlflow_spec_flat(self) -> None:
+        """Test ParamGroupSpec.from_mlflow_spec with a flat Object-typed param."""
+        import mlflow
+
+        obj_type = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("temperature", mlflow.types.DataType.double),
+                mlflow.types.schema.Property("top_k", mlflow.types.DataType.long),
+            ]
+        )
+        default_dict = {"temperature": 1.0, "top_k": 50}
+        mock_param = mock.MagicMock()
+        mock_param.name = "config"
+        mock_param.dtype = obj_type
+        mock_param.default = default_dict
+        mock_param.shape = None
+
+        result = core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
+        self.assertIsInstance(result, core.ParamGroupSpec)
+        self.assertEqual(result.name, "config")
+        self.assertEqual(len(result.specs), 2)
+
+        temp_spec = result.specs[0]
+        assert isinstance(temp_spec, core.ParamSpec)
+        self.assertEqual(temp_spec.name, "temperature")
+        self.assertEqual(temp_spec.dtype, core.DataType.DOUBLE)
+        self.assertEqual(temp_spec.default_value, 1.0)
+
+        topk_spec = result.specs[1]
+        assert isinstance(topk_spec, core.ParamSpec)
+        self.assertEqual(topk_spec.name, "top_k")
+        self.assertEqual(topk_spec.dtype, core.DataType.INT64)
+        self.assertEqual(topk_spec.default_value, 50)
+
+        self.assertEqual(result.default_value, default_dict)
+
+    def test_param_group_spec_from_mlflow_spec_nested(self) -> None:
+        """Test ParamGroupSpec.from_mlflow_spec with nested Object types."""
+        import mlflow
+
+        inner_obj = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("seed", mlflow.types.DataType.long),
+                mlflow.types.schema.Property("strategy", mlflow.types.DataType.string),
+            ]
+        )
+        outer_obj = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("temperature", mlflow.types.DataType.double),
+                mlflow.types.schema.Property("sampling", inner_obj),
+            ]
+        )
+        default_dict = {"temperature": 1.0, "sampling": {"seed": 42, "strategy": "greedy"}}
+        mock_param = mock.MagicMock()
+        mock_param.name = "config"
+        mock_param.dtype = outer_obj
+        mock_param.default = default_dict
+        mock_param.shape = None
+
+        result = core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
+        self.assertIsInstance(result, core.ParamGroupSpec)
+        self.assertEqual(len(result.specs), 2)
+
+        specs_by_name = {s.name: s for s in result.specs}
+
+        temp_spec = specs_by_name["temperature"]
+        assert isinstance(temp_spec, core.ParamSpec)
+        self.assertEqual(temp_spec.default_value, 1.0)
+
+        sampling_spec = specs_by_name["sampling"]
+        assert isinstance(sampling_spec, core.ParamGroupSpec)
+        self.assertEqual(len(sampling_spec.specs), 2)
+        sampling_by_name = {s.name: s for s in sampling_spec.specs}
+        self.assertEqual(sampling_by_name["seed"].default_value, 42)
+        self.assertEqual(sampling_by_name["strategy"].default_value, "greedy")
+
+        self.assertEqual(result.default_value, default_dict)
+
+    def test_param_group_spec_from_mlflow_spec_with_shape(self) -> None:
+        """Test ParamGroupSpec.from_mlflow_spec preserves shape and per-element defaults."""
+        import mlflow
+
+        obj_type = mlflow.types.schema.Object([mlflow.types.schema.Property("value", mlflow.types.DataType.double)])
+        mock_param = mock.MagicMock()
+        mock_param.name = "items"
+        mock_param.dtype = obj_type
+        mock_param.default = [{"value": 1.0}, {"value": 2.0}]
+        mock_param.shape = (2,)
+
+        result = core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
+        self.assertIsInstance(result, core.ParamGroupSpec)
+        self.assertEqual(result.name, "items")
+        self.assertEqual(result.shape, (2,))
+        self.assertEqual(len(result.specs), 1)
+        self.assertEqual(result.specs[0].name, "value")
+        self.assertEqual(result.default_value, [{"value": 1.0}, {"value": 2.0}])
+
+    def test_param_group_spec_from_mlflow_spec_with_array_property(self) -> None:
+        """Test ParamGroupSpec.from_mlflow_spec handles Array-typed properties inside Object."""
+        import mlflow
+
+        obj_type = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("temperature", mlflow.types.DataType.double),
+                mlflow.types.schema.Property("stop_sequences", mlflow.types.schema.Array(mlflow.types.DataType.string)),
+            ]
+        )
+        mock_param = mock.MagicMock()
+        mock_param.name = "config"
+        mock_param.dtype = obj_type
+        mock_param.default = {"temperature": 0.7, "stop_sequences": ["</s>", "\n"]}
+        mock_param.shape = None
+
+        result = core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
+        self.assertIsInstance(result, core.ParamGroupSpec)
+        self.assertEqual(len(result.specs), 2)
+
+        specs_by_name = {s.name: s for s in result.specs}
+
+        temp_spec = specs_by_name["temperature"]
+        assert isinstance(temp_spec, core.ParamSpec)
+        self.assertEqual(temp_spec.dtype, core.DataType.DOUBLE)
+        self.assertEqual(temp_spec.default_value, 0.7)
+
+        stop_spec = specs_by_name["stop_sequences"]
+        assert isinstance(stop_spec, core.ParamSpec)
+        self.assertEqual(stop_spec.dtype, core.DataType.STRING)
+        self.assertEqual(stop_spec.shape, (-1,))
+        self.assertEqual(stop_spec.default_value, ["</s>", "\n"])
+
+    def test_param_group_spec_from_mlflow_spec_with_array_of_object_property(self) -> None:
+        """Test ParamGroupSpec.from_mlflow_spec handles Array(Object) properties."""
+        import mlflow
+
+        inner_obj = mlflow.types.schema.Object([mlflow.types.schema.Property("key", mlflow.types.DataType.string)])
+        obj_type = mlflow.types.schema.Object(
+            [
+                mlflow.types.schema.Property("name", mlflow.types.DataType.string),
+                mlflow.types.schema.Property("items", mlflow.types.schema.Array(inner_obj)),
+            ]
+        )
+        mock_param = mock.MagicMock()
+        mock_param.name = "config"
+        mock_param.dtype = obj_type
+        mock_param.default = {"name": "test", "items": [{"key": "a"}, {"key": "b"}]}
+        mock_param.shape = None
+
+        result = core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
+        self.assertIsInstance(result, core.ParamGroupSpec)
+        self.assertEqual(len(result.specs), 2)
+
+        specs_by_name = {s.name: s for s in result.specs}
+
+        items_spec = specs_by_name["items"]
+        assert isinstance(items_spec, core.ParamGroupSpec)
+        self.assertEqual(items_spec.shape, (-1,))
+        self.assertEqual(len(items_spec.specs), 1)
+        self.assertEqual(items_spec.specs[0].name, "key")
+        self.assertEqual(items_spec.default_value, [{"key": "a"}, {"key": "b"}])
+
+    def test_param_group_spec_from_mlflow_spec_unsupported_property_dtype_raises(self) -> None:
+        """Test _convert_mlflow_properties raises on unsupported property dtype."""
+        import mlflow
+
+        unsupported_prop = mock.MagicMock()
+        unsupported_prop.name = "bad_prop"
+        unsupported_prop.dtype = mock.MagicMock(spec=[])
+
+        obj_type = mock.MagicMock(spec=mlflow.types.schema.Object)
+        obj_type.properties = [unsupported_prop]
+
+        mock_param = mock.MagicMock()
+        mock_param.name = "config"
+        mock_param.dtype = obj_type
+        mock_param.default = {}
+        mock_param.shape = None
+
+        with exception_utils.assert_snowml_exceptions(
+            self, expected_original_error_type=NotImplementedError, expected_regex="bad_prop"
+        ):
+            core.ParamGroupSpec.from_mlflow_spec(mock_param)
+
     def test_from_mlflow_sig_with_shaped_scalar_param(self) -> None:
         """Test from_mlflow_sig with shaped scalar param."""
         import mlflow
@@ -1096,6 +1312,35 @@ ModelSignature(
         self.assertEqual(sig.params[0].default_value, [1, 2, 3])
         self.assertEqual(sig.params[1].shape, None)
         self.assertEqual(sig.params[1].default_value, 1.0)
+
+    def test_from_mlflow_sig_with_mixed_scalar_and_object_params(self) -> None:
+        """Test from_mlflow_sig end-to-end with both scalar and Object params via mock."""
+        import mlflow
+
+        input_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "x")])
+        output_schema = mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.float, "y")])
+
+        scalar_param = mlflow.types.ParamSpec("temperature", mlflow.types.DataType.double, 1.0)
+
+        obj_type = mlflow.types.schema.Object([mlflow.types.schema.Property("seed", mlflow.types.DataType.long)])
+        mock_obj_param = mock.MagicMock()
+        mock_obj_param.name = "config"
+        mock_obj_param.dtype = obj_type
+        mock_obj_param.default = {"seed": 42}
+        mock_obj_param.shape = None
+
+        mlflow_sig = mlflow.models.ModelSignature(inputs=input_schema, outputs=output_schema)
+        mlflow_sig.params = mock.MagicMock()
+        mlflow_sig.params.__iter__ = mock.Mock(return_value=iter([scalar_param, mock_obj_param]))
+        mlflow_sig.params.__bool__ = mock.Mock(return_value=True)
+
+        sig = core.ModelSignature.from_mlflow_sig(mlflow_sig)
+
+        self.assertEqual(len(sig.params), 2)
+        self.assertIsInstance(sig.params[0], core.ParamSpec)
+        self.assertEqual(sig.params[0].name, "temperature")
+        self.assertIsInstance(sig.params[1], core.ParamGroupSpec)
+        self.assertEqual(sig.params[1].name, "config")
 
 
 class ConvertMlflowColTypeTest(absltest.TestCase):

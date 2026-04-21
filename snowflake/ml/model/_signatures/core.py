@@ -967,6 +967,7 @@ class ParamGroupSpec(BaseParamSpec):
         self,
         name: str,
         specs: list[BaseParamSpec],
+        default_value: Any = None,
         shape: Optional[tuple[int, ...]] = None,
     ) -> None:
         """Initialize a parameter group.
@@ -974,11 +975,14 @@ class ParamGroupSpec(BaseParamSpec):
         Args:
             name: Name of the parameter group.
             specs: A list of parameter specifications that composes the group.
+            default_value: Explicit default value for the group. If None, the default
+                is computed from child specs.
             shape: Shape of the parameter group. None means scalar, otherwise a tuple
                 representing dimensions. Use -1 for variable length dimensions.
         """
         super().__init__(name=name, shape=shape)
         self._specs = specs
+        self._default_value = default_value
         self._validate()
 
     def _validate(self) -> None:
@@ -1024,14 +1028,19 @@ class ParamGroupSpec(BaseParamSpec):
     def default_value(self) -> Any:
         """Default value of the parameter group.
 
-        Without shape: returns a dict mapping parameter names to their default values.
-        With shape: returns a nested list structure where each leaf is the default dict.
+        If an explicit default was provided at construction, it is returned as-is.
+        Otherwise, computes a default from child specs:
+        - Without shape: returns a dict mapping parameter names to their default values.
+        - With shape: returns a nested list structure where each leaf is the default dict.
         Variable-length dimensions (-1) result in empty arrays.
         Nested ParamGroupSpecs produce nested dicts (or arrays if they have shape).
 
         Returns:
-            A dict or nested list of dicts depending on shape.
+            The explicit default value, or a computed dict/nested list of dicts.
         """
+        if self._default_value is not None:
+            return self._default_value
+
         base_dict: dict[str, Any] = {}
         for spec in self._specs:
             if isinstance(spec, ParamSpec):
@@ -1063,7 +1072,12 @@ class ParamGroupSpec(BaseParamSpec):
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, ParamGroupSpec):
-            return self._name == other._name and self._specs == other._specs and self._shape == other._shape
+            return (
+                self._name == other._name
+                and self._specs == other._specs
+                and self._shape == other._shape
+                and self._default_value == other._default_value
+            )
         return False
 
     def __repr__(self) -> str:
@@ -1094,6 +1108,8 @@ class ParamGroupSpec(BaseParamSpec):
         result: dict[str, Any] = {"name": self._name, "specs": [s.to_dict() for s in self._specs]}
         if self._shape is not None:
             result["shape"] = self._shape
+        if self._default_value is not None:
+            result["default_value"] = self._default_value
         return result
 
     @classmethod
@@ -1113,7 +1129,110 @@ class ParamGroupSpec(BaseParamSpec):
         shape = input_dict.get("shape", None)
         if shape is not None:
             shape = tuple(shape)
-        return ParamGroupSpec(name=input_dict["name"], specs=specs, shape=shape)
+        default_value = input_dict.get("default_value", None)
+        return ParamGroupSpec(name=input_dict["name"], specs=specs, shape=shape, default_value=default_value)
+
+    @classmethod
+    def from_mlflow_spec(cls, param_spec: "mlflow.types.ParamSpec") -> "ParamGroupSpec":
+        """Convert an MLflow ParamSpec with Object dtype to a ParamGroupSpec.
+
+        Args:
+            param_spec: An mlflow.types.ParamSpec whose dtype is mlflow.types.schema.Object.
+
+        Returns:
+            A ParamGroupSpec with child specs for each property.
+        """
+        specs = cls._convert_mlflow_properties(param_spec.dtype, param_spec.default)
+        return cls(name=param_spec.name, specs=specs, shape=param_spec.shape, default_value=param_spec.default)
+
+    @classmethod
+    def _convert_mlflow_properties(cls, mlflow_obj: Any, default: Any) -> list[BaseParamSpec]:
+        """Recursively convert MLflow Object properties to child param specs.
+
+        Args:
+            mlflow_obj: An mlflow.types.schema.Object instance.
+            default: The default value dict for this level (or None).
+
+        Returns:
+            A list of child BaseParamSpec instances.
+
+        Raises:
+            SnowflakeMLException: If a property has an unsupported dtype.
+        """
+        import mlflow
+
+        default_dict = default if isinstance(default, dict) else {}
+        specs: list[BaseParamSpec] = []
+
+        for prop in mlflow_obj.properties:
+            child_default = default_dict.get(prop.name)
+            if isinstance(prop.dtype, mlflow.types.schema.Object):
+                child_specs = cls._convert_mlflow_properties(prop.dtype, child_default)
+                specs.append(cls(name=prop.name, specs=child_specs))
+            elif isinstance(prop.dtype, mlflow.types.schema.Array):
+                specs.append(cls._convert_mlflow_array_property(prop.name, prop.dtype, child_default))
+            elif isinstance(prop.dtype, mlflow.types.schema.DataType):
+                specs.append(
+                    ParamSpec(
+                        name=prop.name,
+                        dtype=DataType.from_numpy_type(prop.dtype.to_numpy()),
+                        default_value=child_default,
+                    )
+                )
+            else:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.NOT_IMPLEMENTED,
+                    original_exception=NotImplementedError(
+                        f"MLflow param property dtype {type(prop.dtype)} is not supported "
+                        f"for property '{prop.name}'."
+                    ),
+                )
+
+        return specs
+
+    @classmethod
+    def _convert_mlflow_array_property(cls, name: str, mlflow_array: Any, default: Any) -> BaseParamSpec:
+        """Convert an MLflow Array-typed property to a param spec.
+
+        Args:
+            name: The property name.
+            mlflow_array: An mlflow.types.schema.Array instance.
+            default: The default value for this property (typically a list, or None).
+
+        Returns:
+            A ParamSpec with shape for scalar arrays, or a ParamGroupSpec with shape for object arrays.
+
+        Raises:
+            SnowflakeMLException: If the innermost array element type is not supported.
+        """
+        import mlflow
+
+        depth = 0
+        inner = mlflow_array
+        while isinstance(inner, mlflow.types.schema.Array):
+            depth += 1
+            inner = inner.dtype
+
+        shape = (-1,) * depth
+
+        if isinstance(inner, mlflow.types.schema.Object):
+            child_specs = cls._convert_mlflow_properties(inner, default)
+            return cls(name=name, specs=child_specs, shape=shape, default_value=default)
+        elif isinstance(inner, mlflow.types.schema.DataType):
+            return ParamSpec(
+                name=name,
+                dtype=DataType.from_numpy_type(inner.to_numpy()),
+                default_value=default,
+                shape=shape,
+            )
+        else:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.NOT_IMPLEMENTED,
+                original_exception=NotImplementedError(
+                    f"MLflow param property dtype {type(inner)} inside Array is not supported "
+                    f"for property '{name}'."
+                ),
+            )
 
 
 class ModelSignature:
@@ -1324,7 +1443,21 @@ class ModelSignature:
         ]
 
         if hasattr(mlflow_sig, "params") and mlflow_sig.params:
-            params = [ParamSpec.from_mlflow_spec(spec) for spec in mlflow_sig.params]
+            import mlflow
+
+            params: list[BaseParamSpec] = []
+            for spec in mlflow_sig.params:
+                if isinstance(spec.dtype, mlflow.types.schema.Object):
+                    params.append(ParamGroupSpec.from_mlflow_spec(spec))
+                elif isinstance(spec.dtype, mlflow.types.schema.DataType):
+                    params.append(ParamSpec.from_mlflow_spec(spec))
+                else:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.NOT_IMPLEMENTED,
+                        original_exception=NotImplementedError(
+                            f"MLflow param dtype {type(spec.dtype)} is not supported " f"for parameter '{spec.name}'."
+                        ),
+                    )
         else:
             params = []
 

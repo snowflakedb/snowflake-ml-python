@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
+from typing_extensions import override
 
 from snowflake.ml.model import model_signature, openai_signatures
 from snowflake.ml.model._packager.model_handlers.huggingface import (
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 class TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles text-generation pipelines, including OpenAI-compatible chat completions."""
 
+    @override
     def run_inference(
         self,
         raw_model: "transformers.Pipeline",
@@ -46,6 +48,7 @@ class TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
                 input_data = X[signature.inputs[0].name].to_list()
             return getattr(raw_model, target_method)(input_data)
 
+    @override
     def _needs_list_wrapping(
         self,
         raw_model: "transformers.Pipeline",
@@ -57,6 +60,7 @@ class TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
         # Regular text-generation returns list[dict] or dict depending on input count.
         return isinstance(result, dict)
 
+    @override
     def _format_result(
         self,
         raw_model: "transformers.Pipeline",

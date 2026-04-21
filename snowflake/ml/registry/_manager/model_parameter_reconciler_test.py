@@ -114,8 +114,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             )
         )
 
-    def test_pip_requirements_warehouse_warnings(self) -> None:
-        """Test pip_requirements warnings for various warehouse targeting scenarios."""
+    def test_pip_requirements_warehouse_warning_when_target_platforms_none(self) -> None:
+        """Test that a warning is issued when pip_requirements are set without artifact_repository_map
+        and target_platforms is None (defaulting behavior)."""
         reconciler = self._create_reconciler(
             pip_requirements=["pandas>=1.3.0"],
             artifact_repository_map=None,
@@ -126,14 +127,15 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         ):
             reconciler.reconcile()
 
+    def test_pip_requirements_warehouse_error_when_explicitly_targeting_warehouse(self) -> None:
+        """Test that an error is raised when pip_requirements are set without artifact_repository_map
+        and target_platforms explicitly includes WAREHOUSE."""
         reconciler = self._create_reconciler(
             pip_requirements=["pandas>=1.3.0"],
             artifact_repository_map=None,
             target_platforms=[model_types.TargetPlatform.WAREHOUSE],
         )
-        with self.assertWarnsRegex(
-            UserWarning, "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse"
-        ):
+        with self.assertRaises(exceptions.SnowflakeMLException):
             reconciler.reconcile()
 
         reconciler = self._create_reconciler(
@@ -141,9 +143,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             artifact_repository_map=None,
             target_platforms=["WAREHOUSE"],
         )
-        with self.assertWarnsRegex(
-            UserWarning, "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse"
-        ):
+        with self.assertRaises(exceptions.SnowflakeMLException):
             reconciler.reconcile()
 
         reconciler = self._create_reconciler(
@@ -154,9 +154,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
             ],
         )
-        with self.assertWarnsRegex(
-            UserWarning, "Models logged specifying `pip_requirements` cannot be executed in a Snowflake Warehouse"
-        ):
+        with self.assertRaises(exceptions.SnowflakeMLException):
             reconciler.reconcile()
 
     def test_pip_requirements_no_warnings(self) -> None:
@@ -171,7 +169,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             warnings.simplefilter("always")
             reconciler.reconcile()
             pip_warnings = [
-                warning for warning in w if "Models logged specifying `pip_requirements`" in str(warning.message)
+                warning
+                for warning in w
+                if "pip_requirements" in str(warning.message) and "artifact_repository_map" in str(warning.message)
             ]
             self.assertEqual(len(pip_warnings), 0)
 
@@ -184,7 +184,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             warnings.simplefilter("always")
             reconciler.reconcile()
             pip_warnings = [
-                warning for warning in w if "Models logged specifying `pip_requirements`" in str(warning.message)
+                warning
+                for warning in w
+                if "pip_requirements" in str(warning.message) and "artifact_repository_map" in str(warning.message)
             ]
             self.assertEqual(len(pip_warnings), 0)
 
@@ -197,7 +199,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             warnings.simplefilter("always")
             reconciler.reconcile()
             pip_warnings = [
-                warning for warning in w if "Models logged specifying `pip_requirements`" in str(warning.message)
+                warning
+                for warning in w
+                if "pip_requirements" in str(warning.message) and "artifact_repository_map" in str(warning.message)
             ]
             self.assertEqual(len(pip_warnings), 0)
 
@@ -210,7 +214,9 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             warnings.simplefilter("always")
             reconciler.reconcile()
             pip_warnings = [
-                warning for warning in w if "Models logged specifying `pip_requirements`" in str(warning.message)
+                warning
+                for warning in w
+                if "pip_requirements" in str(warning.message) and "artifact_repository_map" in str(warning.message)
             ]
             self.assertEqual(len(pip_warnings), 0)
 

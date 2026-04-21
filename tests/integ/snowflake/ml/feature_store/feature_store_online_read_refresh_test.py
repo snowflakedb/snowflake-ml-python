@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import time
 import uuid
 import warnings
+from unittest.mock import patch
 
 from absl.testing import absltest, parameterized
 from fs_integ_test_base import FeatureStoreIntegTestBase
@@ -528,6 +530,96 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         # Should return only rows with user_id 1 and 2
         for row in filtered_rows:
             self.assertIn(str(row["USER_ID"]), ["1", "2"])
+
+    def test_read_feature_view_from_online_store_use_session_warehouse_perf(self) -> None:
+        """Basic client-side performance sanity check.
+
+        Asserts that the client-side latency overhead is < 5ms. In practice, it is <0.1ms.
+
+        To create the most challenging scenario, we switch the session warehouse to the alternate warehouse
+        and set use_session_warehouse=True when callind read_feature_view().
+        """
+        fv_name = "test_read_online"
+
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="10m",
+            desc="Test reading from online store",
+            online_config=feature_view.OnlineConfig(enable=True),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+
+        try:
+            self._session.use_warehouse(self._alt_warehouse_name)
+            online_data = self.fs.read_feature_view(registered_fv, store_type=feature_view.StoreType.ONLINE)
+            online_rows = online_data.collect()
+            self.assertEqual(len(online_rows), 3)
+            latencies_ms = []
+            with patch.object(self._session, "sql"):
+                for _ in range(100):
+                    t0 = time.perf_counter()
+                    self.fs.read_feature_view(
+                        registered_fv,
+                        feature_names=["USER_ID", "PURCHASE_AMOUNT"],
+                        store_type=feature_view.StoreType.ONLINE,
+                        use_session_warehouse=True,
+                    )
+                    t1 = time.perf_counter()
+                    latencies_ms.append((t1 - t0) * 1000)
+        finally:
+            self._session.use_warehouse(self._test_warehouse_name)
+
+        avg_latency_overhead_ms = sum(latencies_ms) / len(latencies_ms)
+        assert (
+            avg_latency_overhead_ms < 5
+        ), f"avg client-side overhead of online feature view read API is too high: {avg_latency_overhead_ms} ms"
+
+    def test_read_feature_view_use_session_warehouse(self) -> None:
+        """Verify use_session_warehouse=True uses the session's warehouse, not the FeatureStore default.
+
+        Sets the FeatureStore's default warehouse to a newly created warehouse, drops that warehouse,
+        then reads with use_session_warehouse=True to prove the session's own warehouse is used instead.
+        """
+        fv_name = "test_session_wh"
+
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="10m",
+            desc="Test use_session_warehouse bypass",
+            online_config=feature_view.OnlineConfig(enable=True),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+
+        # Sanity check: normal read works
+        rows = self.fs.read_feature_view(registered_fv, store_type=feature_view.StoreType.ONLINE).collect()
+        self.assertEqual(len(rows), 3)
+
+        # Point the FeatureStore's default warehouse to a new warehouse, then drop it.
+        # This makes the default warehouse invalid — any code path that tries to USE it will fail.
+        doomed_warehouse = self._alt_warehouse_name
+        try:
+            self.fs.update_default_warehouse(doomed_warehouse)
+            self._dbm.drop_warehouse(doomed_warehouse)
+            self._alt_warehouse_created = False
+
+            # With use_session_warehouse=True the switch_warehouse decorator is bypassed,
+            # so the dropped warehouse is never referenced and the session's own warehouse is used.
+            online_rows = self.fs.read_feature_view(
+                registered_fv,
+                store_type=feature_view.StoreType.ONLINE,
+                use_session_warehouse=True,
+            ).collect()
+            self.assertEqual(len(online_rows), 3)
+        finally:
+            self.fs.update_default_warehouse(self._test_warehouse_name)
 
     def test_read_feature_view_validation_errors(self) -> None:
         """Test validation errors for read_feature_view method."""

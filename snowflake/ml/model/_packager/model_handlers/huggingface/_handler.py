@@ -62,6 +62,7 @@ class TransformersPipelineHandler(
     ADDITIONAL_CONFIG_FILE = "pipeline_config.pt"
     DEFAULT_TARGET_METHODS = ["__call__"]
     IS_AUTO_SIGNATURE = True
+    _TRANSFORMERS_MIN_VERSION = "4.32.1"
 
     @classmethod
     def can_handle(
@@ -259,11 +260,17 @@ class TransformersPipelineHandler(
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
 
+        task_handler = _get_task_handler(raw_model=model)
+        upper_bound = task_handler.get_transformers_upper_bound()
+        if upper_bound is not None:
+            transformers_requirement = f"transformers>={cls._TRANSFORMERS_MIN_VERSION},<{upper_bound}"
+        else:
+            transformers_requirement = f"transformers>={cls._TRANSFORMERS_MIN_VERSION}"
+
         pkgs_requirements = [
-            model_env.ModelDependency(requirement="transformers>=4.32.1", pip_name="transformers"),
-        ] + _hf_utils.get_requirements_from_task(
-            task, spcs_only=(not type_utils.LazyType("transformers.Pipeline").isinstance(model))
-        )
+            model_env.ModelDependency(requirement=transformers_requirement, pip_name="transformers"),
+            model_env.ModelDependency(requirement="tokenizers", pip_name="tokenizers"),
+        ]
         if framework is None or framework == "pt":
             pkgs_requirements.append(model_env.ModelDependency(requirement="pytorch", pip_name="torch"))
         elif framework == "tf":
@@ -495,63 +502,87 @@ class TransformersPipelineHandler(
         return hg_pipe_model
 
 
-_ZERO_SHOT_TASKS = frozenset(
-    {
-        "zero-shot-audio-classification",
-        "zero-shot-classification",
-        "zero-shot-image-classification",
-        "zero-shot-object-detection",
-    }
-)
-
-_VISION_TASKS = frozenset(
-    {
-        "image-classification",
-        "image-to-text",
-        "image-feature-extraction",
-        "object-detection",
-        "document-question-answering",
-        "visual-question-answering",
-    }
-)
-
-
-def _get_task_handler(raw_model: "transformers.Pipeline") -> "HuggingFaceTaskHandler":
-    """Return the appropriate task handler for the given pipeline.
+def _get_task_handler(
+    raw_model: Union[
+        "transformers.Pipeline",
+        huggingface_pipeline.HuggingFacePipelineModel,
+        huggingface_base.TransformersPipeline,
+    ],
+) -> "HuggingFaceTaskHandler":
+    """Return the appropriate task handler for the given model.
 
     Args:
-        raw_model: The HuggingFace pipeline to select a handler for.
+        raw_model: A HuggingFace model — either a ``transformers.Pipeline``,
+            ``HuggingFacePipelineModel``, or ``TransformersPipeline`` wrapper.
 
     Returns:
-        A HuggingFaceTaskHandler instance for the pipeline.
+        A HuggingFaceTaskHandler instance for the model's task.
     """
     from snowflake.ml.model._packager.model_handlers.huggingface import (
         _default,
+        audio_text_to_text,
+        automatic_speech_recognition,
         conversational,
-        speech,
+        document_question_answering,
+        fill_mask,
+        image_classification,
+        image_feature_extraction,
+        image_text_to_text,
+        image_to_text,
+        object_detection,
+        question_answering,
+        summarization,
+        table_question_answering,
+        text2text_generation,
+        text_classification,
         text_generation,
-        video,
-        vision,
-        zero_shot,
+        token_classification,
+        translation,
+        video_classification,
+        video_text_to_text,
+        visual_question_answering,
+        zero_shot_audio_classification,
+        zero_shot_image_classification,
+        zero_shot_object_detection,
+        zero_shot_text_classification,
     )
 
-    if raw_model.task == "text-generation":
-        return text_generation.TextGenerationTaskHandler()
+    _TASK_HANDLER_CLASSES: dict[str, type[HuggingFaceTaskHandler]] = {
+        "text-generation": text_generation.TextGenerationTaskHandler,
+        "fill-mask": fill_mask.FillMaskTaskHandler,
+        "ner": token_classification.TokenClassificationTaskHandler,
+        "token-classification": token_classification.TokenClassificationTaskHandler,
+        "question-answering": question_answering.QuestionAnsweringTaskHandler,
+        "summarization": summarization.SummarizationTaskHandler,
+        "table-question-answering": table_question_answering.TableQuestionAnsweringTaskHandler,
+        "text-classification": text_classification.TextClassificationTaskHandler,
+        "sentiment-analysis": text_classification.TextClassificationTaskHandler,
+        "text2text-generation": text2text_generation.Text2TextGenerationTaskHandler,
+        "zero-shot-classification": zero_shot_text_classification.ZeroShotTextClassificationTaskHandler,
+        "zero-shot-image-classification": zero_shot_image_classification.ZeroShotImageClassificationTaskHandler,
+        "zero-shot-object-detection": zero_shot_object_detection.ZeroShotObjectDetectionTaskHandler,
+        "zero-shot-audio-classification": zero_shot_audio_classification.ZeroShotAudioClassificationTaskHandler,
+        "image-classification": image_classification.ImageClassificationTaskHandler,
+        "image-to-text": image_to_text.ImageToTextTaskHandler,
+        "image-feature-extraction": image_feature_extraction.ImageFeatureExtractionTaskHandler,
+        "object-detection": object_detection.ObjectDetectionTaskHandler,
+        "document-question-answering": document_question_answering.DocumentQuestionAnsweringTaskHandler,
+        "visual-question-answering": visual_question_answering.VisualQuestionAnsweringTaskHandler,
+        "automatic-speech-recognition": automatic_speech_recognition.AutomaticSpeechRecognitionTaskHandler,
+        "video-classification": video_classification.VideoClassificationTaskHandler,
+        "conversational": conversational.ConversationalTaskHandler,
+        "image-text-to-text": image_text_to_text.ImageTextToTextTaskHandler,
+        "video-text-to-text": video_text_to_text.VideoTextToTextTaskHandler,
+        "audio-text-to-text": audio_text_to_text.AudioTextToTextTaskHandler,
+    }
 
-    if raw_model.task in _ZERO_SHOT_TASKS:
-        return zero_shot.ZeroShotTaskHandler()
+    handler_cls = _TASK_HANDLER_CLASSES.get(raw_model.task)
+    if handler_cls is not None:
+        return handler_cls()
 
-    if raw_model.task in _VISION_TASKS:
-        return vision.VisionTaskHandler()
-
-    if raw_model.task == "automatic-speech-recognition":
-        return speech.SpeechTaskHandler()
-
-    if raw_model.task == "video-classification":
-        return video.VideoTaskHandler()
-
-    if raw_model.task == "conversational":
-        return conversational.ConversationalTaskHandler()
+    # translation tasks have variable suffixes (e.g., translation_en_to_fr)
+    if raw_model.task.startswith("translation"):
+        return translation.TranslationTaskHandler()
 
     return _default.DefaultTaskHandler()
 

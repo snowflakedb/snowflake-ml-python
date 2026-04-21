@@ -1,6 +1,8 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
+from packaging import version
+from typing_extensions import override
 
 from snowflake.ml.model import model_signature
 from snowflake.ml.model._packager.model_handlers.huggingface import (
@@ -13,8 +15,13 @@ if TYPE_CHECKING:
 
 
 class ConversationalTaskHandler(_task_handler.HuggingFaceTaskHandler):
-    """Handles legacy conversational pipelines (transformers < 4.42)."""
+    """Handles legacy conversational pipelines, removed in transformers 5.x."""
 
+    @override
+    def get_transformers_upper_bound(self) -> Optional[version.Version]:
+        return version.Version("5")
+
+    @override
     def run_inference(
         self,
         raw_model: "transformers.Pipeline",
@@ -35,6 +42,7 @@ class ConversationalTaskHandler(_task_handler.HuggingFaceTaskHandler):
         ]
         return getattr(raw_model, target_method)(input_data)
 
+    @override
     def _needs_list_wrapping(
         self,
         raw_model: "transformers.Pipeline",
@@ -44,6 +52,7 @@ class ConversationalTaskHandler(_task_handler.HuggingFaceTaskHandler):
     ) -> bool:
         return _hf_utils.is_transformers_type(result, "Conversation")
 
+    @override
     def _format_result(
         self,
         raw_model: "transformers.Pipeline",

@@ -26,6 +26,7 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
 )
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+from tests.integ.snowflake.ml.test_utils import db_manager
 
 # ============================================================================
 # CONFIGURABLE TEST PARAMETERS
@@ -113,7 +114,7 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
         # Create per-test database to avoid conflicts with other tests
         run_id = uuid4().hex[:8].upper()
-        cls._test_db = f"SNOWML_FS_PERF_TEST_DB_{run_id}"
+        cls._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_PERF_DB").upper()
         cls._session.sql(f"CREATE DATABASE IF NOT EXISTS {cls._test_db}").collect()
 
         # Resolve and use the warehouse (default or explicit perf config)
@@ -146,7 +147,9 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
 
     def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
         """Create a feature store for testing."""
-        current_schema = create_random_schema(self._session, "FS_PERF_TEST") if name is None else name
+        current_schema = (
+            create_random_schema(self._session, "FS_PERF_TEST", database=self._test_db) if name is None else name
+        )
 
         # Use the resolved test warehouse
         print(f"Using warehouse: {self._test_warehouse_name}")

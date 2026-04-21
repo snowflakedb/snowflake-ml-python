@@ -3,13 +3,15 @@ import io
 import json
 import os
 import tempfile
+from importlib import metadata as importlib_metadata
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 from unittest import mock
 
 import numpy as np
 import pandas as pd
 import torch
-from absl.testing import absltest
+from absl.testing import absltest, parameterized
+from packaging import requirements
 
 from snowflake.ml.model import (
     model_signature,
@@ -32,7 +34,7 @@ if TYPE_CHECKING:
     import transformers
 
 
-class HuggingFacePipelineHandlerTest(absltest.TestCase):
+class HuggingFacePipelineHandlerTest(parameterized.TestCase):
     @classmethod
     def setUpClass(self) -> None:
         # environment variables for huggingface cache
@@ -279,6 +281,124 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
                     assert callable(pk.model)
                     res = pk.model(udf_test_input.copy(deep=True))
                     check_udf_res_fn(res)
+
+    def test_save_model_captures_tokenizers_dependency(self) -> None:
+        """Verify that saving a HuggingFace pipeline model captures tokenizers as an explicit dependency.
+
+        tokenizers must be pinned alongside transformers to prevent version mismatches in deployment
+        environments (e.g. transformers==4.41.2 requires tokenizers>=0.19,<0.20).
+        """
+        import tokenizers
+        import transformers
+
+        model = transformers.pipeline(task="fill-mask", model="google-bert/bert-base-uncased")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("tokenizers", deps)
+            self.assertIn("transformers", deps)
+
+            self.assertTrue(deps["tokenizers"].specifier.contains(tokenizers.__version__))
+            self.assertTrue(deps["transformers"].specifier.contains(transformers.__version__))
+
+    def test_save_wrapper_model_captures_tokenizers_dependency(self) -> None:
+        """Verify that saving a TransformersPipeline wrapper captures tokenizers as a dependency.
+
+        Even when transformers may not be installed locally (check_local_version=False),
+        tokenizers should be listed so pip has an explicit constraint during resolution.
+        """
+        wrapper_model = hf_base.TransformersPipeline(
+            task="fill-mask",
+            model="google-bert/bert-base-uncased",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("tokenizers", deps)
+            self.assertIn("transformers", deps)
+
+            # Wrapper uses check_local_version=False, so specifiers should be ranges not exact pins
+            self.assertFalse(
+                any(spec.operator == "==" for spec in deps["tokenizers"].specifier),
+                "TransformersPipeline wrapper should not pin tokenizers to an exact version",
+            )
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"transformers_version": "4.41.2", "tokenizers_version": "0.19.1"},
+        {"transformers_version": "5.3.0", "tokenizers_version": "0.22.2"},
+    )
+    def test_save_pipeline_pins_compatible_version_pairs(
+        self,
+        transformers_version: str,
+        tokenizers_version: str,
+    ) -> None:
+        """Verify that tokenizers and transformers are pinned as a compatible pair for different version combos."""
+        import transformers
+
+        model = transformers.pipeline(task="fill-mask", model="google-bert/bert-base-uncased")
+
+        original_distribution = importlib_metadata.distribution
+
+        def fake_distribution(name: str) -> importlib_metadata.Distribution:
+            versions = {
+                "tokenizers": tokenizers_version,
+                "transformers": transformers_version,
+            }
+            if name in versions:
+                dist = mock.MagicMock(spec=importlib_metadata.Distribution)
+                dist.version = versions[name]
+                return dist
+            return original_distribution(name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch(
+                "snowflake.ml._internal.env_utils.importlib_metadata.distribution", side_effect=fake_distribution
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=model,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
+                )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertTrue(deps["tokenizers"].specifier.contains(tokenizers_version))
+            self.assertTrue(deps["transformers"].specifier.contains(transformers_version))
 
     def test_fill_mask_pipeline(self) -> None:
         x = ["LynYuu is the [MASK] of the Grand Duchy of Yu."]
@@ -1451,6 +1571,107 @@ class HuggingFacePipelineHandlerTest(absltest.TestCase):
         self.assertEqual(len(temp_res), 1)
         self.assertEqual(temp_res[0][0]["label"], "cat")
         self.assertIsInstance(call_args_collector[0][0], Image.Image)
+
+    def test_get_task_handler_returns_correct_handlers(self) -> None:
+        """Verify _get_task_handler returns the correct handler class for known tasks."""
+        from snowflake.ml.model._packager.model_handlers.huggingface import _handler
+
+        fake_model = mock.MagicMock()
+
+        for task_name in ("fill-mask", "text-generation", "translation_en_to_fr", "unknown-task-xyz"):
+            fake_model.task = task_name
+            handler = _handler._get_task_handler(fake_model)
+            self.assertIsNone(handler.get_transformers_upper_bound())
+
+    def test_deprecated_task_handlers_return_upper_bound(self) -> None:
+        """Verify that handlers for tasks removed in transformers 5.x return an upper bound of 5."""
+        from packaging import version as pkg_version
+
+        from snowflake.ml.model._packager.model_handlers.huggingface import _handler
+
+        fake_model = mock.MagicMock()
+        deprecated_tasks = ["conversational", "image-to-text", "visual-question-answering"]
+        for task in deprecated_tasks:
+            fake_model.task = task
+            handler = _handler._get_task_handler(fake_model)
+            upper = handler.get_transformers_upper_bound()
+            self.assertIsNotNone(upper, f"Expected upper bound for deprecated task {task!r}")
+            self.assertEqual(upper, pkg_version.Version("5"))
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"task": "conversational"},
+        {"task": "image-to-text"},
+        {"task": "visual-question-answering"},
+    )
+    def test_save_wrapper_deprecated_task_pins_transformers_below_5(self, task: str) -> None:
+        """Verify that saving a TransformersPipeline wrapper for a deprecated task pins transformers<5."""
+        dummy_signature = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="inputs")],
+            outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="outputs")],
+        )
+
+        wrapper_model = hf_base.TransformersPipeline(
+            task=task,
+            model="google-bert/bert-base-uncased",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                signatures={"__call__": dummy_signature},
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("transformers", deps)
+            transformers_spec = deps["transformers"].specifier
+            self.assertTrue(transformers_spec.contains("4.40.0"), f"Should allow 4.x: {transformers_spec}")
+            self.assertFalse(transformers_spec.contains("5.0.0"), f"Should block 5.x: {transformers_spec}")
+            self.assertFalse(transformers_spec.contains("5.3.0"), f"Should block 5.3: {transformers_spec}")
+
+    @parameterized.parameters(  # type: ignore[misc]
+        {"task": "fill-mask"},
+        {"task": "text-generation"},
+        {"task": "text-classification"},
+        {"task": "summarization"},
+    )
+    def test_save_wrapper_non_deprecated_task_allows_transformers_5(self, task: str) -> None:
+        """Verify that saving a TransformersPipeline wrapper for a non-deprecated task does not cap at <5."""
+        wrapper_model = hf_base.TransformersPipeline(
+            task=task,
+            model="google-bert/bert-base-uncased",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("transformers", deps)
+            transformers_spec = deps["transformers"].specifier
+            self.assertTrue(transformers_spec.contains("4.40.0"), f"Should allow 4.x: {transformers_spec}")
+            self.assertTrue(transformers_spec.contains("5.0.0"), f"Should allow 5.x: {transformers_spec}")
+            self.assertTrue(transformers_spec.contains("5.3.0"), f"Should allow 5.3: {transformers_spec}")
 
 
 if __name__ == "__main__":
