@@ -16,6 +16,7 @@ datasets==3.3.2
 flask-cors==3.0.10
 flask==2.2.2
 fsspec[http]==2024.6.1
+h2==4.3.0
 httpx==0.28.1
 importlib_resources==6.1.1
 inflection==0.5.1

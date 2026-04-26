@@ -20,6 +20,7 @@ Requires ``SNOWFLAKE_PAT`` for spec OFT online read, e.g.
 """
 
 import json
+import logging
 import math
 import os
 import time
@@ -207,6 +208,79 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled")
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_batch_fv_online_read_negotiates_http2(self) -> None:
+        """Soft assertion: confirm the Online Service negotiates HTTP/2.
+
+        Wraps ``httpx.Client.post`` for one online read, captures ``Response.http_version``
+        from successful responses, and asserts ``HTTP/2`` when at least one negotiation
+        succeeded. Skips (non-failing) if the server downgraded to HTTP/1.1 so the test
+        does not flake against environments that have not yet enabled h2.
+        """
+        import httpx
+
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_HTTP2_FV_{s}"
+        batch_key = f"U_HTTP2_{s}"
+        expected_amount = 123.0
+
+        src_table = self._create_batch_source_table(fs, s, batch_key, expected_amount)
+        feature_df = self._session.table(src_table)
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        fs.register_feature_view(fv, "v1")
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        # Wait until rows are visible online before instrumenting httpx, so the captured
+        # negotiation reflects the real query path rather than an empty/poll response.
+        self._poll_online_read(
+            fs,
+            fv_name,
+            "v1",
+            keys=[[batch_key]],
+            validate_fn=lambda pdf: self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3),
+            desc="batch http2 warmup",
+        )
+
+        captured: list[str] = []
+        original_post = httpx.Client.post
+
+        def _spy_post(self_client, url, *args, **kwargs):  # type: ignore[no-untyped-def]
+            resp = original_post(self_client, url, *args, **kwargs)
+            try:
+                if 200 <= int(resp.status_code) < 300:
+                    captured.append(str(getattr(resp, "http_version", "unknown")))
+            except (TypeError, ValueError):
+                logging.debug("batch online read http2 spy could not parse status_code", exc_info=True)
+            return resp
+
+        httpx.Client.post = _spy_post  # type: ignore[method-assign]
+        try:
+            fv_live = fs.get_feature_view(fv_name, "v1")
+            pdf = fs.read_feature_view(fv_live, keys=[[batch_key]], store_type=StoreType.ONLINE, as_pandas=True)
+            self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
+        finally:
+            httpx.Client.post = original_post  # type: ignore[method-assign]
+
+        self.assertGreater(len(captured), 0, "httpx.Client.post was never invoked during the online read.")
+        if all(v != "HTTP/2" for v in captured):
+            self.skipTest(
+                f"Online Service did not negotiate HTTP/2 in this environment; captured versions={captured!r}. "
+                "This is a soft assertion: the server is reachable but negotiated HTTP/1.1."
+            )
+        self.assertIn("HTTP/2", captured)
 
     # =========================================================================
     # E2E: Batch tiled (timeseries) — registration -> online read
@@ -923,6 +997,158 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             self.assertIn(row["IS_ACTIVE"], (True, "true", 1))
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate, desc="all types BFV")
+
+    # =========================================================================
+    # as_pandas fast path: wiring, dtype parity, and offline rejection
+    # =========================================================================
+
+    def test_as_pandas_offline_rejected(self) -> None:
+        """``as_pandas=True`` with ``StoreType.OFFLINE`` must raise INVALID_ARGUMENT."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"AS_PANDAS_OFFLINE_REJECT_{s}"
+        entity_key = f"U_REJECT_{s}"
+        expected_amount = 11.0
+
+        src_table = self._create_batch_source_table(fs, s, entity_key, expected_amount)
+        feature_df = self._session.table(src_table)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+
+        with self.assertRaises(ValueError) as ctx:
+            fs.read_feature_view(registered, keys=[[entity_key]], store_type=StoreType.OFFLINE, as_pandas=True)
+        self.assertIn("(2110)", str(ctx.exception))
+        self.assertIn("as_pandas=True", str(ctx.exception))
+        self.assertIn("OFFLINE", str(ctx.exception))
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_as_pandas_postgres_online_reuses_http_client(self) -> None:
+        """Two consecutive Postgres online reads must reuse the same ``fs._online_http_client`` instance."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"AS_PANDAS_REUSE_{s}"
+        batch_key = f"U_REUSE_{s}"
+        expected_amount = 12.0
+
+        src_table = self._create_batch_source_table(fs, s, batch_key, expected_amount)
+        feature_df = self._session.table(src_table)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        fs.register_feature_view(fv, "v1")
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate(pdf):
+            self.assertIn("AMOUNT", pdf.columns)
+            self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="as_pandas reuse warmup"
+        )
+
+        first_client = fs._online_http_client
+        self.assertIsNotNone(first_client, "Postgres online read must populate fs._online_http_client.")
+
+        fv_live = fs.get_feature_view(fv_name, "v1")
+        pdf2 = fs.read_feature_view(fv_live, keys=[[batch_key]], store_type=StoreType.ONLINE, as_pandas=True)
+        self.assertIs(fs._online_http_client, first_client, "Second read must reuse the same HTTP client.")
+        import pandas as pd
+
+        self.assertIsInstance(pdf2, pd.DataFrame)
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_as_pandas_parity_all_supported_types(self) -> None:
+        """``as_pandas=True`` must match ``.to_pandas()`` on the Snowpark path (column order + dtypes)."""
+        import pandas as pd
+
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"AS_PANDAS_PARITY_{s}"
+        entity_key = f"U_PARITY_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.ALL_TYPES_PARITY_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                SCORE FLOAT,
+                RANK INT,
+                PRICE NUMBER(10,2),
+                IS_ACTIVE BOOLEAN
+            )
+        """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} VALUES
+            ({entity_key!r}, DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), 3.14, 42, 99.95, TRUE)
+        """
+        ).collect()
+
+        feature_df = self._session.table(table_name)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        fs.register_feature_view(fv, "v1")
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate_snowpark(pdf):
+            # Online reads drop timestamp_col (EVENT_TIME) from the schema.
+            for col in ("USER_ID", "SCORE", "RANK", "PRICE", "IS_ACTIVE"):
+                self.assertIn(col, pdf.columns)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[entity_key]], validate_fn=_validate_snowpark, desc="as_pandas parity warmup"
+        )
+
+        fv_live = fs.get_feature_view(fv_name, "v1")
+        pdf_sp = fs.read_feature_view(
+            fv_live, keys=[[entity_key]], store_type=StoreType.ONLINE, as_pandas=False
+        ).to_pandas()
+        pdf_fast = fs.read_feature_view(fv_live, keys=[[entity_key]], store_type=StoreType.ONLINE, as_pandas=True)
+
+        self.assertIsInstance(pdf_fast, pd.DataFrame)
+        self.assertEqual(list(pdf_fast.columns), list(pdf_sp.columns))
+        # NUMBER columns: fast path keeps Decimal (object), Snowpark Arrow downcasts to narrow numeric.
+        decimal_skew_cols = {"RANK", "PRICE"}
+        for col in pdf_sp.columns:
+            if col in decimal_skew_cols:
+                continue
+            self.assertEqual(
+                pdf_fast[col].dtype.kind,
+                pdf_sp[col].dtype.kind,
+                f"dtype-kind mismatch on {col}: fast={pdf_fast[col].dtype} vs sp={pdf_sp[col].dtype}",
+            )
+        self.assertEqual(pdf_fast.iloc[0]["USER_ID"], pdf_sp.iloc[0]["USER_ID"])
+        self.assertAlmostEqual(float(pdf_fast.iloc[0]["SCORE"]), float(pdf_sp.iloc[0]["SCORE"]), places=5)
+        self.assertEqual(int(pdf_fast.iloc[0]["RANK"]), int(pdf_sp.iloc[0]["RANK"]))
+        # Snowpark Arrow rounds NUMBER(10,2) to a narrow int; compare via float+round.
+        self.assertEqual(round(float(pdf_fast.iloc[0]["PRICE"])), round(float(pdf_sp.iloc[0]["PRICE"])))
+        self.assertEqual(bool(pdf_fast.iloc[0]["IS_ACTIVE"]), bool(pdf_sp.iloc[0]["IS_ACTIVE"]))
 
     # =========================================================================
     # Schema validation: unsupported column type

@@ -1,4 +1,10 @@
 import dataclasses
+import enum
+
+
+class RunStatus(enum.Enum):
+    FAILED = "FAILED"
+    FINISHED = "FINISHED"
 
 
 @dataclasses.dataclass

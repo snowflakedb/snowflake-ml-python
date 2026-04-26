@@ -35,6 +35,17 @@ class MyCustomModel(custom_model.CustomModel):
         return pd.DataFrame({"output": model_output + self.bias})
 
 
+class SingleObjectColumnModel(custom_model.CustomModel):
+    """Model with a single OBJECT-type input column."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame({"output": input["payload"].apply(lambda x: x.get("value", None))})
+
+
 class WideInputModel(custom_model.CustomModel):
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
@@ -109,6 +120,32 @@ class TestRegistryCustomModelDeploymentInteg(registry_model_deployment_test_base
                     ),
                 ),
             },
+        )
+
+    def test_custom_model_single_object_column(self) -> None:
+        """Tests that inference server's wide-format detection does not
+        misidentify a single dict-valued feature as wide format."""
+        if not self._has_image_override():
+            self.skipTest("Skipping test: image override not enabled. Requires changes from inference server 1.6.0.")
+
+        model = SingleObjectColumnModel(custom_model.ModelContext())
+        sample_input = pd.DataFrame({"payload": [{"value": 1.5}, {"value": 2.5}]})
+        expected = pd.DataFrame({"output": [1.5, 2.5]})
+
+        self._test_registry_model_deployment(
+            model=model,
+            sample_input_data=sample_input,
+            prediction_assert_fns={
+                "predict": (
+                    sample_input,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        expected,
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            options={"enable_explainability": False},
         )
 
     def test_custom_model_wide_input(self) -> None:

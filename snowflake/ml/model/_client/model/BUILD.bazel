@@ -42,6 +42,18 @@ py_test(
     ],
 )
 
+py_test(
+    name = "batch_inference_specs_test",
+    srcs = ["batch_inference_specs_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":batch_inference_specs",
+    ],
+)
+
 py_library(
     name = "model_impl",
     srcs = ["model_impl.py"],

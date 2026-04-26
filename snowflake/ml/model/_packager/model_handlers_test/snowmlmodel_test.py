@@ -377,6 +377,49 @@ class SnowMLModelHandlerTest(absltest.TestCase):
             # 11 = 4 numerical + 3 onehot * 2 categorical + 1 label
             assert len(pk.meta.signatures["explain"].outputs) == 11
 
+    def test_snowml_pipeline_explainability_when_pipeline_not_convertible(self) -> None:
+        """Regression: task resolution and packaging use the final estimator when the Pipeline does not convert."""
+        df = pd.DataFrame(
+            {
+                "num1": np.random.rand(40),
+                "num2": np.random.rand(40),
+                "label": np.random.rand(40),
+            }
+        )
+        Pipeline._send_pipeline_configuration_telemetry = lambda _: None
+        # Second transformer uses explicit input_cols, so the Pipeline is not sklearn-convertible as a whole
+        # (same class of pipelines as OrdinalEncoder + classifier with per-step input_cols).
+        model_pipeline = Pipeline(
+            steps=[
+                ("scale1", StandardScaler(input_cols=["num1"], output_cols=["n1"])),
+                ("scale2", StandardScaler(input_cols=["num2"], output_cols=["n2"])),
+                (
+                    "reg",
+                    LinearRegression(
+                        input_cols=["n1", "n2"],
+                        label_cols=["label"],
+                        output_cols=["pred"],
+                    ),
+                ),
+            ]
+        )
+        model_pipeline.fit(df)
+        self.assertFalse(model_pipeline._is_convertible_to_sklearn_object())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model_pipeline,
+                sample_input_data=df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SNOWModelSaveOptions(enable_explainability=True),
+            )
+            self.assertIn("explain", model_metadata.signatures)
+            self.assertEqual(
+                model_metadata.function_properties["explain"],
+                {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
+            )
+
 
 if __name__ == "__main__":
     absltest.main()

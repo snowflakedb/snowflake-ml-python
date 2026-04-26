@@ -9,7 +9,9 @@ This module provides SQL generation for:
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Optional
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import (
     AggregationSpec,
     AggregationType,
@@ -287,141 +289,151 @@ FROM (
         Returns:
             List of SQL column expressions for cumulative columns.
         """
-        seen_columns: set[str] = set()
-        columns = []
-        join_keys_str = ", ".join(self._join_keys)
-
-        # Only process lifetime features
         lifetime_features = [f for f in self._features if f.is_lifetime()]
+        return _generate_cumulative_expressions(lifetime_features, list(self._join_keys))
 
-        for spec in lifetime_features:
-            if spec.function == AggregationType.SUM:
-                # Cumulative SUM
-                partial_col = spec.get_tile_column_name("SUM")
-                cum_col = spec.get_cumulative_column_name("SUM")
-                if cum_col not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_col}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_col}"
-                    )
-                    seen_columns.add(cum_col)
 
-            elif spec.function == AggregationType.COUNT:
-                # Cumulative COUNT
-                partial_col = spec.get_tile_column_name("COUNT")
-                cum_col = spec.get_cumulative_column_name("COUNT")
-                if cum_col not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_col}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_col}"
-                    )
-                    seen_columns.add(cum_col)
+def _generate_cumulative_expressions(
+    lifetime_specs: list[AggregationSpec],
+    join_keys: list[str],
+) -> list[str]:
+    """Generate cumulative window function expressions for lifetime aggregations.
 
-            elif spec.function == AggregationType.AVG:
-                # Cumulative AVG needs cumulative SUM and COUNT
-                partial_sum = spec.get_tile_column_name("SUM")
-                partial_count = spec.get_tile_column_name("COUNT")
-                cum_sum = spec.get_cumulative_column_name("SUM")
-                cum_count = spec.get_cumulative_column_name("COUNT")
+    Produces SQL column expressions that compute running aggregates over
+    ``_PARTIAL_*`` columns, partitioned by ``join_keys`` and ordered by
+    ``TILE_START``.  Used by both ``TilingSqlGenerator`` (for base tile DTs)
+    and ``RollupSqlGenerator`` (for rolled-up tile DTs / CTEs).
 
-                if cum_sum not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_sum}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_sum}"
-                    )
-                    seen_columns.add(cum_sum)
-                if cum_count not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_count}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_count}"
-                    )
-                    seen_columns.add(cum_count)
+    Only SUM, COUNT, AVG, MIN, MAX, STD, VAR are supported (sketch and list
+    types are rejected by ``AggregationSpec.validate()``).
 
-            elif spec.function == AggregationType.MIN:
-                # Cumulative MIN (running minimum)
-                partial_col = spec.get_tile_column_name("MIN")
-                cum_col = spec.get_cumulative_column_name("MIN")
-                if cum_col not in seen_columns:
-                    columns.append(
-                        f"MIN({partial_col}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_col}"
-                    )
-                    seen_columns.add(cum_col)
+    Args:
+        lifetime_specs: Aggregation specs with ``is_lifetime() == True``.
+        join_keys: Entity key columns for the PARTITION BY clause.
 
-            elif spec.function == AggregationType.MAX:
-                # Cumulative MAX (running maximum)
-                partial_col = spec.get_tile_column_name("MAX")
-                cum_col = spec.get_cumulative_column_name("MAX")
-                if cum_col not in seen_columns:
-                    columns.append(
-                        f"MAX({partial_col}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_col}"
-                    )
-                    seen_columns.add(cum_col)
+    Returns:
+        List of SQL column expressions, e.g.
+        ``"SUM(_PARTIAL_COUNT_X) OVER (...) AS _CUM_COUNT_X"``.
+    """
+    seen_columns: set[str] = set()
+    columns: list[str] = []
+    join_keys_str = ", ".join(join_keys)
 
-            elif spec.function in (AggregationType.STD, AggregationType.VAR):
-                # Cumulative STD/VAR needs cumulative SUM, COUNT, and SUM_SQ
-                partial_sum = spec.get_tile_column_name("SUM")
-                partial_count = spec.get_tile_column_name("COUNT")
-                partial_sum_sq = spec.get_tile_column_name("SUM_SQ")
-                cum_sum = spec.get_cumulative_column_name("SUM")
-                cum_count = spec.get_cumulative_column_name("COUNT")
-                cum_sum_sq = spec.get_cumulative_column_name("SUM_SQ")
+    for spec in lifetime_specs:
+        if spec.function == AggregationType.SUM:
+            partial_col = spec.get_tile_column_name("SUM")
+            cum_col = spec.get_cumulative_column_name("SUM")
+            if cum_col not in seen_columns:
+                columns.append(
+                    f"SUM({partial_col}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_col}"
+                )
+                seen_columns.add(cum_col)
 
-                if cum_sum not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_sum}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_sum}"
-                    )
-                    seen_columns.add(cum_sum)
-                if cum_count not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_count}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_count}"
-                    )
-                    seen_columns.add(cum_count)
-                if cum_sum_sq not in seen_columns:
-                    columns.append(
-                        f"SUM({partial_sum_sq}) OVER ("
-                        f"PARTITION BY {join_keys_str} "
-                        f"ORDER BY {_TILE_START_COL} "
-                        f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
-                        f") AS {cum_sum_sq}"
-                    )
-                    seen_columns.add(cum_sum_sq)
+        elif spec.function == AggregationType.COUNT:
+            partial_col = spec.get_tile_column_name("COUNT")
+            cum_col = spec.get_cumulative_column_name("COUNT")
+            if cum_col not in seen_columns:
+                columns.append(
+                    f"SUM({partial_col}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_col}"
+                )
+                seen_columns.add(cum_col)
 
-            # Note: APPROX_COUNT_DISTINCT (HLL_COMBINE) and APPROX_PERCENTILE (APPROX_PERCENTILE_COMBINE)
-            # do NOT support cumulative window frames in Snowflake.
-            # These will be handled at merge time by aggregating all tiles.
+        elif spec.function == AggregationType.AVG:
+            partial_sum = spec.get_tile_column_name("SUM")
+            partial_count = spec.get_tile_column_name("COUNT")
+            cum_sum = spec.get_cumulative_column_name("SUM")
+            cum_count = spec.get_cumulative_column_name("COUNT")
 
-            # Note: FIRST_N, FIRST_DISTINCT_N, LAST_N, LAST_DISTINCT_N lifetime
-            # are handled at merge time by scanning tiles, not via cumulative columns
+            if cum_sum not in seen_columns:
+                columns.append(
+                    f"SUM({partial_sum}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_sum}"
+                )
+                seen_columns.add(cum_sum)
+            if cum_count not in seen_columns:
+                columns.append(
+                    f"SUM({partial_count}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_count}"
+                )
+                seen_columns.add(cum_count)
 
-        return columns
+        elif spec.function == AggregationType.MIN:
+            partial_col = spec.get_tile_column_name("MIN")
+            cum_col = spec.get_cumulative_column_name("MIN")
+            if cum_col not in seen_columns:
+                columns.append(
+                    f"MIN({partial_col}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_col}"
+                )
+                seen_columns.add(cum_col)
+
+        elif spec.function == AggregationType.MAX:
+            partial_col = spec.get_tile_column_name("MAX")
+            cum_col = spec.get_cumulative_column_name("MAX")
+            if cum_col not in seen_columns:
+                columns.append(
+                    f"MAX({partial_col}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_col}"
+                )
+                seen_columns.add(cum_col)
+
+        elif spec.function in (AggregationType.STD, AggregationType.VAR):
+            partial_sum = spec.get_tile_column_name("SUM")
+            partial_count = spec.get_tile_column_name("COUNT")
+            partial_sum_sq = spec.get_tile_column_name("SUM_SQ")
+            cum_sum = spec.get_cumulative_column_name("SUM")
+            cum_count = spec.get_cumulative_column_name("COUNT")
+            cum_sum_sq = spec.get_cumulative_column_name("SUM_SQ")
+
+            if cum_sum not in seen_columns:
+                columns.append(
+                    f"SUM({partial_sum}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_sum}"
+                )
+                seen_columns.add(cum_sum)
+            if cum_count not in seen_columns:
+                columns.append(
+                    f"SUM({partial_count}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_count}"
+                )
+                seen_columns.add(cum_count)
+            if cum_sum_sq not in seen_columns:
+                columns.append(
+                    f"SUM({partial_sum_sq}) OVER ("
+                    f"PARTITION BY {join_keys_str} "
+                    f"ORDER BY {_TILE_START_COL} "
+                    f"ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+                    f") AS {cum_sum_sq}"
+                )
+                seen_columns.add(cum_sum_sq)
+
+    return columns
 
 
 class MergingSqlGenerator:
@@ -1136,6 +1148,8 @@ class RollupSqlGenerator:
         new_join_keys: list[str],
         mapping_query: str,
         aggregation_specs: list[AggregationSpec],
+        mapping_valid_from_col: Optional[str] = None,
+        mapping_valid_to_col: Optional[str] = None,
     ) -> None:
         """Initialize the rollup SQL generator.
 
@@ -1145,12 +1159,26 @@ class RollupSqlGenerator:
             new_join_keys: Join keys for the new (rolled up) entity.
             mapping_query: SQL query that returns the mapping table.
             aggregation_specs: Aggregation specifications from the parent FV.
+            mapping_valid_from_col: When provided together with mapping_valid_to_col,
+                uses a range JOIN instead of a plain JOIN for point-in-time correct
+                entity resolution with bounded validity windows [valid_from, valid_to).
+                Supports 1:N mappings (one child entity to multiple parent entities).
+            mapping_valid_to_col: Must be provided together with mapping_valid_from_col.
+                Timestamp column indicating when each mapping expired. NULL values
+                are treated as still-active.
         """
         self._parent_tile_table = parent_tile_table
         self._parent_join_keys = [k.upper() for k in parent_join_keys]
         self._new_join_keys = [k.upper() for k in new_join_keys]
         self._mapping_query = mapping_query
         self._aggregation_specs = aggregation_specs
+        self._mapping_valid_from_col = (
+            SqlIdentifier(mapping_valid_from_col).identifier() if mapping_valid_from_col else None
+        )
+        self._mapping_valid_to_col = SqlIdentifier(mapping_valid_to_col).identifier() if mapping_valid_to_col else None
+
+        self._lifetime_specs = [s for s in aggregation_specs if s.is_lifetime()]
+        self._has_lifetime_features = bool(self._lifetime_specs)
 
     def generate(self) -> str:
         """Generate the rollup SQL query.
@@ -1170,6 +1198,23 @@ class RollupSqlGenerator:
         else:
             return self._generate_rollup_with_lists()
 
+    def generate_as_cte(self, cte_name: str) -> tuple[str, str]:
+        """Generate the rollup SQL as a CTE (name, body) tuple.
+
+        Used at training time to inject a PIT-correct rollup CTE into the
+        MergingSqlGenerator CTE chain.
+
+        Args:
+            cte_name: Name for the CTE (e.g., "PIT_ROLLUP_FV0").
+
+        Returns:
+            Tuple of (cte_name, cte_body) that can be prepended to a CTE chain.
+        """
+        body = self.generate().strip()
+        if body.endswith(";"):
+            body = body[:-1].strip()
+        return (cte_name, body)
+
     def _get_not_null_expr(self) -> str:
         """Get the WHERE NOT NULL filter expression for the mapping join.
 
@@ -1188,6 +1233,64 @@ class RollupSqlGenerator:
             return f"t.{not_null_key} IS NOT NULL"
         else:
             return f"m.{not_null_key} IS NOT NULL"
+
+    def _build_join_clause(self) -> str:
+        """Build the JOIN clause between tile table and mapping table.
+
+        Two paths:
+        - Neither temporal column set: plain JOIN (non-temporal rollup).
+        - Both ``valid_from`` and ``valid_to`` set: range JOIN with bounded
+          validity window ``[valid_from, valid_to)``, supporting 1:N mappings
+          where one child entity maps to multiple parent entities simultaneously.
+
+        Returns:
+            SQL JOIN clause string.
+        """
+        join_conditions = [f"t.{key} = m.{key}" for key in self._parent_join_keys]
+
+        if self._mapping_valid_from_col is not None:
+            range_conditions = join_conditions + [
+                f"t.{_TILE_START_COL} >= m.{self._mapping_valid_from_col}",
+                f"(m.{self._mapping_valid_to_col} IS NULL" f" OR t.{_TILE_START_COL} < m.{self._mapping_valid_to_col})",
+            ]
+            return f"JOIN ({self._mapping_query}) m\n    ON {' AND '.join(range_conditions)}"
+        else:
+            return f"JOIN ({self._mapping_query}) m\n    ON {' AND '.join(join_conditions)}"
+
+    def _wrap_with_cumulative(self, inner_sql: str) -> str:
+        """Wrap a rollup query with cumulative window functions for lifetime features.
+
+        When the parent FV has lifetime aggregation specs, the rollup output
+        needs ``_CUM_*`` columns (running aggregates partitioned by the rolled-up
+        entity keys) so that ``MergingSqlGenerator.LIFETIME_MERGED`` can read
+        them via ASOF JOIN.
+
+        Args:
+            inner_sql: The rollup SQL producing ``_PARTIAL_*`` columns.
+
+        Returns:
+            SQL with an outer SELECT adding ``_CUM_*`` columns, or the original
+            SQL unchanged if there are no lifetime features.
+        """
+        if not self._has_lifetime_features:
+            return inner_sql
+
+        cum_exprs = _generate_cumulative_expressions(self._lifetime_specs, self._new_join_keys)
+        if not cum_exprs:
+            return inner_sql
+
+        inner = inner_sql.strip()
+        if inner.endswith(";"):
+            inner = inner[:-1].strip()
+
+        return f"""
+SELECT
+    base.*,
+    {', '.join(cum_exprs)}
+FROM (
+{inner}
+) base
+"""
 
     def _generate_simple_rollup(self) -> str:
         """Generate rollup SQL when there are no list features.
@@ -1220,9 +1323,6 @@ class RollupSqlGenerator:
                     select_cols.append(col_expr)
                     seen_columns.add(col_name)
 
-        # JOIN condition (on parent's join keys)
-        join_conditions = [f"t.{key} = m.{key}" for key in self._parent_join_keys]
-
         # GROUP BY (new entity keys + TILE_START)
         group_by_cols = []
         for key in self._new_join_keys:
@@ -1233,16 +1333,17 @@ class RollupSqlGenerator:
         group_by_cols.append(f"t.{_TILE_START_COL}")
 
         not_null_expr = self._get_not_null_expr()
+        join_clause = self._build_join_clause()
 
-        return f"""
+        inner = f"""
 SELECT
     {', '.join(select_cols)}
 FROM {self._parent_tile_table} t
-JOIN ({self._mapping_query}) m
-    ON {' AND '.join(join_conditions)}
+{join_clause}
 WHERE {not_null_expr}
 GROUP BY {', '.join(group_by_cols)}
 """
+        return self._wrap_with_cumulative(inner)
 
     def _generate_rollup_with_lists(self) -> str:
         """Generate rollup SQL with proper timestamp ordering for list features.
@@ -1273,8 +1374,8 @@ GROUP BY {', '.join(group_by_cols)}
                 entity_select.append(f"m.{key}")
         entity_keys = list(self._new_join_keys)
 
-        join_conditions = [f"t.{key} = m.{key}" for key in self._parent_join_keys]
         not_null_expr = self._get_not_null_expr()
+        join_clause = self._build_join_clause()
 
         # Collect all tile columns needed (with dedup)
         all_tile_cols: set[str] = set()
@@ -1296,8 +1397,7 @@ GROUP BY {', '.join(group_by_cols)}
     SELECT
         {', '.join(base_select)}
     FROM {self._parent_tile_table} t
-    JOIN ({self._mapping_query}) m
-        ON {' AND '.join(join_conditions)}
+    {join_clause}
     WHERE {not_null_expr}
 )"""
         )
@@ -1410,12 +1510,13 @@ GROUP BY {', '.join(group_by_cols)}
 
         cte_str = ",\n".join(ctes)
 
-        return f"""
+        inner = f"""
 WITH {cte_str}
 SELECT
     {', '.join(final_select_cols)}
 FROM {from_clause}
 """
+        return self._wrap_with_cumulative(inner)
 
     def _get_tile_columns_for_spec(self, spec: AggregationSpec) -> list[str]:
         """Get all tile column names needed for a given aggregation spec.

@@ -8,6 +8,7 @@ import snowflake.ml.experiment._experiment_info as experiment_info
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import experiment_tracking
 from snowflake.ml.experiment._client import experiment_tracking_sql_client as sql_client
+from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.registry._manager import model_manager
 
 
@@ -96,8 +97,8 @@ class RunTest(absltest.TestCase):
         with run as context_run:
             self.assertIs(context_run, run)
 
-        # Verify end_run was called after exiting context
-        self.mock_experiment_tracking.end_run.assert_called_once()
+        # Verify end_run was called without status after successful exit
+        self.mock_experiment_tracking.end_run.assert_called_once_with()
 
     def test_context_manager_with_exception(self) -> None:
         """Test Run as a context manager when exception occurs."""
@@ -115,8 +116,8 @@ class RunTest(absltest.TestCase):
             with run:
                 raise ValueError("Test exception in context")
 
-        # Verify end_run was still called even with exception
-        self.mock_experiment_tracking.end_run.assert_called_once()
+        # Verify end_run was called with FAILED status
+        self.mock_experiment_tracking.end_run.assert_called_once_with(status=run_metadata.RunStatus.FAILED.value)
 
 
 if __name__ == "__main__":

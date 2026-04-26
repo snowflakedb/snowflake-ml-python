@@ -129,7 +129,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         version = f"ver_{version_suffix}"
 
         if expect_error:
-            with self.assertRaises(sp_exceptions.SnowparkSQLException):
+            with self.assertRaises((sp_exceptions.SnowparkSQLException, ValueError)):
                 _ = self.registry.log_model(
                     model=model,
                     model_name=name,

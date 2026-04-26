@@ -221,6 +221,10 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_image_features,
         )
 
+    @absltest.skip(
+        "Blocked on model logger support from https://github.com/snowflake-eng/snowml/pull/5733; "
+        "re-enable once that change lands in the model logger."
+    )
     def test_image_to_text(self) -> None:
         from transformers import pipeline
 

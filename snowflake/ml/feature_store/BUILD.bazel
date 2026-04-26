@@ -32,6 +32,7 @@ py_library(
         "interval_utils.py",
         "metadata_manager.py",
         "online_service.py",
+        "online_service_http_client.py",
         "request_source.py",
         "spec/__init__.py",
         "spec/builder.py",
@@ -80,6 +81,15 @@ py_test(
 py_test(
     name = "online_service_test",
     srcs = ["online_service_test.py"],
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "online_service_http_client_test",
+    srcs = ["online_service_http_client_test.py"],
     tags = ["feature:feature_store"],
     deps = [
         ":feature_store_lib",

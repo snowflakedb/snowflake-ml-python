@@ -54,6 +54,10 @@ logger = logging.getLogger(__name__)
 
 _BACKFILL_TABLE_SUFFIX = "$BACKFILL"
 
+# Prefix for backfill_df columns passed to ``map_in_pandas`` to avoid
+# ``T_RIGHT."<col>_1"`` collisions when UDF output names overlap with input names.
+_BACKFILL_INPUT_PREFIX = "_SML_STREAM_IN_"
+
 
 def _get_backfill_table_name(udf_table_name: SqlIdentifier) -> SqlIdentifier:
     """Derive the backfill table name from a udf_transformed table name."""
@@ -226,16 +230,20 @@ def run_streaming_postamble(
 
     udf_output_schema = session.table(preamble.fq_udf_table).schema
 
-    # map_in_pandas expects Iterator[pd.DataFrame] -> Iterator[pd.DataFrame].
-    # Closure captures user_fn so Snowpark can serialize it as a UDTF.
+    # Prefix input columns so they can't collide with UDF output names in the
+    # map_in_pandas join; unprefix inside the wrapper so user_fn sees original names.
+    original_input_cols = list(backfill_df.columns)
+    renamed_backfill_df = backfill_df.to_df([f"{_BACKFILL_INPUT_PREFIX}{c}" for c in original_input_cols])
+    _rename_back = {f"{_BACKFILL_INPUT_PREFIX}{c}": c for c in original_input_cols}
+
     user_fn = stream_config.transformation_fn
 
     def _batched_fn(iterator):  # type: ignore[no-untyped-def]
         for pdf in iterator:
-            yield user_fn(pdf)
+            yield user_fn(pdf.rename(columns=_rename_back))
 
     transformed_df = map_in_pandas(
-        backfill_df,
+        renamed_backfill_df,
         _batched_fn,
         udf_output_schema,
         packages=["pandas", "numpy"],

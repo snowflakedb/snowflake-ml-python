@@ -1,6 +1,27 @@
 # Release History
 
-## 1.36.0
+## 1.37.0
+
+### New Features
+
+* Experiment Tracking: `end_run` now accepts an optional `status` argument (`"FINISHED"` or `"FAILED"`) to explicitly
+  set the final run status. When a run's context manager exits with an exception, the status is automatically set to
+  `"FAILED"`.
+
+### Bug Fixes
+
+* Registry: Fixed `log_model()` failing for some Snowpark ML `Pipeline` models with explainability when the
+  full pipeline could not be converted to a native object; task inference now uses the final estimator instead.
+
+* Registry: `run_batch()` now raises a clear `ValueError` when a partitioned model's output signature
+  includes the partition column. Previously this produced duplicate columns in the output, causing
+  cryptic Ray/Arrow errors (`AttributeError` or `KeyError`) deep in the batch inference pipeline.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.36.0 (2026-04-22)
 
 ### New Features
 

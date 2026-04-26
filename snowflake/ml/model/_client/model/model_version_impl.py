@@ -801,20 +801,6 @@ class ModelVersion(lineage_node.LineageNode):
         if warehouse is None:
             raise ValueError("Warehouse is not set. Please set the warehouse field in the JobSpec.")
 
-        # use a temporary folder in the output stage to store the intermediate output from the dataframe
-        output_stage_location = output_spec.stage_location
-        if not output_stage_location.endswith("/"):
-            output_stage_location += "/"
-        input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
-
-        self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
-
-        try:
-            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
-        # todo: be specific about the type of errors to provide better error messages.
-        except Exception as e:
-            raise RuntimeError(f"Failed to process input data: {e}")
-
         target_function_info = self._get_function_info(function_name=job_spec.function_name)
 
         if (
@@ -826,6 +812,43 @@ class ModelVersion(lineage_node.LineageNode):
                 "partition_column is not supported for FUNCTION type methods in batch inference jobs. "
                 "Only TABLE_FUNCTION type methods support partitioning."
             )
+
+        if partition_columns is not None and target_function_info["is_partitioned"]:
+            output_cols_upper = {spec.name.upper() for spec in target_function_info["signature"].outputs}
+            partition_cols_upper = {p.upper() for p in partition_columns}
+            collisions = sorted(partition_cols_upper & output_cols_upper)
+            if collisions:
+                raise ValueError(
+                    f"Partitioned model output includes the partition column(s) {collisions}. "
+                    f"Batch inference automatically appends the partition column to the output of "
+                    f"partitioned models; please remove {collisions} from the model output "
+                    f"and re-register the model."
+                )
+
+        input_stage_location: Optional[str] = None
+        output_stage_location: Optional[str] = None
+        base_stage_location: Optional[str] = None
+
+        if output_spec.base_stage_location is not None:
+            base_stage_location = output_spec.base_stage_location
+            if not base_stage_location.endswith("/"):
+                base_stage_location += "/"
+            # use a temporary folder under the base stage to store the intermediate input data
+            input_stage_location = f"{base_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
+        else:
+            # use a temporary folder in the output stage to store the intermediate input data
+            assert output_spec.stage_location is not None
+            output_stage_location = output_spec.stage_location
+            if not output_stage_location.endswith("/"):
+                output_stage_location += "/"
+            input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_TEMPORARY_FOLDER}/"
+
+            self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
+
+        try:
+            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
+        except Exception as e:
+            raise RuntimeError(f"Failed to process input data: {e}")
 
         return self._service_ops.invoke_batch_job_method(
             # model version info
@@ -854,6 +877,7 @@ class ModelVersion(lineage_node.LineageNode):
             partition_columns=partition_columns,
             signature_params=target_function_info["signature"].params,
             output_stage_location=output_stage_location,
+            base_stage_location=base_stage_location,
             completion_filename="_SUCCESS",
             # misc
             statement_params=statement_params,

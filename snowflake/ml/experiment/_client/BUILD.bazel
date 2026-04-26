@@ -15,6 +15,7 @@ py_library(
         "//snowflake/ml/_internal:telemetry",
         "//snowflake/ml/_internal/utils:query_result_checker",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment/_entities:run_metadata",
         "//snowflake/ml/model/_client/sql:_base",
         "//snowflake/ml/utils:sql_client",
     ],

@@ -61,12 +61,8 @@ class TestRegistryBatchInferenceExternalStageInteg(registry_batch_inference_test
         finally:
             self.session.sql(f"REMOVE {stage_location}").collect()
 
-    def test_image_classification_external_stage_fails(self) -> None:
-        """Test that image classification with external S3-backed stage fails.
-
-        External stages are not currently supported for batch inference file input.
-        This test verifies the expected failure behavior.
-        """
+    def test_image_classification_external_stage(self) -> None:
+        """Test image classification with an external S3-backed stage as file input."""
         from transformers import pipeline
 
         model = pipeline(task="image-classification", model="google/vit-base-patch16-224")
@@ -105,7 +101,7 @@ class TestRegistryBatchInferenceExternalStageInteg(registry_batch_inference_test
                 }
             }
 
-            job = self._test_registry_batch_inference(
+            self._test_registry_batch_inference(
                 model=model,
                 X=input_df,
                 compute_pool="SYSTEM_COMPUTE_POOL_CPU",
@@ -113,12 +109,67 @@ class TestRegistryBatchInferenceExternalStageInteg(registry_batch_inference_test
                 input_spec=InputSpec(column_handling=column_handling),
                 job_spec=JobSpec(job_name=job_name, replicas=1),
                 pip_requirements=["pillow"],
-                blocking=False,
             )
 
-            job.wait()
+    def test_image_classification_mixed_stages(self) -> None:
+        """Test image classification with input rows spanning 1 external and 2 internal stages."""
+        from transformers import pipeline
 
-            self.assertEqual(job.status, "FAILED")
+        model = pipeline(task="image-classification", model="google/vit-base-patch16-224")
+
+        test_subdir = f"batch_inference_test/{uuid.uuid4()}"
+
+        (
+            job_name,
+            output_stage_location,
+            _,
+        ) = self._prepare_job_name_and_stage_for_batch_inference()
+
+        # Second internal SSE stage created inside the per-test DB (dropped in tearDown)
+        second_internal_stage = "TEST_STAGE_2"
+        self._db_manager.create_stage(second_internal_stage, sse_encrypted=True)
+
+        internal_stage_1_root = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/"
+        internal_stage_2_root = f"@{self._test_db}.{self._test_schema}.{second_internal_stage}/"
+
+        with self._external_stage_path(test_subdir) as external_stage_location:
+            cat_file_path = "tests/integ/snowflake/ml/test_data/cat.jpeg"
+
+            # Upload cat.jpeg to the roots of both internal stages
+            self.session.sql(
+                f"PUT 'file://{cat_file_path}' {internal_stage_1_root} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+            ).collect()
+            self.session.sql(
+                f"PUT 'file://{cat_file_path}' {internal_stage_2_root} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+            ).collect()
+
+            # Seed the external stage by copying from the first internal stage (PUT isn't supported on external)
+            self.session.sql(f"COPY FILES INTO {external_stage_location} FROM {internal_stage_1_root}").collect()
+
+            data = [
+                [f"{external_stage_location}cat.jpeg"],
+                [f"{internal_stage_1_root}cat.jpeg"],
+                [f"{internal_stage_2_root}cat.jpeg"],
+            ]
+            column_names = ["images"]
+            input_df = self.session.create_dataframe(data, schema=column_names)
+
+            column_handling = {
+                "IMAGES": {
+                    "input_format": InputFormat.FULL_STAGE_PATH,
+                    "convert_to": FileEncoding.RAW_BYTES,
+                }
+            }
+
+            self._test_registry_batch_inference(
+                model=model,
+                X=input_df,
+                compute_pool="SYSTEM_COMPUTE_POOL_CPU",
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                input_spec=InputSpec(column_handling=column_handling),
+                job_spec=JobSpec(job_name=job_name, replicas=1),
+                pip_requirements=["pillow"],
+            )
 
 
 if __name__ == "__main__":

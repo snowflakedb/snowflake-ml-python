@@ -16,6 +16,7 @@ from snowflake.ml.experiment import (
     experiment_tracking,
 )
 from snowflake.ml.experiment._client import artifact
+from snowflake.ml.experiment._entities import run_metadata
 from snowflake.snowpark import exceptions, session
 
 
@@ -263,6 +264,43 @@ class ExperimentTrackingTest(absltest.TestCase):
         call_args = self.mock_sql_client.commit_run.call_args[1]
         self.assertEqual(call_args["experiment_name"], "TEST_EXPERIMENT")
         self.assertEqual(call_args["run_name"], "ANOTHER_RUN")
+
+    def test_end_run_with_status(self) -> None:
+        """Test ending a run with an explicit status"""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+
+        # FINISHED status
+        exp.start_run("RUN_1")
+        exp.end_run(status="FINISHED")
+        call_args = self.mock_sql_client.commit_run.call_args[1]
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.FINISHED)
+
+        # FAILED status
+        self.mock_sql_client.commit_run.reset_mock()
+        exp.start_run("RUN_2")
+        exp.end_run(status="FAILED")
+        call_args = self.mock_sql_client.commit_run.call_args[1]
+        self.assertEqual(call_args["status"], run_metadata.RunStatus.FAILED)
+
+        # No status (default)
+        self.mock_sql_client.commit_run.reset_mock()
+        exp.start_run("RUN_3")
+        exp.end_run()
+        call_args = self.mock_sql_client.commit_run.call_args[1]
+        self.assertIsNone(call_args["status"])
+
+    def test_end_run_with_invalid_status(self) -> None:
+        """Test that an invalid status string raises ValueError with a helpful message"""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        with self.assertRaises(ValueError) as ctx:
+            exp.end_run(status="INVALID")
+        self.assertIn("Unsupported status value: 'INVALID'", str(ctx.exception))
+        self.assertIn("FINISHED", str(ctx.exception))
+        self.assertIn("FAILED", str(ctx.exception))
 
     def test_delete_run(self) -> None:
         """Test deleting a run"""

@@ -77,13 +77,18 @@ class OutputSpec(BaseModel):
     """Specification for batch inference output.
 
     Defines where the inference results should be written and how to handle
-    existing files at the output location.
+    existing files at the output location. Exactly one of ``stage_location`` or
+    ``base_stage_location`` must be provided.
 
     Attributes:
-        stage_location (str): The stage path where batch inference results will be saved.
+        stage_location (Optional[str]): The stage path where batch inference results will be saved.
             This should be a full path including the stage with @ prefix. For example,
             '@My_DB.PUBLIC.MY_STAGE/someth/path/'. A non-existent directory will be re-created.
             Only Snowflake internal stages are supported at this moment.
+            Mutually exclusive with base_stage_location.
+        base_stage_location (Optional[str]): Base stage path for batch inference output. The server
+            derives the output path as ``<base_stage_location>/<job_name>/``.
+            Mutually exclusive with stage_location.
         mode (SaveMode): The save mode that determines behavior when files already exist
             at the output location. Defaults to SaveMode.ERROR which raises an error
             if files exist. Can be set to SaveMode.OVERWRITE to replace existing files.
@@ -95,8 +100,17 @@ class OutputSpec(BaseModel):
         ... )
     """
 
-    stage_location: str
+    stage_location: Optional[str] = None
+    base_stage_location: Optional[str] = None
     mode: SaveMode = SaveMode.ERROR
+
+    @model_validator(mode="after")
+    def _validate_stage_exclusivity(self) -> "OutputSpec":
+        if self.stage_location is not None and self.base_stage_location is not None:
+            raise ValueError("stage_location and base_stage_location are mutually exclusive. Please specify only one.")
+        if self.stage_location is None and self.base_stage_location is None:
+            raise ValueError("Either stage_location or base_stage_location must be provided.")
+        return self
 
 
 class JobSpec(BaseModel):

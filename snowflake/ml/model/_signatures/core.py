@@ -1332,7 +1332,7 @@ class ModelSignature:
         )
 
     def __repr__(self) -> str:
-        def format_spec_list(specs: Sequence[BaseFeatureSpec | BaseParamSpec], num_indents: int = 2) -> str:
+        def format_spec_list(specs: Sequence[Union[BaseFeatureSpec, BaseParamSpec]], num_indents: int = 2) -> str:
             if not specs:
                 return ""
             return ",\n".join(

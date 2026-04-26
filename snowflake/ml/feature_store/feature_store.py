@@ -8,7 +8,18 @@ import re
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Literal, Optional, TypeVar, Union, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Literal,
+    NamedTuple,
+    Optional,
+    TypeVar,
+    Union,
+    cast,
+    overload,
+)
 
 import packaging.version as pkg_version
 from pytimeparse.timeparse import timeparse
@@ -32,7 +43,7 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
-from snowflake.ml.feature_store import online_service
+from snowflake.ml.feature_store import online_service, online_service_http_client
 from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
 from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
@@ -83,15 +94,14 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     ArrayType,
-    DecimalType,
-    DoubleType,
-    FloatType,
     StringType,
     StructField,
     StructType,
-    TimestampTimeZone,
     TimestampType,
 )
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 _Args = ParamSpec("_Args")
 _RT = TypeVar("_RT")
@@ -101,56 +111,6 @@ logger = logging.getLogger(__name__)
 
 def _stream_source_schema_field_names(schema: StructType) -> list[str]:
     return [f.name for f in schema.fields]
-
-
-def _coerce_row_values_for_snowpark_local_schema(row: dict[str, Any], schema: StructType) -> dict[str, Any]:
-    """Coerce local Python values before ``Session.create_dataframe(..., schema=...)``.
-
-    Args:
-        row: One row as a map of column name to value.
-        schema: Expected Snowpark :class:`StructType` for that row.
-
-    Returns:
-        Copy of ``row`` with per-field coercion for double/float, decimal, and timestamp dtypes.
-
-    Snowpark literal SQL for :class:`DoubleType` / :class:`FloatType` only accepts ``float``, not ``int``
-    (see ``datatype_mapper.to_sql``). Query API JSON numbers are often parsed as ``int``.
-
-    ISO-8601 timestamp strings from the Query API are converted to ``datetime`` because
-    ``to_sql`` for :class:`TimestampType` does not accept raw strings.
-
-    JSON integers for COUNT-style features must become :class:`decimal.Decimal` when the schema field is
-    :class:`DecimalType` — Snowpark literal SQL rejects plain ``int`` for ``NUMBER`` columns.
-    """
-    from decimal import Decimal
-
-    out = dict(row)
-    for field in schema.fields:
-        name = field.name
-        if name not in out:
-            continue
-        val = out[name]
-        if val is None:
-            continue
-        dt = field.datatype
-        if isinstance(dt, (DoubleType, FloatType)):
-            if isinstance(val, int) and not isinstance(val, bool):
-                out[name] = float(val)
-            elif isinstance(val, Decimal):
-                out[name] = float(val)
-        elif isinstance(dt, DecimalType):
-            if isinstance(val, (int, float)) and not isinstance(val, bool):
-                out[name] = Decimal(str(val))
-        elif isinstance(dt, TimestampType) and isinstance(val, str):
-            try:
-                s = val.replace("Z", "+00:00") if val.endswith("Z") else val
-                parsed = datetime.datetime.fromisoformat(s)
-                if dt.tz == TimestampTimeZone.NTZ and parsed.tzinfo is not None:
-                    parsed = parsed.replace(tzinfo=None)
-                out[name] = parsed
-            except ValueError:
-                pass
-    return out
 
 
 def _normalize_stream_ingest_records(
@@ -360,6 +320,32 @@ def switch_warehouse(
     return wrapper
 
 
+_CTE_MERGE_BATCH_SIZE = 10
+
+
+class _FvJoinInfo(NamedTuple):
+    cte_name: str
+    key_sig: tuple[tuple[str, ...], bool]
+    join_keys: list[SqlIdentifier]
+    has_ts: bool
+    select_cols: list[str]
+    col_names: list[str]
+
+
+def _make_fv_join_clause(
+    lhs_alias: str,
+    cte_name: str,
+    join_keys: list[SqlIdentifier],
+    has_ts: bool,
+    spine_timestamp_col: Optional[SqlIdentifier],
+) -> str:
+    conditions = [f"{lhs_alias}.{k.identifier()} = {cte_name}.{k.identifier()}" for k in join_keys]
+    if has_ts and spine_timestamp_col:
+        ts_id = spine_timestamp_col.identifier()
+        conditions.append(f"{lhs_alias}.{ts_id} = {cte_name}.{ts_id}")
+    return f"\n    LEFT JOIN {cte_name}\n    ON {' AND '.join(conditions)}"
+
+
 def dispatch_decorator(
     *,
     skip_wh_switch: Optional[Callable[..., bool]] = None,
@@ -398,7 +384,17 @@ def dispatch_decorator(
 
 
 def _predicate_read_feature_view_skip_wh_switch(*args: Any, **kwargs: Any) -> bool:
-    return bool(kwargs.get("use_session_warehouse", False))
+    """Skip warehouse switch when opted-in or targeting a Postgres online read (uses HTTP, not a warehouse)."""
+    if bool(kwargs.get("use_session_warehouse", False)):
+        return True
+    if _get_store_type(kwargs.get("store_type", fv_mod.StoreType.OFFLINE)) != fv_mod.StoreType.ONLINE:
+        return False
+    # String (name, version) inputs would require a metadata round-trip to resolve online_config,
+    # defeating the savings; fall through for them.
+    feature_view = kwargs.get("feature_view") if "feature_view" in kwargs else (args[1] if len(args) > 1 else None)
+    if not isinstance(feature_view, FeatureView):
+        return False
+    return feature_view.online_config is not None and feature_view.online_config.store_type == OnlineStoreType.POSTGRES
 
 
 def _predicate_read_feature_view_skip_telemetry(*args: Any, **kwargs: Any) -> bool:
@@ -528,7 +524,26 @@ class FeatureStore:
                     original_exception=RuntimeError(f"Failed to create feature store {name}: {e}."),
                 ) from e
         self._check_feature_store_object_versions()
+        self._online_http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
         logger.info(f"Successfully connected to feature store: {self._config.full_schema_path}.")
+
+    def _get_or_create_online_http_client(self) -> online_service_http_client.OnlineServiceHttpClient:
+        """Return the FeatureStore-scoped HTTP client, creating it on first use."""
+        if self._online_http_client is None:
+            self._online_http_client = online_service_http_client.OnlineServiceHttpClient()
+        return self._online_http_client
+
+    def close(self) -> None:
+        """Release per-FeatureStore resources (currently: the Online Service HTTP pool). Idempotent."""
+        if self._online_http_client is not None:
+            self._online_http_client.close()
+            self._online_http_client = None
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001 - best-effort cleanup at GC
+            pass
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def update_default_warehouse(self, warehouse_name: str) -> None:
@@ -925,7 +940,13 @@ class FeatureStore:
                 # Save specs and descs atomically in a single statement
                 self._metadata_manager.save_feature_view_metadata(feature_view.name, version, agg_metadata, descs)
 
-            # Step 4: Streaming postamble (metadata + ref_count + async backfill)
+            # Step 4: Save rollup metadata for PIT-correct training queries
+            if feature_view._rollup_metadata is not None:
+                self._metadata_manager.save_rollup_metadata(
+                    feature_view.name, version, feature_view._rollup_metadata.to_dict()
+                )
+
+            # Step 5: Streaming postamble (metadata + ref_count + async backfill)
             if streaming_preamble is not None:
                 from snowflake.ml.feature_store.streaming_registration import (
                     run_streaming_postamble,
@@ -1117,6 +1138,48 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        as_pandas: Literal[False],
+    ) -> DataFrame:
+        ...
+
+    @overload
+    def read_feature_view(
+        self,
+        feature_view: str,
+        version: str,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
+        as_pandas: Literal[True],
+    ) -> pd.DataFrame:
+        ...
+
+    @overload
+    def read_feature_view(
+        self,
+        feature_view: str,
+        version: str,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
+        as_pandas: None = None,
+    ) -> Union[DataFrame, pd.DataFrame]:
+        ...
+
+    @overload
+    def read_feature_view(
+        self,
+        feature_view: FeatureView,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
+        as_pandas: Literal[False],
     ) -> DataFrame:
         ...
 
@@ -1129,7 +1192,21 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-    ) -> DataFrame:
+        as_pandas: Literal[True],
+    ) -> pd.DataFrame:
+        ...
+
+    @overload
+    def read_feature_view(
+        self,
+        feature_view: FeatureView,
+        *,
+        keys: Optional[list[list[str]]] = None,
+        feature_names: Optional[list[str]] = None,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
+        use_session_warehouse: bool = False,
+        as_pandas: None = None,
+    ) -> Union[DataFrame, pd.DataFrame]:
         ...
 
     @dispatch_decorator(  # type: ignore[misc]
@@ -1145,7 +1222,8 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
-    ) -> DataFrame:
+        as_pandas: Optional[bool] = None,
+    ) -> Union[DataFrame, pd.DataFrame]:
         """
         Read values from a FeatureView from either offline or online store.
 
@@ -1166,18 +1244,23 @@ class FeatureStore:
                 only that subset (and join keys). Offline and hybrid online SQL paths use the same list
                 in the SELECT clause.
             store_type: Store to read from - StoreType.ONLINE or StoreType.OFFLINE (default).
-            use_session_warehouse: If True, uses the session's current warehouse instead of the
-                feature store's configured warehouse. Only applies to hybrid table online reads;
-                raises ValueError for Postgres online feature views.
+            use_session_warehouse: If True, use the session's current warehouse instead of the feature
+                store's configured warehouse. No-op for Postgres-backed online reads.
+            as_pandas: Return type. ``None`` (default) returns ``pandas.DataFrame`` for Postgres-backed
+                online reads and Snowpark ``DataFrame`` everywhere else. ``True`` forces
+                ``pandas.DataFrame`` (rejected for ``store_type=StoreType.OFFLINE``). ``False`` forces
+                Snowpark ``DataFrame``.
 
         Returns:
-            Snowpark DataFrame containing the FeatureView data.
+            Snowpark DataFrame (or ``pandas.DataFrame`` when ``as_pandas`` resolves to True)
+            containing the FeatureView data.
 
         Raises:
             SnowflakeMLException: [ValueError] version argument is missing when argument feature_view is a str.
             SnowflakeMLException: [ValueError] FeatureView is not registered.
             SnowflakeMLException: [ValueError] Online store is not enabled for this feature view.
             SnowflakeMLException: [ValueError] Invalid store type.
+            SnowflakeMLException: [ValueError] ``as_pandas=True`` with ``store_type=StoreType.OFFLINE``.
 
         Example::
 
@@ -1216,6 +1299,11 @@ class FeatureStore:
             ----------------------
             |boss     |20       |
             ----------------------
+            >>> # Postgres online reads default to pandas (local-build fast path).
+            >>> # Pass as_pandas=False to force a Snowpark DataFrame instead.
+            >>> pdf = fs.read_feature_view('foo', 'v1', keys=[["1"]], store_type=StoreType.ONLINE)
+            >>> type(pdf).__name__
+            'DataFrame'
 
         """
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
@@ -1228,21 +1316,29 @@ class FeatureStore:
 
         store_type = _get_store_type(store_type)
 
-        if store_type == fv_mod.StoreType.ONLINE:
-            if (
-                use_session_warehouse
+        # Resolve the as_pandas default. Postgres online reads default to pandas because
+        # the Online Service Query API already returns row-oriented JSON; the historical
+        # Snowpark default required a wasteful create_dataframe(VALUES ...) round-trip.
+        # All other paths default to Snowpark DataFrame to preserve existing behavior.
+        if as_pandas is None:
+            as_pandas = (
+                store_type == fv_mod.StoreType.ONLINE
                 and feature_view.online_config is not None
                 and feature_view.online_config.store_type == OnlineStoreType.POSTGRES
-            ):
+            )
+
+        if store_type == fv_mod.StoreType.ONLINE:
+            return self._read_from_online_store(feature_view, keys, feature_names, as_pandas=as_pandas)
+        elif store_type == fv_mod.StoreType.OFFLINE:
+            if as_pandas:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT,
                     original_exception=ValueError(
-                        "use_session_warehouse is not applicable for Postgres-backed online feature views. "
-                        "Postgres online reads use the Online Service Query API and do not involve a warehouse."
+                        "as_pandas=True is not supported for store_type=OFFLINE; offline reads can be arbitrarily "
+                        "large and a local pandas materialization invites OOM. Call .to_pandas() on the returned "
+                        "Snowpark DataFrame instead if you accept the full-scan cost."
                     ),
                 )
-            return self._read_from_online_store(feature_view, keys, feature_names)
-        elif store_type == fv_mod.StoreType.OFFLINE:
             return self._read_from_offline_store(feature_view, keys, feature_names)
         else:
             raise snowml_exceptions.SnowflakeMLException(
@@ -2237,6 +2333,7 @@ class FeatureStore:
             stream_name_wire,
             rows,
             timeout_sec=timeout_sec,
+            http_client=self._get_or_create_online_http_client(),
         )
 
     @dispatch_decorator()
@@ -2390,7 +2487,12 @@ class FeatureStore:
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
-        Enrich spine dataframe with feature values. Mainly used to generate inference data input.
+        Enrich spine dataframe with feature values for inference.
+
+        Uses the latest entity mappings for rollup feature views. For point-in-time
+        correct entity mappings (e.g., during training or backtesting with temporal
+        rollup FVs), use ``generate_training_set`` instead.
+
         If spine_timestamp_col is specified, point-in-time feature values will be fetched.
 
         Args:
@@ -2467,8 +2569,15 @@ class FeatureStore:
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
         """
-        Generate a training set from the specified Spine DataFrame and Feature Views. Result is
-        materialized to a Snowflake Table if `save_as` is specified.
+        Generate a training set from the specified Spine DataFrame and Feature Views.
+
+        For rollup feature views with temporal entity mappings (``mapping_valid_from_col``
+        and ``mapping_valid_to_col``), this method uses point-in-time correct entity
+        resolution via a range JOIN with bounded validity windows ``[valid_from, valid_to)``,
+        supporting 1:N mappings (one child entity to multiple parent entities simultaneously).
+        For inference with latest mappings, use ``retrieve_feature_values`` instead.
+
+        Result is materialized to a Snowflake Table if `save_as` is specified.
 
         Args:
             spine_df: Snowpark DataFrame to join features into.
@@ -2526,6 +2635,7 @@ class FeatureStore:
             include_feature_view_timestamp_col,
             auto_prefix,
             join_method,
+            is_training=True,
         )
 
         if exclude_columns is not None:
@@ -3318,7 +3428,9 @@ class FeatureStore:
         feature_view: FeatureView,
         keys: Optional[list[list[str]]],
         feature_names: Optional[list[str]],
-    ) -> DataFrame:
+        *,
+        as_pandas: bool = False,
+    ) -> Union[DataFrame, pd.DataFrame]:
         query_url = getattr(feature_view, "_postgres_online_query_url", None)
         if not query_url:
             raise snowml_exceptions.SnowflakeMLException(
@@ -3358,10 +3470,13 @@ class FeatureStore:
             keys,
             feature_names,
             join_key_field_types=join_key_field_types,
+            http_client=self._get_or_create_online_http_client(),
         )
+        if as_pandas:
+            return online_service._rows_to_pandas_for_postgres_online(rows, schema)
         if not rows:
             return self._empty_dataframe_for_postgres_online_read(feature_view, feature_names)
-        coerced = [_coerce_row_values_for_snowpark_local_schema(r, schema) for r in rows]
+        coerced = [online_service._coerce_row_values_for_snowpark_local_schema(r, schema) for r in rows]
         return self._session.create_dataframe(coerced, schema=schema)
 
     def _read_from_online_store(
@@ -3369,7 +3484,9 @@ class FeatureStore:
         feature_view: FeatureView,
         keys: Optional[list[list[str]]],
         feature_names: Optional[list[str]],
-    ) -> DataFrame:
+        *,
+        as_pandas: bool = False,
+    ) -> Union[DataFrame, pd.DataFrame]:
         """Read feature values from the online store with optional key filtering.
 
         Uses bind variables for single-key lookups and literal interpolation
@@ -3379,9 +3496,11 @@ class FeatureStore:
             feature_view: The registered feature view to read from.
             keys: Optional list of key value lists to filter by.
             feature_names: Optional list of feature names to return.
+            as_pandas: If True, return a ``pandas.DataFrame`` instead of a Snowpark ``DataFrame``.
 
         Returns:
-            Snowpark DataFrame containing the feature view data.
+            Snowpark DataFrame (or pandas DataFrame when ``as_pandas`` is True) containing the
+            feature view data.
 
         Raises:
             SnowflakeMLException: If online store is not enabled.
@@ -3395,7 +3514,7 @@ class FeatureStore:
             )
 
         if feature_view.online_config is not None and feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
-            return self._read_postgres_online_via_query_api(feature_view, keys, feature_names)
+            return self._read_postgres_online_via_query_api(feature_view, keys, feature_names, as_pandas=as_pandas)
 
         fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
 
@@ -3407,9 +3526,10 @@ class FeatureStore:
         where_clause, params = self._build_where_clause_for_keys(feature_view, keys, use_binds=use_binds)
 
         query = f"SELECT {select_clause} FROM {fully_qualified_online_name}{where_clause}"
-        if params:
-            return self._session.sql(query, params=params)
-        return self._session.sql(query)
+        df = self._session.sql(query, params=params) if params else self._session.sql(query)
+        if as_pandas:
+            return df.to_pandas(statement_params=self._telemetry_stmp)
+        return df
 
     @dispatch_decorator()
     def _clear(self, dryrun: bool = True) -> None:
@@ -3727,12 +3847,36 @@ class FeatureStore:
         # Get mapping query from DataFrame
         mapping_query = rollup_config.mapping_df.queries["queries"][-1]
 
-        # Generate rollup SQL
+        # Build and store RollupMetadata on the feature view for PIT training support
+        from snowflake.ml.feature_store.feature_view import RollupMetadata
+
+        rollup_metadata = RollupMetadata(
+            parent_tile_table=parent_tile_table,
+            parent_join_keys=parent_join_keys,
+            mapping_query=mapping_query,
+            mapping_valid_from_col=rollup_config.mapping_valid_from_col,
+            mapping_valid_to_col=rollup_config.mapping_valid_to_col,
+        )
+        feature_view._rollup_metadata = rollup_metadata
+
+        # For the materialized DT (inference path), use a flat JOIN.
+        # When temporal columns are set (SCD Type 2), filter to currently-active
+        # mappings only. No ROW_NUMBER dedup — supports 1:N mappings where one
+        # child entity maps to multiple parent entities simultaneously.
+        flat_mapping_query = mapping_query
+        if rollup_config.mapping_valid_from_col is not None and rollup_config.mapping_valid_to_col is not None:
+            vfc = SqlIdentifier(rollup_config.mapping_valid_from_col).identifier()
+            vtc = SqlIdentifier(rollup_config.mapping_valid_to_col).identifier()
+            flat_mapping_query = (
+                f"SELECT * FROM ({mapping_query}) "
+                f"WHERE {vfc} <= CURRENT_TIMESTAMP() AND ({vtc} IS NULL OR {vtc} > CURRENT_TIMESTAMP())"
+            )
+
         generator = RollupSqlGenerator(
             parent_tile_table=parent_tile_table,
             parent_join_keys=parent_join_keys,
             new_join_keys=new_join_keys,
-            mapping_query=mapping_query,
+            mapping_query=flat_mapping_query,
             aggregation_specs=feature_view.aggregation_specs or [],
         )
         rollup_sql = generator.generate()
@@ -4139,6 +4283,7 @@ class FeatureStore:
         spine_timestamp_col: Optional[SqlIdentifier],
         include_feature_view_timestamp_col: bool = False,
         auto_prefix: bool = False,
+        is_training: bool = False,
     ) -> str:
         """
         Build a CTE query with the spine query and the feature views.
@@ -4151,6 +4296,18 @@ class FeatureStore:
         5. Performing LEFT JOINs on the deduplicated spine when timestamp columns are missing
         6. Combining results by LEFT JOINing each FV CTE back to the original SPINE
 
+        For large numbers of feature views (> _CTE_MERGE_BATCH_SIZE), the final join is restructured
+        into batched merge CTEs to bound the join depth per batch. FVs are grouped by entity key
+        signature, and each group is chunked into batches. Non-primary batches use a deduplicated
+        spine (SELECT DISTINCT on their entity keys) to reduce cardinality for narrower entity groups.
+
+        For temporal rollup FVs in training mode (``is_training=True`` and
+        ``rollup_metadata.mapping_valid_from_col`` is set), an additional CTE is
+        injected that range JOINs the parent tile table with the temporal mapping to
+        produce PIT-correct rollup tiles using bounded validity windows
+        ``[valid_from, valid_to)``. This supports 1:N mappings. This CTE replaces
+        the flat DT as input to MergingSqlGenerator.
+
         Args:
             feature_views: A list of feature views to join.
             feature_columns: A list of feature column strings for each feature view.
@@ -4159,6 +4316,7 @@ class FeatureStore:
             include_feature_view_timestamp_col: Whether to include the timestamp column of
                 the feature view in the result. Default to false.
             auto_prefix: Whether to automatically prefix feature columns.
+            is_training: If True, use PIT-correct entity mappings for temporal rollup FVs.
 
         Returns:
             A SQL query string with CTE structure for joining feature views.
@@ -4186,8 +4344,36 @@ class FeatureStore:
             # Handle tiled feature views using MergingSqlGenerator
             if feature_view.is_tiled and spine_timestamp_col is not None:
                 assert feature_timestamp_col is not None
+                tile_table = feature_view.fully_qualified_name()
+
+                # For temporal rollup FVs in training mode, inject a PIT-correct
+                # rollup CTE that range JOINs parent tiles with the temporal mapping
+                # using bounded [valid_from, valid_to) windows. Supports 1:N mappings.
+                rm = feature_view.rollup_metadata
+                if is_training and rm is not None and rm.mapping_valid_from_col is not None:
+                    logger.info(
+                        f"Injecting PIT-correct rollup CTE for {feature_view.name} "
+                        f"using range JOIN with mapping_valid_from_col={rm.mapping_valid_from_col}, "
+                        f"mapping_valid_to_col={rm.mapping_valid_to_col}. "
+                        f"Tiles outside the mapping validity window will be excluded."
+                    )
+                    new_join_keys = [str(k) for k in fv_join_keys]
+                    pit_generator = RollupSqlGenerator(
+                        parent_tile_table=rm.parent_tile_table,
+                        parent_join_keys=rm.parent_join_keys,
+                        new_join_keys=new_join_keys,
+                        mapping_query=rm.mapping_query,
+                        aggregation_specs=feature_view.aggregation_specs or [],
+                        mapping_valid_from_col=rm.mapping_valid_from_col,
+                        mapping_valid_to_col=rm.mapping_valid_to_col,
+                    )
+                    pit_cte_name = f"PIT_ROLLUP_FV{i}"
+                    cte_name_str, cte_body = pit_generator.generate_as_cte(pit_cte_name)
+                    ctes.append(f"{cte_name_str} AS (\n{cte_body}\n)")
+                    tile_table = pit_cte_name
+
                 generator = MergingSqlGenerator(
-                    tile_table=feature_view.fully_qualified_name(),
+                    tile_table=tile_table,
                     join_keys=fv_join_keys,
                     timestamp_col=feature_timestamp_col,
                     feature_granularity=feature_view.feature_granularity,  # type: ignore[arg-type]
@@ -4266,19 +4452,16 @@ class FeatureStore:
 )"""
                 )
 
-        # Build final SELECT with LEFT joins to each FV CTE
-        select_columns = []
-        join_clauses = []
-
+        # Collect per-FV metadata for the final join assembly
+        fv_infos: list[_FvJoinInfo] = []
         for i, cte_name in enumerate(cte_names):
             feature_view = feature_views[i]
             fv_join_keys = list({k for e in feature_view.entities for k in e.join_keys})
-            join_conditions = [f"SPINE.{col.identifier()} = {cte_name}.{col.identifier()}" for col in fv_join_keys]
-            # Only include spine timestamp in join condition if both spine and FV have timestamps
-            if spine_timestamp_col is not None and feature_view.timestamp_col is not None:
-                ts_id = spine_timestamp_col.identifier()
-                join_conditions.append(f"SPINE.{ts_id} = {cte_name}.{ts_id}")
+            has_ts = spine_timestamp_col is not None and feature_view.timestamp_col is not None
+            key_sig = (tuple(sorted(k.resolved() for k in fv_join_keys)), has_ts)
 
+            select_cols: list[str] = []
+            col_names: list[str] = []
             if (
                 include_feature_view_timestamp_col
                 and feature_view.timestamp_col is not None
@@ -4287,48 +4470,179 @@ class FeatureStore:
                 f_ts_col_alias = identifier.concat_names(
                     [feature_view.name, "_", str(feature_view.version), "_", feature_view.timestamp_col]
                 )
-                f_ts_col_str = f"{cte_name}.{f_ts_col_alias} AS {f_ts_col_alias}"
-                select_columns.append(f_ts_col_str)
+                select_cols.append(f"{cte_name}.{f_ts_col_alias} AS {f_ts_col_alias}")
+                col_names.append(f_ts_col_alias)
 
-            # Select features from the CTE
-            # For tiled FVs, get output columns from aggregation specs
             prefix = self._get_feature_prefix(feature_view, auto_prefix)
             if feature_view.is_tiled and feature_view.aggregation_specs:
-                feature_cols_from_cte = []
                 for spec in feature_view.aggregation_specs:
                     col_name = spec.get_sql_column_name()
                     if prefix:
                         alias = identifier.concat_names([prefix, col_name])
-                        feature_cols_from_cte.append(f"{cte_name}.{col_name} AS {alias}")
+                        select_cols.append(f"{cte_name}.{col_name} AS {alias}")
+                        col_names.append(alias)
                     else:
-                        feature_cols_from_cte.append(f"{cte_name}.{col_name}")
+                        select_cols.append(f"{cte_name}.{col_name}")
+                        col_names.append(col_name)
             else:
-                # feature_columns[i] is already a comma-separated string of column names
-                feature_cols_from_cte = []
                 for col in feature_columns[i].split(", "):
                     col_clean = col.strip()
                     if prefix:
                         alias = identifier.concat_names([prefix, col_clean])
-                        feature_cols_from_cte.append(f"{cte_name}.{col_clean} AS {alias}")
+                        select_cols.append(f"{cte_name}.{col_clean} AS {alias}")
+                        col_names.append(alias)
                     else:
-                        feature_cols_from_cte.append(f"{cte_name}.{col_clean}")
-            select_columns.extend(feature_cols_from_cte)
+                        select_cols.append(f"{cte_name}.{col_clean}")
+                        col_names.append(col_clean)
 
-            # Create join condition using only this feature view's join keys
-            join_clauses.append(
-                f"""
-    LEFT JOIN {cte_name}
-    ON {" AND ".join(join_conditions)}"""
+            fv_infos.append(
+                _FvJoinInfo(
+                    cte_name=cte_name,
+                    key_sig=key_sig,
+                    join_keys=fv_join_keys,
+                    has_ts=has_ts,
+                    select_cols=select_cols,
+                    col_names=col_names,
+                )
             )
 
-        query = f"""WITH
+        # For small FV counts, use the existing flat join path
+        if len(cte_names) <= _CTE_MERGE_BATCH_SIZE:
+            all_select = [col for fi in fv_infos for col in fi.select_cols]
+            all_joins = "".join(
+                _make_fv_join_clause("SPINE", fi.cte_name, fi.join_keys, fi.has_ts, spine_timestamp_col)
+                for fi in fv_infos
+            )
+            query = f"""WITH
 {', '.join(ctes)}
 SELECT
     SPINE.*,
-    {', '.join(select_columns)}
-FROM SPINE{' '.join(join_clauses)}
+    {', '.join(all_select)}
+FROM SPINE{all_joins}
 """
+            return query
 
+        return self._build_batched_cte_merge_query(ctes, fv_infos, spine_timestamp_col)
+
+    @staticmethod
+    def _build_batched_cte_merge_query(
+        ctes: list[str],
+        fv_infos: list[_FvJoinInfo],
+        spine_timestamp_col: Optional[SqlIdentifier],
+    ) -> str:
+        """Build a batched CTE merge query for large numbers of feature views.
+
+        Groups FVs by entity key signature, chunks them into batches of at most
+        _CTE_MERGE_BATCH_SIZE, and assembles batch CTEs that are joined in a final
+        merge step.  BATCH0 carries all spine columns; subsequent batches deduplicate
+        the spine to their entity keys via SELECT DISTINCT.
+
+        Args:
+            ctes: Accumulated list of CTE definition strings (modified in-place with batch CTEs).
+            fv_infos: Per-feature-view join metadata collected by _build_cte_query.
+            spine_timestamp_col: The timestamp column from the spine, or None.
+
+        Returns:
+            A SQL query string with batched CTE merge structure.
+        """
+        # Group FVs by entity key signature
+        groups: dict[tuple[tuple[str, ...], bool], list[_FvJoinInfo]] = {}
+        for fi in fv_infos:
+            if fi.key_sig not in groups:
+                groups[fi.key_sig] = []
+            groups[fi.key_sig].append(fi)
+
+        # BATCH0 gets the widest key set (most keys; ties broken by has_ts=True,
+        # then lexicographic key order — deterministic regardless of insertion order).
+        batch0_sig = max(groups.keys(), key=lambda sig: (len(sig[0]), sig[1], sig[0]))
+
+        # Ordered list of (fv_chunk, key_sig): BATCH0 group first, then others
+        # sorted for deterministic batch ordering across runs
+        batches: list[tuple[list[_FvJoinInfo], tuple[tuple[str, ...], bool]]] = []
+        batch0_fvs = groups.pop(batch0_sig)
+        for start in range(0, len(batch0_fvs), _CTE_MERGE_BATCH_SIZE):
+            batches.append((batch0_fvs[start : start + _CTE_MERGE_BATCH_SIZE], batch0_sig))
+        for sig in sorted(groups.keys()):
+            fvs = groups[sig]
+            for start in range(0, len(fvs), _CTE_MERGE_BATCH_SIZE):
+                batches.append((fvs[start : start + _CTE_MERGE_BATCH_SIZE], sig))
+
+        batch_cte_names: list[str] = []
+        batch_col_names: list[list[str]] = []
+        batch_key_ids: list[list[SqlIdentifier]] = []
+        batch_has_ts_flags: list[bool] = []
+
+        for batch_idx, (chunk, key_sig) in enumerate(batches):
+            batch_cte_name = f"_BATCH{batch_idx}"
+            batch_cte_names.append(batch_cte_name)
+
+            # All FVs in a group share the same resolved key signature, so chunk[0].join_keys
+            # is a canonical SqlIdentifier list for SQL rendering (preserves case / quoting rules).
+            group_key_ids = chunk[0].join_keys
+            batch_key_ids.append(group_key_ids)
+            batch_has_ts = key_sig[1]
+            batch_has_ts_flags.append(batch_has_ts)
+
+            batch_select = [col for fi in chunk for col in fi.select_cols]
+            batch_col_names.append([cn for fi in chunk for cn in fi.col_names])
+
+            if batch_idx == 0:
+                batch_joins = "".join(
+                    _make_fv_join_clause("SPINE", fi.cte_name, fi.join_keys, fi.has_ts, spine_timestamp_col)
+                    for fi in chunk
+                )
+                cte_body = f"SELECT SPINE.*, {', '.join(batch_select)} FROM SPINE{batch_joins}"
+            else:
+                dedup_alias = f"_SD{batch_idx}"
+                dedup_cols = [k.identifier() for k in group_key_ids]
+                if batch_has_ts and spine_timestamp_col is not None:
+                    dedup_cols.append(spine_timestamp_col.identifier())
+
+                batch_joins = "".join(
+                    _make_fv_join_clause(dedup_alias, fi.cte_name, fi.join_keys, fi.has_ts, spine_timestamp_col)
+                    for fi in chunk
+                )
+
+                key_select = ", ".join(f"{dedup_alias}.{k.identifier()}" for k in group_key_ids)
+                ts_select = (
+                    f", {dedup_alias}.{spine_timestamp_col.identifier()}"
+                    if batch_has_ts and spine_timestamp_col is not None
+                    else ""
+                )
+
+                cte_body = (
+                    f"SELECT {key_select}{ts_select}, {', '.join(batch_select)}\n"
+                    f"    FROM (SELECT DISTINCT {', '.join(dedup_cols)} FROM SPINE) {dedup_alias}"
+                    f"{batch_joins}"
+                )
+
+            ctes.append(f"{batch_cte_name} AS (\n{cte_body}\n)")
+
+        # Final merge: BATCH0.* + feature columns from other batches
+        merge_select_parts = [f"{batch_cte_names[0]}.*"]
+        merge_join_parts: list[str] = []
+
+        for bi in range(1, len(batches)):
+            bcn = batch_cte_names[bi]
+            for col_name in batch_col_names[bi]:
+                merge_select_parts.append(f"{bcn}.{col_name}")
+            merge_join_parts.append(
+                _make_fv_join_clause(
+                    batch_cte_names[0],
+                    bcn,
+                    batch_key_ids[bi],
+                    batch_has_ts_flags[bi],
+                    spine_timestamp_col,
+                )
+            )
+
+        merge_select_str = ",\n    ".join(merge_select_parts)
+        query = f"""WITH
+{', '.join(ctes)}
+SELECT
+    {merge_select_str}
+FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
+"""
         return query
 
     def _join_features(
@@ -4339,6 +4653,7 @@ FROM SPINE{' '.join(join_clauses)}
         include_feature_view_timestamp_col: bool,
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
+        is_training: bool = False,
     ) -> tuple[DataFrame, list[SqlIdentifier]]:
         # Validate join_method parameter
         if join_method not in ["sequential", "cte"]:
@@ -4408,6 +4723,7 @@ FROM SPINE{' '.join(join_clauses)}
                 spine_timestamp_col,
                 include_feature_view_timestamp_col,
                 auto_prefix,
+                is_training,
             )
         else:
             # Use sequential joins layer by layer
@@ -5190,6 +5506,14 @@ FROM SPINE{' '.join(join_clauses)}
                 streaming_meta = self._metadata_manager.get_streaming_metadata(name.identifier(), version)
                 if streaming_meta and streaming_meta.transformation_fn_source:
                     fv._transformation_fn_source = streaming_meta.transformation_fn_source
+
+            # Load rollup metadata if this is a rollup FV
+            if fv_metadata.is_rollup:
+                from snowflake.ml.feature_store.feature_view import RollupMetadata
+
+                rollup_data = self._metadata_manager.get_rollup_metadata(name.identifier(), version)
+                if rollup_data is not None:
+                    fv._rollup_metadata = RollupMetadata.from_dict(rollup_data)
 
             return fv
         else:

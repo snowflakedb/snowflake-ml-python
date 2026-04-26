@@ -651,6 +651,150 @@ class FeatureStoreDatasetPerfTest(absltest.TestCase):
         print(f"\nResult: {result_count:,} rows, {elapsed:.2f}s, {throughput:,.0f} rows/s")
         print("=" * 70)
 
+    def test_batched_cte_merge_correctness(self) -> None:
+        """Test that the batched CTE merge path produces correct results.
+
+        Uses > _CTE_MERGE_BATCH_SIZE (10) feature views with mixed entity types
+        to exercise the entity-aware batched merge path in _build_cte_query.
+        Verifies row count equality and column presence.
+        """
+        num_company_fvs = 6
+        num_subscriber_fvs = 6
+        total_fvs = num_company_fvs + num_subscriber_fvs
+        features_per_fv = 2
+        spine_rows = 10_000
+        fv_rows = 20_000
+        num_companies = 50
+        num_subscribers = 50
+
+        print("\n" + "=" * 70)
+        print("Batched CTE Merge Correctness Test")
+        print(f"Total FVs: {total_fvs} (>{10} to trigger batched path)")
+        print(f"Company FVs: {num_company_fvs}, Subscriber FVs: {num_subscriber_fvs}")
+        print(f"Spine rows: {spine_rows:,}, FV rows: {fv_rows:,}")
+        print("=" * 70)
+
+        fs = self._create_feature_store()
+
+        e_company = Entity("company", ["company_id"])
+        fs.register_entity(e_company)
+
+        e_subscriber = Entity("subscriber", ["subscriber_id"])
+        fs.register_entity(e_subscriber)
+
+        all_fvs = []
+
+        # Create company FVs (narrower entity key)
+        for i in range(num_company_fvs):
+            table_name = f"BATCH_CO_FV_{i}_{uuid4().hex.upper()[:8]}"
+            table_path = self._create_large_table(
+                fs=fs,
+                table_name=table_name,
+                num_rows=fv_rows,
+                join_key="company_id",
+                num_unique_keys=num_companies,
+                num_features=features_per_fv,
+            )
+            feature_cols = ", ".join([f"feature_{j} AS batch_co_fv{i}_f{j}" for j in range(features_per_fv)])
+            fv = FeatureView(
+                name=f"batch_co_fv_{i}",
+                entities=[e_company],
+                feature_df=self._session.sql(f"SELECT company_id, event_ts, {feature_cols} FROM {table_path}"),
+                timestamp_col="event_ts",
+                refresh_freq="DOWNSTREAM",
+            )
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            all_fvs.append(fv)
+
+        # Create subscriber FVs (wider entity key -- subscriber_id)
+        for i in range(num_subscriber_fvs):
+            table_name = f"BATCH_SUB_FV_{i}_{uuid4().hex.upper()[:8]}"
+            table_path = self._create_large_table(
+                fs=fs,
+                table_name=table_name,
+                num_rows=fv_rows,
+                join_key="subscriber_id",
+                num_unique_keys=num_subscribers,
+                num_features=features_per_fv,
+            )
+            feature_cols = ", ".join([f"feature_{j} AS batch_sub_fv{i}_f{j}" for j in range(features_per_fv)])
+            fv = FeatureView(
+                name=f"batch_sub_fv_{i}",
+                entities=[e_subscriber],
+                feature_df=self._session.sql(f"SELECT subscriber_id, event_ts, {feature_cols} FROM {table_path}"),
+                timestamp_col="event_ts",
+                refresh_freq="DOWNSTREAM",
+            )
+            fv = fs.register_feature_view(feature_view=fv, version="v1")
+            all_fvs.append(fv)
+
+        # Create spine
+        spine_table_name = f"BATCH_SPINE_{uuid4().hex.upper()[:8]}"
+        spine_table_path = f"{fs._config.full_schema_path}.{spine_table_name}"
+        self._test_tables.append(spine_table_path)
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {spine_table_path} (
+                company_id INT, subscriber_id INT, event_ts TIMESTAMP_NTZ
+            )
+        """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {spine_table_path}
+            SELECT
+                UNIFORM(1, {num_companies}, RANDOM()) AS company_id,
+                UNIFORM(1, {num_subscribers}, RANDOM()) AS subscriber_id,
+                DATEADD('minute', UNIFORM(0, {DATA_DAYS_SPAN * 1440}, RANDOM()),
+                    '2024-01-01'::TIMESTAMP_NTZ) AS event_ts
+            FROM TABLE(GENERATOR(ROWCOUNT => {spine_rows}))
+        """
+        ).collect()
+
+        spine_df = self._session.table(spine_table_path)
+
+        # Generate dataset with CTE method -- should trigger batched merge
+        dataset_name = f"BATCH_CTE_TEST_{uuid4().hex.upper()}"
+        start_time = time.time()
+        result_df = fs.generate_dataset(
+            name=dataset_name,
+            spine_df=spine_df,
+            features=all_fvs,
+            spine_timestamp_col="event_ts",
+            output_type="table",
+            join_method="cte",
+        )
+        elapsed = time.time() - start_time
+
+        result_count = result_df.count()
+        self.assertEqual(
+            result_count,
+            spine_rows,
+            f"Expected {spine_rows:,} rows, got {result_count:,}. "
+            f"Batched CTE merge may have caused row count mismatch!",
+        )
+
+        # Verify all expected columns are present
+        result_columns = set(result_df.columns)
+        expected_columns = {"COMPANY_ID", "SUBSCRIBER_ID", "EVENT_TS"}
+        for i in range(num_company_fvs):
+            for j in range(features_per_fv):
+                expected_columns.add(f"BATCH_CO_FV{i}_F{j}")
+        for i in range(num_subscriber_fvs):
+            for j in range(features_per_fv):
+                expected_columns.add(f"BATCH_SUB_FV{i}_F{j}")
+
+        missing_columns = expected_columns - result_columns
+        self.assertEqual(
+            len(missing_columns),
+            0,
+            f"Missing columns in batched CTE result: {missing_columns}",
+        )
+
+        print(f"\nResult: {result_count:,} rows, {elapsed:.2f}s, all {len(expected_columns)} columns present")
+        print("=" * 70)
+
 
 if __name__ == "__main__":
     absltest.main()

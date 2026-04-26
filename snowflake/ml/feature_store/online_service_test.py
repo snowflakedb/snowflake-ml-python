@@ -1,14 +1,11 @@
 """Unit tests for online_service helpers."""
 
-import email.message
-import io
 import json
 import os
-import urllib.error
-import urllib.request
-from typing import Any
+from typing import Any, Optional
 from unittest.mock import MagicMock, create_autospec, patch
 
+import httpx
 from absl.testing import absltest
 
 from snowflake.ml._internal.exceptions import (
@@ -16,7 +13,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
-from snowflake.ml.feature_store import online_service
+from snowflake.ml.feature_store import online_service, online_service_http_client
 from snowflake.snowpark import Row, Session
 from snowflake.snowpark.types import StringType
 
@@ -28,23 +25,43 @@ def _locator_fragment(database: str = "DB", schema: str = "SC") -> str:
     return f"{SqlIdentifier(database)}.{SqlIdentifier(schema)}"
 
 
-class _FakeHttpOk:
-    """Minimal response object for ``urlopen`` success path."""
+def _make_response(
+    body: bytes,
+    *,
+    status: int = 200,
+    http_version: str = "HTTP/2",
+    headers: Optional[dict[str, str]] = None,
+) -> httpx.Response:
+    """Build an httpx.Response with a forced http_version (httpx defaults vary by transport)."""
+    resp = httpx.Response(status_code=status, content=body, headers=headers or {})
+    # http_version is a read-only computed property; set the underlying ext dict to override.
+    resp.extensions["http_version"] = http_version.encode("ascii")
+    return resp
 
-    def __init__(self, body: bytes, *, status: int = 200) -> None:
-        self._body = body
-        self._status = status
 
-    def getcode(self) -> int:
-        return self._status
+def _transport_for(handler: Any) -> Any:
+    """Wrap a request handler in an httpx.MockTransport factory the OnlineServiceHttpClient can use."""
 
-    def read(self, size: int = -1) -> bytes:
-        if size >= 0:
-            return self._body[:size]
-        return self._body
+    def _factory(*, proxy: Optional[str] = None) -> httpx.MockTransport:
+        return httpx.MockTransport(handler)
 
-    def close(self) -> None:
-        pass
+    return _factory
+
+
+def _patch_online_http_client_with_transport(handler: Any) -> Any:
+    """Patch OnlineServiceHttpClient so any instance constructed during the test uses MockTransport(handler).
+
+    The non-pooled callers in ``read_postgres_online_features`` and ``stream_ingest_records``
+    construct a one-shot client themselves; this hook rewires that path through MockTransport
+    without changing call sites.
+    """
+    real_init = online_service_http_client.OnlineServiceHttpClient.__init__
+
+    def patched_init(self: Any, **kwargs: Any) -> None:
+        kwargs.setdefault("_transport_factory", _transport_for(handler))
+        real_init(self, **kwargs)
+
+    return patch.object(online_service_http_client.OnlineServiceHttpClient, "__init__", patched_init)
 
 
 class OnlineServiceTest(absltest.TestCase):
@@ -113,19 +130,6 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(len(st.endpoints), 2)
         self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
         self.assertEqual(online_service.endpoint_url(st, "ingest"), "https://i")
-
-    def test_session_rest_auth_headers_uses_snowflake_pat_env(self) -> None:
-        session = create_autospec(Session)
-        with patch.dict(os.environ, {"SNOWFLAKE_PAT": "pat-from-env"}, clear=False):
-            headers = online_service._session_rest_auth_headers(session)
-        self.assertEqual(headers["Authorization"], 'Snowflake Token="pat-from-env"')
-
-    def test_online_service_query_api_pat_from_env_raises_when_unset(self) -> None:
-        with patch.dict(os.environ, {"SNOWFLAKE_PAT": ""}, clear=False):
-            with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
-                online_service._online_service_query_api_pat_from_env()
-        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
-        self.assertIn("SNOWFLAKE_PAT", str(ctx.exception.original_exception))
 
     def test_read_postgres_online_features_requires_snowflake_pat(self) -> None:
         session = create_autospec(Session)
@@ -235,14 +239,13 @@ class OnlineServiceTest(absltest.TestCase):
             },
         }
 
-        captured: list[urllib.request.Request] = []
+        captured: list[httpx.Request] = []
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            captured.append(req)
-            self.assertTrue(req.full_url.endswith("/api/v1/query") or "/api/v1/query" in req.full_url)
-            self.assertIn("Snowflake Token=", req.headers["Authorization"])
-            assert isinstance(req.data, bytes)
-            body = json.loads(req.data.decode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            self.assertIn("/api/v1/query", str(request.url))
+            self.assertIn("Snowflake Token=", request.headers["Authorization"])
+            body = json.loads(request.content.decode("utf-8"))
             self.assertEqual(body["name"], "my_fv")
             self.assertEqual(body["version"], "v1")
             self.assertEqual(body["object_type"], "feature_view")
@@ -252,10 +255,10 @@ class OnlineServiceTest(absltest.TestCase):
             )
             self.assertEqual(len(body["request_rows"]), 2)
             self.assertNotIn("features", body)
-            return _FakeHttpOk(json.dumps(response_payload).encode("utf-8"))
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, _schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/svc",
@@ -293,17 +296,16 @@ class OnlineServiceTest(absltest.TestCase):
             },
         }
 
-        captured: list[urllib.request.Request] = []
+        captured: list[httpx.Request] = []
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            captured.append(req)
-            assert isinstance(req.data, bytes)
-            body = json.loads(req.data.decode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            body = json.loads(request.content.decode("utf-8"))
             self.assertEqual(body["features"], ["score"])
-            return _FakeHttpOk(json.dumps(response_payload).encode("utf-8"))
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, _schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/",
@@ -335,11 +337,11 @@ class OnlineServiceTest(absltest.TestCase):
             },
         }
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            return _FakeHttpOk(json.dumps(response_payload).encode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, _schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/",
@@ -370,11 +372,11 @@ class OnlineServiceTest(absltest.TestCase):
             },
         }
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            return _FakeHttpOk(json.dumps(response_payload).encode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/",
@@ -409,11 +411,11 @@ class OnlineServiceTest(absltest.TestCase):
             },
         }
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            return _FakeHttpOk(json.dumps(response_payload).encode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, _schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/",
@@ -436,11 +438,10 @@ class OnlineServiceTest(absltest.TestCase):
 
         call_count = 0
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
+        def handler(request: httpx.Request) -> httpx.Response:
             nonlocal call_count
             call_count += 1
-            assert isinstance(req.data, bytes)
-            body = json.loads(req.data.decode("utf-8"))
+            body = json.loads(request.content.decode("utf-8"))
             self.assertNotIn("features", body)
             n = len(body["request_rows"])
             self.assertLessEqual(n, 10)
@@ -451,11 +452,11 @@ class OnlineServiceTest(absltest.TestCase):
                 "results": results,
                 "metadata": {"features": [{"name": "x"}]},
             }
-            return _FakeHttpOk(json.dumps(payload).encode("utf-8"))
+            return _make_response(json.dumps(payload).encode("utf-8"))
 
         keys = [[i] for i in range(11)]
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 rows, _schema = online_service.read_postgres_online_features(
                     session,
                     "https://q.example/",
@@ -475,13 +476,11 @@ class OnlineServiceTest(absltest.TestCase):
 
         err_body = json.dumps({"error": {"code": "NOT_FOUND", "message": "missing fv"}}).encode()
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            raise urllib.error.HTTPError(
-                req.full_url, 404, "Not Found", hdrs=email.message.Message(), fp=io.BytesIO(err_body)
-            )
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(err_body, status=404)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.read_postgres_online_features(
                         session,
@@ -507,13 +506,11 @@ class OnlineServiceTest(absltest.TestCase):
             }
         ).encode()
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            raise urllib.error.HTTPError(
-                req.full_url, 500, "Server Error", hdrs=email.message.Message(), fp=io.BytesIO(err_body)
-            )
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(err_body, status=500)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.read_postgres_online_features(
                         session,
@@ -545,14 +542,13 @@ class OnlineServiceTest(absltest.TestCase):
 
     def test_stream_ingest_records_posts_ingest_api(self) -> None:
         session = create_autospec(Session)
-        captured: list[urllib.request.Request] = []
+        captured: list[httpx.Request] = []
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            captured.append(req)
-            self.assertTrue(req.full_url.endswith("/api/v1/ingest") or "/api/v1/ingest" in req.full_url)
-            self.assertIn("Snowflake Token=", req.headers["Authorization"])
-            assert isinstance(req.data, bytes)
-            body = json.loads(req.data.decode("utf-8"))
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            self.assertIn("/api/v1/ingest", str(request.url))
+            self.assertIn("Snowflake Token=", request.headers["Authorization"])
+            body = json.loads(request.content.decode("utf-8"))
             self.assertEqual(
                 body["records"],
                 {"MY_STREAM": [{"USER_ID": "u1", "AMOUNT": 2.5}]},
@@ -567,10 +563,10 @@ class OnlineServiceTest(absltest.TestCase):
                     }
                 },
             }
-            return _FakeHttpOk(json.dumps(resp).encode("utf-8"))
+            return _make_response(json.dumps(resp).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 n = online_service.stream_ingest_records(
                     session,
                     "https://ingest.example/svc",
@@ -584,7 +580,7 @@ class OnlineServiceTest(absltest.TestCase):
         """207 with failed records raises SnowflakeMLException."""
         session = create_autospec(Session)
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
+        def handler(request: httpx.Request) -> httpx.Response:
             resp = {
                 "request_id": "r2",
                 "status": "partial_success",
@@ -607,10 +603,10 @@ class OnlineServiceTest(absltest.TestCase):
                     }
                 },
             }
-            return _FakeHttpOk(json.dumps(resp).encode("utf-8"), status=207)
+            return _make_response(json.dumps(resp).encode("utf-8"), status=207)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.stream_ingest_records(
                         session,
@@ -623,7 +619,7 @@ class OnlineServiceTest(absltest.TestCase):
     def test_stream_ingest_records_http_207_all_records_failed_raises(self) -> None:
         session = create_autospec(Session)
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
+        def handler(request: httpx.Request) -> httpx.Response:
             resp = {
                 "request_id": "r3",
                 "status": "partial_success",
@@ -646,10 +642,10 @@ class OnlineServiceTest(absltest.TestCase):
                     }
                 },
             }
-            return _FakeHttpOk(json.dumps(resp).encode("utf-8"), status=207)
+            return _make_response(json.dumps(resp).encode("utf-8"), status=207)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.stream_ingest_records(
                         session,
@@ -670,13 +666,11 @@ class OnlineServiceTest(absltest.TestCase):
         session = create_autospec(Session)
         err_body = json.dumps({"error": {"code": "INVALID_ARGUMENT", "message": "bad row"}}).encode()
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            raise urllib.error.HTTPError(
-                req.full_url, 400, "Bad Request", hdrs=email.message.Message(), fp=io.BytesIO(err_body)
-            )
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(err_body, status=400)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.stream_ingest_records(
                         session,
@@ -783,14 +777,13 @@ class OnlineServiceTest(absltest.TestCase):
         session = create_autospec(Session)
         captured_body: list[dict[str, Any]] = []
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            assert isinstance(req.data, bytes)
-            captured_body.append(json.loads(req.data.decode("utf-8")))
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_body.append(json.loads(request.content.decode("utf-8")))
             resp = {"request_id": "r1", "status": "success", "sources": {"S": {"records": {"total": 1, "failed": 0}}}}
-            return _FakeHttpOk(json.dumps(resp).encode("utf-8"))
+            return _make_response(json.dumps(resp).encode("utf-8"))
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 online_service.stream_ingest_records(
                     session,
                     "https://ingest.example/",
@@ -805,13 +798,11 @@ class OnlineServiceTest(absltest.TestCase):
         session = create_autospec(Session)
         err_body = json.dumps({"error": {"message": "boom"}, "request_id": "srv-123"}).encode()
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            raise urllib.error.HTTPError(
-                req.full_url, 500, "Internal", hdrs=email.message.Message(), fp=io.BytesIO(err_body)
-            )
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(err_body, status=500)
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.stream_ingest_records(session, "https://i/", "s", [{"x": 1}])
         msg = str(ctx.exception.original_exception)
@@ -822,13 +813,11 @@ class OnlineServiceTest(absltest.TestCase):
         session = create_autospec(Session)
         html_body = b"<html><body>502 Bad Gateway</body></html>"
 
-        def urlopen_impl(req: urllib.request.Request, timeout: float | None = None) -> _FakeHttpOk:
-            raise urllib.error.HTTPError(
-                req.full_url, 502, "Bad Gateway", hdrs=email.message.Message(), fp=io.BytesIO(html_body)
-            )
+        def handler(request: httpx.Request) -> httpx.Response:
+            return _make_response(html_body, status=502, headers={"content-type": "text/html"})
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
-            with patch.object(urllib.request, "urlopen", side_effect=urlopen_impl):
+            with _patch_online_http_client_with_transport(handler):
                 with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
                     online_service.stream_ingest_records(session, "https://i/", "s", [{"x": 1}])
         msg = str(ctx.exception.original_exception)

@@ -201,10 +201,11 @@ class ModelDeploymentSpec:
         *,
         inference_compute_pool_name: sql_identifier.SqlIdentifier,
         function_name: str,
-        input_stage_location: str,
-        output_stage_location: str,
         completion_filename: str,
         input_file_pattern: str,
+        input_stage_location: Optional[str] = None,
+        output_stage_location: Optional[str] = None,
+        base_stage_location: Optional[str] = None,
         column_handling: Optional[str] = None,
         params: Optional[str] = None,
         partition_columns: Optional[list[str]] = None,
@@ -226,10 +227,13 @@ class ModelDeploymentSpec:
         Args:
             inference_compute_pool_name: Compute pool for inference.
             function_name: Function name.
-            input_stage_location: Stage location for input data.
-            output_stage_location: Stage location for output data.
             completion_filename: Name of completion file (default: "completion.txt").
             input_file_pattern: Pattern for input files (optional).
+            input_stage_location: Stage location for input data.
+            output_stage_location: Stage location for output data.
+                Mutually exclusive with base_stage_location.
+            base_stage_location: Base stage location; server derives per-job paths.
+                Mutually exclusive with output_stage_location.
             column_handling: Column handling mode for input data.
             params: Additional parameters for the job.
             partition_columns: Partition columns for the input data.
@@ -284,6 +288,7 @@ class ModelDeploymentSpec:
             ),
             output=model_deployment_spec_schema.Output(
                 output_stage_location=output_stage_location,
+                base_stage_location=base_stage_location,
                 completion_filename=completion_filename,
             ),
             replicas=replicas,

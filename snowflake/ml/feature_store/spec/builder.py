@@ -21,11 +21,13 @@ Example — StreamingFeatureView::
 
 Example — RealtimeFeatureView (no offline_configs, features come from UDF outputs)::
 
+    # ``ordered_entity_column_names`` is derived from the upstream FVs in
+    # ``set_sources``; passing ``entity_columns`` to ``set_properties`` is
+    # rejected for RTFV / FeatureGroup.
     spec_obj = (
         FeatureViewSpecBuilder(FeatureViewKind.RealtimeFeatureView, ...)
         .set_sources([request_source, user_fv])
         .set_udf(name=..., engine=..., output_columns=[...], function_definition=...)
-        .set_properties(entity_columns=[...])
         .build()
     )
 
@@ -39,13 +41,14 @@ Example — FeatureGroup (FV sources only, features passthrough, optional prefix
             ("USER_FV", "v2"): "USER_FV_v2_",
             ("TXN_FV", "v1"): "TXN_FV_v1_",
         })
-        .set_properties(entity_columns=[...])
         .build()
     )
 """
 
 from __future__ import annotations
 
+import ast
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -149,6 +152,21 @@ _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
 # Type alias for the polymorphic source input
 SourceInput = Union[StreamSource, RequestSource, "FeatureView", "FeatureViewSlice", BatchSource]
 
+# Allowed upstream FV kinds when a FEATURES source is consumed by another FV.
+_FG_ALLOWED_UPSTREAM_KINDS: frozenset[FeatureViewKind] = frozenset(
+    {
+        FeatureViewKind.StreamingFeatureView,
+        FeatureViewKind.BatchFeatureView,
+        FeatureViewKind.RealtimeFeatureView,
+    }
+)
+_RTFV_ALLOWED_UPSTREAM_KINDS: frozenset[FeatureViewKind] = frozenset(
+    {
+        FeatureViewKind.StreamingFeatureView,
+        FeatureViewKind.BatchFeatureView,
+    }
+)
+
 
 class FeatureViewSpecBuilder:
     """Builds a validated FeatureView spec payload for the Go backend.
@@ -194,6 +212,16 @@ class FeatureViewSpecBuilder:
         self._agg_specs: list[AggregationSpec] = []
         self._udf: Optional[UDF] = None
         self._source_prefix_map: dict[tuple[str, Optional[str]], str] = {}
+        # Upstream kind per FEATURES source, keyed by (name, source_version).
+        # Populated and reset by set_sources; missing entries are skipped by
+        # the upstream-kind validators.
+        self._source_kinds: dict[tuple[str, Optional[str]], FeatureViewKind] = {}
+        # First-seen union of upstream FVs' ``ordered_entity_columns`` across
+        # FEATURES sources, in user-provided source order. Built inside
+        # :meth:`set_sources` alongside ``self._sources``; used by RTFV / FG
+        # as ``Spec.ordered_entity_column_names`` and as the entity-column
+        # exclude set in :meth:`_resolve_passthrough_features`.
+        self._derived_entity_columns: list[str] = []
 
         # Properties
         self._entity_columns: list[str] = []
@@ -237,7 +265,7 @@ class FeatureViewSpecBuilder:
     def set_properties(
         self,
         *,
-        entity_columns: list[str],
+        entity_columns: Optional[list[str]] = None,
         timestamp_field: Optional[str] = None,
         granularity: Optional[str] = None,
         agg_method: Optional[FeatureAggregationMethod] = None,
@@ -248,8 +276,16 @@ class FeatureViewSpecBuilder:
         Interval strings (e.g., ``'1h'``, ``'30s'``) are converted to integer
         seconds internally.
 
+        ``entity_columns`` is required for Streaming and Batch feature views,
+        where it defines the join keys. It must not be set for
+        :class:`FeatureViewKind.RealtimeFeatureView` or
+        :class:`FeatureViewKind.FeatureGroup`: those kinds derive their
+        ordered entity columns from the upstream FEATURES sources at
+        :meth:`build` time.
+
         Args:
-            entity_columns: Ordered list of entity/join-key column names.
+            entity_columns: Ordered list of entity/join-key column names
+                (Streaming/Batch only; must be ``None`` for RTFV/FG).
             timestamp_field: Optional timestamp column name.
             granularity: Optional tile interval (e.g., ``"1h"``). Converted to seconds.
             agg_method: Optional aggregation method.
@@ -257,8 +293,21 @@ class FeatureViewSpecBuilder:
 
         Returns:
             self for method chaining.
+
+        Raises:
+            ValueError: If ``entity_columns`` is provided for a
+                :class:`FeatureViewKind.RealtimeFeatureView` or
+                :class:`FeatureViewKind.FeatureGroup`.
         """
-        self._entity_columns = entity_columns
+        if entity_columns is not None and self._kind in (
+            FeatureViewKind.RealtimeFeatureView,
+            FeatureViewKind.FeatureGroup,
+        ):
+            raise ValueError(
+                f"{self._kind.value}.set_properties(entity_columns=...) is not allowed; "
+                f"entity columns are derived from upstream FeatureView sources."
+            )
+        self._entity_columns = list(entity_columns) if entity_columns is not None else []
         self._timestamp_field = timestamp_field
         self._granularity_sec = interval_to_seconds(granularity) if granularity else None
         self._agg_method = agg_method
@@ -288,6 +337,8 @@ class FeatureViewSpecBuilder:
         )
 
         self._sources = []
+        self._source_kinds = {}
+        self._derived_entity_columns = []
 
         for src in sources:
             if isinstance(src, BatchSource):
@@ -297,12 +348,63 @@ class FeatureViewSpecBuilder:
             elif isinstance(src, RequestSource):
                 self._sources.append(self._convert_request_source(src))
             elif isinstance(src, FeatureViewSlice):
-                self._sources.append(self._convert_feature_view_slice(src))
+                converted = self._convert_feature_view_slice(src)
+                self._sources.append(converted)
+                key = (converted.name, converted.source_version)
+                self._source_kinds[key] = FeatureViewSpecBuilder._kind_of_fv(src.feature_view_ref)
+                self._append_derived_entity_columns(src.feature_view_ref.ordered_entity_columns)
             elif isinstance(src, FeatureView):
-                self._sources.append(self._convert_feature_view(src))
+                converted = self._convert_feature_view(src)
+                self._sources.append(converted)
+                key = (converted.name, converted.source_version)
+                self._source_kinds[key] = FeatureViewSpecBuilder._kind_of_fv(src)
+                self._append_derived_entity_columns(src.ordered_entity_columns)
             else:
                 raise ValueError(f"Unsupported source type: {type(src).__name__}")
         return self
+
+    def _append_derived_entity_columns(self, cols: Iterable[str]) -> None:
+        """Append upstream entity columns to ``self._derived_entity_columns``.
+
+        Preserves first-seen order across calls (dedup against what's already
+        been collected from earlier FEATURES sources in the same
+        :meth:`set_sources` invocation).
+
+        Args:
+            cols: Entity column names from a single upstream FeatureView
+                (typically ``fv.ordered_entity_columns``).
+        """
+        seen = set(self._derived_entity_columns)
+        for col in cols:
+            if col not in seen:
+                seen.add(col)
+                self._derived_entity_columns.append(col)
+
+    @staticmethod
+    def _kind_of_fv(fv: FeatureView) -> FeatureViewKind:
+        """Map a user-facing FeatureView to its spec FeatureViewKind.
+
+        Today the only user-facing kinds are Streaming and Batch (surfaced
+        via :attr:`FeatureView.is_streaming`), so this helper can only
+        return those two values for real inputs. The chaining-rejection
+        branches in :meth:`_validate_features_upstream_kinds` that guard
+        against ``RealtimeFeatureView`` / ``FeatureGroup`` upstreams are
+        staged for the follow-up that introduces those user-facing FV
+        classes; they are exercised today by tests that seed
+        ``self._source_kinds`` directly (see ``_seed_upstream_kind``).
+
+        TODO(snowml-quake): Switch to isinstance dispatch once user-facing
+        RealtimeFeatureView and FeatureGroup FV classes land.
+
+        Args:
+            fv: A user-facing FeatureView.
+
+        Returns:
+            The spec FeatureViewKind that this FV represents.
+        """
+        if fv.is_streaming:
+            return FeatureViewKind.StreamingFeatureView
+        return FeatureViewKind.BatchFeatureView
 
     _SUPPORTED_UDF_ENGINES: frozenset[str] = frozenset({"pandas"})
 
@@ -428,10 +530,14 @@ class FeatureViewSpecBuilder:
             client_version=VERSION,
         )
 
-        # 4. Construct spec — filter out BATCH sources (builder-internal only)
+        # 4. Construct spec — filter out BATCH sources (builder-internal only).
         external_sources = [s for s in self._sources if s.source_type != SourceType.BATCH]
+        if self._kind in (FeatureViewKind.RealtimeFeatureView, FeatureViewKind.FeatureGroup):
+            ordered_entity_column_names = self._derived_entity_columns
+        else:
+            ordered_entity_column_names = self._entity_columns
         spec = Spec(
-            ordered_entity_column_names=self._entity_columns,
+            ordered_entity_column_names=ordered_entity_column_names,
             sources=external_sources,
             features=spec_features,
             timestamp_field=self._timestamp_field,
@@ -499,14 +605,28 @@ class FeatureViewSpecBuilder:
 
     @staticmethod
     def _convert_feature_view_slice(fvs: FeatureViewSlice) -> Source:
-        """Convert a FeatureViewSlice to a spec Source with selected_features."""
+        """Convert a FeatureViewSlice to a spec Source containing only the selected columns.
+
+        The slice's caller-requested feature order is preserved in ``columns``.
+        Selected names that don't appear in the upstream FV's exposed schema
+        are silently dropped (matching prior selected-features semantics).
+
+        Args:
+            fvs: The feature view slice to convert.
+
+        Returns:
+            A FEATURES Source whose ``columns`` are exactly the slice's selected
+            columns, in the slice's requested order.
+        """
         fv = fvs.feature_view_ref
+        all_cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        col_by_name = {c.name: c for c in all_cols}
+        selected_cols = [col_by_name[n.resolved()] for n in fvs.names if n.resolved() in col_by_name]
         return Source(
             name=fv.name.resolved(),
             source_type=SourceType.FEATURES,
-            columns=FeatureViewSpecBuilder._columns_from_feature_view(fv),
+            columns=selected_cols,
             source_version=str(fv.version) if fv.version else None,
-            selected_features=[n.resolved() for n in fvs.names],
         )
 
     # -----------------------------------------------------------------------
@@ -687,7 +807,7 @@ class FeatureViewSpecBuilder:
             # RealtimeFV has no timestamp_field (validated in _validate_realtime).
             if self._udf is None:
                 return []
-            exclude = set(self._entity_columns)
+            exclude = set(self._derived_entity_columns)
             return [
                 Feature(source_column=col, output_column=col)
                 for col in self._udf.output_columns
@@ -696,28 +816,29 @@ class FeatureViewSpecBuilder:
 
         elif self._kind == FeatureViewKind.FeatureGroup:
             # FeatureGroup has no timestamp_field (validated in _validate_feature_group).
-            exclude = set(self._entity_columns)
+            # ``source.columns`` already represents the caller's selection in
+            # their requested order (slice projection happens at conversion time).
+            exclude = set(self._derived_entity_columns)
             spec_features: list[Feature] = []
             for source in self._sources:
                 if source.source_type != SourceType.FEATURES:
                     continue
                 prefix = self._source_prefix_map.get((source.name, source.source_version), "")
-                if source.selected_features is not None:
-                    # Preserve the caller's requested ordering (FeatureViewSlice
-                    # intentionally preserves feature order) by iterating
-                    # selected_features rather than source.columns.
-                    col_by_name = {c.name: c for c in source.columns}
-                    ordered_cols = [col_by_name[n] for n in source.selected_features if n in col_by_name]
-                else:
-                    ordered_cols = list(source.columns)
-                for col in ordered_cols:
+                for col in source.columns:
                     if col.name in exclude:
                         continue
                     if prefix:
                         output_col = col.model_copy(update={"name": f"{prefix}{col.name}"})
                     else:
                         output_col = col
-                    spec_features.append(Feature(source_column=col, output_column=output_col))
+                    spec_features.append(
+                        Feature(
+                            source_column=col,
+                            output_column=output_col,
+                            source_name=source.name,
+                            source_version=source.source_version,
+                        )
+                    )
             return spec_features
 
         raise ValueError(f"Passthrough features are not supported for kind: {self._kind.value}")
@@ -786,6 +907,7 @@ class FeatureViewSpecBuilder:
         # UDF required
         if self._udf is None:
             raise ValueError("StreamingFeatureView requires a UDF")
+        self._validate_udf_signature()
 
         # Timestamp required
         if self._timestamp_field is None:
@@ -825,10 +947,14 @@ class FeatureViewSpecBuilder:
 
         RealtimeFeatureView rules:
           - No offline configs (computed at request time)
-          - Exactly 1 Request source plus 0+ Features sources; no Stream/Batch
+          - Exactly 1 Request source plus at least 1 Features source;
+            no Stream/Batch
           - UDF required; features are derived from its output_columns
           - No aggregation (no agg_method, no granularity_sec, no agg features)
           - No timestamp_field
+          - Each FEATURES source's upstream FV kind (when known) must be
+            ``StreamingFeatureView`` or ``BatchFeatureView`` — RTFV does not
+            support chaining (RTFV-on-RTFV) or FeatureGroup upstreams.
 
         Args:
             source_types: Source types present on the builder.
@@ -846,6 +972,16 @@ class FeatureViewSpecBuilder:
             raise ValueError("RealtimeFeatureView must not have Stream sources")
         if SourceType.BATCH in source_types:
             raise ValueError("RealtimeFeatureView must not have Batch sources")
+        if self._sources[0].source_type != SourceType.REQUEST:
+            raise ValueError(
+                "RealtimeFeatureView requires the Request source to be first in "
+                "sources[] (its data is bound to the UDF's first positional argument)."
+            )
+        if source_types.count(SourceType.FEATURES) < 1:
+            raise ValueError(
+                "RealtimeFeatureView requires at least 1 Features source "
+                "(an upstream FeatureView) in addition to the Request source."
+            )
 
         if self._udf is None:
             raise ValueError("RealtimeFeatureView requires a UDF")
@@ -859,6 +995,15 @@ class FeatureViewSpecBuilder:
         if self._timestamp_field is not None:
             raise ValueError("RealtimeFeatureView must not have a timestamp_field")
 
+        self._validate_features_upstream_kinds(
+            allowed_kinds=_RTFV_ALLOWED_UPSTREAM_KINDS,
+            consumer_label="RealtimeFeatureView",
+            allowed_label="StreamingFeatureView, BatchFeatureView",
+            extra_hint="RealtimeFeatureView does not support chaining or FeatureGroup upstreams.",
+        )
+
+        self._validate_udf_signature()
+
     def _validate_feature_group(self, source_types: list[SourceType]) -> None:
         """Validate rules specific to FeatureGroup.
 
@@ -868,6 +1013,10 @@ class FeatureViewSpecBuilder:
           - No UDF
           - No aggregation (no agg_method, no granularity_sec, no agg features)
           - No timestamp_field
+          - No target_lag_sec (FG inherits freshness from its upstream FVs)
+          - Each FEATURES source's upstream FV kind (when known) must be
+            ``StreamingFeatureView``, ``BatchFeatureView``, or
+            ``RealtimeFeatureView`` — FG-on-FG chaining is not supported.
 
         Args:
             source_types: Source types present on the builder.
@@ -896,6 +1045,15 @@ class FeatureViewSpecBuilder:
             raise ValueError("FeatureGroup must not have aggregation features (set_features)")
         if self._timestamp_field is not None:
             raise ValueError("FeatureGroup must not have a timestamp_field")
+        if self._target_lag_sec is not None:
+            raise ValueError("FeatureGroup must not have target_lag_sec")
+
+        self._validate_features_upstream_kinds(
+            allowed_kinds=_FG_ALLOWED_UPSTREAM_KINDS,
+            consumer_label="FeatureGroup",
+            allowed_label="StreamingFeatureView, BatchFeatureView, RealtimeFeatureView",
+            extra_hint="FeatureGroup chaining is not supported.",
+        )
 
     def _validate_unique_output_columns(self, features: list[Feature]) -> None:
         """Reject specs whose resolved features contain duplicate output names.
@@ -946,16 +1104,12 @@ class FeatureViewSpecBuilder:
                     raise ValueError(f"Stream source '{source.name}' must have columns")
                 if source.source_version is not None:
                     raise ValueError(f"Stream source '{source.name}' must not have " f"source_version")
-                if source.selected_features is not None:
-                    raise ValueError(f"Stream source '{source.name}' must not have " f"selected_features")
 
             elif source.source_type == SourceType.REQUEST:
                 if not source.columns:
                     raise ValueError(f"Request source '{source.name}' must have columns")
                 if source.source_version is not None:
                     raise ValueError(f"Request source '{source.name}' must not have " f"source_version")
-                if source.selected_features is not None:
-                    raise ValueError(f"Request source '{source.name}' must not have " f"selected_features")
 
             elif source.source_type == SourceType.FEATURES:
                 if not source.columns:
@@ -968,5 +1122,108 @@ class FeatureViewSpecBuilder:
                     raise ValueError(f"Batch source '{source.name}' must have columns")
                 if source.source_version is not None:
                     raise ValueError(f"Batch source '{source.name}' must not have " f"source_version")
-                if source.selected_features is not None:
-                    raise ValueError(f"Batch source '{source.name}' must not have " f"selected_features")
+
+    def _validate_features_upstream_kinds(
+        self,
+        *,
+        allowed_kinds: frozenset[FeatureViewKind],
+        consumer_label: str,
+        allowed_label: str,
+        extra_hint: str,
+    ) -> None:
+        """Reject FEATURES sources whose upstream FV kind is not allowed.
+
+        Only sources registered through ``set_sources`` with a real
+        ``FeatureView`` / ``FeatureViewSlice`` input have an entry in
+        ``self._source_kinds``. Sources with no recorded kind are skipped
+        so that test fixtures injecting raw ``Source`` objects continue
+        to work without explicit kind annotations.
+
+        Args:
+            allowed_kinds: Permitted upstream FV kinds for this consumer.
+            consumer_label: Human-readable label for the consumer kind
+                (e.g., ``"FeatureGroup"``) used in the error message.
+            allowed_label: Comma-separated list of permitted kind names
+                used in the error message.
+            extra_hint: Additional explanatory sentence appended to the
+                error message.
+
+        Raises:
+            ValueError: If any FEATURES source has a recorded upstream
+                kind that is not in *allowed_kinds*.
+        """
+        for source in self._sources:
+            if source.source_type != SourceType.FEATURES:
+                continue
+            upstream_kind = self._source_kinds.get((source.name, source.source_version))
+            if upstream_kind is None:
+                continue
+            if upstream_kind not in allowed_kinds:
+                raise ValueError(
+                    f"{consumer_label} upstream '{source.name}@{source.source_version}' "
+                    f"has kind '{upstream_kind.value}'; allowed: {allowed_label}. "
+                    f"{extra_hint}"
+                )
+
+    def _validate_udf_signature(self) -> None:
+        """Validate that the UDF's signature matches the runtime positional contract.
+
+        At inference / materialization time the runtime invokes the UDF with
+        exactly one positional argument per ``self._sources`` entry, in
+        ``sources[]`` order. This helper enforces that the provided
+        ``function_definition`` exposes a top-level ``def`` matching
+        ``udf.name`` whose signature is strictly positional, non-variadic,
+        non-async, non-generator, and has the correct arity.
+
+        Raises:
+            ValueError: If the UDF source is unparsable, lacks a top-level
+                ``def`` matching ``udf.name``, is async / a generator,
+                uses ``*args`` / ``**kwargs`` / keyword-only args, or has an
+                arity that doesn't match ``len(self._sources)``.
+        """
+        udf = self._udf
+        assert udf is not None  # caller has already verified UDF presence
+        try:
+            tree = ast.parse(udf.function_definition)
+        except SyntaxError as e:
+            raise ValueError(f"UDF '{udf.name}' function_definition is not valid Python: {e.msg}") from e
+
+        matches = [
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == udf.name
+        ]
+        if not matches:
+            raise ValueError(
+                f"UDF '{udf.name}' function_definition must contain a top-level " f"'def {udf.name}(...)'."
+            )
+        if len(matches) > 1:
+            raise ValueError(
+                f"UDF '{udf.name}' function_definition contains multiple top-level "
+                f"defs named '{udf.name}'; expected exactly one."
+            )
+        fn = matches[0]
+
+        if isinstance(fn, ast.AsyncFunctionDef):
+            raise ValueError(f"UDF '{udf.name}' must not be async.")
+
+        for node in ast.walk(fn):
+            if isinstance(node, (ast.Yield, ast.YieldFrom)):
+                raise ValueError(f"UDF '{udf.name}' must not be a generator.")
+
+        args = fn.args
+        if args.vararg is not None:
+            raise ValueError(f"UDF '{udf.name}' must not use *args.")
+        if args.kwarg is not None:
+            raise ValueError(f"UDF '{udf.name}' must not use **kwargs.")
+        if args.kwonlyargs:
+            raise ValueError(f"UDF '{udf.name}' must not use keyword-only args.")
+
+        expected = len(self._sources)
+        actual = len(args.args) + len(args.posonlyargs)
+        if actual != expected:
+            raise ValueError(
+                f"UDF '{udf.name}' has {actual} positional argument(s) but the "
+                f"feature view has {expected} source(s). The UDF receives one "
+                f"positional argument per source, in sources[] order."
+            )

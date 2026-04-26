@@ -68,6 +68,18 @@ py_test(
 )
 
 py_test(
+    name = "registry_batch_inference_definition_vllm_test",
+    timeout = "eternal",
+    srcs = ["registry_batch_inference_definition_vllm_test.py"],
+    optional_dependencies = ["transformers"],
+    tags = ["feature:model_serving"],
+    deps = [
+        ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/batch",
+    ],
+)
+
+py_test(
     name = "registry_batch_inference_failure_mode_test",
     timeout = "eternal",
     srcs = ["registry_batch_inference_failure_mode_test.py"],
@@ -456,7 +468,7 @@ py_test(
         "//tests/integ/snowflake/ml/test_data:cat.jpeg",
     ],
     optional_dependencies = ["transformers"],
-    shard_count = 1,
+    shard_count = 2,
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",

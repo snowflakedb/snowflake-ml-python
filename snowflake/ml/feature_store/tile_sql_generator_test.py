@@ -7,6 +7,7 @@ from snowflake.ml.feature_store.tile_sql_generator import (
     MergingSqlGenerator,
     RollupSqlGenerator,
     TilingSqlGenerator,
+    _generate_cumulative_expressions,
 )
 
 
@@ -811,6 +812,604 @@ class RollupSqlGeneratorTest(absltest.TestCase):
         # Find the final SELECT (after all CTEs)
         self.assertIn("l0._PARTIAL_LAST_ORDER_VALUE", sql)
         self.assertIn("l0._PARTIAL_LAST_TS_ORDER_VALUE", sql)
+
+
+class TemporalRollupSqlGeneratorTest(absltest.TestCase):
+    """Unit tests for temporal (range JOIN) rollup SQL generation."""
+
+    def test_temporal_rollup_uses_range_join(self) -> None:
+        """Test that temporal columns produce a range JOIN with validity window."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFFECTIVE_TS",
+            mapping_valid_to_col="EXPIRY_TS",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertNotIn("MATCH_CONDITION", sql)
+        self.assertIn("JOIN", sql)
+        self.assertIn("t.TILE_START >= m.EFFECTIVE_TS", sql)
+        self.assertIn("m.EXPIRY_TS IS NULL OR t.TILE_START < m.EXPIRY_TS", sql)
+
+    def test_temporal_rollup_without_effective_ts_uses_flat_join(self) -> None:
+        """Test that omitting mapping_valid_from_col produces flat JOIN."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertNotIn("MATCH_CONDITION", sql)
+        self.assertIn("JOIN", sql)
+
+    def test_temporal_rollup_with_list_features_uses_range_join_in_base_cte(self) -> None:
+        """Test that range JOIN is used in the base CTE for list features."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFFECTIVE_TS",
+            mapping_valid_to_col="EXPIRY_TS",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertIn("t.TILE_START >= m.EFFECTIVE_TS", sql)
+        self.assertIn("m.EXPIRY_TS IS NULL OR t.TILE_START < m.EXPIRY_TS", sql)
+        self.assertIn("LATERAL FLATTEN", sql)
+
+    def test_temporal_rollup_mixed_simple_and_list(self) -> None:
+        """Test temporal rollup with both simple and list aggregations."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFFECTIVE_TS",
+            mapping_valid_to_col="EXPIRY_TS",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertIn("t.TILE_START >= m.EFFECTIVE_TS", sql)
+        self.assertIn("simple_rollup AS", sql)
+        self.assertIn("list_rollup_0 AS", sql)
+        self.assertIn("LATERAL FLATTEN", sql)
+
+    def test_temporal_rollup_range_join_condition_format(self) -> None:
+        """Test the exact range JOIN format with all conditions in ON clause."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_TOTAL",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFF_TS",
+            mapping_valid_to_col="EXP_TS",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertNotIn("MATCH_CONDITION", sql)
+        self.assertIn("ON t.VISITOR_ID = m.VISITOR_ID", sql)
+        self.assertIn("t.TILE_START >= m.EFF_TS", sql)
+        self.assertIn("m.EXP_TS IS NULL OR t.TILE_START < m.EXP_TS", sql)
+
+    def test_generate_as_cte(self) -> None:
+        """Test generate_as_cte returns proper (name, body) tuple."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFFECTIVE_TS",
+            mapping_valid_to_col="EXPIRY_TS",
+        )
+        cte_name, cte_body = generator.generate_as_cte("PIT_ROLLUP_FV0")
+
+        self.assertEqual(cte_name, "PIT_ROLLUP_FV0")
+        self.assertNotIn("ASOF JOIN", cte_body)
+        self.assertIn("t.TILE_START >= m.EFFECTIVE_TS", cte_body)
+        self.assertIn("SUM(t._PARTIAL_COUNT_VISITOR_ID)", cte_body)
+        self.assertNotIn("WITH", cte_body)
+
+    def test_temporal_rollup_preserves_aggregation_logic(self) -> None:
+        """Test that temporal rollup uses the same aggregation expressions as flat rollup."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_TOTAL",
+            ),
+            AggregationSpec(
+                function=AggregationType.AVG,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="ORDER_AVG",
+            ),
+        ]
+
+        flat_gen = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        temporal_gen = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="EFFECTIVE_TS",
+            mapping_valid_to_col="EXPIRY_TS",
+        )
+
+        flat_sql = flat_gen.generate()
+        temporal_sql = temporal_gen.generate()
+
+        for agg_expr in [
+            "SUM(t._PARTIAL_COUNT_VISITOR_ID)",
+            "SUM(t._PARTIAL_SUM_ORDER_VALUE)",
+        ]:
+            self.assertIn(agg_expr, flat_sql)
+            self.assertIn(agg_expr, temporal_sql)
+
+        # Only temporal should have range JOIN conditions
+        self.assertNotIn("EFFECTIVE_TS", flat_sql)
+        self.assertIn("t.TILE_START >= m.EFFECTIVE_TS", temporal_sql)
+
+    def test_range_join_conditions_in_on_clause_simple(self) -> None:
+        """Test that valid_from and valid_to are in the JOIN ON clause, not WHERE."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="VALID_FROM",
+            mapping_valid_to_col="VALID_TO",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        # Validity conditions should be in the ON clause
+        on_clause_idx = sql.index("ON ")
+        where_clause_idx = sql.index("WHERE ")
+        valid_from_idx = sql.index("t.TILE_START >= m.VALID_FROM")
+        valid_to_idx = sql.index("m.VALID_TO IS NULL OR t.TILE_START < m.VALID_TO")
+        self.assertGreater(valid_from_idx, on_clause_idx)
+        self.assertLess(valid_from_idx, where_clause_idx)
+        self.assertGreater(valid_to_idx, on_clause_idx)
+        self.assertLess(valid_to_idx, where_clause_idx)
+
+    def test_range_join_conditions_in_on_clause_list(self) -> None:
+        """Test that range JOIN conditions appear in list features base CTE ON clause."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="VALID_FROM",
+            mapping_valid_to_col="VALID_TO",
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertIn("t.TILE_START >= m.VALID_FROM", sql)
+        self.assertIn("m.VALID_TO IS NULL OR t.TILE_START < m.VALID_TO", sql)
+        self.assertIn("LATERAL FLATTEN", sql)
+
+    def test_no_temporal_columns_uses_plain_join(self) -> None:
+        """Test that omitting both temporal columns produces a plain JOIN."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("ASOF JOIN", sql)
+        self.assertNotIn("VALID_FROM", sql)
+        self.assertNotIn("VALID_TO", sql)
+        self.assertIn("JOIN", sql)
+
+    def test_range_join_in_generate_as_cte(self) -> None:
+        """Test that generate_as_cte uses range JOIN with both conditions."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="VALID_FROM",
+            mapping_valid_to_col="VALID_TO",
+        )
+        cte_name, cte_body = generator.generate_as_cte("PIT_ROLLUP_FV0")
+
+        self.assertEqual(cte_name, "PIT_ROLLUP_FV0")
+        self.assertNotIn("ASOF JOIN", cte_body)
+        self.assertIn("t.TILE_START >= m.VALID_FROM", cte_body)
+        self.assertIn("m.VALID_TO IS NULL OR t.TILE_START < m.VALID_TO", cte_body)
+
+    def test_validation_rejects_valid_to_only(self) -> None:
+        """Test that RollupConfig rejects valid_to without valid_from."""
+        from unittest.mock import MagicMock
+
+        from snowflake.ml.feature_store.feature_view import RollupConfig
+
+        mock_fv = MagicMock()
+        mock_fv.is_tiled = True
+        mock_fv.status = MagicMock()
+        mock_fv.status.name = "ACTIVE"
+        mock_fv.entities = []
+
+        mock_df = MagicMock()
+        mock_df.schema.fields = []
+
+        config = RollupConfig(
+            source=mock_fv,
+            mapping_df=mock_df,
+            mapping_valid_to_col="VALID_TO",
+        )
+        with self.assertRaisesRegex(ValueError, "must both be provided or both be omitted"):
+            config.validate(target_entity_keys=[])
+
+    def test_validation_rejects_valid_from_only(self) -> None:
+        """Test that RollupConfig rejects valid_from without valid_to."""
+        from unittest.mock import MagicMock
+
+        from snowflake.ml.feature_store.feature_view import RollupConfig
+
+        mock_fv = MagicMock()
+        mock_fv.is_tiled = True
+        mock_fv.status = MagicMock()
+        mock_fv.status.name = "ACTIVE"
+        mock_fv.entities = []
+
+        mock_df = MagicMock()
+        mock_df.schema.fields = []
+
+        config = RollupConfig(
+            source=mock_fv,
+            mapping_df=mock_df,
+            mapping_valid_from_col="VALID_FROM",
+        )
+        with self.assertRaisesRegex(ValueError, "must both be provided or both be omitted"):
+            config.validate(target_entity_keys=[])
+
+
+class LifetimeRollupSqlGeneratorTest(absltest.TestCase):
+    """Unit tests for lifetime feature support in RollupSqlGenerator."""
+
+    def test_rollup_with_lifetime_count(self) -> None:
+        """Rollup with lifetime COUNT produces _CUM_COUNT_* via window functions."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="lifetime",
+                output_column="EVENT_COUNT_LIFETIME",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertIn("_PARTIAL_COUNT_VISITOR_ID", sql)
+        self.assertIn("_CUM_COUNT_VISITOR_ID", sql)
+        self.assertIn("PARTITION BY SUBSCRIBER_ID, COMPANY_ID", sql)
+        self.assertIn("ORDER BY TILE_START", sql)
+        self.assertIn("ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", sql)
+        self.assertIn("base.*", sql)
+
+    def test_rollup_with_lifetime_min_max(self) -> None:
+        """Rollup with lifetime MIN and MAX produces _CUM_MIN_* and _CUM_MAX_*."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.MIN,
+                source_column="EVENT_TS",
+                window="lifetime",
+                output_column="FIRST_EVENT_LIFETIME",
+            ),
+            AggregationSpec(
+                function=AggregationType.MAX,
+                source_column="EVENT_TS",
+                window="lifetime",
+                output_column="LAST_EVENT_LIFETIME",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertIn("_CUM_MIN_EVENT_TS", sql)
+        self.assertIn("_CUM_MAX_EVENT_TS", sql)
+        self.assertIn("MIN(_PARTIAL_MIN_EVENT_TS) OVER", sql)
+        self.assertIn("MAX(_PARTIAL_MAX_EVENT_TS) OVER", sql)
+
+    def test_rollup_with_mixed_lifetime_and_windowed(self) -> None:
+        """Mixed lifetime + windowed: _CUM_* only for lifetime specs."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="7d",
+                output_column="EVENT_COUNT_7D",
+            ),
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="lifetime",
+                output_column="EVENT_COUNT_LIFETIME",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertIn("_PARTIAL_COUNT_VISITOR_ID", sql)
+        self.assertIn("_CUM_COUNT_VISITOR_ID", sql)
+        self.assertIn("base.*", sql)
+
+    def test_rollup_no_cumulative_without_lifetime(self) -> None:
+        """No _CUM_* columns when there are no lifetime features (regression guard)."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="24h",
+                output_column="EVENT_COUNT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertNotIn("_CUM_", sql)
+        self.assertNotIn("base.*", sql)
+        self.assertIn("_PARTIAL_COUNT_VISITOR_ID", sql)
+
+    def test_rollup_with_lists_and_lifetime(self) -> None:
+        """CTE-based list rollup path also gets cumulative wrapper for lifetime."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="ORDER_VALUE",
+                window="24h",
+                output_column="LAST_ORDERS",
+                params={"n": 5},
+            ),
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="lifetime",
+                output_column="EVENT_COUNT_LIFETIME",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID", "COMPANY_ID"],
+            new_join_keys=["SUBSCRIBER_ID", "COMPANY_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+        )
+        sql = generator.generate()
+
+        self.assertIn("WITH", sql)
+        self.assertIn("LATERAL FLATTEN", sql)
+        self.assertIn("_CUM_COUNT_VISITOR_ID", sql)
+        self.assertIn("base.*", sql)
+        self.assertIn("PARTITION BY SUBSCRIBER_ID, COMPANY_ID", sql)
+
+    def test_rollup_cte_with_lifetime(self) -> None:
+        """generate_as_cte() (PIT path) with lifetime includes cumulative columns."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="VISITOR_ID",
+                window="lifetime",
+                output_column="EVENT_COUNT_LIFETIME",
+            ),
+            AggregationSpec(
+                function=AggregationType.MIN,
+                source_column="EVENT_TS",
+                window="lifetime",
+                output_column="FIRST_EVENT",
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.VISITOR_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            mapping_valid_from_col="VALID_FROM",
+            mapping_valid_to_col="VALID_TO",
+        )
+        cte_name, cte_body = generator.generate_as_cte("PIT_ROLLUP_FV0")
+
+        self.assertEqual(cte_name, "PIT_ROLLUP_FV0")
+        self.assertNotIn("ASOF JOIN", cte_body)
+        self.assertIn("t.TILE_START >= m.VALID_FROM", cte_body)
+        self.assertIn("_CUM_COUNT_VISITOR_ID", cte_body)
+        self.assertIn("_CUM_MIN_EVENT_TS", cte_body)
+        self.assertIn("PARTITION BY SUBSCRIBER_ID", cte_body)
+
+    def test_extracted_cumulative_fn_matches_tiling(self) -> None:
+        """Extracted _generate_cumulative_expressions matches TilingSqlGenerator output."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="EVENT_ID",
+                window="lifetime",
+                output_column="COUNT_LIFETIME",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="lifetime",
+                output_column="SUM_LIFETIME",
+            ),
+            AggregationSpec(
+                function=AggregationType.MIN,
+                source_column="TS",
+                window="lifetime",
+                output_column="MIN_LIFETIME",
+            ),
+            AggregationSpec(
+                function=AggregationType.MAX,
+                source_column="TS",
+                window="lifetime",
+                output_column="MAX_LIFETIME",
+            ),
+        ]
+        join_keys = ["USER_ID", "ORG_ID"]
+
+        tiling_gen = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=join_keys,
+            timestamp_col="EVENT_TS",
+            feature_granularity="1d",
+            features=specs,
+        )
+        tiling_cols = tiling_gen._generate_cumulative_columns()
+        extracted_cols = _generate_cumulative_expressions(specs, join_keys)
+
+        self.assertEqual(tiling_cols, extracted_cols)
 
 
 if __name__ == "__main__":

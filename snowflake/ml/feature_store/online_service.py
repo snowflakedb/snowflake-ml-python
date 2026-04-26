@@ -9,25 +9,25 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-import os
-import urllib.error
-import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
     exceptions as snowml_exceptions,
 )
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store import online_service_http_client
 from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from snowflake.snowpark.types import StructType
+
 logger = logging.getLogger(__name__)
 
-_QUERY_API_REL_PATH = "api/v1/query"
-_INGEST_API_REL_PATH = "api/v1/ingest"
 _MAX_QUERY_REQUEST_ROWS = 10
 
 _ONLINE_SERVICE_NOT_READY_USER_MESSAGE = (
@@ -256,53 +256,6 @@ def endpoint_url(status: OnlineServiceStatus, name: str) -> Optional[str]:
     return None
 
 
-def _query_api_url(query_base_url: str) -> str:
-    """Append ``api/v1/query`` to the Online Service ``query`` endpoint URL from status JSON."""
-    base = query_base_url.strip().rstrip("/") + "/"
-    return urllib.parse.urljoin(base, _QUERY_API_REL_PATH)
-
-
-def _ingest_api_url(ingest_base_url: str) -> str:
-    """Append ``api/v1/ingest`` to the Online Service ``ingest`` endpoint URL from status JSON."""
-    base = ingest_base_url.strip().rstrip("/") + "/"
-    return urllib.parse.urljoin(base, _INGEST_API_REL_PATH)
-
-
-def _online_service_query_api_pat_from_env() -> str:
-    """PAT for ``Authorization: Snowflake Token="..."`` on the Online Service REST APIs (Query + Ingest).
-
-    Only ``SNOWFLAKE_PAT`` is supported so behavior is explicit; create a PAT in Snowflake and set this env var.
-
-    Returns:
-        Programmatic access token from ``SNOWFLAKE_PAT``.
-
-    Raises:
-        SnowflakeMLException: If ``SNOWFLAKE_PAT`` is unset or empty.
-    """
-    pat = os.environ.get("SNOWFLAKE_PAT", "").strip()
-    if pat:
-        return pat
-    raise snowml_exceptions.SnowflakeMLException(
-        error_code=error_codes.INVALID_ARGUMENT,
-        original_exception=RuntimeError(
-            "Online Service requires a Snowflake Programmatic Access Token (PAT). "
-            "Set the SNOWFLAKE_PAT environment variable "
-            "(export in your shell or set os.environ in your notebook)."
-        ),
-    )
-
-
-def _session_rest_auth_headers(session: Session) -> dict[str, str]:
-    """Build HTTP headers for the Online Service REST APIs (Query + Ingest); ``session`` is reserved for future use."""
-    _ = session
-    token = _online_service_query_api_pat_from_env()
-    return {
-        "Authorization": f'Snowflake Token="{token}"',
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-
-
 def _json_serialize_value(value: Any) -> Any:
     """JSON-serialize a single field value for Online Service request bodies."""
     if value is None or isinstance(value, (bool, int, float, str)):
@@ -314,32 +267,6 @@ def _json_serialize_value(value: Any) -> Any:
     if isinstance(value, bytes):
         raise TypeError(f"bytes values are not supported in Online Service requests: {value!r}")
     return str(value)
-
-
-_MAX_RESPONSE_BYTES = 1024 * 1024  # 1 MB cap on response reads to prevent unbounded memory use.
-
-
-def _http_post_json(
-    url: str,
-    headers: dict[str, str],
-    body: dict[str, Any],
-    timeout: float,
-) -> tuple[int, bytes]:
-    payload = json.dumps(body).encode("utf-8")
-    req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-    try:
-        resp = urllib.request.urlopen(req, timeout=timeout)
-    except urllib.error.HTTPError as e:
-        return e.code, e.read(_MAX_RESPONSE_BYTES)
-    except (urllib.error.URLError, OSError) as e:
-        raise snowml_exceptions.SnowflakeMLException(
-            error_code=error_codes.INTERNAL_SNOWFLAKE_API_ERROR,
-            original_exception=RuntimeError(f"Online Service is unreachable: {e}"),
-        ) from e
-    try:
-        return resp.getcode(), resp.read(_MAX_RESPONSE_BYTES)
-    finally:
-        resp.close()
 
 
 def _try_extract_request_id_from_json_payload(parsed: Any) -> Optional[str]:
@@ -564,6 +491,7 @@ def stream_ingest_records(
     records: list[dict[str, Any]],
     *,
     timeout_sec: float = 120.0,
+    http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
 ) -> int:
     """Send records to the Online Service for a given stream source.
 
@@ -575,6 +503,8 @@ def stream_ingest_records(
         stream_source_name: Registered stream source name.
         records: Non-empty list of row dicts (keys must match the stream source schema).
         timeout_sec: Request timeout in seconds.
+        http_client: Optional pooled client; when ``None``, a one-shot client is created
+            for this call and closed before returning.
 
     Returns:
         Count of accepted records. On partial success, this may be less than the
@@ -589,7 +519,7 @@ def stream_ingest_records(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError("records must be non-empty for stream ingest."),
         )
-    resolved = _ingest_api_url(ingest_base_url)
+    resolved = online_service_http_client.ingest_api_url(ingest_base_url)
     logger.debug(
         "Ingest API: url=%r stream_source=%r num_records=%d",
         resolved,
@@ -598,8 +528,18 @@ def stream_ingest_records(
     )
     serializable = [{k: _json_serialize_value(v) for k, v in row.items()} for row in records]
     body: dict[str, Any] = {"records": {stream_source_name: serializable}}
-    headers = _session_rest_auth_headers(session)
-    status, raw = _http_post_json(resolved, headers, body, timeout_sec)
+    # PAT is validated up-front (caller may not have a pooled client yet).
+    _ = online_service_http_client.auth_headers(session)
+    owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
+    client = http_client
+    if client is None:
+        owned_client = online_service_http_client.OnlineServiceHttpClient()
+        client = owned_client
+    try:
+        status, raw = client.post_json(resolved, body, timeout_sec)
+    finally:
+        if owned_client is not None:
+            owned_client.close()
     # 200 = full success, 207 = partial success.
     if status not in (200, 207):
         _raise_online_service_http_error(status, raw)
@@ -840,6 +780,220 @@ def _postgres_online_query_result_schema(
     return StructType(jfields + ffields)
 
 
+# Query API row -> local value conversion. Two materialization paths:
+#   - Snowpark (``as_pandas=False``): ``_coerce_row_values_for_snowpark_local_schema``
+#     fixes values that Snowpark's literal-SQL layer rejects, then
+#     ``Session.create_dataframe(rows, schema)``.
+#   - Pandas fast path (``as_pandas=True``): ``_rows_to_pandas_for_postgres_online``
+#     builds a ``pandas.DataFrame`` directly with dtypes pinned to match
+#     ``Session.create_dataframe(...).to_pandas()``.
+# Type vocabulary comes from ``_snowflake_query_api_type_to_snowpark`` above.
+
+
+def _coerce_row_values_for_snowpark_local_schema(row: dict[str, Any], schema: StructType) -> dict[str, Any]:
+    """Fix Query API JSON values that Snowpark's literal-SQL layer (``datatype_mapper.to_sql``) rejects.
+
+    - :class:`DoubleType` / :class:`FloatType`: ``int`` → ``float`` (NUMBER-shaped JSON arrives as ``int``).
+    - :class:`DecimalType`: ``int`` / ``float`` → :class:`decimal.Decimal` (NUMBER columns reject plain ``int``).
+    - :class:`TimestampType`: ISO-8601 ``str`` → :class:`datetime.datetime` (string literals not accepted).
+
+    Args:
+        row: One row as a map of column name to value.
+        schema: Expected Snowpark :class:`StructType` for that row.
+
+    Returns:
+        Shallow copy of ``row`` with the coercions above applied; other fields pass through unchanged.
+    """
+    from decimal import Decimal
+
+    from snowflake.snowpark.types import (
+        DecimalType,
+        DoubleType,
+        FloatType,
+        TimestampTimeZone,
+        TimestampType,
+    )
+
+    out = dict(row)
+    for f in schema.fields:
+        name = f.name
+        if name not in out:
+            continue
+        val = out[name]
+        if val is None:
+            continue
+        dt = f.datatype
+        if isinstance(dt, (DoubleType, FloatType)):
+            if isinstance(val, int) and not isinstance(val, bool):
+                out[name] = float(val)
+            elif isinstance(val, Decimal):
+                out[name] = float(val)
+        elif isinstance(dt, DecimalType):
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                out[name] = Decimal(str(val))
+        elif isinstance(dt, TimestampType) and isinstance(val, str):
+            try:
+                s = val.replace("Z", "+00:00") if val.endswith("Z") else val
+                parsed = datetime.datetime.fromisoformat(s)
+                if dt.tz == TimestampTimeZone.NTZ and parsed.tzinfo is not None:
+                    parsed = parsed.replace(tzinfo=None)
+                out[name] = parsed
+            except ValueError:
+                pass
+    return out
+
+
+def _parse_iso_timestamp(value: Any, tz: Any) -> Any:
+    """Parse an ISO-8601 string to ``datetime``; strip tzinfo for NTZ. Non-strings/unparseable pass through."""
+    from snowflake.snowpark.types import TimestampTimeZone
+
+    if not isinstance(value, str):
+        return value
+    try:
+        s = value.replace("Z", "+00:00") if value.endswith("Z") else value
+        parsed = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return value
+    if tz == TimestampTimeZone.NTZ and parsed.tzinfo is not None:
+        return parsed.replace(tzinfo=None)
+    return parsed
+
+
+def _parse_iso_date(value: Any) -> Any:
+    """Parse an ISO-8601 string to ``datetime.date``. ``datetime`` is narrowed; other inputs pass through."""
+    if value is None or isinstance(value, datetime.date):
+        return value.date() if isinstance(value, datetime.datetime) else value
+    if not isinstance(value, str):
+        return value
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError:
+        return value
+
+
+def _parse_iso_time(value: Any) -> Any:
+    """Parse an ISO-8601 string to ``datetime.time``. Non-strings/unparseable pass through."""
+    if value is None or isinstance(value, datetime.time):
+        return value
+    if not isinstance(value, str):
+        return value
+    try:
+        return datetime.time.fromisoformat(value)
+    except ValueError:
+        return value
+
+
+def _parse_binary(value: Any) -> Any:
+    """Decode hex strings to ``bytes`` (fallback: UTF-8 encode). ``bytes``/``bytearray``/``None`` pass through."""
+    if value is None or isinstance(value, (bytes, bytearray)):
+        return bytes(value) if isinstance(value, bytearray) else value
+    if isinstance(value, str):
+        try:
+            return bytes.fromhex(value)
+        except ValueError:
+            return value.encode("utf-8")
+    return value
+
+
+def _rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: StructType) -> pd.DataFrame:
+    """Build a ``pandas.DataFrame`` from Query API rows with dtypes matching Snowpark's ``.to_pandas()``.
+
+    Schema is produced by ``_snowflake_query_api_type_to_snowpark``; per-type dtype mapping:
+
+    - ``fixed`` → :class:`DecimalType` → ``object`` of :class:`decimal.Decimal`
+    - ``real`` / ``double`` / ``float`` → :class:`DoubleType` / :class:`FloatType` → ``float64``
+    - ``text`` → :class:`StringType` → ``object``
+    - ``boolean`` → :class:`BooleanType` → ``bool`` (null-free) / ``object`` (with nulls)
+    - ``date`` → :class:`DateType` → ``object`` of :class:`datetime.date`
+    - ``time`` → :class:`TimeType` → ``object`` of :class:`datetime.time`
+    - ``binary`` → :class:`BinaryType` → ``object`` of :class:`bytes`
+    - ``variant`` / ``object`` / ``array`` → :class:`VariantType` → ``object`` (parsed JSON)
+    - ``timestamp*`` → :class:`TimestampType` → ``datetime64[ns]`` (NTZ) / ``datetime64[ns, UTC]`` (LTZ/TZ)
+    - anything else (incl. join-key :class:`StringType`): ``object`` catch-all (never raises on schema drift)
+
+    Column order follows ``schema.fields``.
+
+    Args:
+        rows: Query API row dicts (may be empty). Keys must match ``schema.fields`` names.
+        schema: Snowpark ``StructType`` derived from Query API ``metadata.features``.
+
+    Returns:
+        A ``pandas.DataFrame`` with one column per ``schema.fields`` entry, in schema order.
+    """
+    from decimal import Decimal
+
+    import pandas as pd
+
+    from snowflake.snowpark.types import (
+        BinaryType,
+        BooleanType,
+        DateType,
+        DecimalType,
+        DoubleType,
+        FloatType,
+        TimestampTimeZone,
+        TimestampType,
+        TimeType,
+    )
+
+    columns = [f.name for f in schema.fields]
+
+    if not rows:
+        series_by_name: dict[str, pd.Series] = {}
+        for f in schema.fields:
+            dt = f.datatype
+            if isinstance(dt, (DoubleType, FloatType)):
+                series_by_name[f.name] = pd.Series([], dtype="float64")
+            elif isinstance(dt, BooleanType):
+                series_by_name[f.name] = pd.Series([], dtype="bool")
+            elif isinstance(dt, TimestampType):
+                if dt.tz == TimestampTimeZone.NTZ:
+                    series_by_name[f.name] = pd.Series([], dtype="datetime64[ns]")
+                else:
+                    series_by_name[f.name] = pd.Series([], dtype="datetime64[ns, UTC]")
+            else:
+                series_by_name[f.name] = pd.Series([], dtype="object")
+        return pd.DataFrame(series_by_name, columns=columns)
+
+    data: dict[str, list[Any]] = {name: [row.get(name) for row in rows] for name in columns}
+    for f in schema.fields:
+        name = f.name
+        dt = f.datatype
+        values = data[name]
+        if isinstance(dt, DecimalType):
+            data[name] = [v if (v is None or isinstance(v, Decimal)) else Decimal(str(v)) for v in values]
+        elif isinstance(dt, (DoubleType, FloatType)):
+            data[name] = [None if v is None else float(v) for v in values]
+        elif isinstance(dt, TimestampType):
+            data[name] = [_parse_iso_timestamp(v, dt.tz) for v in values]
+        elif isinstance(dt, DateType):
+            data[name] = [_parse_iso_date(v) for v in values]
+        elif isinstance(dt, TimeType):
+            data[name] = [_parse_iso_time(v) for v in values]
+        elif isinstance(dt, BinaryType):
+            data[name] = [_parse_binary(v) for v in values]
+
+    pdf = pd.DataFrame(data, columns=columns)
+
+    for f in schema.fields:
+        name = f.name
+        dt = f.datatype
+        if isinstance(dt, (DoubleType, FloatType)):
+            pdf[name] = pdf[name].astype("float64")
+        elif isinstance(dt, BooleanType):
+            if not pdf[name].isna().any():
+                pdf[name] = pdf[name].astype("bool")
+        elif isinstance(dt, TimestampType):
+            if dt.tz == TimestampTimeZone.NTZ:
+                pdf[name] = pd.to_datetime(pdf[name], errors="coerce")
+                if getattr(pdf[name].dt, "tz", None) is not None:
+                    pdf[name] = pdf[name].dt.tz_convert("UTC").dt.tz_localize(None)
+            else:
+                pdf[name] = pd.to_datetime(pdf[name], errors="coerce", utc=True)
+
+    return pdf
+
+
 def _parse_query_batch_response(
     raw: bytes,
     batch_size: int,
@@ -942,19 +1096,18 @@ def read_postgres_online_features(
     *,
     join_key_field_types: dict[str, Any],
     timeout_sec: float = 120.0,
+    http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
 ) -> tuple[list[dict[str, Any]], Any]:
     """Query Postgres-backed online features via the Online Service ``POST /api/v1/query`` endpoint.
 
-    If ``feature_names`` is set, the JSON body includes ``features: [...]`` so the Query API can narrow
-    the payload; if ``feature_names`` is ``None``, ``features`` is omitted and the server chooses its
-    default columns. Returned row dicts and the Snowpark :class:`StructType` always reflect only the
-    requested subset when ``feature_names`` is set (extra columns from the server are dropped). Values
-    are aligned to ``metadata.features`` order. Join-key columns use ``join_key_field_types`` from the
-    feature view (they are not part of ``metadata.features``).
+    When ``feature_names`` is set it is sent as ``features: [...]`` to narrow the server payload, and
+    returned rows/schema are filtered to that subset (case-insensitive, in the requested order). When
+    ``None``, all columns from ``metadata.features`` are returned in response order. Join-key columns
+    are taken from ``join_key_field_types`` (server metadata does not include them).
 
     Args:
         session: Snowpark session (reserved for future use). Auth requires ``SNOWFLAKE_PAT``; see
-            :func:`_online_service_query_api_pat_from_env`.
+            :func:`online_service_http_client.online_service_pat_from_env`.
         query_url: Base URL for the ``query`` endpoint from Online Service status.
         feature_view_name: Logical feature view name.
         feature_view_version: Feature view version string (e.g. ``v1``).
@@ -965,11 +1118,12 @@ def read_postgres_online_features(
             ``metadata.features`` are included, in response order.
         join_key_field_types: Snowpark types for join keys (from feature view ``output_schema``).
         timeout_sec: Per-request timeout.
+        http_client: Optional pooled client; when ``None``, each call opens a fresh connection.
 
     Returns:
         ``(rows, schema)`` where each row has join keys plus selected feature columns,
         and ``schema`` is the matching :class:`StructType`
-        for :func:`~snowflake.ml.feature_store.feature_store._coerce_row_values_for_snowpark_local_schema`.
+        for :func:`_coerce_row_values_for_snowpark_local_schema`.
 
     Raises:
         SnowflakeMLException: For invalid arguments, HTTP/API errors, unknown requested features,
@@ -995,74 +1149,84 @@ def read_postgres_online_features(
                 ),
             )
 
-    resolved_query_url = _query_api_url(query_url)
+    resolved_query_url = online_service_http_client.query_api_url(query_url)
     logger.debug("Query API url=%r", resolved_query_url)
     url = resolved_query_url
-    headers = _session_rest_auth_headers(session)
+    # PAT is validated eagerly so callers fail fast even with an empty key batch.
+    _ = online_service_http_client.auth_headers()
+    owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
+    client = http_client
+    if client is None:
+        owned_client = online_service_http_client.OnlineServiceHttpClient()
+        client = owned_client
 
     out: list[dict[str, Any]] = []
     baseline_names: Optional[list[str]] = None
     output_feature_names: Optional[list[str]] = None
     schema: Any = None
 
-    for start in range(0, len(keys), _MAX_QUERY_REQUEST_ROWS):
-        batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
-        request_rows = [
-            {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
-        ]
-        body: dict[str, Any] = {
-            "name": str(feature_view_name),
-            "version": str(feature_view_version),
-            "object_type": "feature_view",
-            "metadata_options": {"include_names": True, "include_data_types": True},
-            "request_rows": request_rows,
-        }
-        if feature_names:
-            body["features"] = _dedupe_feature_names_preserve_order(feature_names)
+    try:
+        for start in range(0, len(keys), _MAX_QUERY_REQUEST_ROWS):
+            batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
+            request_rows = [
+                {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
+            ]
+            body: dict[str, Any] = {
+                "name": str(feature_view_name),
+                "version": str(feature_view_version),
+                "object_type": "feature_view",
+                "metadata_options": {"include_names": True, "include_data_types": True},
+                "request_rows": request_rows,
+            }
+            if feature_names:
+                body["features"] = _dedupe_feature_names_preserve_order(feature_names)
 
-        status, raw = _http_post_json(url, headers, body, timeout_sec)
-        if status not in (200, 207):
-            _raise_online_service_http_error(status, raw)
+            status, raw = client.post_json(url, body, timeout_sec)
+            if status not in (200, 207):
+                _raise_online_service_http_error(status, raw)
 
-        data, results, names_from_server, dict_items = _parse_query_batch_response(raw, len(batch))
+            data, results, names_from_server, dict_items = _parse_query_batch_response(raw, len(batch))
 
-        rid = data.get("request_id")
-        if isinstance(rid, str) and rid.strip():
-            logger.info(
-                "Query API response request_id=%r batch_start=%s batch_size=%s",
-                rid.strip(),
-                start,
-                len(batch),
-            )
+            rid = data.get("request_id")
+            if isinstance(rid, str) and rid.strip():
+                logger.info(
+                    "Query API response request_id=%r batch_start=%s batch_size=%s",
+                    rid.strip(),
+                    start,
+                    len(batch),
+                )
 
-        if baseline_names is None:
-            baseline_names = names_from_server
-            output_feature_names = _resolve_output_feature_names(names_from_server, feature_names)
-            feature_types = _snowpark_types_from_query_metadata_features(dict_items)
-            schema = _postgres_online_query_result_schema(
-                join_key_names,
-                join_key_field_types,
-                output_feature_names,
-                feature_types,
-            )
-        elif names_from_server != baseline_names:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWML_ERROR,
-                original_exception=RuntimeError(
-                    "Online Service returned inconsistent feature metadata across requests; "
-                    f"expected {baseline_names!r}, got {names_from_server!r}."
-                ),
-            )
+            if baseline_names is None:
+                baseline_names = names_from_server
+                output_feature_names = _resolve_output_feature_names(names_from_server, feature_names)
+                feature_types = _snowpark_types_from_query_metadata_features(dict_items)
+                schema = _postgres_online_query_result_schema(
+                    join_key_names,
+                    join_key_field_types,
+                    output_feature_names,
+                    feature_types,
+                )
+            elif names_from_server != baseline_names:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(
+                        "Online Service returned inconsistent feature metadata across requests; "
+                        f"expected {baseline_names!r}, got {names_from_server!r}."
+                    ),
+                )
 
-        if output_feature_names is None or schema is None:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INTERNAL_SNOWML_ERROR,
-                original_exception=RuntimeError(
-                    "Online Service query loop completed without initializing feature metadata."
-                ),
-            )
+            if output_feature_names is None or schema is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(
+                        "Online Service query loop completed without initializing feature metadata."
+                    ),
+                )
 
-        out.extend(_extract_result_rows(results, names_from_server, output_feature_names, join_key_names, batch))
+            out.extend(_extract_result_rows(results, names_from_server, output_feature_names, join_key_names, batch))
+    finally:
+        if owned_client is not None:
+            owned_client.close()
 
     if schema is None:
         raise snowml_exceptions.SnowflakeMLException(

@@ -38,6 +38,12 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
+        if not pip_requirements:
+            self.skipTest(
+                """SNOW-3420922: Skipping test due to known issue with
+                sentence-transformers and transformers package conflict"""
+            )
+
         import sentence_transformers
 
         # Sample Data

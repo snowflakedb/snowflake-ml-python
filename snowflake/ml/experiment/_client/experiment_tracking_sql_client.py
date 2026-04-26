@@ -3,6 +3,7 @@ from typing import Any, Optional
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import query_result_checker, sql_identifier
 from snowflake.ml.experiment._client import artifact
+from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.model._client.sql import _base
 from snowflake.ml.utils import sql_client
 from snowflake.snowpark import dataframe, file_operation, row, session, types
@@ -129,11 +130,15 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         *,
         experiment_name: sql_identifier.SqlIdentifier,
         run_name: sql_identifier.SqlIdentifier,
+        status: Optional[run_metadata.RunStatus] = None,
     ) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
-        query_result_checker.SqlResultValidator(
-            self._session, f"ALTER EXPERIMENT {experiment_fqn} COMMIT RUN {run_name}"
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        query = f"ALTER EXPERIMENT {experiment_fqn} COMMIT RUN {run_name}"
+        if status is not None:
+            query += f" WITH STATUS='{status.value}'"
+        query_result_checker.SqlResultValidator(self._session, query).has_dimensions(
+            expected_rows=1, expected_cols=1
+        ).validate()
 
     def get_run_id(
         self,
