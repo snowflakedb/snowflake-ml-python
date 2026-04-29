@@ -34,6 +34,7 @@ py_library(
         "//snowflake/ml/_internal/utils:tee",
         "//snowflake/ml/experiment/_client:experiment_tracking_sql_client",
         "//snowflake/ml/experiment/_entities:entities",
+        "//snowflake/ml/experiment/_entities:run_metadata",
         "//snowflake/ml/experiment/_logging:logging",
         "//snowflake/ml/registry",
     ],

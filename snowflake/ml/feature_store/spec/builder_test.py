@@ -168,7 +168,7 @@ def _simple_udf_args() -> _UdfArgs:
         "name": "transform_fn",
         "engine": "pandas",
         "output_columns": [("AMOUNT", DoubleType())],
-        "function_definition": "def f(x): return x * 2",
+        "function_definition": "def transform_fn(request): return request",
     }
 
 
@@ -187,16 +187,29 @@ def _mock_feature_view(
     name: str = "upstream_fv",
     version: str = "v1",
     feature_names: Optional[list[str]] = None,
+    *,
+    is_streaming: bool = True,
+    entity_columns: Optional[list[str]] = None,
 ) -> mock.MagicMock:
     """Create a mock FeatureView for source conversion tests.
 
     Uses spec= to ensure isinstance checks pass in set_sources.
+
+    ``is_streaming`` is set explicitly (rather than left to MagicMock's default
+    truthy-mock behavior) so the builder's ``_kind_of_fv`` dispatcher returns
+    a deterministic ``FeatureViewKind`` and tests intending a Batch upstream
+    can opt in via ``is_streaming=False``.
+
+    ``entity_columns`` is exposed via ``ordered_entity_columns`` so the
+    builder can capture it in ``set_sources`` for RTFV/FG derivation of
+    ``ordered_entity_column_names``.
     """
     from snowflake.ml.feature_store.feature_view import FeatureView
 
     fv = mock.MagicMock(spec=FeatureView)
     fv.name = name
     fv.version = version
+    fv.is_streaming = is_streaming
     names = feature_names or ["SCORE", "RISK"]
     fv.feature_names = names
     fv.output_schema = StructType(
@@ -206,11 +219,14 @@ def _mock_feature_view(
             StructField("RISK", DoubleType()),
         ]
     )
+    fv.ordered_entity_columns = list(entity_columns) if entity_columns is not None else ["USER_ID"]
     return fv
 
 
 def _mock_feature_view_slice(
     selected_features: Optional[list[str]] = None,
+    *,
+    entity_columns: Optional[list[str]] = None,
 ) -> mock.MagicMock:
     """Create a mock FeatureViewSlice for source conversion tests.
 
@@ -219,10 +235,42 @@ def _mock_feature_view_slice(
     from snowflake.ml.feature_store.feature_view import FeatureViewSlice
 
     fvs = mock.MagicMock(spec=FeatureViewSlice)
-    fv = _mock_feature_view()
+    fv = _mock_feature_view(entity_columns=entity_columns)
     fvs.feature_view_ref = fv
     fvs.names = selected_features or ["SCORE"]
     return fvs
+
+
+def _seed_upstream_kind(
+    builder: FeatureViewSpecBuilder,
+    *,
+    name: str,
+    version: Optional[str],
+    kind: FeatureViewKind,
+) -> None:
+    """Stamp an upstream FeatureViewKind on *builder* for validation tests.
+
+    Centralizes access to ``builder._source_kinds`` so individual tests don't
+    couple themselves to that internal field name. Used to simulate RTFV / FG
+    upstreams while user-facing FeatureView classes for those kinds don't
+    exist yet.
+    """
+    builder._source_kinds[(name, version)] = kind
+
+
+def _seed_derived_entity_columns(
+    builder: FeatureViewSpecBuilder,
+    *,
+    entity_columns: list[str],
+) -> None:
+    """Stamp the precomputed entity-columns union on *builder* for tests.
+
+    Used when a test injects pre-built ``Source`` objects directly (bypassing
+    :meth:`FeatureViewSpecBuilder.set_sources`) and therefore can't rely on
+    ``_append_derived_entity_columns`` to populate the list. Mirrors what
+    ``set_sources`` would compute from the upstream FV inputs.
+    """
+    builder._derived_entity_columns = list(entity_columns)
 
 
 # ============================================================================
@@ -303,7 +351,7 @@ class StreamingBuilderTilesTest(absltest.TestCase):
         self.assertIsNotNone(udf)
         assert udf is not None
         self.assertEqual(udf.name, "transform_fn")
-        self.assertEqual(udf.function_definition, "def f(x): return x * 2")
+        self.assertEqual(udf.function_definition, "def transform_fn(request): return request")
 
         # Features
         self.assertEqual(len(spec.features), 1)
@@ -579,13 +627,12 @@ class RealtimeBuilderTest(absltest.TestCase):
                 name="realtime_fv",
                 version="v1",
             )
-            .set_properties(entity_columns=["USER_ID"])
             .set_sources([_request_source(), mock_fv])
             .set_udf(
                 name="score_fn",
                 engine="pandas",
                 output_columns=[("RISK_SCORE", DoubleType())],
-                function_definition="def score(txn, features): return 0.5",
+                function_definition="def score_fn(txn, features): return 0.5",
             )
             .build()
         )
@@ -684,7 +731,6 @@ class SourceConversionTest(absltest.TestCase):
             source_type=SourceType.FEATURES,
             columns=[FSColumn(name="SCORE", type="DoubleType")],
             source_version="v1",
-            selected_features=["SCORE"],
         )
         fvs = _mock_feature_view_slice(["SCORE"])
         builder = FeatureViewSpecBuilder(
@@ -696,7 +742,7 @@ class SourceConversionTest(absltest.TestCase):
         )
         builder.set_sources([fvs])
         src = builder._sources[0]
-        self.assertEqual(src.selected_features, ["SCORE"])
+        self.assertEqual([c.name for c in src.columns], ["SCORE"])
 
     def test_unsupported_source_type(self) -> None:
         builder = FeatureViewSpecBuilder(
@@ -801,7 +847,6 @@ class FeatureViewConversionTest(absltest.TestCase):
         self.assertEqual(len(source.columns), 2)
         self.assertEqual(source.columns[0].name, "SCORE")
         self.assertEqual(source.columns[1].name, "RISK")
-        self.assertIsNone(source.selected_features)
 
     def test_convert_feature_view_no_version(self) -> None:
         """source_version is None when fv.version is falsy."""
@@ -813,7 +858,7 @@ class FeatureViewConversionTest(absltest.TestCase):
     # -- _convert_feature_view_slice ---------------------------------------
 
     def test_convert_feature_view_slice(self) -> None:
-        """Full Source with selected_features from a FeatureViewSlice."""
+        """Source from a FeatureViewSlice contains only the selected columns."""
         from snowflake.ml.feature_store.feature_view import FeatureViewSlice
 
         fv = self._make_typed_fv()
@@ -825,22 +870,20 @@ class FeatureViewConversionTest(absltest.TestCase):
         self.assertEqual(source.source_type, SourceType.FEATURES)
         self.assertEqual(source.name, "UPSTREAM_FV")
         self.assertEqual(source.source_version, "v1")
-        self.assertEqual(source.selected_features, ["SCORE"])
-        # columns come from all features (not filtered by slice selection)
-        self.assertEqual(len(source.columns), 2)
+        # columns are filtered to the slice's selection (in slice order).
+        self.assertEqual([c.name for c in source.columns], ["SCORE"])
 
     def test_convert_feature_view_slice_multiple_selected(self) -> None:
-        """Slice with multiple selected features."""
+        """Slice with multiple selected features preserves slice order."""
         from snowflake.ml.feature_store.feature_view import FeatureViewSlice
 
         fv = self._make_typed_fv()
         fvs = mock.MagicMock(spec=FeatureViewSlice)
         fvs.feature_view_ref = fv
-        fvs.names = [SqlIdentifier("SCORE"), SqlIdentifier("RISK")]
+        fvs.names = [SqlIdentifier("RISK"), SqlIdentifier("SCORE")]
 
         source = FeatureViewSpecBuilder._convert_feature_view_slice(fvs)
-        self.assertEqual(source.selected_features, ["SCORE", "RISK"])
-        self.assertEqual(len(source.columns), 2)
+        self.assertEqual([c.name for c in source.columns], ["RISK", "SCORE"])
 
 
 # ============================================================================
@@ -878,7 +921,7 @@ class UDFEncodingTest(absltest.TestCase):
     def test_dollar_sign_safe_in_to_json(self) -> None:
         """$$ in function definition does not appear in to_json() output,
         and json.loads() recovers the original $$ string."""
-        code = "def f():\n    return '$$dangerous$$'\n"
+        code = "def fn(stream):\n    return '$$dangerous$$'\n"
 
         # Build a full spec to exercise to_json()
         full_builder = (
@@ -914,7 +957,7 @@ class UDFEncodingTest(absltest.TestCase):
 
     def test_triple_dollar_safe_in_to_json(self) -> None:
         """$$$ in function definition is also handled; round-trip recovers original."""
-        code = "x = '$$$'\n"
+        code = "def fn(stream):\n    return '$$$'\n"
         full_builder = (
             FeatureViewSpecBuilder(
                 FeatureViewKind.StreamingFeatureView,
@@ -953,7 +996,7 @@ class UDFEncodingTest(absltest.TestCase):
 
     def test_no_dollar_dollar_passes_through(self) -> None:
         """Code without $$ goes through to_json() unmodified (no spurious escaping)."""
-        code = "def compute(x):\n    return x + 1\n"
+        code = "def fn(x):\n    return x + 1\n"
         full_builder = (
             FeatureViewSpecBuilder(
                 FeatureViewKind.StreamingFeatureView,
@@ -2243,12 +2286,7 @@ class RealtimeValidationTest(absltest.TestCase):
         )
 
     def test_no_offline_configs(self) -> None:
-        builder = (
-            self._base_builder()
-            .set_offline_configs([_batch_source_config()])
-            .set_properties(entity_columns=["USER_ID"])
-            .set_udf(**_simple_udf_args())
-        )
+        builder = self._base_builder().set_offline_configs([_batch_source_config()]).set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="request",
@@ -2265,9 +2303,9 @@ class RealtimeValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not have offline configs"):
             builder.build()
 
-    def test_request_only_without_features_ok(self) -> None:
-        """Realtime FV with only a Request source (no Features) is valid."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+    def test_request_only_without_features_rejected(self) -> None:
+        """Realtime FV with only a Request source (no Features) is rejected."""
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="request",
@@ -2275,14 +2313,12 @@ class RealtimeValidationTest(absltest.TestCase):
                 columns=[FSColumn(name="X", type="DoubleType")],
             ),
         ]
-        # Should NOT raise — features source is optional
-        result = builder.build()
-        source_types = [s.source_type for s in result.spec.sources]
-        self.assertEqual(source_types, [SourceType.REQUEST])
+        with self.assertRaisesRegex(ValueError, "at least 1 Features source"):
+            builder.build()
 
     def test_requires_request_source(self) -> None:
         """Only features, no request → rejected."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="fv",
@@ -2296,7 +2332,7 @@ class RealtimeValidationTest(absltest.TestCase):
 
     def test_multiple_request_sources_rejected(self) -> None:
         """More than 1 request source → rejected."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="r1",
@@ -2320,7 +2356,7 @@ class RealtimeValidationTest(absltest.TestCase):
 
     def test_stream_source_rejected(self) -> None:
         """Stream sources not allowed in realtime FVs."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="stream",
@@ -2344,7 +2380,7 @@ class RealtimeValidationTest(absltest.TestCase):
 
     def test_batch_source_rejected(self) -> None:
         """Batch sources not allowed in realtime FVs."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="batch",
@@ -2361,7 +2397,7 @@ class RealtimeValidationTest(absltest.TestCase):
             builder.build()
 
     def test_requires_udf(self) -> None:
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"])
+        builder = self._base_builder()
         builder._sources = [
             Source(
                 name="request",
@@ -2380,12 +2416,7 @@ class RealtimeValidationTest(absltest.TestCase):
 
     def test_no_agg_method(self) -> None:
         builder = (
-            self._base_builder()
-            .set_properties(
-                entity_columns=["USER_ID"],
-                agg_method=FeatureAggregationMethod.TILES,
-            )
-            .set_udf(**_simple_udf_args())
+            self._base_builder().set_properties(agg_method=FeatureAggregationMethod.TILES).set_udf(**_simple_udf_args())
         )
         builder._sources = [
             Source(
@@ -2404,14 +2435,7 @@ class RealtimeValidationTest(absltest.TestCase):
             builder.build()
 
     def test_no_granularity(self) -> None:
-        builder = (
-            self._base_builder()
-            .set_properties(
-                entity_columns=["USER_ID"],
-                granularity="1h",
-            )
-            .set_udf(**_simple_udf_args())
-        )
+        builder = self._base_builder().set_properties(granularity="1h").set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="request",
@@ -2430,12 +2454,18 @@ class RealtimeValidationTest(absltest.TestCase):
 
     def test_no_agg_features(self) -> None:
         """RealtimeFV must not have aggregation features via set_features()."""
-        builder = self._base_builder().set_properties(entity_columns=["USER_ID"]).set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
                 name="request",
                 source_type=SourceType.REQUEST,
                 columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="fv",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
             ),
         ]
         builder.set_features(
@@ -2452,10 +2482,74 @@ class RealtimeValidationTest(absltest.TestCase):
             builder.build()
 
     def test_no_timestamp_field(self) -> None:
-        builder = (
-            self._base_builder()
-            .set_properties(entity_columns=["USER_ID"], timestamp_field="EVENT_TIME")
-            .set_udf(**_simple_udf_args())
+        builder = self._base_builder().set_properties(timestamp_field="EVENT_TIME").set_udf(**_simple_udf_args())
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="fv",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "RealtimeFeatureView must not have a timestamp_field"):
+            builder.build()
+
+    def _rtfv_with_features_upstream(
+        self,
+        *,
+        upstream_name: str,
+        upstream_version: str,
+    ) -> FeatureViewSpecBuilder:
+        """Build a Realtime FV with one Request + one Features source."""
+        builder = self._base_builder().set_udf(**_simple_udf_args())
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name=upstream_name,
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version=upstream_version,
+            ),
+        ]
+        return builder
+
+    def test_rejects_rtfv_upstream_in_rtfv(self) -> None:
+        """RTFV chaining (RTFV-on-RTFV) is not supported."""
+        builder = self._rtfv_with_features_upstream(upstream_name="UPSTREAM_RT", upstream_version="v1")
+        _seed_upstream_kind(builder, name="UPSTREAM_RT", version="v1", kind=FeatureViewKind.RealtimeFeatureView)
+
+        with self.assertRaises(ValueError) as cm:
+            builder.build()
+        message = str(cm.exception)
+        self.assertIn("RealtimeFeatureView upstream 'UPSTREAM_RT@v1' has kind 'RealtimeFeatureView'", message)
+        self.assertIn("RealtimeFeatureView does not support chaining or FeatureGroup upstreams.", message)
+
+    def test_rejects_fg_upstream_in_rtfv(self) -> None:
+        """RTFV cannot have a FeatureGroup upstream."""
+        builder = self._rtfv_with_features_upstream(upstream_name="UPSTREAM_FG", upstream_version="v1")
+        _seed_upstream_kind(builder, name="UPSTREAM_FG", version="v1", kind=FeatureViewKind.FeatureGroup)
+
+        with self.assertRaises(ValueError) as cm:
+            builder.build()
+        message = str(cm.exception)
+        self.assertIn("RealtimeFeatureView upstream 'UPSTREAM_FG@v1' has kind 'FeatureGroup'", message)
+        self.assertIn("RealtimeFeatureView does not support chaining or FeatureGroup upstreams.", message)
+
+    def test_accepts_stream_and_batch_upstreams_in_rtfv(self) -> None:
+        builder = self._base_builder().set_udf(
+            name="transform_fn",
+            engine="pandas",
+            output_columns=[("AMOUNT", DoubleType())],
+            function_definition="def transform_fn(req, stream_fv, batch_fv): return req",
         )
         builder._sources = [
             Source(
@@ -2463,9 +2557,331 @@ class RealtimeValidationTest(absltest.TestCase):
                 source_type=SourceType.REQUEST,
                 columns=[FSColumn(name="X", type="DoubleType")],
             ),
+            Source(
+                name="UPSTREAM_STREAM",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+            Source(
+                name="UPSTREAM_BATCH",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Z", type="DoubleType")],
+                source_version="v2",
+            ),
         ]
-        with self.assertRaisesRegex(ValueError, "RealtimeFeatureView must not have a timestamp_field"):
+        _seed_upstream_kind(builder, name="UPSTREAM_STREAM", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        _seed_upstream_kind(builder, name="UPSTREAM_BATCH", version="v2", kind=FeatureViewKind.BatchFeatureView)
+
+        # Should build without raising.
+        result = builder.build()
+        self.assertEqual(result.kind, FeatureViewKind.RealtimeFeatureView)
+
+    def test_set_properties_entity_columns_rejected_for_rtfv(self) -> None:
+        """set_properties(entity_columns=...) is not allowed on a RealtimeFeatureView."""
+        builder = self._base_builder()
+        with self.assertRaisesRegex(ValueError, "RealtimeFeatureView.set_properties.*entity columns are derived"):
+            builder.set_properties(entity_columns=["USER_ID"])
+
+    def test_derived_ordered_entity_columns_union_preserves_first_seen_order(self) -> None:
+        """RTFV's ``ordered_entity_column_names`` is the first-seen union across
+        FEATURES sources; REQUEST contributes nothing."""
+        builder = self._base_builder().set_udf(
+            name="transform_fn",
+            engine="pandas",
+            output_columns=[("AMOUNT", DoubleType())],
+            function_definition="def transform_fn(req, fv_a, fv_b): return req",
+        )
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="UPSTREAM_A",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="A_FEAT", type="DoubleType")],
+                source_version="v1",
+            ),
+            Source(
+                name="UPSTREAM_B",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="B_FEAT", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        _seed_upstream_kind(builder, name="UPSTREAM_A", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        _seed_upstream_kind(builder, name="UPSTREAM_B", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        # UPSTREAM_A → [USER_ID, MERCHANT_ID]; UPSTREAM_B shares USER_ID and
+        # adds DEVICE_ID. Expected union in first-seen order:
+        # [USER_ID, MERCHANT_ID, DEVICE_ID].
+        _seed_derived_entity_columns(
+            builder,
+            entity_columns=["USER_ID", "MERCHANT_ID", "DEVICE_ID"],
+        )
+
+        result = builder.build()
+        self.assertEqual(
+            result.spec.ordered_entity_column_names,
+            ["USER_ID", "MERCHANT_ID", "DEVICE_ID"],
+        )
+
+    def test_request_source_contributes_no_entity_columns(self) -> None:
+        """REQUEST source does not contribute to derived entity columns."""
+        builder = self._base_builder().set_udf(**_simple_udf_args())
+        # Only one upstream FEATURES source contributes USER_ID.
+        builder._sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                # Even a column named "USER_ID" on the REQUEST source must
+                # NOT contribute; request data is request-scoped, not an
+                # entity join key.
+                columns=[FSColumn(name="USER_ID", type="StringType")],
+            ),
+            Source(
+                name="UPSTREAM_FV",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="A", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        _seed_upstream_kind(builder, name="UPSTREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        _seed_derived_entity_columns(builder, entity_columns=["MERCHANT_ID"])
+        # arity 1 UDF vs 2 sources → update UDF
+        builder.set_udf(
+            name="transform_fn",
+            engine="pandas",
+            output_columns=[("AMOUNT", DoubleType())],
+            function_definition="def transform_fn(req, fv): return req",
+        )
+
+        result = builder.build()
+        # Only the FEATURES source contributes entity columns.
+        self.assertEqual(result.spec.ordered_entity_column_names, ["MERCHANT_ID"])
+
+
+# ============================================================================
+# UDF Signature Validation Tests — Realtime
+# ============================================================================
+
+
+class RealtimeUdfSignatureValidationTest(absltest.TestCase):
+    """Tests for `_validate_udf_signature` and the REQUEST-first rule on RTFV."""
+
+    def _builder(
+        self,
+        *,
+        sources: Optional[list[Source]] = None,
+    ) -> FeatureViewSpecBuilder:
+        builder = FeatureViewSpecBuilder(
+            FeatureViewKind.RealtimeFeatureView,
+            database="DB",
+            schema="SCH",
+            name="fv",
+            version="v1",
+        )
+        if sources is None:
+            sources = [
+                Source(
+                    name="request",
+                    source_type=SourceType.REQUEST,
+                    columns=[FSColumn(name="X", type="DoubleType")],
+                ),
+                Source(
+                    name="fv",
+                    source_type=SourceType.FEATURES,
+                    columns=[FSColumn(name="Y", type="DoubleType")],
+                    source_version="v1",
+                ),
+            ]
+        builder._sources = list(sources)
+        return builder
+
+    def _set_udf(self, builder: FeatureViewSpecBuilder, function_definition: str, name: str = "score") -> None:
+        builder.set_udf(
+            name=name,
+            engine="pandas",
+            output_columns=[("OUT", DoubleType())],
+            function_definition=function_definition,
+        )
+
+    def test_udf_unparsable_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def f(x: : x")
+        with self.assertRaisesRegex(ValueError, "is not valid Python"):
             builder.build()
+
+    def test_udf_missing_named_def_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def other(req): return req")
+        with self.assertRaisesRegex(ValueError, "must contain a top-level 'def score"):
+            builder.build()
+
+    def test_udf_async_def_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "async def score(req): return req")
+        with self.assertRaisesRegex(ValueError, "must not be async"):
+            builder.build()
+
+    def test_udf_generator_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def score(req):\n    yield req")
+        with self.assertRaisesRegex(ValueError, "must not be a generator"):
+            builder.build()
+
+    def test_udf_varargs_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def score(*args): return args")
+        with self.assertRaisesRegex(ValueError, r"must not use \*args"):
+            builder.build()
+
+    def test_udf_kwargs_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def score(req, **kw): return req")
+        with self.assertRaisesRegex(ValueError, r"must not use \*\*kwargs"):
+            builder.build()
+
+    def test_udf_kwonly_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def score(*, req): return req")
+        with self.assertRaisesRegex(ValueError, "must not use keyword-only args"):
+            builder.build()
+
+    def test_udf_arity_too_few_rejected(self) -> None:
+        sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="UPSTREAM_FV",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        builder = self._builder(sources=sources)
+        _seed_upstream_kind(builder, name="UPSTREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        self._set_udf(builder, "def score(req): return req")
+        with self.assertRaisesRegex(ValueError, r"has 1 positional argument\(s\) but the feature view has 2"):
+            builder.build()
+
+    def test_udf_arity_too_many_rejected(self) -> None:
+        builder = self._builder()
+        self._set_udf(builder, "def score(req, fv, extra): return req")
+        with self.assertRaisesRegex(ValueError, r"has 3 positional argument\(s\) but the feature view has 2"):
+            builder.build()
+
+    def test_udf_arity_matches_ok(self) -> None:
+        sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="UPSTREAM_FV",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        builder = self._builder(sources=sources)
+        _seed_upstream_kind(builder, name="UPSTREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        self._set_udf(builder, "def score(req, fv): return req")
+        result = builder.build()
+        self.assertEqual(result.spec.sources[0].source_type, SourceType.REQUEST)
+        self.assertEqual(len(result.spec.sources), 2)
+
+    def test_request_source_must_be_first_rejected(self) -> None:
+        sources = [
+            Source(
+                name="UPSTREAM_FV",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+        ]
+        builder = self._builder(sources=sources)
+        _seed_upstream_kind(builder, name="UPSTREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        self._set_udf(builder, "def score(req, fv): return req")
+        with self.assertRaisesRegex(ValueError, "Request source to be first"):
+            builder.build()
+
+    def test_udf_with_default_value_ok(self) -> None:
+        sources = [
+            Source(
+                name="request",
+                source_type=SourceType.REQUEST,
+                columns=[FSColumn(name="X", type="DoubleType")],
+            ),
+            Source(
+                name="UPSTREAM_FV",
+                source_type=SourceType.FEATURES,
+                columns=[FSColumn(name="Y", type="DoubleType")],
+                source_version="v1",
+            ),
+        ]
+        builder = self._builder(sources=sources)
+        _seed_upstream_kind(builder, name="UPSTREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        self._set_udf(builder, "def score(req, fv=None): return req")
+        result = builder.build()
+        self.assertEqual(len(result.spec.sources), 2)
+
+
+# ============================================================================
+# UDF Signature Validation Tests — Streaming
+# ============================================================================
+
+
+class StreamingUdfSignatureValidationTest(absltest.TestCase):
+    """Tests for `_validate_udf_signature` invocation from `_validate_streaming`."""
+
+    def _builder(self, function_definition: str, name: str = "fn") -> FeatureViewSpecBuilder:
+        return (
+            FeatureViewSpecBuilder(
+                FeatureViewKind.StreamingFeatureView,
+                database="DB",
+                schema="SCH",
+                name="fv",
+                version="v1",
+            )
+            .set_offline_configs([_udf_transformed_config()])
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+            )
+            .set_sources([_make_stream_source()])
+            .set_udf(
+                name=name,
+                engine="pandas",
+                output_columns=[("OUT", DoubleType())],
+                function_definition=function_definition,
+            )
+        )
+
+    def test_streaming_udf_arity_must_be_one(self) -> None:
+        builder = self._builder("def fn(stream, extra): return stream")
+        with self.assertRaisesRegex(ValueError, r"has 2 positional argument\(s\) but the feature view has 1"):
+            builder.build()
+
+    def test_streaming_udf_missing_named_def_rejected(self) -> None:
+        builder = self._builder("def other(stream): return stream")
+        with self.assertRaisesRegex(ValueError, "must contain a top-level 'def fn"):
+            builder.build()
+
+    def test_streaming_udf_arity_one_ok(self) -> None:
+        builder = self._builder("def fn(stream): return stream")
+        result = builder.build()
+        self.assertEqual(result.kind, FeatureViewKind.StreamingFeatureView)
 
 
 # ============================================================================
@@ -2512,19 +2928,6 @@ class SourceFieldValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not have source_version"):
             builder.build()
 
-    def test_stream_source_with_selected_features_rejected(self) -> None:
-        builder = self._streaming_builder()
-        builder._sources = [
-            Source(
-                name="s",
-                source_type=SourceType.STREAM,
-                columns=[FSColumn(name="X", type="DoubleType")],
-                selected_features=["X"],
-            )
-        ]
-        with self.assertRaisesRegex(ValueError, "must not have selected_features"):
-            builder.build()
-
     def test_request_source_with_version_rejected(self) -> None:
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.RealtimeFeatureView,
@@ -2547,8 +2950,12 @@ class SourceFieldValidationTest(absltest.TestCase):
                 source_version="v1",
             ),
         ]
-        builder._udf = mock.MagicMock()
-        builder.set_properties(entity_columns=["USER_ID"])
+        builder.set_udf(
+            name="fn",
+            engine="pandas",
+            output_columns=[("OUT", DoubleType())],
+            function_definition="def fn(req, features): return None",
+        )
         with self.assertRaisesRegex(ValueError, "must not have source_version"):
             builder._validate()
 
@@ -2572,8 +2979,12 @@ class SourceFieldValidationTest(absltest.TestCase):
                 columns=[FSColumn(name="Y", type="DoubleType")],
             ),
         ]
-        builder._udf = mock.MagicMock()
-        builder.set_properties(entity_columns=["USER_ID"])
+        builder.set_udf(
+            name="fn",
+            engine="pandas",
+            output_columns=[("OUT", DoubleType())],
+            function_definition="def fn(req, features): return None",
+        )
         with self.assertRaisesRegex(ValueError, "requires source_version"):
             builder._validate()
 
@@ -2609,6 +3020,11 @@ class OmitemptySerializationTest(absltest.TestCase):
         self.assertNotIn("udf", spec)
         self.assertNotIn("target_lag_sec", spec)
         self.assertEqual(result["online_store_type"], "postgres")
+        # Stream / Batch features must not emit source_name / source_version —
+        # those JSON keys exist only on FeatureGroup features.
+        for feat in spec["features"]:
+            self.assertNotIn("source_name", feat)
+            self.assertNotIn("source_version", feat)
 
 
 # ============================================================================
@@ -2723,7 +3139,16 @@ def _make_rt_builder(
     entity_columns: Optional[list[str]] = None,
     timestamp_field: Optional[str] = None,
 ) -> FeatureViewSpecBuilder:
-    """Helper to construct a Realtime builder with sources + properties set."""
+    """Helper to construct a Realtime builder with sources + properties set.
+
+    ``entity_columns`` are stamped directly onto ``_derived_entity_columns``
+    — the precomputed first-seen union that :meth:`set_sources` would
+    otherwise build from upstream FV inputs.
+
+    This helper bypasses :meth:`set_sources` (which expects user-facing types)
+    by injecting pre-built ``Source`` instances directly — mirroring the
+    pattern used in :func:`_make_fg_builder`.
+    """
     builder = FeatureViewSpecBuilder(
         FeatureViewKind.RealtimeFeatureView,
         database="DB",
@@ -2731,11 +3156,22 @@ def _make_rt_builder(
         name="rt_fv",
         version="v1",
     )
-    builder.set_properties(
-        entity_columns=entity_columns if entity_columns is not None else ["USER_ID"],
-        timestamp_field=timestamp_field,
-    )
-    builder.set_sources([_request_source()])
+    builder.set_properties(timestamp_field=timestamp_field)
+    resolved_entity_columns = entity_columns if entity_columns is not None else ["USER_ID"]
+    builder._sources = [
+        Source(
+            name="request",
+            source_type=SourceType.REQUEST,
+            columns=[FSColumn(name="REQ_X", type="DoubleType")],
+        ),
+        Source(
+            name="UPSTREAM_FV",
+            source_type=SourceType.FEATURES,
+            columns=[FSColumn(name="UPSTREAM_FEAT", type="DoubleType")],
+            source_version="v1",
+        ),
+    ]
+    _seed_derived_entity_columns(builder, entity_columns=resolved_entity_columns)
     return builder
 
 
@@ -2843,10 +3279,13 @@ def _fg_features_source(
     *,
     name: str = "USER_FV",
     columns: Optional[list[FSColumn]] = None,
-    selected_features: Optional[list[str]] = None,
     source_version: Optional[str] = "v1",
 ) -> Source:
-    """Build a Source with source_type=FEATURES directly (bypassing FV mocks)."""
+    """Build a Source with source_type=FEATURES directly (bypassing FV mocks).
+
+    For FEATURES sources, ``columns`` is the caller-selected subset (in the
+    desired order) — the same shape ``_convert_feature_view_slice`` produces.
+    """
     if columns is None:
         columns = [
             FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
@@ -2857,7 +3296,6 @@ def _fg_features_source(
         source_type=SourceType.FEATURES,
         columns=columns,
         source_version=source_version,
-        selected_features=selected_features,
     )
 
 
@@ -2874,6 +3312,10 @@ def _make_fg_builder(
     Bypasses set_sources (which expects user-facing types) by injecting Source
     instances directly into the builder's internal state; avoids mocking
     FeatureView/FeatureViewSlice for spec-builder unit tests.
+
+    ``entity_columns`` is stamped directly onto
+    ``_derived_entity_columns`` — the precomputed first-seen union that
+    :meth:`set_sources` would otherwise build from upstream FV inputs.
     """
     builder = FeatureViewSpecBuilder(
         FeatureViewKind.FeatureGroup,
@@ -2882,8 +3324,9 @@ def _make_fg_builder(
         name=name,
         version=version,
     )
-    builder.set_properties(entity_columns=entity_columns or ["USER_ID"])
     builder._sources = list(sources)
+    resolved_entity_columns = entity_columns or ["USER_ID"]
+    _seed_derived_entity_columns(builder, entity_columns=resolved_entity_columns)
     if prefix_map is not None:
         builder.set_source_prefixes(prefix_map)
     return builder
@@ -2904,8 +3347,13 @@ class FeatureGroupBuilderTest(absltest.TestCase):
 
         self.assertEqual(result.kind, FeatureViewKind.FeatureGroup)
         self.assertEqual(len(result.offline_configs), 0)
+        # FG emits its FEATURES sources, mirroring RTFV's shape.
         self.assertEqual(len(result.spec.sources), 1)
-        self.assertEqual(result.spec.sources[0].source_type, SourceType.FEATURES)
+        src = result.spec.sources[0]
+        self.assertEqual(src.source_type, SourceType.FEATURES)
+        self.assertEqual(src.name, "USER_FV")
+        self.assertEqual(src.source_version, "v1")
+        self.assertEqual([c.name for c in src.columns], ["TOTAL_SPEND_30D", "AVG_TXN_AMOUNT"])
         self.assertIsNone(result.spec.udf)
         self.assertIsNone(result.spec.feature_aggregation_method)
         self.assertIsNone(result.spec.feature_granularity_sec)
@@ -2916,6 +3364,9 @@ class FeatureGroupBuilderTest(absltest.TestCase):
         for f in result.spec.features:
             # No prefix → output_column == source_column.
             self.assertEqual(f.source_column, f.output_column)
+            # Each FG feature carries the upstream FV identity inline.
+            self.assertEqual(f.source_name, "USER_FV")
+            self.assertEqual(f.source_version, "v1")
 
     def test_multiple_features_sources(self) -> None:
         user_src = _fg_features_source(
@@ -2935,18 +3386,38 @@ class FeatureGroupBuilderTest(absltest.TestCase):
 
         result = _make_fg_builder(sources=[user_src, txn_src]).build()
 
+        # FG emits its FEATURES sources in the order they were registered.
+        self.assertEqual(len(result.spec.sources), 2)
+        self.assertEqual(
+            [(s.name, s.source_version) for s in result.spec.sources],
+            [("USER_FV", "v1"), ("TXN_FV", "v2")],
+        )
+        self.assertEqual([c.name for c in result.spec.sources[0].columns], ["TOTAL_SPEND_30D"])
+        self.assertEqual(
+            [c.name for c in result.spec.sources[1].columns],
+            ["TXN_COUNT_24H", "LAST_AMOUNT"],
+        )
+
         feature_names = [f.output_column.name for f in result.spec.features]
         self.assertEqual(feature_names, ["TOTAL_SPEND_30D", "TXN_COUNT_24H", "LAST_AMOUNT"])
 
+        # Each feature points at the right upstream FV via (source_name, source_version).
+        identities = [(f.source_name, f.source_version) for f in result.spec.features]
+        self.assertEqual(
+            identities,
+            [
+                ("USER_FV", "v1"),
+                ("TXN_FV", "v2"),
+                ("TXN_FV", "v2"),
+            ],
+        )
+
     def test_feature_view_slice_only_selected_features(self) -> None:
+        # A slice is encoded as columns[] containing only the selected
+        # columns; no separate selected_features field exists.
         src = _fg_features_source(
             name="USER_FV",
-            columns=[
-                FSColumn(name="TOTAL_SPEND_30D", type="DoubleType"),
-                FSColumn(name="AVG_TXN_AMOUNT", type="DoubleType"),
-                FSColumn(name="LAST_LOGIN_TS", type="TimestampType"),
-            ],
-            selected_features=["TOTAL_SPEND_30D"],
+            columns=[FSColumn(name="TOTAL_SPEND_30D", type="DoubleType")],
         )
 
         result = _make_fg_builder(sources=[src]).build()
@@ -2983,8 +3454,11 @@ class FeatureGroupBuilderTest(absltest.TestCase):
         ).build()
 
         self.assertEqual(result.spec.features, [])
-        # Source still appears (validation only requires >=1 source).
+        # The FV reference still appears in sources[] even though all of its
+        # columns are entity columns and contribute no features.
         self.assertEqual(len(result.spec.sources), 1)
+        self.assertEqual(result.spec.sources[0].name, "USER_FV")
+        self.assertEqual([c.name for c in result.spec.sources[0].columns], ["USER_ID"])
 
     @mock.patch(
         "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
@@ -3006,17 +3480,23 @@ class FeatureGroupBuilderTest(absltest.TestCase):
                 name="fg",
                 version="v1",
             )
-            .set_properties(entity_columns=["USER_ID"])
             .set_sources([fv])
             .set_source_prefixes({("USER_FV", "v1"): "USER_FV_v1_"})
             .build()
         )
 
         self.assertEqual(result.kind, FeatureViewKind.FeatureGroup)
+        # FG emits its FEATURES sources mirroring RTFV's shape.
         self.assertEqual(len(result.spec.sources), 1)
-        self.assertEqual(result.spec.sources[0].source_type, SourceType.FEATURES)
+        src = result.spec.sources[0]
+        self.assertEqual(src.source_type, SourceType.FEATURES)
+        self.assertEqual(src.name, "USER_FV")
+        self.assertEqual(src.source_version, "v1")
+        self.assertEqual([c.name for c in src.columns], ["SCORE"])
         self.assertEqual([f.output_column.name for f in result.spec.features], ["USER_FV_v1_SCORE"])
         self.assertEqual(result.spec.features[0].source_column.name, "SCORE")
+        self.assertEqual(result.spec.features[0].source_name, "USER_FV")
+        self.assertEqual(result.spec.features[0].source_version, "v1")
 
 
 # ============================================================================
@@ -3129,6 +3609,13 @@ class FeatureGroupValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "FeatureGroup must not have a timestamp_field"):
             builder.build()
 
+    def test_rejects_target_lag_sec(self) -> None:
+        builder = _make_fg_builder(sources=[_fg_features_source()])
+        builder._target_lag_sec = 3600
+
+        with self.assertRaisesRegex(ValueError, "FeatureGroup must not have target_lag_sec"):
+            builder.build()
+
     def test_rejects_duplicate_output_column_names(self) -> None:
         # Two FEATURES sources expose the same column name → collision
         # without prefixing should surface at build() time.
@@ -3163,6 +3650,95 @@ class FeatureGroupValidationTest(absltest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "Duplicate output column name.*p_AMT"):
             builder.build()
+
+    def test_rejects_fg_upstream_in_fg(self) -> None:
+        # FG-on-FG chaining is not supported. (User-facing FG FeatureView class
+        # doesn't exist yet, so we simulate the upstream kind via the helper.)
+        src = _fg_features_source(name="USER_FG", source_version="v1")
+        builder = _make_fg_builder(sources=[src])
+        _seed_upstream_kind(builder, name="USER_FG", version="v1", kind=FeatureViewKind.FeatureGroup)
+
+        with self.assertRaises(ValueError) as cm:
+            builder.build()
+        message = str(cm.exception)
+        self.assertIn("FeatureGroup upstream 'USER_FG@v1' has kind 'FeatureGroup'", message)
+        self.assertIn("FeatureGroup chaining is not supported.", message)
+
+    def test_accepts_rtfv_upstream_in_fg(self) -> None:
+        # FG explicitly allows RTFV upstreams (deviation from hand-off doc;
+        # reflects updated platform contract).
+        src = _fg_features_source(name="USER_RT_FV", source_version="v1")
+        builder = _make_fg_builder(sources=[src])
+        _seed_upstream_kind(builder, name="USER_RT_FV", version="v1", kind=FeatureViewKind.RealtimeFeatureView)
+
+        result = builder.build()
+        self.assertEqual(result.kind, FeatureViewKind.FeatureGroup)
+        self.assertEqual(result.spec.features[0].source_name, "USER_RT_FV")
+        self.assertEqual(result.spec.features[0].source_version, "v1")
+
+    def test_accepts_stream_and_batch_upstreams_in_fg(self) -> None:
+        stream_src = _fg_features_source(
+            name="USER_STREAM_FV",
+            columns=[FSColumn(name="STREAM_FEAT", type="DoubleType")],
+            source_version="v1",
+        )
+        batch_src = _fg_features_source(
+            name="USER_BATCH_FV",
+            columns=[FSColumn(name="BATCH_FEAT", type="DoubleType")],
+            source_version="v2",
+        )
+        builder = _make_fg_builder(sources=[stream_src, batch_src])
+        _seed_upstream_kind(builder, name="USER_STREAM_FV", version="v1", kind=FeatureViewKind.StreamingFeatureView)
+        _seed_upstream_kind(builder, name="USER_BATCH_FV", version="v2", kind=FeatureViewKind.BatchFeatureView)
+
+        # Should build without raising.
+        result = builder.build()
+        identities = [(f.source_name, f.source_version) for f in result.spec.features]
+        self.assertEqual(
+            identities,
+            [
+                ("USER_STREAM_FV", "v1"),
+                ("USER_BATCH_FV", "v2"),
+            ],
+        )
+
+    def test_set_properties_entity_columns_rejected_for_fg(self) -> None:
+        """set_properties(entity_columns=...) is not allowed on a FeatureGroup."""
+        builder = FeatureViewSpecBuilder(
+            FeatureViewKind.FeatureGroup,
+            database="DB",
+            schema="SCH",
+            name="fg",
+            version="v1",
+        )
+        with self.assertRaisesRegex(ValueError, "FeatureGroup.set_properties.*entity columns are derived"):
+            builder.set_properties(entity_columns=["USER_ID"])
+
+    def test_derived_ordered_entity_columns_union(self) -> None:
+        """FG's ``ordered_entity_column_names`` is the first-seen union across
+        FEATURES sources."""
+        src_a = _fg_features_source(
+            name="USER_FV",
+            columns=[FSColumn(name="A", type="DoubleType")],
+            source_version="v1",
+        )
+        src_b = _fg_features_source(
+            name="TXN_FV",
+            columns=[FSColumn(name="B", type="DoubleType")],
+            source_version="v1",
+        )
+        # USER_FV → [USER_ID, MERCHANT_ID]; TXN_FV → [USER_ID, TXN_ID].
+        # Expected: [USER_ID, MERCHANT_ID, TXN_ID].
+        builder = _make_fg_builder(
+            sources=[src_a, src_b],
+            entity_columns=["USER_ID", "MERCHANT_ID", "TXN_ID"],
+        )
+
+        result = builder.build()
+        self.assertEqual(
+            result.spec.ordered_entity_column_names,
+            ["USER_ID", "MERCHANT_ID", "TXN_ID"],
+        )
 
 
 # ============================================================================
@@ -3328,17 +3904,14 @@ class FeatureGroupPrefixTest(absltest.TestCase):
         self.assertEqual(names, ["USER_FV_v1_SCORE", "USER_FV_v2_SCORE"])
 
     def test_feature_view_slice_order_preserved(self) -> None:
-        # FeatureViewSlice preserves caller-requested feature order; the
-        # builder must emit passthrough features in that order rather than
-        # in schema (source.columns) order.
+        # FeatureViewSlice preserves caller-requested feature order, encoded
+        # as the order of columns[] on the FEATURES source.
         src = _fg_features_source(
             name="USER_FV",
             columns=[
-                FSColumn(name="A", type="DoubleType"),
-                FSColumn(name="B", type="DoubleType"),
                 FSColumn(name="C", type="DoubleType"),
+                FSColumn(name="A", type="DoubleType"),
             ],
-            selected_features=["C", "A"],  # intentional reverse/partial order
         )
 
         result = _make_fg_builder(sources=[src]).build()
@@ -3365,9 +3938,21 @@ class NewKindsSerializationTest(absltest.TestCase):
         self.assertNotIn("udf", d["spec"])
         self.assertNotIn("feature_aggregation_method", d["spec"])
         self.assertNotIn("feature_granularity_sec", d["spec"])
+        # FG emits its FEATURES sources, mirroring RTFV's wire shape.
+        self.assertEqual(len(d["spec"]["sources"]), 1)
+        self.assertEqual(d["spec"]["sources"][0]["name"], "USER_FV")
+        self.assertEqual(d["spec"]["sources"][0]["source_type"], SourceType.FEATURES)
+        self.assertEqual(d["spec"]["sources"][0]["source_version"], "v1")
+        self.assertEqual(
+            [c["name"] for c in d["spec"]["sources"][0]["columns"]],
+            ["TOTAL_SPEND_30D", "AVG_TXN_AMOUNT"],
+        )
         self.assertEqual(
             [f["output_column"]["name"] for f in d["spec"]["features"]], ["u_TOTAL_SPEND_30D", "u_AVG_TXN_AMOUNT"]
         )
+        for feat in d["spec"]["features"]:
+            self.assertEqual(feat["source_name"], "USER_FV")
+            self.assertEqual(feat["source_version"], "v1")
 
         # to_json() should be parseable round-trip.
         import json
@@ -3393,13 +3978,12 @@ class NewKindsSerializationTest(absltest.TestCase):
                 name="realtime_fv",
                 version="v1",
             )
-            .set_properties(entity_columns=["USER_ID"])
             .set_sources([_request_source(), _mock_feature_view()])
             .set_udf(
                 name="score_fn",
                 engine="pandas",
                 output_columns=[("RISK_SCORE", DoubleType())],
-                function_definition="def score(txn, features): return 0.5",
+                function_definition="def score_fn(txn, features): return 0.5",
             )
             .build()
         )
@@ -3409,6 +3993,11 @@ class NewKindsSerializationTest(absltest.TestCase):
         self.assertIn("udf", d["spec"])
         self.assertEqual(d["spec"]["udf"]["name"], "score_fn")
         self.assertEqual([f["output_column"]["name"] for f in d["spec"]["features"]], ["RISK_SCORE"])
+        # RTFV features do NOT carry source_name / source_version
+        # (the UDF is the producer of every output column).
+        for feat in d["spec"]["features"]:
+            self.assertNotIn("source_name", feat)
+            self.assertNotIn("source_version", feat)
 
 
 if __name__ == "__main__":

@@ -115,6 +115,13 @@
   name_conda: fsspec
   dev_version: 2024.6.1
   version_requirements: '>=2024.6.1,<2026'
+- name: h2
+  # Required by httpx for HTTP/2 negotiation. httpx pulls h2 only via the ``httpx[http2]`` extra,
+  # which our requirements pipeline does not model; declare it explicitly so
+  # OnlineServiceHttpClient(http2=True) does not ImportError at runtime.
+  # Pin >=4.3.0 to avoid CVE in <4.3.0 (CRLF injection on HTTP/2->1.1 downgrade).
+  dev_version: 4.3.0
+  version_requirements: '>=4.3.0,<5'
 - name: httpx
   dev_version: 0.28.1
 - name: importlib_resources

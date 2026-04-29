@@ -32,15 +32,21 @@ from snowflake.ml.feature_store.spec.enums import (
 )
 from snowflake.snowpark import Row
 from snowflake.snowpark.types import (
+    BinaryType,
+    BooleanType,
     DataType,
+    DateType,
     DecimalType,
     DoubleType,
+    FloatType,
     LongType,
     StringType,
     StructField,
     StructType,
     TimestampTimeZone,
     TimestampType,
+    TimeType,
+    VariantType,
 )
 
 
@@ -933,7 +939,7 @@ class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
     """``Session.create_dataframe`` literal rules for Postgres Query API rows."""
 
     def test_coerce_int_to_float_for_double(self) -> None:
-        from snowflake.ml.feature_store.feature_store import (
+        from snowflake.ml.feature_store.online_service import (
             _coerce_row_values_for_snowpark_local_schema,
         )
 
@@ -950,7 +956,7 @@ class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
         self.assertEqual(out["AMOUNT"], 999.0)
 
     def test_coerce_int_to_decimal_for_count_column(self) -> None:
-        from snowflake.ml.feature_store.feature_store import (
+        from snowflake.ml.feature_store.online_service import (
             _coerce_row_values_for_snowpark_local_schema,
         )
 
@@ -967,7 +973,7 @@ class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
         self.assertEqual(out["TXN_COUNT_2D"], Decimal("3"))
 
     def test_coerce_iso_timestamp_string_for_ntz(self) -> None:
-        from snowflake.ml.feature_store.feature_store import (
+        from snowflake.ml.feature_store.online_service import (
             _coerce_row_values_for_snowpark_local_schema,
         )
 
@@ -976,6 +982,274 @@ class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
         out = _coerce_row_values_for_snowpark_local_schema(row, schema)
         self.assertIsInstance(out["EVENT_TIME"], datetime.datetime)
         self.assertIsNone(out["EVENT_TIME"].tzinfo)
+
+
+class PostgresOnlinePandasBuilderTest(absltest.TestCase):
+    """Dtype-parity tests for ``_rows_to_pandas_for_postgres_online`` (Query API type vocabulary only)."""
+
+    def _build(self, rows: list[dict[str, Any]], schema: StructType) -> Any:
+        from snowflake.ml.feature_store.online_service import (
+            _rows_to_pandas_for_postgres_online,
+        )
+
+        return _rows_to_pandas_for_postgres_online(rows, schema)
+
+    def test_empty_rows_preserves_columns_and_dtypes(self) -> None:
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("RANK", DecimalType(38, 0)),
+                StructField("SCORE", DoubleType()),
+                StructField("PRICE", DecimalType(10, 2)),
+                StructField("IS_ACTIVE", BooleanType()),
+                StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+                StructField("EVENT_TIME_UTC", TimestampType(TimestampTimeZone.LTZ)),
+                StructField("BIRTHDAY", DateType()),
+                StructField("WAKEUP", TimeType()),
+                StructField("PAYLOAD", BinaryType()),
+                StructField("ATTRS", VariantType()),
+            ]
+        )
+
+        pdf = self._build([], schema)
+
+        self.assertEqual(
+            list(pdf.columns),
+            [
+                "USER_ID",
+                "RANK",
+                "SCORE",
+                "PRICE",
+                "IS_ACTIVE",
+                "EVENT_TIME",
+                "EVENT_TIME_UTC",
+                "BIRTHDAY",
+                "WAKEUP",
+                "PAYLOAD",
+                "ATTRS",
+            ],
+        )
+        self.assertEqual(len(pdf), 0)
+        self.assertEqual(pdf["USER_ID"].dtype, object)
+        self.assertEqual(pdf["RANK"].dtype, object)
+        self.assertEqual(pdf["SCORE"].dtype, "float64")
+        self.assertEqual(pdf["PRICE"].dtype, object)
+        self.assertEqual(pdf["IS_ACTIVE"].dtype, "bool")
+        self.assertEqual(str(pdf["EVENT_TIME"].dtype), "datetime64[ns]")
+        self.assertEqual(str(pdf["EVENT_TIME_UTC"].dtype), "datetime64[ns, UTC]")
+        self.assertEqual(pdf["BIRTHDAY"].dtype, object)
+        self.assertEqual(pdf["WAKEUP"].dtype, object)
+        self.assertEqual(pdf["PAYLOAD"].dtype, object)
+        self.assertEqual(pdf["ATTRS"].dtype, object)
+
+    def test_column_order_follows_schema_not_row_keys(self) -> None:
+        """Output columns must follow schema.fields regardless of row-dict key order."""
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("SCORE", DoubleType()),
+                StructField("RANK", DecimalType(38, 0)),
+            ]
+        )
+        rows = [
+            {"RANK": 10, "USER_ID": "u1", "SCORE": 1.5},
+        ]
+        pdf = self._build(rows, schema)
+        self.assertEqual(list(pdf.columns), ["USER_ID", "SCORE", "RANK"])
+        self.assertEqual(pdf.iloc[0]["USER_ID"], "u1")
+        self.assertEqual(pdf.iloc[0]["SCORE"], 1.5)
+        self.assertEqual(pdf.iloc[0]["RANK"], Decimal("10"))
+
+    def test_string_dtype_is_object(self) -> None:
+        schema = StructType([StructField("USER_ID", StringType())])
+        pdf = self._build([{"USER_ID": "u1"}, {"USER_ID": "u2"}], schema)
+        self.assertEqual(pdf["USER_ID"].dtype, object)
+        self.assertEqual(pdf["USER_ID"].tolist(), ["u1", "u2"])
+
+    def test_integer_like_decimal_is_object_of_decimal(self) -> None:
+        """``NUMBER(38, 0)`` (Query API ``fixed``) stays as object/Decimal, matching Snowpark."""
+        schema = StructType([StructField("RANK", DecimalType(38, 0))])
+        pdf = self._build([{"RANK": 1}, {"RANK": 2}, {"RANK": 3}], schema)
+        self.assertEqual(pdf["RANK"].dtype, object)
+        self.assertEqual(pdf["RANK"].tolist(), [Decimal("1"), Decimal("2"), Decimal("3")])
+
+    def test_integer_like_decimal_with_nulls_stays_object(self) -> None:
+        """Nulls in ``DecimalType(38, 0)`` stay as ``None``; dtype remains ``object``."""
+        import pandas as pd
+
+        schema = StructType([StructField("RANK", DecimalType(38, 0))])
+        pdf = self._build([{"RANK": 1}, {"RANK": None}, {"RANK": 3}], schema)
+        self.assertEqual(pdf["RANK"].dtype, object)
+        self.assertEqual(pdf["RANK"].iloc[0], Decimal("1"))
+        self.assertTrue(pd.isna(pdf["RANK"].iloc[1]) or pdf["RANK"].iloc[1] is None)
+        self.assertEqual(pdf["RANK"].iloc[2], Decimal("3"))
+
+    def test_double_and_float_are_float64(self) -> None:
+        schema = StructType([StructField("SCORE", DoubleType()), StructField("RATIO", FloatType())])
+        pdf = self._build([{"SCORE": 1, "RATIO": 2}], schema)
+        self.assertEqual(pdf["SCORE"].dtype, "float64")
+        self.assertEqual(pdf["RATIO"].dtype, "float64")
+        self.assertIsInstance(pdf["SCORE"].iloc[0].item(), float)
+
+    def test_decimal_stays_as_object_of_decimal(self) -> None:
+        schema = StructType([StructField("PRICE", DecimalType(10, 2))])
+        pdf = self._build([{"PRICE": 99.95}, {"PRICE": "100.01"}, {"PRICE": None}], schema)
+        self.assertEqual(pdf["PRICE"].dtype, object)
+        self.assertIsInstance(pdf["PRICE"].iloc[0], Decimal)
+        self.assertEqual(pdf["PRICE"].iloc[0], Decimal("99.95"))
+        self.assertIsInstance(pdf["PRICE"].iloc[1], Decimal)
+        self.assertEqual(pdf["PRICE"].iloc[1], Decimal("100.01"))
+        self.assertIsNone(pdf["PRICE"].iloc[2])
+
+    def test_boolean_without_nulls_is_bool(self) -> None:
+        schema = StructType([StructField("IS_ACTIVE", BooleanType())])
+        pdf = self._build([{"IS_ACTIVE": True}, {"IS_ACTIVE": False}], schema)
+        self.assertEqual(pdf["IS_ACTIVE"].dtype, "bool")
+        self.assertEqual(pdf["IS_ACTIVE"].tolist(), [True, False])
+
+    def test_boolean_with_nulls_is_object(self) -> None:
+        schema = StructType([StructField("IS_ACTIVE", BooleanType())])
+        pdf = self._build([{"IS_ACTIVE": True}, {"IS_ACTIVE": None}, {"IS_ACTIVE": False}], schema)
+        self.assertEqual(pdf["IS_ACTIVE"].dtype, object)
+
+    def test_timestamp_ntz_is_tz_naive_datetime64_ns(self) -> None:
+        schema = StructType([StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ))])
+        pdf = self._build(
+            [
+                {"EVENT_TIME": "2024-06-01T12:00:00"},
+                {"EVENT_TIME": "2024-06-02T13:00:00Z"},
+            ],
+            schema,
+        )
+        self.assertEqual(str(pdf["EVENT_TIME"].dtype), "datetime64[ns]")
+        self.assertIsNone(pdf["EVENT_TIME"].iloc[0].tzinfo)
+        self.assertIsNone(pdf["EVENT_TIME"].iloc[1].tzinfo)
+
+    def test_timestamp_ltz_and_tz_are_utc_datetime64(self) -> None:
+        for tz in (TimestampTimeZone.LTZ, TimestampTimeZone.TZ):
+            schema = StructType([StructField("EVENT_TIME", TimestampType(tz))])
+            pdf = self._build(
+                [
+                    {"EVENT_TIME": "2024-06-01T12:00:00Z"},
+                    {"EVENT_TIME": "2024-06-02T13:00:00+02:00"},
+                ],
+                schema,
+            )
+            self.assertEqual(str(pdf["EVENT_TIME"].dtype), "datetime64[ns, UTC]")
+            self.assertEqual(pdf["EVENT_TIME"].iloc[1].hour, 11)
+
+    def test_date_is_object_of_datetime_date(self) -> None:
+        schema = StructType([StructField("BIRTHDAY", DateType())])
+        pdf = self._build(
+            [
+                {"BIRTHDAY": "2024-06-01"},
+                {"BIRTHDAY": None},
+                {"BIRTHDAY": datetime.date(1999, 12, 31)},
+            ],
+            schema,
+        )
+        self.assertEqual(pdf["BIRTHDAY"].dtype, object)
+        self.assertEqual(pdf["BIRTHDAY"].iloc[0], datetime.date(2024, 6, 1))
+        self.assertIsNone(pdf["BIRTHDAY"].iloc[1])
+        self.assertEqual(pdf["BIRTHDAY"].iloc[2], datetime.date(1999, 12, 31))
+
+    def test_time_is_object_of_datetime_time(self) -> None:
+        schema = StructType([StructField("WAKEUP", TimeType())])
+        pdf = self._build(
+            [
+                {"WAKEUP": "06:30:00"},
+                {"WAKEUP": None},
+                {"WAKEUP": datetime.time(23, 59, 59)},
+            ],
+            schema,
+        )
+        self.assertEqual(pdf["WAKEUP"].dtype, object)
+        self.assertEqual(pdf["WAKEUP"].iloc[0], datetime.time(6, 30, 0))
+        self.assertIsNone(pdf["WAKEUP"].iloc[1])
+        self.assertEqual(pdf["WAKEUP"].iloc[2], datetime.time(23, 59, 59))
+
+    def test_binary_is_object_of_bytes(self) -> None:
+        """Hex-string binary payloads decode to ``bytes``."""
+        schema = StructType([StructField("PAYLOAD", BinaryType())])
+        pdf = self._build(
+            [
+                {"PAYLOAD": "deadbeef"},
+                {"PAYLOAD": None},
+                {"PAYLOAD": b"\x01\x02"},
+            ],
+            schema,
+        )
+        self.assertEqual(pdf["PAYLOAD"].dtype, object)
+        self.assertEqual(pdf["PAYLOAD"].iloc[0], b"\xde\xad\xbe\xef")
+        self.assertIsNone(pdf["PAYLOAD"].iloc[1])
+        self.assertEqual(pdf["PAYLOAD"].iloc[2], b"\x01\x02")
+
+    def test_variant_stays_as_object_of_parsed_json(self) -> None:
+        """``variant``/``object``/``array`` values are pre-parsed JSON and pass through unchanged."""
+        schema = StructType([StructField("ATTRS", VariantType())])
+        pdf = self._build(
+            [
+                {"ATTRS": {"k": "v"}},
+                {"ATTRS": [1, 2, 3]},
+                {"ATTRS": None},
+                {"ATTRS": "plain"},
+            ],
+            schema,
+        )
+        self.assertEqual(pdf["ATTRS"].dtype, object)
+        self.assertEqual(pdf["ATTRS"].iloc[0], {"k": "v"})
+        self.assertEqual(pdf["ATTRS"].iloc[1], [1, 2, 3])
+        self.assertIsNone(pdf["ATTRS"].iloc[2])
+        self.assertEqual(pdf["ATTRS"].iloc[3], "plain")
+
+    def test_null_row_for_each_type_does_not_raise(self) -> None:
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("RANK", DecimalType(38, 0)),
+                StructField("SCORE", DoubleType()),
+                StructField("PRICE", DecimalType(10, 2)),
+                StructField("IS_ACTIVE", BooleanType()),
+                StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+                StructField("BIRTHDAY", DateType()),
+                StructField("WAKEUP", TimeType()),
+                StructField("PAYLOAD", BinaryType()),
+                StructField("ATTRS", VariantType()),
+            ]
+        )
+        pdf = self._build(
+            [
+                {
+                    "USER_ID": None,
+                    "RANK": None,
+                    "SCORE": None,
+                    "PRICE": None,
+                    "IS_ACTIVE": None,
+                    "EVENT_TIME": None,
+                    "BIRTHDAY": None,
+                    "WAKEUP": None,
+                    "PAYLOAD": None,
+                    "ATTRS": None,
+                }
+            ],
+            schema,
+        )
+        self.assertEqual(len(pdf), 1)
+        self.assertEqual(
+            list(pdf.columns),
+            [
+                "USER_ID",
+                "RANK",
+                "SCORE",
+                "PRICE",
+                "IS_ACTIVE",
+                "EVENT_TIME",
+                "BIRTHDAY",
+                "WAKEUP",
+                "PAYLOAD",
+                "ATTRS",
+            ],
+        )
 
 
 class FeatureAggregationMethodTest(absltest.TestCase):

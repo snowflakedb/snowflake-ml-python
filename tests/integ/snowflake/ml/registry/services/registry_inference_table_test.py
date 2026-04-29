@@ -412,9 +412,14 @@ class RegistryInferenceTableTest(RegistryModelDeploymentTestBase):
         self.assertIsNotNone(response)
         self.assertEqual(len(response), len(test_input), "Response should match input size")
 
-        # Query INFERENCE_TABLE expecting 7 records (3 from test + 4 from deployment validation)
+        # Query INFERENCE_TABLE expecting 5 records:
+        #   - 3 from the test's REST API call above (3 rows in test_input)
+        #   - 2 from deployment validation's REST API call (2 rows in prediction_assert_fns)
+        # The deployment validation also calls mv.run() with 2 rows, but mv.run() uses the
+        # SQL function path (not HTTP ingress), which bypasses the proxy's autocapture pipeline,
+        # so those 2 rows are NOT captured in the inference table.
         inference_results = self._query_inference_table(
-            mv=mv, service_name=service_name, expected_record_count=7, timeout_seconds=120
+            mv=mv, service_name=service_name, expected_record_count=5, timeout_seconds=120
         )
         self.assertIsNotNone(inference_results, "Should have inference table results")
 

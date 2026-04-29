@@ -8,6 +8,7 @@ REQUIREMENTS = [
     "cloudpickle>=2.0.0",
     "cryptography",
     "fsspec>=2024.6.1,<2026",
+    "h2>=4.3.0,<5",
     "importlib_resources>=6.1.1, <7",
     "numpy>=1.23,<3",
     "packaging>=20.9,<26",

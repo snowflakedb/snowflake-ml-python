@@ -32,6 +32,8 @@ def _apply_transforms_up_to_last_step(
 ) -> pd.DataFrame:
     """Apply all transformations in the snowml pipeline model up to the last step."""
     if type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model):
+        # Pipeline.steps matches sklearn: each item is (step_name, step). Exclude the final tuple, which is the
+        # predictor (typically has predict*, not transform for the explain path).
         for step_name, step in model.steps[:-1]:  # type: ignore[attr-defined]
             if not hasattr(step, "transform"):
                 raise ValueError(f"Step '{step_name}' does not have a 'transform' method.")
@@ -181,6 +183,14 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                     model_meta.signatures = temp_model_signature_dict
 
         python_base_obj = cls._get_supported_object_for_explainability(model, sample_input_data, enable_explainability)
+        if type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model) and python_base_obj is None:
+            # Whole-pipeline conversion (to_sklearn / to_xgboost / ...) often fails when later steps use
+            # explicit input_cols, but explainability still runs on the final estimator via _build_explain_fn.
+            # steps[-1] is the last (name, estimator) pair; [1] accesses the estimator itself ([0] is the name).
+            final_estimator = model.steps[-1][1]  # type: ignore[attr-defined]
+            python_base_obj = cls._get_supported_object_for_explainability(
+                final_estimator, sample_input_data, enable_explainability
+            )
         explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
 
         if enable_explainability:
@@ -290,6 +300,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         is_pipeline = type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model)
         if is_pipeline:
             background_data = _apply_transforms_up_to_last_step(model, background_data)
+            # steps[-1] is the last (name, estimator) pair; [1] accesses the estimator itself ([0] is the name).
             predictor = model.steps[-1][1]  # type: ignore[attr-defined]
 
         def explain_fn(data: model_types.SupportedDataType) -> pd.DataFrame:

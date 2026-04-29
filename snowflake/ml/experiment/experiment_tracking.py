@@ -23,6 +23,7 @@ from snowflake.ml.experiment._client import (
     artifact,
     experiment_tracking_sql_client as sql_client,
 )
+from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.model import type_hints
 from snowflake.ml.utils import sql_client as sql_client_utils
 
@@ -311,15 +312,17 @@ class ExperimentTracking:
         assert self._run is not None  # for mypy
         return self._run
 
-    def end_run(self, run_name: Optional[str] = None) -> None:
+    def end_run(self, run_name: Optional[str] = None, status: Optional[str] = None) -> None:
         """
         End the current run if no run name is provided. Otherwise, the specified run is ended.
 
         Args:
             run_name: The name of the run to be ended. If None, the current run is ended.
+            status: The final status for the run, e.g. "FINISHED" or "FAILED".
 
         Raises:
             RuntimeError: If no run is active.
+            ValueError: If the status value is not supported.
         """
         if not self._experiment:
             raise RuntimeError("No experiment set. Please set an experiment before ending a run.")
@@ -332,9 +335,18 @@ class ExperimentTracking:
         else:
             raise RuntimeError("No run is active. Please start a run before ending it.")
 
+        try:
+            run_status = run_metadata.RunStatus(status) if status is not None else None
+        except ValueError:
+            raise ValueError(
+                f"Unsupported status value: '{status}'. Supported values are:"
+                f" {[s.value for s in run_metadata.RunStatus]}."
+            )
+
         self._sql_client.commit_run(
             experiment_name=experiment_name,
             run_name=run_name,
+            status=run_status,
         )
         if self._run and run_name == self._run.name:
             self._unset_run()

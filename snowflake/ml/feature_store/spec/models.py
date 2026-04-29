@@ -189,13 +189,19 @@ class FSColumn(BaseModel):
 
 
 class Source(BaseModel):
-    """A data source for a feature view."""
+    """A data source for a feature view.
+
+    For ``FEATURES`` sources (references to upstream feature views), ``columns``
+    contains exactly the subset of the upstream FV's exposed columns that this
+    consumer wants, in the consumer's desired order. The full upstream FV
+    schema lives in the upstream FV's own spec on the server and is not
+    repeated here.
+    """
 
     name: str
     source_type: SourceType
     columns: list[FSColumn]
     source_version: Optional[str] = None
-    selected_features: Optional[list[str]] = None
 
 
 class UDF(BaseModel):
@@ -219,6 +225,11 @@ class Feature(BaseModel):
 
     Represents a single feature derivation from a source column to an
     output column, optionally with an aggregation function and window.
+
+    ``source_name`` / ``source_version`` identify the upstream FV when the
+    feature comes from a ``FEATURES`` source, and are ``None`` otherwise.
+    Required for ``FeatureGroup`` (whose spec omits the parallel ``sources``
+    block); ``None`` for all other kinds today.
     """
 
     source_column: FSColumn
@@ -227,6 +238,8 @@ class Feature(BaseModel):
     window_sec: Optional[int] = None
     offset_sec: Optional[int] = None
     function_params: Optional[dict[str, Any]] = None
+    source_name: Optional[str] = None
+    source_version: Optional[str] = None
 
 
 class OfflineTableConfig(BaseModel):

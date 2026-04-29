@@ -39,6 +39,7 @@ from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
     all_types_identity_transform,
     identity_transform,
+    passthrough_plus_new_column_transform,
 )
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
@@ -102,6 +103,50 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         udf_count = self._session.table(fq_udf).count()
         self.assertEqual(udf_count, 3, "udf_transformed table should have 3 backfill rows")
+
+    def test_register_streaming_fv_passthrough_plus_new_column(self) -> None:
+        """Regression guard: UDF whose output schema is a superset of the input must register without error."""
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_FV_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table(fs, s)
+
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=passthrough_plus_new_column_transform,
+            backfill_df=backfill_df,
+        )
+
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+        )
+
+        registered_fv = fs.register_feature_view(fv, "v1")
+        self.assertEqual(registered_fv.status, FeatureViewStatus.ACTIVE)
+        self.assertTrue(registered_fv.is_streaming)
+
+        physical_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+
+        self._wait_udf_and_backfill(
+            fq_udf,
+            timeout_s=60,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered_fv.name),
+            streaming_fv_version=str(registered_fv.version),
+        )
+
+        rows = self._session.sql(f"SELECT USER_ID, AMOUNT, IS_LARGE FROM {fq_udf} ORDER BY USER_ID").collect()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([r["IS_LARGE"] for r in rows], [False, True, False])
 
     def test_streaming_fv_shows_in_list(self) -> None:
         """Test that streaming FV appears in list_feature_views with stream_config."""
@@ -700,7 +745,7 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     # =========================================================================
 
     def test_overwrite_streaming_fv(self) -> None:
-        """Re-registering with overwrite=True succeeds and keeps ref_count=1."""
+        """Re-registering with overwrite=True succeeds, completes backfill, and keeps ref_count=1."""
         s = uuid.uuid4().hex[:8]
         stream = f"TXN_{s}"
         fs = self._create_feature_store()
@@ -725,12 +770,14 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         fs.register_feature_view(fv, "v1")
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count(self._stream_source_ref_key(stream)), 1)
 
+        # Use a non-identity transform so the overwrite path exercises the map_in_pandas
+        # column-collision case and actually runs the backfill SQL.
         fv2 = FeatureView(
             name=f"STREAM_FV_{s}",
             entities=[self.user_entity],
             stream_config=StreamConfig(
                 stream_source=stream,
-                transformation_fn=identity_transform,
+                transformation_fn=passthrough_plus_new_column_transform,
                 backfill_df=self._session.table(backfill_table),
             ),
             timestamp_col="EVENT_TIME",
@@ -740,6 +787,18 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertTrue(registered.is_streaming)
 
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count(self._stream_source_ref_key(stream)), 1)
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            timeout_s=60,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+        self.assertEqual(self._session.table(fq_udf).count(), 3)
 
     # =========================================================================
     # backfill_start_time filter

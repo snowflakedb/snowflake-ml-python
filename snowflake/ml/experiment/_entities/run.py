@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Optional
 
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import _experiment_info as experiment_info
+from snowflake.ml.experiment._entities import run_metadata
 
 if TYPE_CHECKING:
     from snowflake.ml.experiment import experiment_tracking
@@ -44,7 +45,9 @@ class Run:
         if self._experiment_tracking._run is self:
             if exc_type is not None:
                 self._experiment_tracking._try_log_exception(exc_type, exc_value, tb)
-            self._experiment_tracking.end_run()
+                self._experiment_tracking.end_run(status=run_metadata.RunStatus.FAILED.value)
+            else:
+                self._experiment_tracking.end_run()
 
     def _get_experiment_info(self) -> experiment_info.ExperimentInfo:
         return experiment_info.ExperimentInfo(

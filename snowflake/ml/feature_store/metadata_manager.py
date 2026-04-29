@@ -41,6 +41,7 @@ class MetadataType(str, Enum):
 
     FEATURE_SPECS = "FEATURE_SPECS"
     FEATURE_DESCS = "FEATURE_DESCS"
+    ROLLUP_CONFIG = "ROLLUP_CONFIG"
     STREAM_SOURCE_CONFIG = "STREAM_SOURCE_CONFIG"
     STREAM_CONFIG = "STREAM_CONFIG"
 
@@ -341,6 +342,57 @@ class FeatureStoreMetadataManager:
             metadata_type=MetadataType.FEATURE_DESCS,
         )
         return data
+
+    # =========================================================================
+    # Rollup Config
+    # =========================================================================
+
+    def save_rollup_metadata(
+        self,
+        fv_name: str,
+        version: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """Save rollup configuration metadata for a rollup feature view.
+
+        This stores parent tile table, join keys, mapping query, and optional
+        mapping_valid_from_col / mapping_valid_to_col needed for PIT-correct ASOF JOIN
+        at training time.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+            metadata: Dictionary from RollupMetadata.to_dict().
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.ROLLUP_CONFIG,
+            metadata=metadata,
+        )
+
+    def get_rollup_metadata(
+        self,
+        fv_name: str,
+        version: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get rollup configuration metadata for a feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+
+        Returns:
+            Dictionary suitable for RollupMetadata.from_dict() if found, None otherwise.
+        """
+        return self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.ROLLUP_CONFIG,
+        )
 
     # =========================================================================
     # Cleanup

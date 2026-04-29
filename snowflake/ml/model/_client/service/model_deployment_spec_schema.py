@@ -38,7 +38,7 @@ class Service(BaseModel):
 
 
 class Input(BaseModel):
-    input_stage_location: str
+    input_stage_location: Optional[str] = None
     input_file_pattern: str
     column_handling: Optional[str] = None
     params: Optional[str] = None
@@ -46,7 +46,8 @@ class Input(BaseModel):
 
 
 class Output(BaseModel):
-    output_stage_location: str
+    output_stage_location: Optional[str] = None
+    base_stage_location: Optional[str] = None
     completion_filename: str
 
 

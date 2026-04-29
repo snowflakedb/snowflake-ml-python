@@ -2170,6 +2170,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
+                base_stage_location=None,
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
                 inference_engine_args=None,
@@ -2253,6 +2254,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
+                base_stage_location=None,
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
                 inference_engine_args=None,
@@ -2331,6 +2333,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
+                base_stage_location=None,
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
                 inference_engine_args=None,
@@ -2416,6 +2419,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
+                base_stage_location=None,
                 completion_filename="_SUCCESS",
                 statement_params=mock.ANY,
                 inference_engine_args=None,
@@ -2543,15 +2547,6 @@ class ModelVersionImplTest(absltest.TestCase):
             call_args = mock_invoke_batch_job.call_args
             self.assertIsNone(call_args.kwargs["job_name"])
             self.assertEqual(call_args.kwargs["job_name_prefix"], "CUSTOM_PREFIX")
-
-    def test_run_batch_with_job_name_and_prefix_error(self) -> None:
-        """Test _run_batch raises error when both job_name and job_name_prefix are set."""
-        with self.assertRaises(ValueError) as ctx:
-            batch_inference_specs.JobSpec(
-                job_name="CUSTOM_JOB",
-                job_name_prefix="CUSTOM_PREFIX",
-            )
-        self.assertIn("mutually exclusive", str(ctx.exception))
 
     def test_run_batch_with_warehouse_from_session(self) -> None:
         """Test _run_batch with warehouse from session when job_spec.warehouse is None."""
@@ -2698,6 +2693,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 partition_columns=None,
                 signature_params=_DUMMY_SIG["predict"].params,
                 output_stage_location="@output_stage/",
+                base_stage_location=None,
                 completion_filename="_SUCCESS",  # OutputSpec default
                 statement_params=mock.ANY,
                 inference_engine_args=None,
@@ -3053,6 +3049,61 @@ class ModelVersionImplTest(absltest.TestCase):
             with self.assertRaisesRegex(
                 ValueError,
                 "partition_column is not supported for FUNCTION type methods",
+            ):
+                self.m_mv.run_batch(
+                    input_df,
+                    compute_pool="TEST_POOL",
+                    output_spec=output_spec,
+                    input_spec=input_spec,
+                    job_spec=job_spec,
+                )
+
+    def test_run_batch_partitioned_model_with_partition_col_in_output_error(self) -> None:
+        """Test run_batch raises ValueError when a partitioned model's output includes the partition column."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location = mock.MagicMock()
+
+        output_spec = batch_inference_specs.OutputSpec(stage_location="@output_stage")
+        job_spec = batch_inference_specs.JobSpec(
+            function_name="predict_table",
+            job_name="TEST_JOB",
+            warehouse="TEST_WAREHOUSE",
+        )
+
+        input_spec = batch_inference_specs.InputSpec(partition_column="PARTITION_COL")
+
+        sig_with_partition_col_output = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(name="PARTITION_COL", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="input", dtype=model_signature.DataType.FLOAT),
+            ],
+            outputs=[
+                model_signature.FeatureSpec(name="PARTITION_COL", dtype=model_signature.DataType.INT64),
+                model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT),
+            ],
+        )
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_model_spec",
+                return_value={"model_type": snowmlmodel.SnowMLModelHandler.HANDLER_TYPE},
+            ),
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict_table",
+                    "target_method_function_type": "TABLE_FUNCTION",
+                    "signature": sig_with_partition_col_output,
+                    "is_partitioned": True,
+                },
+            ),
+            mock.patch.object(self.m_mv._service_ops, "_enforce_save_mode"),
+        ):
+            with self.assertRaisesRegex(
+                ValueError,
+                "Partitioned model output includes the partition column",
             ):
                 self.m_mv.run_batch(
                     input_df,

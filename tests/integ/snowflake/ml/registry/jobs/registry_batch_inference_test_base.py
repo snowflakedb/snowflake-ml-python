@@ -282,7 +282,11 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         if not blocking:
             return batch_job
 
-        output_stage_location = output_spec.stage_location
+        if output_spec.base_stage_location is not None:
+            base = output_spec.base_stage_location.rstrip("/")
+            output_stage_location = f"{base}/{batch_job.name}/"
+        else:
+            output_stage_location = output_spec.stage_location
 
         try:
             batch_job.wait(timeout=1800)

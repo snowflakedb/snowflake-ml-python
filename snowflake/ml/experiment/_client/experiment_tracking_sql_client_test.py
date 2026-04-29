@@ -9,6 +9,7 @@ from snowflake.ml.experiment._client import (
     artifact,
     experiment_tracking_sql_client as sql_client,
 )
+from snowflake.ml.experiment._entities import run_metadata
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.utils import sql_client as sql_client_utils
 from snowflake.snowpark import file_operation, row, session, types
@@ -178,6 +179,30 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         )
 
         self.client.commit_run(experiment_name=experiment_name, run_name=run_name)
+
+    def test_commit_run_with_status(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT COMMIT RUN TEST_RUN WITH STATUS='FAILED'",
+            self._create_mock_df(),
+        )
+
+        self.client.commit_run(experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.FAILED)
+
+    def test_commit_run_with_status_finished(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT COMMIT RUN TEST_RUN WITH STATUS='FINISHED'",
+            self._create_mock_df(),
+        )
+
+        self.client.commit_run(
+            experiment_name=experiment_name, run_name=run_name, status=run_metadata.RunStatus.FINISHED
+        )
 
     def test_get_run_id(self) -> None:
         # Test getting run ID

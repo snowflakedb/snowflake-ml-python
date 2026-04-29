@@ -163,6 +163,23 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
         # so the job should already be DONE immediately.
         self.assertEqual(job.status, "DONE")
 
+    # TODO(SNOW-3408843): Fix input_stage_location conflict with base_stage_location in run_batch flow.
+    @absltest.skip("Server rejects input_stage_location when base_stage_location is used.")
+    def test_base_stage_location(self) -> None:
+        """Test batch inference with base_stage_location (server-derived output paths)."""
+        model, _, _, input_df, expected_predictions, sp_df = self._prepare_test()
+
+        base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/run_batch_base/"
+
+        self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            X=input_df,
+            output_spec=OutputSpec(base_stage_location=base_stage_location),
+            job_spec=JobSpec(job_name_prefix="test_rb", block=True),
+            expected_predictions=expected_predictions,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

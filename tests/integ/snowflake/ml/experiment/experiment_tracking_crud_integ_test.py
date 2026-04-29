@@ -108,6 +108,37 @@ class ExperimentCrudIntegTest(ExperimentTrackingIntegTestBase):
         # Cleanup: end the run
         self.exp.end_run()
 
+    def test_end_run_with_status(self) -> None:
+        """Test implicit and explicit run status for both FINISHED and FAILED."""
+        experiment_name = "TEST_EXPERIMENT_END_RUN_STATUS"
+        self.exp.set_experiment(experiment_name=experiment_name)
+
+        # Implicit FINISHED: context manager exits cleanly
+        with self.exp.start_run(run_name="IMPLICIT_FINISHED"):
+            pass
+
+        # Implicit FAILED: context manager exits with exception
+        with self.assertRaises(ValueError):
+            with self.exp.start_run(run_name="IMPLICIT_FAILED"):
+                raise ValueError("simulated failure")
+
+        # Explicit FINISHED: end_run(status="FINISHED")
+        self.exp.start_run(run_name="EXPLICIT_FINISHED")
+        self.exp.end_run(status="FINISHED")
+
+        # Explicit FAILED: end_run(status="FAILED")
+        self.exp.start_run(run_name="EXPLICIT_FAILED")
+        self.exp.end_run(status="FAILED")
+
+        runs = self._session.sql(
+            f"SHOW RUNS IN EXPERIMENT {self._db_name}.{self._schema_name}.{experiment_name}"
+        ).collect()
+        status_by_name = {row["name"]: json.loads(row["metadata"])["status"] for row in runs}
+        self.assertEqual(status_by_name["IMPLICIT_FINISHED"], "FINISHED")
+        self.assertEqual(status_by_name["IMPLICIT_FAILED"], "FAILED")
+        self.assertEqual(status_by_name["EXPLICIT_FINISHED"], "FINISHED")
+        self.assertEqual(status_by_name["EXPLICIT_FAILED"], "FAILED")
+
     def test_start_run_existing_non_running_raises(self) -> None:
         """If a run exists but is not RUNNING, starting with same name should raise."""
         experiment_name = "TEST_EXPERIMENT_NON_RUNNING"

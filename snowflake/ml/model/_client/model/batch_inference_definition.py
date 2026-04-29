@@ -130,19 +130,38 @@ class BatchInferenceDefinition:
         # TODO(SNOW-3351625): Propagate OutputSpec.mode (save_mode) to the deployment spec
         # so the server can enforce OVERWRITE/ERROR semantics for repeated DAG runs.
         # Currently the mode is only enforced client-side in run_batch() via _enforce_save_mode.
-        output_stage = self._output_spec.stage_location
-        if not output_stage.endswith("/"):
-            output_stage += "/"
+        if self._output_spec.base_stage_location is not None:
+            base_stage_location = self._output_spec.base_stage_location
+            if not base_stage_location.endswith("/"):
+                base_stage_location += "/"
 
-        # Input section
-        # TODO(SNOW-3316544): Remove input_stage_location once it's not required.
-        input_stage_location = f"{output_stage}_temporary/"
-        input_dict: dict[str, Any] = {
-            "input_stage_location": input_stage_location,
-            "queries": self._queries,
-            "post_actions": self._post_actions,
-            "input_file_pattern": "*",
-        }
+            input_dict: dict[str, Any] = {
+                "queries": self._queries,
+                "post_actions": self._post_actions,
+                "input_file_pattern": "*",
+            }
+            output_dict: dict[str, Any] = {
+                "base_stage_location": base_stage_location,
+                "completion_filename": "_SUCCESS",
+            }
+        else:
+            assert self._output_spec.stage_location is not None
+            output_stage = self._output_spec.stage_location
+            if not output_stage.endswith("/"):
+                output_stage += "/"
+
+            # TODO(SNOW-3316544): Remove input_stage_location once it's not required.
+            input_stage_location = f"{output_stage}_temporary/"
+            input_dict = {
+                "input_stage_location": input_stage_location,
+                "queries": self._queries,
+                "post_actions": self._post_actions,
+                "input_file_pattern": "*",
+            }
+            output_dict = {
+                "output_stage_location": output_stage,
+                "completion_filename": "_SUCCESS",
+            }
 
         # Encode params if present
         params_encoded = batch_inference_serialization.encode_params(self._input_spec.params)
@@ -156,11 +175,6 @@ class BatchInferenceDefinition:
 
         if self._input_spec.partition_column is not None:
             input_dict["partition_columns"] = [self._input_spec.partition_column]
-
-        output_dict: dict[str, Any] = {
-            "output_stage_location": output_stage,
-            "completion_filename": "_SUCCESS",
-        }
 
         # Job section
         job_dict: dict[str, Any] = {

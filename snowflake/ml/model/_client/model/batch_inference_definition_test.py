@@ -407,6 +407,39 @@ class BatchInferenceDefinitionTest(absltest.TestCase):
         self.assertEqual(job["max_batch_rows"], 1024)
         self.assertEqual(job["replicas"], 3)
 
+    def test_to_sql_with_base_stage_location(self) -> None:
+        from snowflake.ml.model._client.model.batch_inference_definition import (
+            BatchInferenceDefinition,
+        )
+
+        mv = self._create_mock_model_version()
+        df = self._create_mock_dataframe()
+        output_spec = OutputSpec(base_stage_location="@MY_DB.MY_SCHEMA.MY_STAGE/base")
+        job_spec = JobSpec(job_name_prefix="MY_PREFIX", warehouse="MY_WH")
+
+        defn = BatchInferenceDefinition(
+            model_version=mv,
+            X=df,
+            compute_pool="GPU_POOL",
+            output_spec=output_spec,
+            job_spec=job_spec,
+        )
+
+        sql = defn.to_sql()
+        spec = self._extract_spec_from_sql(sql)
+
+        # Output should have base_stage_location, NOT output_stage_location
+        output = spec["job"]["output"]
+        self.assertNotIn("output_stage_location", output)
+        self.assertEqual(output["base_stage_location"], "@MY_DB.MY_SCHEMA.MY_STAGE/base/")
+        self.assertEqual(output["completion_filename"], "_SUCCESS")
+
+        # Input should NOT have input_stage_location
+        input_section = spec["job"]["input"]
+        self.assertNotIn("input_stage_location", input_section)
+        self.assertEqual(input_section["queries"], ["CREATE TEMP TABLE t1 AS SELECT 1", "SELECT * FROM t1"])
+        self.assertEqual(input_section["post_actions"], ["DROP TABLE IF EXISTS t1"])
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -65,6 +65,13 @@ _PARTITIONED_MODEL_SIGNATURES = {
         inputs=_PARTITIONED_INPUT_FEATURES,
         outputs=_OUTPUT_FEATURES,
     ),
+    "predict_equal_with_partition_col": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("PARTITION_COL", model_signature.DataType.INT64),
+            *_OUTPUT_FEATURES,
+        ],
+    ),
     "predict_expanded": model_signature.ModelSignature(
         inputs=_PARTITIONED_INPUT_FEATURES,
         outputs=_OUTPUT_FEATURES,
@@ -165,6 +172,17 @@ class PartitionedModel(custom_model.CustomModel):
         """M=N: Returns the same number of rows as input (stateless)."""
         return pd.DataFrame(
             {
+                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
+                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
+            }
+        )
+
+    @custom_model.partitioned_api
+    def predict_equal_with_partition_col(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        """M=N with partition column in model output."""
+        return pd.DataFrame(
+            {
+                "PARTITION_COL": input_df["PARTITION_COL"],
                 "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
                 "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
             }
@@ -688,6 +706,43 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             partition_column="PARTITION_COL",
             sort_columns=["PARTITION_COL", "OUTPUT_COL1"],
         )
+
+    def test_partitioned_table_function_with_partition_col_in_output(self) -> None:
+        """Case E4: Partitioned model whose output includes the partition column — client rejects."""
+        input_pandas_df = _generate_partitioned_data()
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_{inspect.stack()[0].function}",
+            version_name=f"ver_{self._run_id}",
+            conda_dependencies=[
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ],
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            options={"function_type": "TABLE_FUNCTION", "embed_local_ml_library": True},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Partitioned model output includes the partition column",
+        ):
+            mv.run_batch(
+                input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                input_spec=InputSpec(partition_column="PARTITION_COL"),
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                job_spec=JobSpec(
+                    job_name=job_name,
+                    function_name="predict_equal_with_partition_col",
+                    image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                ),
+            )
 
     def test_non_partitioned_table_function_with_partition_column_with_params(self) -> None:
         """Case C + params: Non-partitioned table function with partition column and override params."""

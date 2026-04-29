@@ -78,6 +78,10 @@ def _make_mock_backfill_df() -> MagicMock:
     )
     mock_df.schema = schema
     mock_df.columns = [f.name for f in schema.fields]
+    # postamble calls backfill_df.to_df([...]) to prefix input columns before map_in_pandas.
+    renamed_df = MagicMock()
+    renamed_df.queries = {"queries": ["SELECT * FROM renamed_src"]}
+    mock_df.to_df.return_value = renamed_df
     return mock_df
 
 
@@ -848,6 +852,89 @@ class RunStreamingPostambleTest(absltest.TestCase):
         self.assertEqual(saved_meta.kwargs["metadata"].backfill_query_id, "test-query-id")
 
         metadata_manager.increment_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+
+    @patch("snowflake.snowpark.dataframe.map_in_pandas")
+    def test_postamble_renames_input_columns_with_prefix(self, mock_map: MagicMock) -> None:
+        """Postamble prefixes backfill_df columns for map_in_pandas and unprefixes in the wrapper."""
+        backfill_df = _make_mock_backfill_df()
+        renamed_backfill_df = MagicMock()
+        renamed_backfill_df.queries = {"queries": ["SELECT * FROM renamed_src"]}
+        backfill_df.to_df.return_value = renamed_backfill_df
+
+        captured = {}
+
+        def user_fn(df: pd.DataFrame) -> pd.DataFrame:
+            captured["user_fn_columns"] = list(df.columns)
+            df["AMOUNT_CENTS"] = (df["AMOUNT"] * 100).astype(int)
+            df["IS_LARGE"] = df["AMOUNT"] > 1000
+            return df
+
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=user_fn,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+        )
+
+        session = MagicMock()
+        session.table.return_value.schema = StructType(
+            [StructField("USER_ID", StringType()), StructField("AMOUNT_CENTS", DoubleType())]
+        )
+        metadata_manager = MagicMock()
+
+        transformed_df = MagicMock()
+        transformed_df.queries = {"queries": ["SELECT udtf(...) FROM source"]}
+        mock_map.return_value = transformed_df
+        async_job = MagicMock()
+        async_job.query_id = "q"
+        session.sql.return_value.collect.return_value = async_job
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            _BACKFILL_INPUT_PREFIX,
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+
+        run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+        )
+
+        backfill_df.to_df.assert_called_once()
+        new_names = backfill_df.to_df.call_args[0][0]
+        expected_names = [f"{_BACKFILL_INPUT_PREFIX}{c}" for c in backfill_df.columns]
+        self.assertEqual(new_names, expected_names)
+
+        called_df = mock_map.call_args[0][0]
+        self.assertIs(called_df, renamed_backfill_df)
+
+        wrapper_fn = mock_map.call_args[0][1]
+        prefixed_pdf = pd.DataFrame(
+            {
+                f"{_BACKFILL_INPUT_PREFIX}USER_ID": ["u1", "u2"],
+                f"{_BACKFILL_INPUT_PREFIX}AMOUNT": [100.0, 2000.0],
+                f"{_BACKFILL_INPUT_PREFIX}EVENT_TIME": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+            }
+        )
+        out = list(wrapper_fn(iter([prefixed_pdf])))
+        self.assertEqual(len(out), 1)
+        self.assertEqual(captured["user_fn_columns"], ["USER_ID", "AMOUNT", "EVENT_TIME"])
+        self.assertIn("AMOUNT_CENTS", out[0].columns)
+        self.assertIn("IS_LARGE", out[0].columns)
 
     @patch("snowflake.snowpark.dataframe.map_in_pandas")
     def test_postamble_with_backfill_start_time(self, mock_map: MagicMock) -> None:

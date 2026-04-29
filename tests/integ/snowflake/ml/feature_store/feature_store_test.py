@@ -4155,6 +4155,82 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self.assertIn("PLAN_TYPE", cte_df.columns, "PLAN_TYPE column should exist")
             self.assertIn("USAGE", cte_df.columns, "USAGE column should exist")
 
+    def test_cte_method_batched_merge(self) -> None:
+        """Test that the batched CTE merge path (>10 FVs) produces correct results.
+
+        Creates 12 feature views across two entity groups to exceed the batch
+        threshold, then uses _compare_cte_vs_sequential as an oracle.
+        """
+        fs = self._create_feature_store()
+
+        e_customer = Entity("CUSTOMER", ["CUSTOMER_ID"])
+        fs.register_entity(e_customer)
+        e_product = Entity("PRODUCT", ["PRODUCT_ID"])
+        fs.register_entity(e_product)
+
+        all_fvs: list[FeatureView] = []
+
+        for i in range(7):
+            self._session.sql(
+                f"""CREATE OR REPLACE TABLE {fs._config.full_schema_path}.CUST_FV_{i} (
+                    CUSTOMER_ID INT, FV_TS TIMESTAMP_NTZ, FEAT_{i} INT
+                )"""
+            ).collect()
+            self._session.sql(
+                f"""INSERT INTO {fs._config.full_schema_path}.CUST_FV_{i} VALUES
+                    (1, '2023-01-10', {10 + i}),
+                    (2, '2023-01-11', {20 + i}),
+                    (3, '2023-01-12', {30 + i})"""
+            ).collect()
+            fv = FeatureView(
+                name=f"CUST_FV_{i}",
+                entities=[e_customer],
+                feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.CUST_FV_{i}"),
+                timestamp_col="FV_TS",
+                refresh_freq=None,
+            )
+            all_fvs.append(fs.register_feature_view(feature_view=fv, version="V1"))
+
+        for i in range(5):
+            self._session.sql(
+                f"""CREATE OR REPLACE TABLE {fs._config.full_schema_path}.PROD_FV_{i} (
+                    PRODUCT_ID INT, FV_TS TIMESTAMP_NTZ, PFEAT_{i} INT
+                )"""
+            ).collect()
+            self._session.sql(
+                f"""INSERT INTO {fs._config.full_schema_path}.PROD_FV_{i} VALUES
+                    (101, '2023-01-08', {100 + i}),
+                    (102, '2023-01-09', {200 + i}),
+                    (103, '2023-01-10', {300 + i})"""
+            ).collect()
+            fv = FeatureView(
+                name=f"PROD_FV_{i}",
+                entities=[e_product],
+                feature_df=self._session.sql(f"SELECT * FROM {fs._config.full_schema_path}.PROD_FV_{i}"),
+                timestamp_col="FV_TS",
+                refresh_freq=None,
+            )
+            all_fvs.append(fs.register_feature_view(feature_view=fv, version="V1"))
+
+        self.assertGreater(len(all_fvs), 10, "Need >10 FVs to trigger batched merge path")
+
+        spine_df = self._session.create_dataframe(
+            [
+                (1, 101, "2023-01-15"),
+                (2, 102, "2023-01-15"),
+                (3, 103, "2023-01-15"),
+            ],
+            schema=["CUSTOMER_ID", "PRODUCT_ID", "EVENT_TS"],
+        )
+
+        self._compare_cte_vs_sequential(
+            fs,
+            spine_df,
+            all_fvs,
+            "batched_merge",
+            spine_timestamp_col="EVENT_TS",
+        )
+
     # ==================== Iceberg Storage Tests ====================
     # Tests for Dynamic Iceberg Table support in Feature Store
 

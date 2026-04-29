@@ -71,6 +71,23 @@ def all_types_identity_transform(df: pd.DataFrame) -> pd.DataFrame:
     return df[["USER_ID", "EVENT_TIME", "SCORE", "RANK", "PRICE", "IS_ACTIVE"]]
 
 
+def passthrough_plus_new_column_transform(df: pd.DataFrame) -> pd.DataFrame:
+    """Pass through all input columns and add a derived ``IS_LARGE`` column.
+
+    Output schema is a superset of input schema, which exercises the
+    ``map_in_pandas`` column-collision path.
+
+    Args:
+        df: Input pandas batch.
+
+    Returns:
+        DataFrame with ``USER_ID``, ``EVENT_TIME``, ``AMOUNT``, ``IS_LARGE``.
+    """
+    df = df.copy()
+    df["IS_LARGE"] = df["AMOUNT"] > 500.0
+    return df[["USER_ID", "EVENT_TIME", "AMOUNT", "IS_LARGE"]]
+
+
 # Force cloudpickle to serialize by value (bytecode) rather than by module reference.
 # Without this, Snowflake warehouse workers fail with ModuleNotFoundError because
 # test module names are not importable on the server.  When __module__ is "__main__",
@@ -78,6 +95,7 @@ def all_types_identity_transform(df: pd.DataFrame) -> pd.DataFrame:
 # so it falls back to by-value serialization — which is what we need.
 identity_transform.__module__ = "__main__"
 all_types_identity_transform.__module__ = "__main__"
+passthrough_plus_new_column_transform.__module__ = "__main__"
 
 
 def _env_truthy(name: str) -> bool:
@@ -355,10 +373,11 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         last_err: Optional[str] = None
         while time.time() < deadline:
             try:
-                out = fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE)
-                if out.count() > 0:
+                # Postgres-backed online reads now default to pandas.DataFrame; force as_pandas=True so
+                # this helper returns the same type regardless of online_config.store_type.
+                pdf = fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=True)
+                if len(pdf) > 0:
                     if validate_fn is not None:
-                        pdf = out.to_pandas()
                         validate_fn(pdf)
                     return
             except Exception as e:

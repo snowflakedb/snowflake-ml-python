@@ -123,11 +123,11 @@ class SourceModelTest(absltest.TestCase):
             source_type=SourceType.FEATURES,
             columns=[FSColumn(name="SCORE", type="FloatType")],
             source_version="v1",
-            selected_features=["SCORE"],
         )
         d = src.model_dump(exclude_none=True)
         self.assertEqual(d["source_version"], "v1")
-        self.assertEqual(d["selected_features"], ["SCORE"])
+        self.assertEqual([c["name"] for c in d["columns"]], ["SCORE"])
+        self.assertNotIn("selected_features", d)
 
 
 class FeatureModelTest(absltest.TestCase):
@@ -143,6 +143,32 @@ class FeatureModelTest(absltest.TestCase):
         d = feat.model_dump(exclude_none=True)
         self.assertEqual(d["function"], "SUM")
         self.assertEqual(d["window_sec"], 86400)
+
+    def test_source_name_and_version_round_trip(self) -> None:
+        """FG features carry source_name + source_version through serialization."""
+        feat = Feature(
+            source_column=FSColumn(name="SCORE", type="DoubleType"),
+            output_column=FSColumn(name="SCORE", type="DoubleType"),
+            source_name="USER_FV",
+            source_version="v1",
+        )
+        d = feat.model_dump(exclude_none=True)
+        self.assertEqual(d["source_name"], "USER_FV")
+        self.assertEqual(d["source_version"], "v1")
+        self.assertNotIn("function", d)
+        self.assertNotIn("window_sec", d)
+
+    def test_source_name_and_version_omitempty_default(self) -> None:
+        """source_name / source_version are omitted by default (Stream/Batch/RTFV)."""
+        feat = Feature(
+            source_column=FSColumn(name="SCORE", type="DoubleType"),
+            output_column=FSColumn(name="SCORE", type="DoubleType"),
+        )
+        self.assertIsNone(feat.source_name)
+        self.assertIsNone(feat.source_version)
+        d = feat.model_dump(exclude_none=True)
+        self.assertNotIn("source_name", d)
+        self.assertNotIn("source_version", d)
 
 
 class OfflineTableConfigTest(absltest.TestCase):

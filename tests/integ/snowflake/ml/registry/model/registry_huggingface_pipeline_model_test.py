@@ -96,6 +96,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_question_answering_pipeline(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_question_answering_pipeline,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model = transformers.pipeline(
@@ -136,6 +142,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_question_answering_pipeline_multiple_output(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_question_answering_pipeline_multiple_output,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model = transformers.pipeline(
@@ -178,6 +190,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_summarization_pipeline(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_summarization_pipeline,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model = transformers.pipeline(task="summarization", model="Falconsai/text_summarization")
@@ -217,6 +235,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_table_question_answering_pipeline(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_table_question_answering_pipeline,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model_id = "microsoft/tapex-base-finetuned-wtq"
@@ -451,6 +475,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_hf_pipeline_text2text_generation(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_hf_pipeline_text2text_generation,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model = transformers.pipeline(
@@ -477,6 +507,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_translation_pipeline(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_translation_pipeline,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
         import transformers
 
         model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")

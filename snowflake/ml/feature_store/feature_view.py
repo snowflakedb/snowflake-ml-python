@@ -144,15 +144,60 @@ class RollupConfig:
         ...     ),
         ... )
 
+    For point-in-time correct entity mappings with SCD Type 2 validity windows
+    (e.g., when visitors get reassigned between subscribers over time), provide
+    ``mapping_valid_from_col`` and ``mapping_valid_to_col`` (both are required together)::
+
+        >>> subscriber_fv = FeatureView(
+        ...     name="subscriber_events_temporal",
+        ...     entities=[subscriber_entity],
+        ...     rollup_config=RollupConfig(
+        ...         source=visitor_fv,
+        ...         mapping_df=session.table("VISITOR_SUBSCRIBER_MAPPING"),
+        ...         mapping_valid_from_col="VALID_FROM",
+        ...         mapping_valid_to_col="VALID_TO",
+        ...     ),
+        ... )
+
     Args:
         source: The parent tiled FeatureView to roll up from. Must be registered and tiled.
         mapping_df: DataFrame containing the entity mapping (e.g., visitor_id → subscriber_id).
             Must contain all join keys from source entity and target entity.
             Expected to be a many-to-one mapping (many source keys → one target key).
+        mapping_valid_from_col: Optional timestamp column in mapping_df that indicates when
+            each mapping became effective (SCD Type 2 lower bound). When provided, training via
+            ``generate_training_set`` uses a range JOIN for point-in-time correct entity resolution.
+            Inference via ``retrieve_feature_values`` always uses the latest mapping from the
+            materialized Dynamic Table. If None, the latest mapping state is used everywhere
+            (current behavior).
+
+            **Important:** The column should use the same timestamp type (TIMESTAMP_NTZ or
+            TIMESTAMP_LTZ) as the source FeatureView's ``timestamp_col`` to avoid implicit
+            timezone conversion in the range JOIN comparison.
+
+            **Tiles before the earliest effective date:** Any tiles with ``TILE_START`` earlier
+            than the first ``mapping_valid_from_col`` value for an entity will have no valid
+            mapping match and will be excluded from training results. To avoid this, ensure the
+            mapping table has entries covering the full history of your event data.
+
+            Must be provided together with ``mapping_valid_to_col``.
+        mapping_valid_to_col: Optional timestamp column in mapping_df that indicates when
+            each mapping expired (SCD Type 2 upper bound). Uses half-open interval semantics:
+            a mapping is active for ``[valid_from, valid_to)``. Rows where this column is NULL
+            are treated as still-active mappings.
+
+            Must be provided together with ``mapping_valid_from_col``.
+
+            When both temporal columns are provided, a range JOIN is used instead of a
+            plain JOIN, which supports 1:N mappings (one child entity mapped to multiple
+            parent entities simultaneously with overlapping validity windows). The inference
+            DT filters to currently-active mappings only.
     """
 
     source: FeatureView
     mapping_df: DataFrame
+    mapping_valid_from_col: Optional[str] = None
+    mapping_valid_to_col: Optional[str] = None
 
     def validate(self, target_entity_keys: list[str]) -> None:
         """Validate the rollup configuration.
@@ -171,19 +216,68 @@ class RollupConfig:
         if self.source.status == FeatureViewStatus.DRAFT:
             raise ValueError("RollupConfig source must be registered")
 
-        # Get column names from mapping
-        mapping_cols = {f.name.upper() for f in self.mapping_df.schema.fields}
+        # Get column names from mapping as resolved SqlIdentifier strings for case-correct comparison
+        mapping_col_ids = {SqlIdentifier(f.name).resolved() for f in self.mapping_df.schema.fields}
 
-        # Source entity keys must exist in mapping
-        source_keys = [str(k).upper() for e in self.source.entities for k in e.join_keys]
-        for key in source_keys:
-            if key not in mapping_cols:
-                raise ValueError(f"Mapping must contain source join key '{key}'")
+        # Source entity keys must exist in mapping (Entity.join_keys are already SqlIdentifiers)
+        for source_key in (k for e in self.source.entities for k in e.join_keys):
+            if source_key.resolved() not in mapping_col_ids:
+                raise ValueError(f"Mapping must contain source join key '{source_key}'")
 
         # Target entity keys must exist in mapping
-        for key in target_entity_keys:
-            if key.upper() not in mapping_cols:
-                raise ValueError(f"Mapping must contain target join key '{key}'")
+        for target_key in target_entity_keys:
+            if SqlIdentifier(target_key).resolved() not in mapping_col_ids:
+                raise ValueError(f"Mapping must contain target join key '{target_key}'")
+
+        # Temporal columns must be provided together or both omitted
+        if self.mapping_valid_from_col is None and self.mapping_valid_to_col is None:
+            pass  # both omitted — no temporal validation needed
+        elif self.mapping_valid_from_col is not None and self.mapping_valid_to_col is not None:
+            if SqlIdentifier(self.mapping_valid_from_col).resolved() not in mapping_col_ids:
+                raise ValueError(f"Mapping must contain mapping_valid_from_col '{self.mapping_valid_from_col}'")
+            if SqlIdentifier(self.mapping_valid_to_col).resolved() not in mapping_col_ids:
+                raise ValueError(f"Mapping must contain mapping_valid_to_col '{self.mapping_valid_to_col}'")
+        else:
+            raise ValueError(
+                "mapping_valid_from_col and mapping_valid_to_col must both be provided "
+                "or both be omitted. Providing only one is not supported."
+            )
+
+
+@dataclass
+class RollupMetadata:
+    """Serializable metadata for a rollup feature view.
+
+    Persisted to the metadata table during registration and loaded back during
+    ``get_feature_view`` reconstruction. Contains everything needed to generate
+    PIT-correct range JOIN SQL at training time without requiring the original
+    ``RollupConfig`` (which holds live FeatureView and DataFrame objects).
+    """
+
+    parent_tile_table: str
+    parent_join_keys: list[str]
+    mapping_query: str
+    mapping_valid_from_col: Optional[str] = None
+    mapping_valid_to_col: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "parent_tile_table": self.parent_tile_table,
+            "parent_join_keys": self.parent_join_keys,
+            "mapping_query": self.mapping_query,
+            "mapping_valid_from_col": self.mapping_valid_from_col,
+            "mapping_valid_to_col": self.mapping_valid_to_col,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RollupMetadata:
+        return cls(
+            parent_tile_table=data["parent_tile_table"],
+            parent_join_keys=data["parent_join_keys"],
+            mapping_query=data["mapping_query"],
+            mapping_valid_from_col=data.get("mapping_valid_from_col"),
+            mapping_valid_to_col=data.get("mapping_valid_to_col"),
+        )
 
 
 class StoreType(Enum):
@@ -250,6 +344,7 @@ class _FeatureViewMetadata:
     timestamp_col: str
     is_tiled: bool = False  # Whether FV uses tile-based aggregations
     is_iceberg: bool = False  # Whether FV uses Iceberg storage format
+    is_rollup: bool = False  # Whether FV is a rollup (entity aggregation) feature view
     is_streaming: bool = False  # Whether FV is a streaming feature view
 
     def to_json(self) -> str:
@@ -264,6 +359,9 @@ class _FeatureViewMetadata:
         # Backward compatibility: old FVs don't have is_iceberg
         if "is_iceberg" not in state_dict:
             state_dict["is_iceberg"] = False
+        # Backward compatibility: old FVs don't have is_rollup
+        if "is_rollup" not in state_dict:
+            state_dict["is_rollup"] = False
         # Backward compatibility: old FVs don't have is_streaming
         if "is_streaming" not in state_dict:
             state_dict["is_streaming"] = False
@@ -689,6 +787,8 @@ class FeatureView(lineage_node.LineageNode):
             )
         self._storage_config: Optional[StorageConfig] = storage_config
 
+        # Rollup metadata for PIT-correct training (set during registration, loaded during reconstruction)
+        self._rollup_metadata: Optional[RollupMetadata] = None
         self._postgres_online_query_url: Optional[str] = None
 
         # Column aliasing for dataset generation (ephemeral, in-memory only)
@@ -1069,10 +1169,13 @@ class FeatureView(lineage_node.LineageNode):
     def is_rollup(self) -> bool:
         """Check if this feature view is a rollup of another tiled feature view.
 
+        Returns True for both draft FVs created with ``rollup_config`` and
+        registered FVs reconstructed from persisted ``rollup_metadata``.
+
         Returns:
-            True if this feature view was created with rollup_config.
+            True if this is a rollup feature view, False otherwise.
         """
-        return self._rollup_config is not None
+        return self._rollup_config is not None or self._rollup_metadata is not None
 
     @property
     def rollup_config(self) -> Optional[RollupConfig]:
@@ -1082,6 +1185,19 @@ class FeatureView(lineage_node.LineageNode):
             The RollupConfig used to create this feature view, or None.
         """
         return self._rollup_config
+
+    @property
+    def rollup_metadata(self) -> Optional[RollupMetadata]:
+        """Get the rollup metadata for PIT-correct training queries.
+
+        Set during registration and loaded during ``get_feature_view`` reconstruction.
+        Contains parent tile table info and mapping query needed to generate range JOIN
+        SQL at training time.
+
+        Returns:
+            The RollupMetadata, or None if this is not a rollup FV or has no temporal mapping.
+        """
+        return self._rollup_metadata
 
     @property
     def feature_granularity(self) -> Optional[str]:
@@ -1314,6 +1430,7 @@ class FeatureView(lineage_node.LineageNode):
             ts_col,
             is_tiled=self.is_tiled,
             is_iceberg=is_iceberg,
+            is_rollup=self.is_rollup,
             is_streaming=self.is_streaming,
         )
 
@@ -1653,6 +1770,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             [spec.to_dict() for spec in self._aggregation_specs] if self._aggregation_specs is not None else None
         )
 
+        # Remove non-serializable live objects
+        fv_dict.pop("_rollup_config", None)
+        # Serialize rollup metadata if present
+        fv_dict["_rollup_metadata"] = self._rollup_metadata.to_dict() if self._rollup_metadata is not None else None
+
         lineage_node_keys = [key for key in fv_dict if key.startswith("_node") or key == "_session"]
 
         for key in lineage_node_keys:
@@ -1728,7 +1850,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         if json_dict.get("_aggregation_specs"):
             aggregation_specs = [AggregationSpec.from_dict(s) for s in json_dict["_aggregation_specs"]]
 
-        return FeatureView._construct_feature_view(
+        fv = FeatureView._construct_feature_view(
             name=json_dict["_name"],
             entities=entities,
             feature_df=session.sql(json_dict["_query"]),
@@ -1756,6 +1878,13 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             if json_dict.get("_storage_config")
             else None,
         )
+
+        # Restore rollup metadata if present
+        rollup_meta_dict = json_dict.get("_rollup_metadata")
+        if rollup_meta_dict is not None:
+            fv._rollup_metadata = RollupMetadata.from_dict(rollup_meta_dict)
+
+        return fv
 
     def _get_compact_repr(self) -> _CompactRepresentation:
         return _CompactRepresentation(
