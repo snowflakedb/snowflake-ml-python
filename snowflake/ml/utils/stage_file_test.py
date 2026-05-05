@@ -171,5 +171,48 @@ class ListStageFilesTest(parameterized.TestCase):
                 stage_file.list_stage_files(self.session, "@DB.SCHEMA.STAGE")
 
 
+class ListStageFilesFromDirectoryTablesTest(parameterized.TestCase):
+    def setUp(self) -> None:
+        self.m_session = mock_session.MockSession(conn=None, test_case=self)
+        self.session = cast(Session, self.m_session)
+
+    @parameterized.parameters(  # type: ignore[misc]
+        ("@DB.SCHEMA.MY_STAGE",),
+        ("DB.SCHEMA.MY_STAGE",),
+    )
+    def test_composes_lazy_dataframe(self, stage_name: str) -> None:
+        lazy_df = mock.MagicMock()
+        final_df = mock.MagicMock()
+        lazy_df.select.return_value = final_df
+
+        with mock.patch.object(self.session, "sql", return_value=lazy_df) as mock_sql:
+            result = stage_file.list_stage_files_from_directory_tables(self.session, stage_name)
+
+        mock_sql.assert_called_once_with("SELECT RELATIVE_PATH FROM DIRECTORY(@DB.SCHEMA.MY_STAGE)")
+        lazy_df.select.assert_called_once()
+        self.assertIs(result, final_df)
+
+        # The function must compose a plan only — it must not execute anything.
+        lazy_df.collect.assert_not_called()
+        final_df.collect.assert_not_called()
+
+        (col_expr,), _ = lazy_df.select.call_args
+        self.assertEqual(col_expr.getName(), '"FILE_PATH"')
+
+    def test_custom_column_name(self) -> None:
+        lazy_df = mock.MagicMock()
+        with mock.patch.object(self.session, "sql", return_value=lazy_df):
+            stage_file.list_stage_files_from_directory_tables(self.session, "@DB.SCHEMA.STAGE", column_name="IMAGES")
+
+        (col_expr,), _ = lazy_df.select.call_args
+        self.assertEqual(col_expr.getName(), '"IMAGES"')
+
+    def test_rejects_subpath(self) -> None:
+        with mock.patch.object(self.session, "sql") as mock_sql:
+            with self.assertRaisesRegex(ValueError, "without a subpath"):
+                stage_file.list_stage_files_from_directory_tables(self.session, "@DB.SCHEMA.STAGE/sub")
+            mock_sql.assert_not_called()
+
+
 if __name__ == "__main__":
     absltest.main()

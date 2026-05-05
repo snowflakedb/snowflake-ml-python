@@ -1,3 +1,6 @@
+# Use a remote JDK so builds work without a local JDK install (only needed for bazel-diff)
+build --java_runtime_version=remotejdk_21
+
 # Common Default
 
 # Wrapper to make sure tests are run.
@@ -33,7 +36,7 @@ build:build --config=_build
 run:pre_build --config=_build --config=py3.11
 
 # Config to run type check
-build:typecheck --aspects @rules_mypy//:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.11
+build:typecheck --aspects //third_party/rules_mypy:mypy.bzl%mypy_aspect --output_groups=mypy --config=_all --config=py3.11
 
 # Config to build the doc
 # Note: docs build uses py3.10 due to Sphinx module resolution issues with py3.11
@@ -47,6 +50,13 @@ run:core --config=_core
 cquery:all --config=_all
 test:all --config=_all
 run:all --config=_all
+
+# Hermetic CC toolchain: use zig cc on Linux to avoid host ccache issues with cgo.
+# On macOS the system toolchain is used (zig cc lacks macOS SDK headers).
+common --enable_platform_specific_config
+build:linux --extra_toolchains=@zig_sdk//toolchain/...
+build:linux --extra_toolchains=@zig_sdk//libc_aware/toolchain/...
+build:linux --sandbox_add_mount_pair=/tmp
 
 # Environment variables for Hugging Face
 build --action_env=HF_HUB_ETAG_TIMEOUT=86400

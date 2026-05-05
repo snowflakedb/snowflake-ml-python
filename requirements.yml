@@ -231,9 +231,6 @@
   dev_version: 0.17.21
   tags:
     - build_essential
-- name: s3fs
-  dev_version: 2024.6.1
-  version_requirements: '>=2024.6.1,<2026'
 - name: scikit-learn
   dev_version: 1.5.1
   version_requirements: <1.8

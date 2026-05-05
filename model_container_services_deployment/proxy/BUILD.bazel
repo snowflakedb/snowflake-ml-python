@@ -1,0 +1,3 @@
+# Go subpackages have their own BUILD.bazel files with go_library/go_test targets.
+# Run all tests: bazel test --config=build model_container_services_deployment/proxy/...
+# Build binary:  bazel build --config=build //model_container_services_deployment/proxy/cmd/proxy:proxy

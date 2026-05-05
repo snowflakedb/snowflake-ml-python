@@ -1,6 +1,29 @@
 # Release History
 
-## 1.37.0
+## 1.38.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Registry: For HuggingFace `text-generation` pipelines whose tokenizer defines a chat template, the
+  auto-inferred signature now matches the OpenAI Chat Completions API
+  (`_OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC`). Inputs are a single `messages` column and inference
+  controls (`temperature`, `max_completion_tokens`, `stop`, `n`, `stream`, `top_p`, `frequency_penalty`,
+  `presence_penalty`) move from `inputs` to `params` with default values. Predictions return the OpenAI
+  response shape (`id`, `object`, `created`, `model`, `choices`, `usage`); the generated text is at
+  `choices[0].message.content` instead of `outputs[0].generated_text`.
+
+* Registry: For HuggingFace `image-text-to-text`, `video-text-to-text`, and `audio-text-to-text`
+  pipelines, the auto-inferred signature now uses `_OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC` instead of
+  `_OPENAI_CHAT_SIGNATURE_SPEC`. The input column set narrows to just `messages`, and the inference
+  controls move to `params` with default values; the output schema is unchanged.
+
+### Deprecations
+
+## 1.37.0 (2026-04-29)
 
 ### New Features
 

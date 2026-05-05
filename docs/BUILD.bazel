@@ -1,5 +1,5 @@
-load("@rules_sphinx//:defs.bzl", "sphinx_docs")
 load("//:packages.bzl", "PACKAGES")
+load("//third_party/rules_sphinx:defs.bzl", "sphinx_docs")
 
 package_group(
     name = "docs_package",

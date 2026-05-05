@@ -929,7 +929,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
-            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC,
             has_chat_template=True,
         )
 
@@ -956,7 +956,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
-            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC,
             has_chat_template=True,
         )
 
@@ -968,7 +968,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             check_pipeline_fn=lambda x, y: None,  # ignore this check
             check_udf_res_fn=check_udf_res,
             check_gpu=False,
-            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC,
+            signature=openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC,
             has_chat_template=True,
         )
 

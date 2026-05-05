@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, cast
 
-from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark import DataFrame, Session, functions
 from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.types import StringType, StructField, StructType
 
@@ -110,3 +110,61 @@ def list_stage_files(
         file_paths.append((fully_qualified,))
 
     return session.create_dataframe(file_paths, schema=StructType([StructField(column_name, StringType())]))
+
+
+def list_stage_files_from_directory_tables(
+    session: Session,
+    stage_name: str,
+    *,
+    column_name: str = "FILE_PATH",
+) -> DataFrame:
+    """
+    List files from a Snowflake stage's directory table and return a DataFrame with fully qualified paths.
+
+    Unlike :func:`list_stage_files`, this utility queries the stage's directory table
+    (``SELECT RELATIVE_PATH FROM DIRECTORY(@stage)``) rather than issuing a ``LIST`` command.
+    The stage must have its directory table enabled and refreshed for the listing to be populated.
+
+    The returned DataFrame is lazy — no query is executed by this call. The caller materializes
+    the plan when they need the rows (e.g. ``ModelVersion.run_batch``, ``collect``, ``to_pandas``).
+
+    Args:
+        session: Active Snowpark session.
+        stage_name: Fully qualified stage reference, e.g. ``"@DB.SCHEMA.STAGE"``. A subpath is
+            not supported — only a bare stage reference is accepted.
+        column_name: Name of the output column. Defaults to ``"FILE_PATH"``.
+
+    Returns:
+        DataFrame with a single column containing fully qualified stage paths, suitable as the
+        input DataFrame to ``ModelVersion.run_batch()``.
+
+    Raises:
+        ValueError: If ``stage_name`` contains a subpath.
+
+    Example:
+        List all files in a stage via its directory table::
+
+            >>> df = list_stage_files_from_directory_tables(session, "@MY_DB.MY_SCHEMA.MY_STAGE")
+            >>> df.show()
+            -------------------------------------------------
+            |"FILE_PATH"                                    |
+            -------------------------------------------------
+            |@MY_DB.MY_SCHEMA.MY_STAGE/file1.avi            |
+            |@MY_DB.MY_SCHEMA.MY_STAGE/file2.mp3            |
+            -------------------------------------------------
+    """
+    if not stage_name.startswith("@"):
+        stage_name = "@" + stage_name
+
+    if "/" in stage_name[1:]:
+        raise ValueError(
+            f"stage_name must be a bare stage reference like '@DB.SCHEMA.STAGE' "
+            f"without a subpath, got: {stage_name}"
+        )
+
+    return cast(
+        DataFrame,
+        session.sql(f"SELECT RELATIVE_PATH FROM DIRECTORY({stage_name})").select(
+            functions.concat(functions.lit(f"{stage_name}/"), functions.col("RELATIVE_PATH")).alias(column_name)
+        ),
+    )

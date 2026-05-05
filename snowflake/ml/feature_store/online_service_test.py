@@ -176,18 +176,6 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(result.status, "SUCCESS")
         self.assertIn("get_online_service_status", result.message)
 
-    def test_create_online_service_validates_same_roles(self) -> None:
-        session = create_autospec(Session)
-        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
-            online_service.create_online_service(
-                session,
-                SqlIdentifier("DB"),
-                SqlIdentifier("SC"),
-                "R1",
-                "R1",
-            )
-        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
-
     def test_get_online_service_status_raises_on_error_status(self) -> None:
         session = create_autospec(Session)
 

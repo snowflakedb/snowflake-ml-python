@@ -25,7 +25,7 @@ class TableQuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
     ) -> Any:
         X["table"] = X["table"].apply(json.loads)
         input_data = X.to_dict(orient="records")
-        return getattr(raw_model, target_method)(input_data)
+        return getattr(raw_model, target_method)(input_data, **kwargs)
 
     @override
     def _needs_list_wrapping(
