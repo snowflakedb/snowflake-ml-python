@@ -1,7 +1,9 @@
 import collections
 import copy
+import os
 import pathlib
 import re
+import sys
 import textwrap
 import warnings
 from enum import Enum
@@ -52,6 +54,24 @@ def get_execution_context() -> str:
         return "SPCS"
     else:
         return "EXTERNAL"
+
+
+def is_local_conda_environment() -> bool:
+    """Return True if the active Python interpreter appears to run inside a conda env
+    or under conda session context (e.g. a venv created inside an activated conda env).
+
+    Uses the presence of a ``conda-meta`` directory under :py:data:`sys.prefix`, which is
+    standard for conda-created environments. A nested venv typically has ``sys.prefix``
+    pointing at the venv without ``conda-meta``; conda still sets ``CONDA_PREFIX`` when
+    an environment is activated, so a non-empty ``CONDA_PREFIX`` is treated as conda context.
+
+    Returns:
+        ``True`` if ``sys.prefix`` contains ``conda-meta`` or ``CONDA_PREFIX`` is set and
+        non-empty, else ``False``.
+    """
+    if os.path.isdir(os.path.join(sys.prefix, "conda-meta")):
+        return True
+    return bool(os.environ.get("CONDA_PREFIX", "").strip())
 
 
 def _validate_pip_requirement_string(req_str: str) -> requirements.Requirement:

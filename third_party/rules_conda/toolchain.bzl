@@ -5,7 +5,7 @@ load("@bazel_tools//tools/python:toolchain.bzl", "py_runtime_pair")
 
 py_runtime_pair(
     name = "runtimes",
-    py3_runtime = "{runtime}"
+    py3_runtime = "{runtime}",
 )
 
 toolchain(

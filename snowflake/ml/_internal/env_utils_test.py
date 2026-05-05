@@ -4,6 +4,7 @@ import importlib
 import os
 import pathlib
 import platform
+import sys
 import tempfile
 import textwrap
 from importlib import metadata as importlib_metadata
@@ -1289,6 +1290,21 @@ pandas>=2.0
             env_utils.try_convert_conda_requirement_to_pip(requirements.Requirement("numpy==1.3")),
             requirements.Requirement("numpy==1.3"),
         )
+
+    def test_is_local_conda_environment(self) -> None:
+        conda_prefix = "/fake/miniconda/envs/myenv"
+        with mock.patch.object(sys, "prefix", conda_prefix):
+            with mock.patch("os.path.isdir", return_value=True) as mock_isdir:
+                self.assertTrue(env_utils.is_local_conda_environment())
+                mock_isdir.assert_called_once_with(os.path.join(conda_prefix, "conda-meta"))
+        with mock.patch.object(sys, "prefix", "/fake/venv"):
+            with mock.patch("os.path.isdir", return_value=False):
+                with mock.patch.dict(os.environ, {"CONDA_PREFIX": ""}):
+                    self.assertFalse(env_utils.is_local_conda_environment())
+        with mock.patch.object(sys, "prefix", "/fake/venv"):
+            with mock.patch("os.path.isdir", return_value=False):
+                with mock.patch.dict(os.environ, {"CONDA_PREFIX": conda_prefix}):
+                    self.assertTrue(env_utils.is_local_conda_environment())
 
     def test_validate_py_runtime_version(self) -> None:
         with mock.patch.object(snowml_env, "PYTHON_VERSION", "3.8.13"):

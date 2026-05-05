@@ -384,8 +384,8 @@ dmypy.json
 # Bazel Output directories
 bazel-*
 
-# Bazel module files
-MODULE.bazel
+# bzlmod lockfile
+# TODO: Check this in
 MODULE.bazel.lock
 
 # User-specific Bazel settings

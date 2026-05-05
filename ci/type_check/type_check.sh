@@ -100,7 +100,7 @@ if [[ -z "${type_check_targets}" ]]; then
 fi
 
 cat >"${SCRIPTPATH}/runner/BUILD.bazel" <<EndOfMessage
-load("@rules_mypy//:mypy.bzl", "mypy_test")
+load("//third_party/rules_mypy:mypy.bzl", "mypy_test")
 
 mypy_test(
     name = "mypy_type_checking",

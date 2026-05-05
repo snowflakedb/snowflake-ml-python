@@ -3,6 +3,7 @@
 import logging
 import os
 import uuid
+from typing import Any, Optional
 
 import pytest
 from cryptography.hazmat import backends
@@ -97,3 +98,79 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._test_db)
         super().tearDown()
+
+    def list_job_services(
+        self,
+        *,
+        name_like: Optional[str] = None,
+        compute_pool: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """List job services in the current account via ``SHOW SERVICES``.
+
+        Filters the rows returned by ``SHOW SERVICES`` to only those where ``is_job`` is true,
+        i.e. SPCS job services (as opposed to long-running services).
+
+        Args:
+            name_like: Optional SQL ``LIKE`` pattern to match against the service name
+                (e.g. ``"MY_JOB_%"``). Forwarded to ``SHOW SERVICES LIKE ...``.
+            compute_pool: Optional compute pool name to scope the listing to
+                (``SHOW SERVICES IN COMPUTE POOL <pool>``).
+
+        Returns:
+            A list of dicts, one per matching job service, with the columns from ``SHOW SERVICES``
+            (e.g. ``name``, ``database_name``, ``schema_name``, ``status``, ``compute_pool``,
+            ``is_job``, ...).
+        """
+        query = "SHOW SERVICES"
+        if name_like is not None:
+            escaped = name_like.replace("'", "''")
+            query += f" LIKE '{escaped}'"
+        if compute_pool is not None:
+            query += f" IN COMPUTE POOL {compute_pool}"
+
+        rows = self.session.sql(query).collect()
+        jobs: list[dict[str, Any]] = []
+        for row in rows:
+            row_dict = row.as_dict()
+            is_job = row_dict.get("is_job")
+            if isinstance(is_job, str):
+                is_job_bool = is_job.strip().lower() in ("true", "t", "yes", "y", "1")
+            else:
+                is_job_bool = bool(is_job)
+            if is_job_bool:
+                jobs.append(row_dict)
+        return jobs
+
+    def get_job_service_spec(
+        self,
+        job_name: str,
+        *,
+        database: Optional[str] = None,
+        schema: Optional[str] = None,
+    ) -> str:
+        """Return the YAML spec of a job service via ``DESCRIBE SERVICE``.
+
+        Args:
+            job_name: The job service name. May be unqualified or fully qualified.
+            database: Optional database to qualify the job with. Defaults to ``self._test_db``
+                when neither ``database`` nor a qualified ``job_name`` is provided.
+            schema: Optional schema to qualify the job with. Defaults to ``self._test_schema``
+                when ``database`` is supplied (or defaulted) and ``job_name`` is unqualified.
+
+        Returns:
+            The ``spec`` column of the ``DESCRIBE SERVICE`` row, which contains the service YAML.
+
+        Raises:
+            ValueError: If ``DESCRIBE SERVICE`` returns no rows for the given job.
+        """
+        if "." in job_name:
+            fully_qualified = job_name
+        else:
+            db = database if database is not None else self._test_db
+            sch = schema if schema is not None else self._test_schema
+            fully_qualified = f"{db}.{sch}.{job_name}"
+
+        rows = self.session.sql(f"DESCRIBE SERVICE {fully_qualified}").collect()
+        if not rows:
+            raise ValueError(f"DESCRIBE SERVICE {fully_qualified} returned no rows")
+        return rows[0].as_dict()["spec"]

@@ -190,11 +190,6 @@ def create_online_service(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError("producer_role and consumer_role must be non-empty."),
         )
-    if producer_role.strip() == consumer_role.strip():
-        raise snowml_exceptions.SnowflakeMLException(
-            error_code=error_codes.INVALID_ARGUMENT,
-            original_exception=ValueError("producer_role and consumer_role must be different roles."),
-        )
     payload = json.dumps(
         {
             "roles": {

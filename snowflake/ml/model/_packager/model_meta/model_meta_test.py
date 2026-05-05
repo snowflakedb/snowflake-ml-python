@@ -1,6 +1,7 @@
 import os
 import tempfile
 from importlib import metadata as importlib_metadata
+from unittest import mock
 
 import yaml
 from absl.testing import absltest
@@ -51,80 +52,45 @@ _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML = list(
 
 class ModelMetaEnvTest(absltest.TestCase):
     def test_model_meta_dependencies(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
+        # Simulate packaging from a conda env so default deps stay on the conda path.
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
 
-            self.assertListEqual(meta.env.pip_requirements, [])
-            self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
-            self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+                self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
 
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-            self.assertListEqual(loaded_meta.env.pip_requirements, [])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
-            self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
-
-    def test_model_meta_dependencies_no_relax(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-
-            self.assertListEqual(meta.env.pip_requirements, [])
-            self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
-            self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
-
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-
-            self.assertListEqual(loaded_meta.env.pip_requirements, [])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
-            self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
+                self.assertListEqual(loaded_meta.env.pip_requirements, [])
+                self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+                self.assertEqual(meta.env.snowpark_ml_version, snowml_version.VERSION)
 
     def test_model_meta_dependencies_no_packages_embedded_snowml(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                embed_local_ml_library=True,
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures=_DUMMY_SIG,
+                    embed_local_ml_library=True,
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
 
-            self.assertListEqual(meta.env.pip_requirements, [])
-            self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
-            self.assertIsNotNone(meta.env._snowpark_ml_version.local)
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
+                self.assertIsNotNone(meta.env._snowpark_ml_version.local)
 
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-            self.assertListEqual(loaded_meta.env.pip_requirements, [])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
-            self.assertIsNotNone(meta.env._snowpark_ml_version.local)
-
-    def test_model_meta_dependencies_no_packages_embedded_snowml_strict(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-                embed_local_ml_library=True,
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-
-            self.assertListEqual(meta.env.pip_requirements, [])
-            self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
-            self.assertIsNotNone(meta.env._snowpark_ml_version.local)
-
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-
-            self.assertListEqual(loaded_meta.env.pip_requirements, [])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
-            self.assertIsNotNone(meta.env._snowpark_ml_version.local)
+                self.assertListEqual(loaded_meta.env.pip_requirements, [])
+                self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET)
+                self.assertIsNotNone(meta.env._snowpark_ml_version.local)
 
     def test_model_meta_dependencies_dup_basic_dep(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -226,27 +192,28 @@ class ModelMetaEnvTest(absltest.TestCase):
             self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_conda_additional_package(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir,
-                name="model1",
-                model_type="custom",
-                signatures=_DUMMY_SIG,
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-                meta.env.include_if_absent([model_env.ModelDependency("pytorch==2.0.1", "torch")])
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir,
+                    name="model1",
+                    model_type="custom",
+                    signatures=_DUMMY_SIG,
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                    meta.env.include_if_absent([model_env.ModelDependency("pytorch==2.0.1", "torch")])
 
-            dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
-            dep_target.append("pytorch==2.0.1")
-            dep_target.sort()
+                dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                dep_target.append("pytorch==2.0.1")
+                dep_target.sort()
 
-            self.assertListEqual(meta.env.pip_requirements, [])
-            self.assertListEqual(meta.env.conda_dependencies, dep_target)
+                self.assertListEqual(meta.env.pip_requirements, [])
+                self.assertListEqual(meta.env.conda_dependencies, dep_target)
 
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                loaded_meta = model_meta.ModelMetadata.load(tmpdir)
 
-            self.assertListEqual(loaded_meta.env.pip_requirements, [])
-            self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
+                self.assertListEqual(loaded_meta.env.pip_requirements, [])
+                self.assertListEqual(loaded_meta.env.conda_dependencies, dep_target)
 
     def test_model_meta_dependencies_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -445,49 +412,128 @@ class ModelMetaEnvTest(absltest.TestCase):
                 loaded_meta.env.cuda_version = "12.0"
 
     def test_model_meta_runtimes(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-                meta.env.include_if_absent([model_env.ModelDependency(requirement="pytorch", pip_name="torch")])
-                self.assertListEqual(meta.env.pip_requirements, [])
-                self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                    meta.env.include_if_absent([model_env.ModelDependency(requirement="pytorch", pip_name="torch")])
+                    self.assertListEqual(meta.env.pip_requirements, [])
+                    self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
 
-            self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
-            with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
-                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
+                self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
+                with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
+                    self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
 
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-            self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
+                loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
 
     def test_model_meta_runtimes_gpu(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with model_meta.create_model_metadata(
-                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
-            ) as meta:
-                meta.models["model1"] = _DUMMY_BLOB
-                meta.env.include_if_absent([model_env.ModelDependency(requirement="pytorch", pip_name="torch")])
-                meta.env.cuda_version = "11.7"
-                self.assertListEqual(meta.env.pip_requirements, [])
-                self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+                    meta.env.include_if_absent([model_env.ModelDependency(requirement="pytorch", pip_name="torch")])
+                    meta.env.cuda_version = "11.7"
+                    self.assertListEqual(meta.env.pip_requirements, [])
+                    self.assertContainsSubset(["pytorch"], meta.env.conda_dependencies)
 
-            self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
-            with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
-                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
-            self.assertContainsSubset(
-                ["pytorch"],
-                meta.runtimes["gpu"].runtime_env.conda_dependencies,
-            )
-            with open(os.path.join(tmpdir, "runtimes", "gpu", "env", "conda.yml"), encoding="utf-8") as f:
-                self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
+                self.assertContainsSubset(["pytorch"], meta.runtimes["cpu"].runtime_env.conda_dependencies)
+                with open(os.path.join(tmpdir, "runtimes", "cpu", "env", "conda.yml"), encoding="utf-8") as f:
+                    self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
+                self.assertContainsSubset(
+                    ["pytorch"],
+                    meta.runtimes["gpu"].runtime_env.conda_dependencies,
+                )
+                with open(os.path.join(tmpdir, "runtimes", "gpu", "env", "conda.yml"), encoding="utf-8") as f:
+                    self.assertListEqual(yaml.safe_load(f)["channels"], ["conda-forge", "nodefaults"])
 
-            loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-            self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
-            self.assertContainsSubset(
-                ["pytorch"],
-                loaded_meta.runtimes["gpu"].runtime_env.conda_dependencies,
-            )
+                loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                self.assertContainsSubset(["pytorch"], loaded_meta.runtimes["cpu"].runtime_env.conda_dependencies)
+                self.assertContainsSubset(
+                    ["pytorch"],
+                    loaded_meta.runtimes["gpu"].runtime_env.conda_dependencies,
+                )
+
+    def test_model_meta_dependencies_default_pip_path_without_local_conda(self) -> None:
+        """Pip-only opt-in + no explicit conda deps + not in a conda env -> automatic deps on pip."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with model_meta.create_model_metadata(
+                        model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                    ) as meta:
+                        meta.models["model1"] = _DUMMY_BLOB
+
+                    dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                    dep_target.sort()
+                    self.assertTrue(meta.env.prefer_pip)
+                    self.assertListEqual(meta.env.conda_dependencies, [])
+                    self.assertListEqual(meta.env.pip_requirements, dep_target)
+
+                    loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                    self.assertListEqual(loaded_meta.env.conda_dependencies, [])
+                    self.assertListEqual(loaded_meta.env.pip_requirements, dep_target)
+
+    def test_model_meta_dependencies_pip_only_with_local_conda_still_conda_defaults(self) -> None:
+        """Pip-only opt-in does not move automatic deps to pip when packaging from a conda context."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with model_meta.create_model_metadata(
+                        model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                    ) as meta:
+                        meta.models["model1"] = _DUMMY_BLOB
+
+                    self.assertFalse(meta.env.prefer_pip)
+                    self.assertListEqual(meta.env.pip_requirements, [])
+                    self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+
+                    loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                    self.assertFalse(loaded_meta.env.prefer_pip)
+                    self.assertListEqual(loaded_meta.env.pip_requirements, [])
+                    self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
+
+    def test_model_meta_dependencies_pip_only_with_local_conda_spcs_target_still_prefer_pip(self) -> None:
+        """SPCS-only target_platforms forces prefer_pip even under local conda (and pip-only flag)."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with model_meta.create_model_metadata(
+                        model_dir_path=tmpdir,
+                        name="model1",
+                        model_type="custom",
+                        signatures=_DUMMY_SIG,
+                        target_platforms=[type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES],
+                    ) as meta:
+                        meta.models["model1"] = _DUMMY_BLOB
+
+                    dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
+                    dep_target.sort()
+                    self.assertTrue(meta.env.prefer_pip)
+                    self.assertListEqual(meta.env.conda_dependencies, [])
+                    self.assertListEqual(meta.env.pip_requirements, dep_target)
+
+                    loaded_meta = model_meta.ModelMetadata.load(tmpdir)
+                    self.assertListEqual(loaded_meta.env.conda_dependencies, [])
+                    self.assertListEqual(loaded_meta.env.pip_requirements, dep_target)
+
+    def test_model_meta_dependencies_venv_without_pip_only_flag_still_conda_defaults(self) -> None:
+        """Without pip-only opt-in, venv/plain Python still gets conda default deps (legacy behavior)."""
+        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", False):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with model_meta.create_model_metadata(
+                        model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                    ) as meta:
+                        meta.models["model1"] = _DUMMY_BLOB
+
+                    self.assertFalse(meta.env.prefer_pip)
+                    self.assertListEqual(meta.env.pip_requirements, [])
+                    self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
 
     def test_model_meta_prefer_pip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

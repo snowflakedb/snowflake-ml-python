@@ -2605,6 +2605,68 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         # Previous sum: tiles hour 1 + hour 2 = 70 + 50 = 120.0
         self.assertEqual(prev_sum, 120.0)
 
+    def test_default_offset_naming(self) -> None:
+        """Two Features sharing column/function/window but differing in offset must
+        coexist with distinct default output column names and be retrievable end-to-end
+        through dataset generation."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("amount", "1h"),
+            Feature.avg("amount", "7d", offset="0m"),
+            Feature.sum("amount", "2h", offset="0 d"),  # Intentional space, do NOT remove
+            Feature.sum("amount", "2h", offset="1h"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_default_offset_naming",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Same spine as test_offset_feature_values: user 1 at hour 4.
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 4, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+
+        ds = fs.generate_dataset(
+            spine_df=spine_df,
+            features=[registered_fv],
+            spine_timestamp_col="query_ts",
+            name="test_default_offset_naming",
+            output_type="dataset",
+            join_method="cte",
+        )
+
+        result_pd = ds.read.to_pandas()
+        self.assertEqual(len(result_pd), 1)
+
+        self.assertIn("AMOUNT_COUNT_1H", result_pd.columns)
+        self.assertIn("AMOUNT_AVG_7D", result_pd.columns)
+        self.assertIn("AMOUNT_SUM_2H", result_pd.columns)
+        self.assertIn("AMOUNT_SUM_2H_OFFSET_1H", result_pd.columns)
+
+        # Values for user 1 query at hour 4:
+        #   COUNT_1H: tile hour 3 -> 0 events -> 0
+        #   AVG_7D (offset="0m"): all 5 events (10, 20, 30, 40, 50) -> 30.0
+        #   SUM_2H (offset="0 d"): tiles hour 2, 3 -> event at 02:30 = 50.0
+        #   SUM_2H_OFFSET_1H: tiles hour 1, 2 -> events at 01:15 + 01:45 + 02:30 = 120.0
+        self.assertEqual(int(result_pd["AMOUNT_COUNT_1H"].iloc[0]), 0)
+        self.assertEqual(float(result_pd["AMOUNT_AVG_7D"].iloc[0]), 30.0)
+        self.assertEqual(float(result_pd["AMOUNT_SUM_2H"].iloc[0]), 50.0)
+        self.assertEqual(float(result_pd["AMOUNT_SUM_2H_OFFSET_1H"].iloc[0]), 120.0)
+
     def test_offset_validation_not_multiple_of_granularity(self) -> None:
         """Test that offset not multiple of granularity raises error."""
         fs = self._create_feature_store()
