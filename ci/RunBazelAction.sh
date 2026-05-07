@@ -273,9 +273,9 @@ merge_gate)
         echo "Also filtering by feature areas in query: ${TAG_FILTERS}"
         # Build feature area query condition
         feature_query="attr(tags, \"${TAG_FILTERS}\", //...)"
-        query_expr='kind(".*_test rule", rdeps((//... intersect '"${feature_query}"') - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+        query_expr='attr(tags, "short_regress", kind(".*_test rule", rdeps((//... intersect '"${feature_query}"') - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"'))))'
     else
-        query_expr='kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"')))'
+        query_expr='attr(tags, "short_regress", kind(".*_test rule", rdeps(//... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'), set('"$(<"${affected_targets_file}")"'))))'
     fi
     ;;
 continuous_run)

@@ -141,7 +141,10 @@ class SnowparkModelTrainer:
             import os
 
             import cloudpickle as cp
+            import joblib
+            import numpy as np
             import pandas as pd
+            from sklearn.metrics._pairwise_distances_reduction import ArgKmin
 
             for import_name in imports:
                 importlib.import_module(import_name)
@@ -189,7 +192,12 @@ class SnowparkModelTrainer:
                 if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                     args["sample_weight"] = df[sample_weight_col].squeeze()
 
-                estimator.fit(**args)
+                X = np.ascontiguousarray(args["X"].to_numpy(), dtype=np.float64)
+                if ArgKmin.is_usable_for(X, X, "euclidean"):
+                    estimator.fit(**args)
+                else:
+                    with joblib.parallel_backend("threading", n_jobs=1):
+                        estimator.fit(**args)
 
                 local_result_file_name = temp_file_utils.get_temp_file_path()
 
@@ -274,7 +282,10 @@ class SnowparkModelTrainer:
             import os
 
             import cloudpickle as cp
+            import joblib
+            import numpy as np
             import pandas as pd
+            from sklearn.metrics._pairwise_distances_reduction import ArgKmin
 
             for import_name in imports:
                 importlib.import_module(import_name)
@@ -301,7 +312,12 @@ class SnowparkModelTrainer:
             with open(local_transform_file_path, mode="r+b") as local_transform_file_obj:
                 estimator = cp.load(local_transform_file_obj)
 
-            fit_predict_result = estimator.fit_predict(X=df[input_cols])
+            X = np.ascontiguousarray(df[input_cols].to_numpy(), dtype=np.float64)
+            if ArgKmin.is_usable_for(X, X, "euclidean"):
+                fit_predict_result = estimator.fit_predict(X=df[input_cols])
+            else:
+                with joblib.parallel_backend("threading", n_jobs=1):
+                    fit_predict_result = estimator.fit_predict(X=df[input_cols])
 
             local_result_file_name = temp_file_utils.get_temp_file_path()
 
@@ -387,10 +403,14 @@ class SnowparkModelTrainer:
             expected_output_cols_list: list[str],
             fit_transform_result_name: str,
         ) -> str:
+            import inspect
             import os
 
             import cloudpickle as cp
+            import joblib
+            import numpy as np
             import pandas as pd
+            from sklearn.metrics._pairwise_distances_reduction import ArgKmin
 
             for import_name in imports:
                 importlib.import_module(import_name)
@@ -430,7 +450,12 @@ class SnowparkModelTrainer:
             if sample_weight_col is not None and should_include_sample_weight(estimator, "fit"):
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
-            fit_transform_result = estimator.fit_transform(**args)
+            X = np.ascontiguousarray(args["X"].to_numpy(), dtype=np.float64)
+            if ArgKmin.is_usable_for(X, X, "euclidean"):
+                fit_transform_result = estimator.fit_transform(**args)
+            else:
+                with joblib.parallel_backend("threading", n_jobs=1):
+                    fit_transform_result = estimator.fit_transform(**args)
 
             local_result_file_name = temp_file_utils.get_temp_file_path()
 

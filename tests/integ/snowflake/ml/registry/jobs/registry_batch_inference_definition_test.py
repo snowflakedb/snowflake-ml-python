@@ -216,7 +216,7 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
             f"DAG {dag_name} did not complete within {self._DAG_POLL_MAX_ATTEMPTS * self._DAG_POLL_INTERVAL_SEC}s"
         )
 
-    def _deploy_and_run_dag(self, dag: DAG) -> None:
+    def _deploy_and_run_dag(self, dag: "DAG") -> None:
         """Deploy a DAG, apply image overrides on the batch inference child task, and trigger a run."""
         api_root = Root(self.session)
         schema = api_root.databases[self._test_db].schemas[self._test_schema]
@@ -446,7 +446,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         )
         self._run_batch_inference_dag(defn, base_stage_location)
 
-    @absltest.skip("TODO: fix column_handling")
     def test_column_handling(self) -> None:
         """Verify batch inference works with InputSpec column_handling in a DAG task."""
         # Upload a small text file to stage
@@ -672,6 +671,57 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
             ),
         )
         self._run_batch_inference_dag(defn, base_stage_location)
+
+    def test_user_privileges(self) -> None:
+        """Verify batch inference works when the root DAG task uses EXECUTE AS USER.
+
+        Requires IMPERSONATE privilege on the current user granted to the current role.
+        """
+        input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
+        base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/user_privileges_base_stage/"
+
+        defn = BatchInferenceDefinition(
+            model_version=self._mv,
+            X=input_df,
+            compute_pool=self._TEST_CPU_COMPUTE_POOL,
+            output_spec=OutputSpec(base_stage_location=base_stage_location),
+            job_spec=JobSpec(
+                warehouse=self._TEST_SPCS_WH,
+                function_name="predict",
+                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                job_name_prefix="test_user_privs",
+            ),
+        )
+
+        dag = DAG(
+            self._dag_name,
+            schedule=timedelta(days=1),
+            warehouse=self._TEST_SPCS_WH,
+            stage_location=f"@{self._test_db}.{self._test_schema}.{self._test_stage}",
+        )
+
+        with dag:
+            data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
+            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            data_prep_task >> batch_inference_task
+
+        api_root = Root(self.session)
+        schema = api_root.databases[self._test_db].schemas[self._test_schema]
+        dag_op = DAGOperation(schema)
+
+        dag_op.deploy(dag, mode="orReplace")
+
+        root_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}"
+        current_user = self.session.sql("SELECT CURRENT_USER()").collect()[0][0]
+
+        self.session.sql(f"ALTER TASK {root_task_fqn} SUSPEND").collect()
+        self.session.sql(f"ALTER TASK {root_task_fqn} SET EXECUTE AS USER {current_user}").collect()
+        if self._has_image_override():
+            self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
+        self.session.sql(f"ALTER TASK {root_task_fqn} RESUME").collect()
+
+        dag_op.run(dag)
+        self._assert_batch_inference_succeeded(base_stage_location)
 
 
 if __name__ == "__main__":

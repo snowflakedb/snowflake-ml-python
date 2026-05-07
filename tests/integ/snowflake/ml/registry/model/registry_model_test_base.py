@@ -53,6 +53,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         resource_constraint: Optional[dict[str, str]] = None,
         code_paths: Optional[list[model_types.CodePathLike]] = None,
         partition_column: Optional[str] = None,
+        params_assert_fns: Optional[dict[str, tuple[Any, dict[str, Any], Callable[[Any], Any]]]] = None,
     ) -> None:
         conda_dependencies = [
             test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
@@ -85,6 +86,11 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             res = mv.run(test_input, function_name=target_method, partition_column=partition_column)
             check_func(res)
+
+        if params_assert_fns:
+            for target_method, (test_input, params, check_func) in params_assert_fns.items():
+                res = mv.run(test_input, function_name=target_method, params=params)
+                check_func(res)
 
         if function_type_assert:
             res = mv.show_functions()

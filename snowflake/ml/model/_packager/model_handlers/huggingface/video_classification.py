@@ -39,7 +39,7 @@ class VideoClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
                 temp_file.flush()
                 temp_file_paths.append(temp_file.name)
                 temp_files.append(temp_file)
-            return getattr(raw_model, target_method)(temp_file_paths)
+            return getattr(raw_model, target_method)(temp_file_paths, **kwargs)
         finally:
             for f in temp_files:
                 f.close()

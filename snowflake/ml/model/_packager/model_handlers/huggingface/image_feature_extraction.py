@@ -27,4 +27,4 @@ class ImageFeatureExtractionTaskHandler(_task_handler.HuggingFaceTaskHandler):
 
         input_col = signature.inputs[0].name
         images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
-        return getattr(raw_model, target_method)(images)
+        return getattr(raw_model, target_method)(images, **kwargs)

@@ -76,6 +76,11 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
         engine_args_override: Optional[list[str]],
     ) -> None:
         """Test text generation with vLLM inference engine and various resource configurations."""
+        if not self._has_image_override():
+            self.skipTest(
+                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
+                "so the ray_orchestrator image carries that fix."
+            )
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",
@@ -152,6 +157,11 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
         instead of including them in the input DataFrame. It validates that
         the model produces output content when parameters are passed via InputSpec.
         """
+        if not self._has_image_override():
+            self.skipTest(
+                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
+                "so the ray_orchestrator image carries that fix."
+            )
         model = huggingface.TransformersPipeline(
             model="Qwen/Qwen2.5-0.5B-Instruct",
             task="text-generation",

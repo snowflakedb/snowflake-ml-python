@@ -139,6 +139,10 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=[
+                core.ParamSpec(name="targets", dtype=core.DataType.STRING, default_value=None, shape=(-1,)),
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=None),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TokenClassificationPipeline
@@ -163,6 +167,15 @@ def huggingface_pipeline_signature_auto_infer(
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.QuestionAnsweringPipeline
     if task == "question-answering":
+        qa_params = [
+            core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=1),
+            core.ParamSpec(name="doc_stride", dtype=core.DataType.INT64, default_value=128),
+            core.ParamSpec(name="max_answer_len", dtype=core.DataType.INT64, default_value=15),
+            core.ParamSpec(name="max_seq_len", dtype=core.DataType.INT64, default_value=384),
+            core.ParamSpec(name="max_question_len", dtype=core.DataType.INT64, default_value=64),
+            core.ParamSpec(name="handle_impossible_answer", dtype=core.DataType.BOOL, default_value=False),
+            core.ParamSpec(name="align_to_words", dtype=core.DataType.BOOL, default_value=True),
+        ]
         # If top_k and topk is not set or set to 1, then the output is a dict per input, thus we could expand.
         if params.get("top_k", 1) == 1 and params.get("topk", 1) == 1:
             return core.ModelSignature(
@@ -176,6 +189,7 @@ def huggingface_pipeline_signature_auto_infer(
                     core.FeatureSpec(name="end", dtype=core.DataType.INT64),
                     core.FeatureSpec(name="answer", dtype=core.DataType.STRING),
                 ],
+                params=qa_params,
             )
         # Else it is a list of dict per input.
         return core.ModelSignature(
@@ -195,6 +209,7 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=qa_params,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.SummarizationPipeline
@@ -229,10 +244,19 @@ def huggingface_pipeline_signature_auto_infer(
                 core.FeatureSpec(name="cells", dtype=core.DataType.STRING, shape=(-1,)),
                 core.FeatureSpec(name="aggregator", dtype=core.DataType.STRING),
             ],
+            params=[
+                core.ParamSpec(name="sequential", dtype=core.DataType.BOOL, default_value=False),
+                core.ParamSpec(name="padding", dtype=core.DataType.STRING, default_value=None),
+                core.ParamSpec(name="truncation", dtype=core.DataType.STRING, default_value=None),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TextClassificationPipeline
     if task == "text-classification" or task == "sentiment-analysis":
+        text_cls_params = [
+            core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=1),
+            core.ParamSpec(name="function_to_apply", dtype=core.DataType.STRING, default_value=None),
+        ]
         # If top_k is set, return a list of dict per input
         if params.get("top_k", None) is not None:
             return core.ModelSignature(
@@ -249,6 +273,7 @@ def huggingface_pipeline_signature_auto_infer(
                         shape=(-1,),
                     ),
                 ],
+                params=text_cls_params,
             )
         # Else, return a dict per input
         return core.ModelSignature(
@@ -259,6 +284,7 @@ def huggingface_pipeline_signature_auto_infer(
                 core.FeatureSpec(name="label", dtype=core.DataType.STRING),
                 core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
             ],
+            params=text_cls_params,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageClassificationPipeline
@@ -276,6 +302,11 @@ def huggingface_pipeline_signature_auto_infer(
                     ],
                     shape=(-1,),
                 ),
+            ],
+            params=[
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=5),
+                core.ParamSpec(name="function_to_apply", dtype=core.DataType.STRING, default_value=None),
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
             ],
         )
 
@@ -319,6 +350,12 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=[
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=5),
+                core.ParamSpec(name="num_frames", dtype=core.DataType.INT64, default_value=None),
+                core.ParamSpec(name="frame_sampling_rate", dtype=core.DataType.INT64, default_value=1),
+                core.ParamSpec(name="function_to_apply", dtype=core.DataType.STRING, default_value="softmax"),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.DocumentQuestionAnsweringPipeline
@@ -359,6 +396,10 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=[
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=5),
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageFeatureExtractionPipeline
@@ -369,6 +410,9 @@ def huggingface_pipeline_signature_auto_infer(
             ],
             outputs=[
                 core.FeatureSpec(name="feature_extraction", dtype=core.DataType.DOUBLE, shape=(-1,)),
+            ],
+            params=[
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
             ],
         )
 
@@ -414,6 +458,10 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=[
+                core.ParamSpec(name="threshold", dtype=core.DataType.DOUBLE, default_value=0.5),
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ZeroShotImageClassificationPipeline
@@ -432,6 +480,12 @@ def huggingface_pipeline_signature_auto_infer(
                     ],
                     shape=(-1,),
                 ),
+            ],
+            params=[
+                core.ParamSpec(
+                    name="hypothesis_template", dtype=core.DataType.STRING, default_value="This is a photo of {}."
+                ),
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
             ],
         )
 
@@ -461,6 +515,11 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=[
+                core.ParamSpec(name="threshold", dtype=core.DataType.DOUBLE, default_value=0.1),
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=None),
+                core.ParamSpec(name="timeout", dtype=core.DataType.DOUBLE, default_value=None),
+            ],
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TextGenerationPipeline
@@ -470,28 +529,7 @@ def huggingface_pipeline_signature_auto_infer(
                 f"Auto deployment for HuggingFace pipeline {task} "
                 "when `return_tensors` set to `True` has not been supported yet."
             )
-        # Always generate a list of dict per input
-        return core.ModelSignature(
-            inputs=[
-                core.FeatureGroupSpec(
-                    name="inputs",
-                    specs=[
-                        core.FeatureSpec(name="role", dtype=core.DataType.STRING),
-                        core.FeatureSpec(name="content", dtype=core.DataType.STRING),
-                    ],
-                    shape=(-1,),
-                ),
-            ],
-            outputs=[
-                core.FeatureGroupSpec(
-                    name="outputs",
-                    specs=[
-                        core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING),
-                    ],
-                    shape=(-1,),
-                )
-            ],
-        )
+        return openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC
 
     if task == "text-generation" and not has_chat_template:
         if params.get("return_tensors", False):
@@ -523,8 +561,11 @@ def huggingface_pipeline_signature_auto_infer(
                 "when `return_tensors` set to `True` has not been supported yet."
             )
         # Always generate a dict per input
-        # defaulting to OPENAI_CHAT_SIGNATURE_SPEC for image-text-to-text pipeline
-        return openai_signatures._OPENAI_CHAT_SIGNATURE_SPEC
+        # defaulting to OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC for image-text-to-text,
+        # video-text-to-text, and audio-text-to-text pipelines so inference controls
+        # (temperature, max_completion_tokens, etc.) are exposed as params with defaults
+        # rather than required input columns.
+        return openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.Text2TextGenerationPipeline
     if task == "text2text-generation":
@@ -569,6 +610,36 @@ def huggingface_pipeline_signature_auto_infer(
                 core.FeatureSpec(name="sequence", dtype=core.DataType.STRING),
                 core.FeatureSpec(name="labels", dtype=core.DataType.STRING, shape=(-1,)),
                 core.FeatureSpec(name="scores", dtype=core.DataType.DOUBLE, shape=(-1,)),
+            ],
+            params=[
+                core.ParamSpec(
+                    name="hypothesis_template", dtype=core.DataType.STRING, default_value="This example is {}."
+                ),
+                core.ParamSpec(name="multi_label", dtype=core.DataType.BOOL, default_value=False),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ZeroShotAudioClassificationPipeline
+    if task == "zero-shot-audio-classification":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="audio", dtype=core.DataType.BYTES),
+                core.FeatureSpec(name="candidate_labels", dtype=core.DataType.STRING, shape=(-1,)),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            params=[
+                core.ParamSpec(
+                    name="hypothesis_template", dtype=core.DataType.STRING, default_value="This is a sound of {}."
+                ),
             ],
         )
 

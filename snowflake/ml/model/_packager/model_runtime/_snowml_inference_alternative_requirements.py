@@ -21,7 +21,6 @@ REQUIREMENTS = [
     "pyyaml>=6.0,<7",
     "requests",
     "retrying>=1.3.3,<2",
-    "s3fs>=2024.6.1,<2026",
     "scikit-learn<1.8",
     "scipy>=1.9,<2",
     "shap>=0.46.0,<1",

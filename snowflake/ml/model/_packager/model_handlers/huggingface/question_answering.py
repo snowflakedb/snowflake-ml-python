@@ -24,7 +24,7 @@ class QuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
         **kwargs: Any,
     ) -> Any:
         input_data = X.to_dict(orient="records")
-        return getattr(raw_model, target_method)(input_data)
+        return getattr(raw_model, target_method)(input_data, **kwargs)
 
     @override
     def _needs_list_wrapping(

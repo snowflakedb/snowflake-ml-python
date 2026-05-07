@@ -7,7 +7,14 @@ import logging
 import pickle
 import sys
 import textwrap
-from importlib.abc import Traversable
+
+try:
+    from importlib.resources.abc import (
+        Traversable,  # Python 3.12+; importlib.abc.Traversable is deprecated
+    )
+except ImportError:
+    from importlib.abc import Traversable
+
 from pathlib import Path, PurePath
 from types import ModuleType
 from typing import IO, Any, Callable, Optional, Union, cast, get_args, get_origin

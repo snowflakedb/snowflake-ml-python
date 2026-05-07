@@ -144,6 +144,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm(self) -> None:
+        if not self._has_image_override():
+            self.skipTest(
+                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
+                "so the ray_orchestrator image carries that fix."
+            )
         # TODO: change to correct task type
         model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation")
 
@@ -232,6 +237,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm_multi_replica(self) -> None:
+        if not self._has_image_override():
+            self.skipTest(
+                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
+                "so the ray_orchestrator image carries that fix."
+            )
         # TODO: change to correct task type
         model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation")
 
@@ -329,7 +339,6 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_mljob_get_logs_on_vllm(self) -> None:
-
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B",

@@ -1,7 +1,7 @@
 "Define Sphinx build rules"
 
 load("@//bazel:py_rules.bzl", "py_binary")
-load("@rules_sphinx//:latex_engine.bzl", "LatexEngineInfo", "latex_engine")
+load("//third_party/rules_sphinx:latex_engine.bzl", "LatexEngineInfo", "latex_engine")
 
 # Borrowed from Rules Go, licensed under Apache 2.
 # https://github.com/bazelbuild/rules_go/blob/67f44035d84a352cffb9465159e199066ecb814c/proto/compiler.bzl#L72
@@ -139,7 +139,7 @@ def sphinx_docs(name, deps, extensions = [], latex_dependencies = [], latex_font
     sphinx_main_name = name + "_sphinx_main"
     py_binary(
         name = sphinx_main_name,
-        srcs = ["@rules_sphinx//:sphinx_main.py"],
+        srcs = ["//third_party/rules_sphinx:sphinx_main.py"],
         visibility = ["//visibility:public"],
         main = "sphinx_main.py",
         deps = deps + extensions,

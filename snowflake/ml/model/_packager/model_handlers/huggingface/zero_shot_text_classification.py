@@ -24,7 +24,7 @@ class ZeroShotTextClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler
     ) -> Any:
         def process_row(row: pd.Series) -> Any:
             return getattr(raw_model, target_method)(
-                row[signature.inputs[0].name], candidate_labels=row["candidate_labels"]
+                row[signature.inputs[0].name], candidate_labels=row["candidate_labels"], **kwargs
             )
 
         return X.apply(process_row, axis=1).to_list()

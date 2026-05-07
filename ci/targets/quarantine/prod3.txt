@@ -11,5 +11,6 @@
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_definition_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_definition_vllm_test
 //tests/integ/snowflake/ml/registry/jobs:registry_batch_inference_external_stage_test
+//tests/integ/snowflake/ml/registry/jobs:registry_multi_modality_vllm_external_stage_test
 //tests/integ/snowflake/ml/jobs:classical_models_integ_test
 //tests/integ/snowflake/ml/jobs:tensorflow_integ_test

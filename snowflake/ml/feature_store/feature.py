@@ -12,8 +12,11 @@ from typing import Any, Optional
 from snowflake.ml.feature_store.aggregation import (
     AggregationSpec,
     AggregationType,
+    interval_to_seconds,
     is_lifetime_window,
 )
+
+_NO_OFFSET = "0"
 
 
 class Feature:
@@ -96,6 +99,11 @@ class Feature:
         else:
             window_suffix = self._window.replace(" ", "").lower()
         base_name = f"{self._column}_{self._function.value}_{window_suffix}"
+
+        offset_seconds = interval_to_seconds(self._offset) if self._offset != _NO_OFFSET else 0
+        if offset_seconds > 0:
+            offset_suffix = self._offset.replace(" ", "").lower()
+            base_name = f"{base_name}_offset_{offset_suffix}"
         return base_name.upper()
 
     # Factory methods for creating features

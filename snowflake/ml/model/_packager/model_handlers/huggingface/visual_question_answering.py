@@ -37,7 +37,7 @@ class VisualQuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
         def process_row(row: pd.Series) -> Any:
             pil_image = Image.open(io.BytesIO(row[input_col]))
             extra_kwargs = {k: row[k] for k in row.index if k != input_col}
-            return getattr(raw_model, target_method)(pil_image, **extra_kwargs)
+            return getattr(raw_model, target_method)(pil_image, **extra_kwargs, **kwargs)
 
         return X.apply(process_row, axis=1).to_list()
 
