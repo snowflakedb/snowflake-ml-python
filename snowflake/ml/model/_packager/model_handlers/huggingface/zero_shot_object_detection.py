@@ -27,6 +27,6 @@ class ZeroShotObjectDetectionTaskHandler(_task_handler.HuggingFaceTaskHandler):
 
         def process_row(row: pd.Series) -> Any:
             pil_image = Image.open(io.BytesIO(row[signature.inputs[0].name]))
-            return getattr(raw_model, target_method)(pil_image, candidate_labels=row["candidate_labels"])
+            return getattr(raw_model, target_method)(pil_image, candidate_labels=row["candidate_labels"], **kwargs)
 
         return X.apply(process_row, axis=1).to_list()

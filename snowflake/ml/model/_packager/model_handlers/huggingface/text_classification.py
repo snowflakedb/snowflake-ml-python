@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pandas as pd
 from typing_extensions import override
 
@@ -24,7 +25,13 @@ class TextClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
         **kwargs: Any,
     ) -> Any:
         input_data = X[signature.inputs[0].name].to_list()
-        return getattr(raw_model, target_method)(input_data)
+        # TextClassificationPipeline._sanitize_parameters uses isinstance(top_k, int)
+        # which rejects np.int64 values arriving from Snowflake UDF DataFrames.
+        native_kwargs = {
+            k: int(v) if isinstance(v, np.integer) else float(v) if isinstance(v, np.floating) else v
+            for k, v in kwargs.items()
+        }
+        return getattr(raw_model, target_method)(input_data, **native_kwargs)
 
     @override
     def _needs_list_wrapping(

@@ -50,12 +50,25 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("token_str", row[0])
                 self.assertIn("sequence", row[0])
 
+        def check_res_with_top_k(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertEqual(len(row), 3)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"top_k": 3},
+                    check_res_with_top_k,
                 ),
             },
         )
@@ -131,12 +144,32 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertEqual(res["end"].dtype.type, np.int64)
             self.assertEqual(res["answer"].dtype.type, str)
 
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["score", "start", "end", "answer"]))
+            self.assertEqual(res["score"].dtype.type, np.float64)
+            for answer in res["answer"]:
+                self.assertLessEqual(len(answer), 5)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        "doc_stride": 64,
+                        "max_answer_len": 5,
+                        "max_seq_len": 256,
+                        "max_question_len": 32,
+                        "handle_impossible_answer": True,
+                        "align_to_words": False,
+                    },
+                    check_res_with_params,
                 ),
             },
         )
@@ -179,12 +212,34 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("end", row[0])
                 self.assertIn("answer", row[0])
 
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["answers"]))
+            for row in res["answers"]:
+                self.assertIsInstance(row, list)
+                self.assertIn("answer", row[0])
+                for entry in row:
+                    self.assertLessEqual(len(entry["answer"]), 5)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        "max_answer_len": 5,
+                        "doc_stride": 64,
+                        "max_seq_len": 256,
+                        "max_question_len": 32,
+                        "handle_impossible_answer": True,
+                        "align_to_words": False,
+                    },
+                    check_res_with_params,
                 ),
             },
         )
@@ -294,12 +349,23 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIsInstance(res["cells"][0], list)
                 self.assertEqual(res["aggregator"].dtype.type, str)
 
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["answer", "coordinates", "cells", "aggregator"]))
+            self.assertEqual(res["answer"].dtype.type, str)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"sequential": True, "padding": "max_length", "truncation": "only_first"},
+                    check_res_with_params,
                 ),
             },
         )
@@ -366,12 +432,26 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("label", row[0])
                 self.assertIn("score", row[0])
 
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertEqual(len(row), 2)
+                self.assertIn("score", row[0])
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"top_k": 2, "function_to_apply": "sigmoid"},
+                    check_res_with_params,
                 ),
             },
         )
@@ -387,7 +467,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         x_df = pd.DataFrame(
             [
                 {
-                    "inputs": [
+                    "messages": [
                         {
                             "role": "user",
                             "content": 'A descendant of the Lost City of Atlantis, who swam to Earth while saying, "',  # noqa: E501
@@ -398,11 +478,16 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
         def check_res(res: pd.DataFrame) -> None:
-            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
+            )
 
-            for row in res["outputs"]:
+            for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertIn("generated_text", row[0])
+                self.assertIn("message", row[0])
+                self.assertIn("content", row[0]["message"])
 
         self._test_registry_model(
             model=model,
@@ -590,12 +675,24 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             self.assertIsInstance(res["scores"][0], list)
             self.assertIsInstance(res["scores"][1], list)
 
+        def check_res_with_multi_label(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["sequence", "labels", "scores"]))
+            self.assertEqual(res["scores"].dtype.type, np.object_)
+            self.assertIsInstance(res["scores"][0], list)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"multi_label": True, "hypothesis_template": "This is about {}."},
+                    check_res_with_multi_label,
                 ),
             },
         )
@@ -623,12 +720,25 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIn("label", row[0])
                 self.assertIn("score", row[0])
 
+        def check_res_with_top_k(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertEqual(len(row), 3)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"top_k": 3, "function_to_apply": "sigmoid"},
+                    check_res_with_top_k,
                 ),
             },
             additional_dependencies=["pillow==12.0"],
@@ -712,6 +822,260 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 "pytorch=2.9.1",
                 "torchvision=0.24.1",
             ],
+        )
+
+    def test_object_detection_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="object-detection",
+            model="hustvl/yolos-tiny",
+        )
+
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame({"images": [image_bytes]})
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["detections"]))
+            for row in res["detections"]:
+                self.assertIsInstance(row, list)
+                if len(row) > 0:
+                    self.assertIn("label", row[0])
+                    self.assertIn("score", row[0])
+                    self.assertIn("box", row[0])
+
+        def check_res_with_threshold(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["detections"]))
+            for row in res["detections"]:
+                self.assertIsInstance(row, list)
+                for det in row:
+                    self.assertGreaterEqual(det["score"], 0.9)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"threshold": 0.9, "timeout": 30.0},
+                    check_res_with_threshold,
+                ),
+            },
+            additional_dependencies=["pillow==12.0"],
+        )
+
+    def test_zero_shot_image_classification_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="zero-shot-image-classification",
+            model="openai/clip-vit-base-patch32",
+        )
+
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame(
+            [
+                {
+                    "images": image_bytes,
+                    "candidate_labels": ["cat", "dog", "bird"],
+                },
+            ]
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("label", row[0])
+                self.assertIn("score", row[0])
+
+        def check_res_with_template(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["labels"]))
+            for row in res["labels"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"hypothesis_template": "A picture of a {}.", "timeout": 30.0},
+                    check_res_with_template,
+                ),
+            },
+            additional_dependencies=["pillow==12.0"],
+        )
+
+    def test_zero_shot_object_detection_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="zero-shot-object-detection",
+            model="google/owlvit-base-patch32",
+        )
+
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame(
+            [
+                {
+                    "images": image_bytes,
+                    "candidate_labels": ["cat", "remote control"],
+                },
+            ]
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["detections"]))
+            for row in res["detections"]:
+                self.assertIsInstance(row, list)
+                if len(row) > 0:
+                    self.assertIn("label", row[0])
+                    self.assertIn("score", row[0])
+                    self.assertIn("box", row[0])
+
+        def check_res_with_threshold(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["detections"]))
+            for row in res["detections"]:
+                self.assertIsInstance(row, list)
+                for det in row:
+                    self.assertGreaterEqual(det["score"], 0.5)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"threshold": 0.5, "top_k": 5, "timeout": 30.0},
+                    check_res_with_threshold,
+                ),
+            },
+            additional_dependencies=["pillow==12.0"],
+        )
+
+    def test_image_feature_extraction_pipeline(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="image-feature-extraction",
+            model="google/vit-base-patch16-224",
+        )
+
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame({"images": [image_bytes]})
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["feature_extraction"]))
+            for row in res["feature_extraction"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["feature_extraction"]))
+            for row in res["feature_extraction"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"timeout": 30.0},
+                    check_res_with_params,
+                ),
+            },
+            additional_dependencies=["pillow==12.0"],
+        )
+
+    def test_visual_question_answering_pipeline(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_visual_question_answering_pipeline,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
+        import transformers
+
+        model = transformers.pipeline(
+            task="visual-question-answering",
+            model="dandelin/vilt-b32-finetuned-vqa",
+        )
+
+        with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
+            image_bytes = f.read()
+
+        x_df = pd.DataFrame(
+            [
+                {
+                    "image": image_bytes,
+                    "question": "What animal is in the picture?",
+                },
+            ]
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["answers"]))
+            for row in res["answers"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("answer", row[0])
+                self.assertIn("score", row[0])
+
+        def check_res_with_top_k(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["answers"]))
+            for row in res["answers"]:
+                self.assertIsInstance(row, list)
+                self.assertEqual(len(row), 3)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {"top_k": 3, "timeout": 30.0},
+                    check_res_with_top_k,
+                ),
+            },
+            additional_dependencies=["pillow==12.0"],
         )
 
 

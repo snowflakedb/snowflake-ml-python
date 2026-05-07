@@ -90,6 +90,10 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
     def test_sentence_transformers_with_default_repo(
         self,
     ) -> None:
+        self.skipTest(
+            """SNOW-3420922: Skipping test due to known issue with
+            sentence-transformers and transformers package conflict"""
+        )
         self._test_sentence_transformers(None, use_default_repo=True)
 
 

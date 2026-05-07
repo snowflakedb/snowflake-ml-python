@@ -31,6 +31,32 @@ _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
 
+def _resolve_prefer_pip(
+    *,
+    target_platforms: Optional[list[model_types.TargetPlatform]],
+    conda_dependencies: Optional[list[str]],
+) -> bool:
+    """Return whether automatic packaging deps should go on pip (vs conda).
+
+    True for SPCS-only ``target_platforms``, or when ``model_env._ENABLE_PIP_ONLY_PACKAGING``
+    is set (client import of ``enable_pip_only_packaging``), the user gave no conda
+    dependencies, and :func:`~snowflake.ml._internal.env_utils.is_local_conda_environment`
+    is false.
+
+    Args:
+        target_platforms: Deployment targets for the model, or ``None`` for defaults.
+        conda_dependencies: User-specified conda dependency strings, or ``None`` / empty if none.
+
+    Returns:
+        Whether ``ModelEnv`` should prefer pip when adding automatic packaging dependencies.
+    """
+    if target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
+        return True
+    return bool(
+        model_env._ENABLE_PIP_ONLY_PACKAGING and not conda_dependencies and not env_utils.is_local_conda_environment()
+    )
+
+
 @contextmanager
 def create_model_metadata(
     *,
@@ -103,7 +129,10 @@ def create_model_metadata(
         else:
             raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
 
-    prefer_pip = target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+    prefer_pip = _resolve_prefer_pip(
+        target_platforms=target_platforms,
+        conda_dependencies=conda_dependencies,
+    )
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
         pip_requirements=pip_requirements,

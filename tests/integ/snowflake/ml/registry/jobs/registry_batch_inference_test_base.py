@@ -37,40 +37,47 @@ def create_openai_chat_completion_output_validator(
     """
 
     def validator(output_df: pd.DataFrame) -> None:
-        # Extract content from the 'id' column which contains the choices array
-        # Structure: id -> list of choices -> message -> content
-        all_content = []
+        col_map = {col.lower(): col for col in output_df.columns}
+        required = ["id", "object", "created", "model", "choices", "usage"]
+        for c in required:
+            test_case.assertIn(c, col_map, f"Missing required column '{c}'. Got columns: {list(output_df.columns)}")
 
-        # Look for 'id' or 'ID' column which contains the actual choices
-        id_col = None
-        for col in output_df.columns:
-            if col.lower() == "id":
-                id_col = col
-                break
+        def _parse_if_str(val: Any) -> Any:
+            if not isinstance(val, str):
+                return val
+            try:
+                return json.loads(val)
+            except json.JSONDecodeError:
+                pass
+            # Snowflake may return nested values as Python-literal strings (single quotes,
+            # trailing commas) when reading from parquet; fall back to ast.literal_eval.
+            # See try_parse_json() later in this file for the same pattern.
+            try:
+                return ast.literal_eval(val)
+            except (ValueError, SyntaxError):
+                pass
+            return val
 
-        if id_col is not None:
-            for val in output_df[id_col]:
-                if val is None:
-                    continue
-
-                # Parse JSON string if needed
-                test_case.assertIsInstance(val, str)
-                val = json.loads(val)
-
-                # val should be a list of choice objects
-                test_case.assertIsInstance(val, list)
-                for choice in val:
-                    test_case.assertIsInstance(choice, dict)
-                    message = choice.get("message", {})
-                    test_case.assertIsInstance(message, dict)
-                    content = message.get("content", "")
-                    test_case.assertIsInstance(content, str)
-                    if content:
-                        all_content.append(str(content))
+        all_content: list[str] = []
+        for row_idx, row in output_df.iterrows():
+            choices_raw = row[col_map["choices"]]
+            choices_val = _parse_if_str(choices_raw)
+            test_case.assertIsInstance(
+                choices_val,
+                list,
+                f"row {row_idx}: 'choices' should be list, got {type(choices_val).__name__}: {choices_val!r}",
+            )
+            test_case.assertGreater(len(choices_val), 0, f"row {row_idx}: 'choices' should be non-empty")
+            for i, choice in enumerate(choices_val):
+                test_case.assertIsInstance(choice, dict, f"row {row_idx}: choices[{i}] should be dict")
+                message = choice.get("message")
+                test_case.assertIsInstance(message, dict, f"row {row_idx}: choices[{i}].message should be dict")
+                content = message.get("content")
+                test_case.assertIsInstance(content, str, f"row {row_idx}: choices[{i}].message.content should be str")
+                if content:
+                    all_content.append(content)
 
         output_text = " ".join(all_content).lower()
-
-        # If no content found, show helpful debug info
         if not output_text.strip():
             test_case.fail(f"No content found. Columns: {list(output_df.columns)}. DataFrame:\n{output_df.to_string()}")
 

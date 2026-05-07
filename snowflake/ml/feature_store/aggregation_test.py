@@ -503,6 +503,39 @@ class FeatureTest(absltest.TestCase):
         repr_str = repr(feature)
         self.assertNotIn("offset", repr_str)
 
+    def test_default_output_name_distinct_for_different_offsets(self) -> None:
+        """Two features with same column/function/window but different offsets must
+        produce distinct default output column names so they don't collide."""
+        names = [
+            Feature.sum("amount", "24h").to_spec().output_column,
+            Feature.sum("amount", "24h", offset="1d").to_spec().output_column,
+            Feature.sum("amount", "24h", offset="7d").to_spec().output_column,
+        ]
+        expected_names = ["AMOUNT_SUM_24H", "AMOUNT_SUM_24H_OFFSET_1D", "AMOUNT_SUM_24H_OFFSET_7D"]
+        self.assertEqual(names, expected_names)
+
+    def test_default_output_name_offset_with_list_aggregation(self) -> None:
+        """Default name with offset works for list aggregations as well."""
+        feature = Feature.last_n("page_id", "1h", n=10, offset="1h")
+        self.assertEqual(feature.to_spec().output_column, "PAGE_ID_LAST_N_1H_OFFSET_1H")
+
+    def test_default_output_name_offset_strips_spaces(self) -> None:
+        """Spaces in offset are stripped (consistent with window handling)."""
+        feature = Feature.sum("amount", "24h", offset="1 d")
+        self.assertEqual(feature.to_spec().output_column, "AMOUNT_SUM_24H_OFFSET_1D")
+
+    def test_default_output_name_zero_offset_variants_no_suffix(self) -> None:
+        """Offsets that semantically equal zero (``0``, ``0s``, ``0m``, ...) must not
+        produce an ``_OFFSET_*`` suffix in the default name."""
+        canonical = Feature.sum("amount", "24h").to_spec().output_column
+        for zero_offset in ("0s", "0m", "0h", "0d", "0 seconds", "0 minutes"):
+            feature = Feature.sum("amount", "24h", offset=zero_offset)
+            self.assertEqual(
+                feature.to_spec().output_column,
+                canonical,
+                msg=f"offset={zero_offset!r} should produce no suffix",
+            )
+
 
 class LifetimeWindowTest(absltest.TestCase):
     """Unit tests for lifetime window support."""

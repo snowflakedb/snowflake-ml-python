@@ -248,6 +248,331 @@ class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
         self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
 
 
+class HuggingFaceParamSpecTest(absltest.TestCase):
+    """Tests that applicable tasks include ParamSpecs in their auto-inferred signatures."""
+
+    def _get_param_names(self, task: str, **extra_kw: Any) -> set[str]:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task=task, params={}, **extra_kw)
+        self.assertIsNotNone(sig)
+        assert sig is not None
+        return {p.name for p in sig.params}
+
+    def test_fill_mask_params(self) -> None:
+        self.assertEqual(self._get_param_names("fill-mask"), {"targets", "top_k"})
+
+    def test_fill_mask_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="fill-mask", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertIsNone(defaults["targets"])
+        self.assertIsNone(defaults["top_k"])
+
+    def test_fill_mask_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="fill-mask", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- question-answering ---
+
+    def test_question_answering_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("question-answering"),
+            {
+                "top_k",
+                "doc_stride",
+                "max_answer_len",
+                "max_seq_len",
+                "max_question_len",
+                "handle_impossible_answer",
+                "align_to_words",
+            },
+        )
+
+    def test_question_answering_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="question-answering", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["top_k"], 1)
+        self.assertEqual(defaults["doc_stride"], 128)
+        self.assertEqual(defaults["max_answer_len"], 15)
+        self.assertEqual(defaults["max_seq_len"], 384)
+        self.assertEqual(defaults["max_question_len"], 64)
+        self.assertFalse(defaults["handle_impossible_answer"])
+        self.assertTrue(defaults["align_to_words"])
+
+    def test_question_answering_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="question-answering", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    def test_question_answering_both_variants_have_same_params(self) -> None:
+        flat_sig = utils.huggingface_pipeline_signature_auto_infer(task="question-answering", params={})
+        list_sig = utils.huggingface_pipeline_signature_auto_infer(task="question-answering", params={"top_k": 3})
+        assert flat_sig is not None and list_sig is not None
+        self.assertEqual({p.name for p in flat_sig.params}, {p.name for p in list_sig.params})
+
+    # --- table-question-answering ---
+
+    def test_table_question_answering_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("table-question-answering"),
+            {"sequential", "padding", "truncation"},
+        )
+
+    def test_table_question_answering_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="table-question-answering", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertFalse(defaults["sequential"])
+        self.assertIsNone(defaults["padding"])
+        self.assertIsNone(defaults["truncation"])
+
+    def test_table_question_answering_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="table-question-answering", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- text-classification / sentiment-analysis ---
+
+    def test_text_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("text-classification"),
+            {"top_k", "function_to_apply"},
+        )
+
+    def test_sentiment_analysis_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("sentiment-analysis"),
+            {"top_k", "function_to_apply"},
+        )
+
+    def test_text_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="text-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["top_k"], 1)
+        self.assertIsNone(defaults["function_to_apply"])
+
+    def test_text_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="text-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    def test_text_classification_both_variants_have_same_params(self) -> None:
+        flat_sig = utils.huggingface_pipeline_signature_auto_infer(task="text-classification", params={})
+        list_sig = utils.huggingface_pipeline_signature_auto_infer(task="text-classification", params={"top_k": 5})
+        assert flat_sig is not None and list_sig is not None
+        self.assertEqual({p.name for p in flat_sig.params}, {p.name for p in list_sig.params})
+
+    # --- image-classification ---
+
+    def test_image_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("image-classification"),
+            {"top_k", "function_to_apply", "timeout"},
+        )
+
+    def test_image_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="image-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["top_k"], 5)
+        self.assertIsNone(defaults["function_to_apply"])
+        self.assertIsNone(defaults["timeout"])
+
+    def test_image_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="image-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- video-classification ---
+
+    def test_video_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("video-classification"),
+            {"top_k", "num_frames", "frame_sampling_rate", "function_to_apply"},
+        )
+
+    def test_video_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="video-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["top_k"], 5)
+        self.assertIsNone(defaults["num_frames"])
+        self.assertEqual(defaults["frame_sampling_rate"], 1)
+        self.assertEqual(defaults["function_to_apply"], "softmax")
+
+    def test_video_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="video-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- visual-question-answering ---
+
+    def test_visual_question_answering_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("visual-question-answering"),
+            {"top_k", "timeout"},
+        )
+
+    def test_visual_question_answering_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="visual-question-answering", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["top_k"], 5)
+        self.assertIsNone(defaults["timeout"])
+
+    def test_visual_question_answering_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="visual-question-answering", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- image-feature-extraction ---
+
+    def test_image_feature_extraction_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("image-feature-extraction"),
+            {"timeout"},
+        )
+
+    def test_image_feature_extraction_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="image-feature-extraction", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertIsNone(defaults["timeout"])
+
+    def test_image_feature_extraction_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="image-feature-extraction", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- object-detection ---
+
+    def test_object_detection_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("object-detection"),
+            {"threshold", "timeout"},
+        )
+
+    def test_object_detection_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="object-detection", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["threshold"], 0.5)
+        self.assertIsNone(defaults["timeout"])
+
+    def test_object_detection_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="object-detection", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- zero-shot-image-classification ---
+
+    def test_zero_shot_image_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("zero-shot-image-classification"),
+            {"hypothesis_template", "timeout"},
+        )
+
+    def test_zero_shot_image_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-image-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["hypothesis_template"], "This is a photo of {}.")
+        self.assertIsNone(defaults["timeout"])
+
+    def test_zero_shot_image_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-image-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- zero-shot-object-detection ---
+
+    def test_zero_shot_object_detection_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("zero-shot-object-detection"),
+            {"threshold", "top_k", "timeout"},
+        )
+
+    def test_zero_shot_object_detection_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-object-detection", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["threshold"], 0.1)
+        self.assertIsNone(defaults["top_k"])
+        self.assertIsNone(defaults["timeout"])
+
+    def test_zero_shot_object_detection_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-object-detection", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- zero-shot-classification ---
+
+    def test_zero_shot_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("zero-shot-classification"),
+            {"hypothesis_template", "multi_label"},
+        )
+
+    def test_zero_shot_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["hypothesis_template"], "This example is {}.")
+        self.assertFalse(defaults["multi_label"])
+
+    def test_zero_shot_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- zero-shot-audio-classification ---
+
+    def test_zero_shot_audio_classification_params(self) -> None:
+        self.assertEqual(
+            self._get_param_names("zero-shot-audio-classification"),
+            {"hypothesis_template"},
+        )
+
+    def test_zero_shot_audio_classification_param_defaults(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-audio-classification", params={})
+        assert sig is not None
+        defaults = {p.name: p.default_value for p in sig.params}
+        self.assertEqual(defaults["hypothesis_template"], "This is a sound of {}.")
+
+    def test_zero_shot_audio_classification_param_names_dont_collide_with_inputs(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="zero-shot-audio-classification", params={})
+        assert sig is not None
+        input_names = {spec.name.upper() for spec in sig.inputs}
+        param_names = {p.name.upper() for p in sig.params}
+        self.assertTrue(input_names.isdisjoint(param_names))
+
+
 class ModelSignatureMiscTest(absltest.TestCase):
     def testrename_features(self) -> None:
         utils.rename_features([])

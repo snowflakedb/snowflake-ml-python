@@ -2,7 +2,7 @@
 
 load("@bazel_skylib//lib:sets.bzl", "sets")
 load("@bazel_skylib//lib:shell.bzl", "shell")
-load("@rules_mypy//:rules.bzl", "MyPyStubsInfo")
+load("//third_party/rules_mypy:rules.bzl", "MyPyStubsInfo")
 
 MyPyAspectInfo = provider(
     """This is an aspect attaching to the original Python build graph to type-checking Python source files.
@@ -27,7 +27,7 @@ VALID_EXTENSIONS = ["py", "pyi"]
 
 DEFAULT_ATTRS = {
     "_mypy_cli": attr.label(
-        default = Label("@rules_mypy//:mypy"),
+        default = Label("//third_party/rules_mypy:mypy"),
         executable = True,
         cfg = "exec",
     ),
@@ -36,7 +36,7 @@ DEFAULT_ATTRS = {
         allow_single_file = True,
     ),
     "_template": attr.label(
-        default = Label("@rules_mypy//templates:mypy.sh.tpl"),
+        default = Label("//third_party/rules_mypy/templates:mypy.sh.tpl"),
         allow_single_file = True,
     ),
 }
