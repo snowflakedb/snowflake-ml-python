@@ -209,10 +209,10 @@ py_test(
 
 py_test(
     name = "huggingface_pipeline_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = ["huggingface_pipeline_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 2,
+    shard_count = 4,
     tags = [
         "feature:model_registry",
         "short_regress",

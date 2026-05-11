@@ -17,6 +17,7 @@ from absl.testing import absltest, parameterized
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     OnlineConfig,
@@ -119,6 +120,330 @@ class FeatureViewValidationTest(parameterized.TestCase):
             self._create_mock_feature_view_with_specs(specs)
 
         self.assertIn("Duplicate feature alias", str(cm.exception))
+
+
+class SecondaryKeyFeatureViewTest(parameterized.TestCase):
+    """Unit tests for FV-level ``aggregation_secondary_keys``."""
+
+    def _mock_feature_df(self, columns: list[str]) -> MagicMock:
+        df = MagicMock()
+        df.columns = columns
+        df.queries = {"queries": ["SELECT * FROM source"]}
+        return df
+
+    def _make_fv(
+        self,
+        specs: list[AggregationSpec],
+        *,
+        secondary_keys: Optional[list[str]] = None,
+        df_columns: Optional[list[str]] = None,
+        entity_join_keys: Optional[list[str]] = None,
+    ) -> FeatureView:
+        if df_columns is None:
+            df_columns = ["user_id", "event_ts", "amount", "ad_id"]
+        if entity_join_keys is None:
+            entity_join_keys = ["user_id"]
+        return FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=entity_join_keys)],
+            feature_df=self._mock_feature_df(df_columns),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            aggregation_secondary_keys=secondary_keys,
+            _aggregation_specs=specs,
+        )
+
+    def test_aggregation_secondary_keys_synthesizes_keys_specs(self) -> None:
+        """The FV-level secondary keys are normalized once; one
+        ``_SECONDARY_KEY_ARRAY`` spec is synthesized per unique
+        ``(window, offset)`` and prepended as a leading block before all
+        value specs."""
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id"]),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            aggregation_secondary_keys=["ad_id"],
+            features=[
+                Feature.sum("amount", "24h").alias("spend_24h"),
+                Feature.count("amount", "7d").alias("events_7d"),
+            ],
+        )
+
+        self.assertEqual(fv.aggregation_secondary_keys, ["AD_ID"])
+        assert fv.aggregation_specs is not None
+        self.assertEqual(
+            [s.output_column for s in fv.aggregation_specs],
+            ["AD_ID_KEYS_24H", "AD_ID_KEYS_7D", "SPEND_24H", "EVENTS_7D"],
+        )
+        # Synthesized keys-specs use the _SECONDARY_KEY_ARRAY type.
+        self.assertEqual(
+            [
+                s.function
+                for s in fv.aggregation_specs
+                if s.output_column.endswith("_KEYS_24H") or s.output_column.endswith("_KEYS_7D")
+            ],
+            [AggregationType._SECONDARY_KEY_ARRAY, AggregationType._SECONDARY_KEY_ARRAY],
+        )
+
+    def test_secondary_key_cannot_be_an_entity_join_key(self) -> None:
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="AMOUNT_SUM_24H",
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "cannot be an entity join key"):
+            self._make_fv(specs, secondary_keys=["user_id"])
+
+    def test_secondary_key_must_exist_in_feature_dataframe(self) -> None:
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="AMOUNT_SUM_24H",
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "not found in the feature"):
+            self._make_fv(
+                specs,
+                secondary_keys=["missing_col"],
+                df_columns=["user_id", "event_ts", "amount"],
+            )
+
+    def test_secondary_key_allows_sketch_aggregations(self) -> None:
+        """Sketch aggregations (HLL/T-Digest) work with a secondary key — they're mergeable per-(entity, sk)."""
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id"]),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            aggregation_secondary_keys=["ad_id"],
+            features=[
+                Feature.approx_count_distinct("amount", "24h").alias("uniques_per_ad"),
+                Feature.approx_percentile("amount", "24h", percentile=0.95).alias("p95_per_ad"),
+            ],
+        )
+        assert fv.aggregation_specs is not None
+        # 2 user value specs + 1 synthesized keys-spec for the (24h, 0) group.
+        self.assertEqual(len(fv.aggregation_specs), 3)
+        self.assertIn(SqlIdentifier("UNIQUES_PER_AD"), fv.feature_names)
+        self.assertIn(SqlIdentifier("P95_PER_AD"), fv.feature_names)
+
+    def test_secondary_key_rejects_list_aggregations(self) -> None:
+        """List aggregations would yield arrays-of-arrays per entity — not supported."""
+        with self.assertRaisesRegex(ValueError, "is not supported with list aggregations"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["user_id"])],
+                feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id"]),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                aggregation_secondary_keys=["ad_id"],
+                features=[Feature.last_n("amount", "24h", n=10).alias("recent_amounts")],
+            )
+
+    def test_secondary_key_rejects_lifetime_window(self) -> None:
+        """Lifetime windows have no bounded merge for the per-sk ARRAY_AGG."""
+        with self.assertRaisesRegex(ValueError, "is not supported with lifetime windows"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["user_id"])],
+                feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id"]),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                aggregation_secondary_keys=["ad_id"],
+                features=[Feature.sum("amount", "lifetime").alias("lifetime_spend")],
+            )
+
+    def test_secondary_keys_rejects_more_than_one_element(self) -> None:
+        """Plural-shaped API is forward-compatible but currently capped at length 1."""
+        with self.assertRaisesRegex(ValueError, "currently supports a single element"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["user_id"])],
+                feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id", "campaign_id"]),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                aggregation_secondary_keys=["ad_id", "campaign_id"],
+                features=[Feature.sum("amount", "24h").alias("spend_24h")],
+            )
+
+    def test_slice_auto_includes_keys_for_secondary_key_fv(self) -> None:
+        """``slice()`` auto-prepends the keys column for any requested value
+        column whose ``(window, offset)`` group has a synthesized
+        ``_SECONDARY_KEY_ARRAY`` spec — but only when the user did NOT name
+        the keys column themselves. User-supplied ordering is preserved
+        verbatim; missing keys are prepended in first-encounter order.
+        """
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="impression",
+                window="24h",
+                output_column="IMPRESSIONS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="SPEND_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="PREV_DAY_SPEND",
+                offset="1d",
+            ),
+        ]
+        fv = self._make_fv(
+            specs,
+            secondary_keys=["ad_id"],
+            df_columns=["user_id", "event_ts", "amount", "impression", "ad_id"],
+        )
+
+        # Single value from one group → its keys column is auto-prepended.
+        single = fv.slice(["IMPRESSIONS_24H"])
+        self.assertEqual([str(c) for c in single.names], ["AD_ID_KEYS_24H", "IMPRESSIONS_24H"])
+
+        # Two values from the same (window, offset) group share a keys column;
+        # user-supplied value order is preserved verbatim.
+        same_group = fv.slice(["SPEND_24H", "IMPRESSIONS_24H"])
+        self.assertEqual(
+            [str(c) for c in same_group.names],
+            ["AD_ID_KEYS_24H", "SPEND_24H", "IMPRESSIONS_24H"],
+        )
+
+        # A value from a different (window, offset) group pulls in its own keys
+        # column; the other group's keys column is NOT included.
+        offset_group = fv.slice(["PREV_DAY_SPEND"])
+        self.assertEqual([str(c) for c in offset_group.names], ["AD_ID_KEYS_24H_OFFSET_1D", "PREV_DAY_SPEND"])
+
+        # Mixing groups: missing keys are prepended in first-encounter order
+        # (the order their corresponding values appear in the user's input);
+        # user-supplied value order is preserved verbatim.
+        mixed = fv.slice(["PREV_DAY_SPEND", "IMPRESSIONS_24H"])
+        self.assertEqual(
+            [str(c) for c in mixed.names],
+            ["AD_ID_KEYS_24H_OFFSET_1D", "AD_ID_KEYS_24H", "PREV_DAY_SPEND", "IMPRESSIONS_24H"],
+        )
+
+        # When the user explicitly names the keys column, slice() does not
+        # re-add it; the user-supplied order is preserved verbatim.
+        explicit_keys = fv.slice(["IMPRESSIONS_24H", "AD_ID_KEYS_24H"])
+        self.assertEqual(
+            [str(c) for c in explicit_keys.names],
+            ["IMPRESSIONS_24H", "AD_ID_KEYS_24H"],
+        )
+
+    def test_slice_non_secondary_key_fv_preserves_user_order(self) -> None:
+        """For tiled FVs without ``aggregation_secondary_keys``, ``slice()``
+        is a pass-through: it returns exactly what the user named, in the
+        order they named it. No keys are auto-prepended (there are none)."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="impression",
+                window="24h",
+                output_column="IMPRESSIONS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="SPEND_24H",
+            ),
+        ]
+        fv = self._make_fv(specs)
+
+        sliced = fv.slice(["SPEND_24H", "IMPRESSIONS_24H"])
+        self.assertEqual([str(c) for c in sliced.names], ["SPEND_24H", "IMPRESSIONS_24H"])
+
+    def test_feature_names_lays_out_keys_block_before_values(self) -> None:
+        """``feature_names`` emits one keys column per ``(window, offset)`` group as a single
+        leading block, followed by all value columns in user-declared order.
+
+        Pins four invariants in a single assertion:
+
+        * **Leading keys block** — every ``AD_ID_KEYS_<suffix>`` precedes every value column.
+        * **Group ordering** — keys appear in the order their ``(window, offset)`` first
+          surfaces among the value specs.
+        * **Offset disambiguation** — same window with a non-zero offset emits a distinct
+          ``..._OFFSET_{offset}`` keys column so the two groups are independent.
+        * **Value name preservation** — user-specified output columns keep their casing
+          and order (e.g. ``IMPRESSIONS_24H`` precedes ``SPEND_24H``).
+        """
+        specs = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="impression",
+                window="24h",
+                output_column="IMPRESSIONS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="SPEND_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="PREV_DAY_SPEND",
+                offset="1d",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="7d",
+                output_column="SPEND_7D",
+            ),
+        ]
+        fv = self._make_fv(
+            specs,
+            secondary_keys=["ad_id"],
+            df_columns=["user_id", "event_ts", "amount", "impression", "ad_id"],
+        )
+
+        self.assertEqual(
+            [str(c) for c in fv.feature_names],
+            [
+                "AD_ID_KEYS_24H",
+                "AD_ID_KEYS_24H_OFFSET_1D",
+                "AD_ID_KEYS_7D",
+                "IMPRESSIONS_24H",
+                "SPEND_24H",
+                "PREV_DAY_SPEND",
+                "SPEND_7D",
+            ],
+        )
+
+        # Sanity: without a secondary key, no ``_KEYS_`` columns are emitted.
+        plain_fv = self._make_fv(
+            [
+                AggregationSpec(
+                    function=AggregationType.SUM,
+                    source_column="amount",
+                    window="24h",
+                    output_column="SPEND_24H",
+                ),
+            ],
+        )
+        self.assertEqual([str(c) for c in plain_fv.feature_names], ["SPEND_24H"])
 
 
 class OnlineConfigTest(parameterized.TestCase):

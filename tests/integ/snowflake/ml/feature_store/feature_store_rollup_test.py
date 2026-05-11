@@ -1293,8 +1293,9 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         # Verify registration succeeded
         self.assertEqual(registered_subscriber.status, FeatureViewStatus.ACTIVE)
 
-        # Verify TARGET_LAG is DOWNSTREAM (cron detection worked)
-        self.assertEqual(registered_subscriber.refresh_freq, "DOWNSTREAM")
+        # CRON-based refresh uses TARGET_LAG='DOWNSTREAM' under the hood with a
+        # companion Task — but the round-trip surfaces the original cron expression.
+        self.assertEqual(registered_subscriber.refresh_freq, "* * * * * UTC")
 
         # Verify scheduled task was created
         fv_name = FeatureView._get_physical_name("subscriber_events_cron", "v1")

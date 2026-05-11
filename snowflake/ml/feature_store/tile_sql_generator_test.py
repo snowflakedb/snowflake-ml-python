@@ -3,6 +3,7 @@
 from absl.testing import absltest
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
+from snowflake.ml.feature_store.feature_view import _prepend_keys_specs
 from snowflake.ml.feature_store.tile_sql_generator import (
     MergingSqlGenerator,
     RollupSqlGenerator,
@@ -1410,6 +1411,516 @@ class LifetimeRollupSqlGeneratorTest(absltest.TestCase):
         extracted_cols = _generate_cumulative_expressions(specs, join_keys)
 
         self.assertEqual(tiling_cols, extracted_cols)
+
+
+class TilingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
+    """Unit tests for :class:`TilingSqlGenerator` with secondary-key aggregations."""
+
+    def test_tile_rows_keyed_by_entity_tile_and_secondary_key(self) -> None:
+        """Tile SQL SELECTs the secondary key and GROUPs BY it alongside the entity and tile."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_SUM",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=_prepend_keys_specs(features, ["AD_ID"]),
+        )
+        sql = generator.generate()
+
+        self.assertIn("SUM(AMOUNT) AS _PARTIAL_SUM_AMOUNT", sql)
+        self.assertNotIn("ARRAY_AGG", sql)
+        self.assertNotIn("_PARTIAL_KEYS_", sql)
+        self.assertNotIn("_PARTIAL_SUM_ARR_", sql)
+
+        # Tile row dimensions: (entity, secondary_key, TILE_START)
+        self.assertIn("USER_ID,", sql)
+        self.assertIn("AD_ID,", sql)
+        self.assertIn("TIME_SLICE(EVENT_TS, 1, 'HOUR', 'START') AS TILE_START", sql)
+        self.assertIn("GROUP BY USER_ID, AD_ID, TILE_START", sql)
+
+    def test_secondary_key_avg_emits_scalar_sum_and_count_partials(self) -> None:
+        """AVG with a secondary key lands as scalar ``_PARTIAL_SUM`` + ``_PARTIAL_COUNT``.
+
+        The merge CTE recombines these with ``SUM(_PARTIAL_SUM)/SUM(_PARTIAL_COUNT)``
+        per secondary key before the outer ``ARRAY_AGG``.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.AVG,
+                source_column="PRICE",
+                window="24h",
+                output_column="AVG_PRICE",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=_prepend_keys_specs(features, ["PRODUCT_ID"]),
+        )
+        sql = generator.generate()
+
+        self.assertIn("SUM(PRICE) AS _PARTIAL_SUM_PRICE", sql)
+        self.assertIn("COUNT(PRICE) AS _PARTIAL_COUNT_PRICE", sql)
+        self.assertNotIn("_PARTIAL_SUM_ARR_", sql)
+        self.assertNotIn("_PARTIAL_COUNT_ARR_", sql)
+        self.assertNotIn("ARRAY_AGG", sql)
+        self.assertIn("GROUP BY USER_ID, PRODUCT_ID, TILE_START", sql)
+
+    def test_secondary_key_stddev_emits_sum_count_and_sum_sq_partials(self) -> None:
+        """STD/VAR with a secondary key lands as scalar ``_PARTIAL_SUM`` + ``_PARTIAL_COUNT`` + ``_PARTIAL_SUM_SQ``.
+
+        These three partials are sufficient to reconstruct variance per
+        ``(entity, sk)`` at merge time using the parallel-variance formula.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.STD,
+                source_column="PRICE",
+                window="24h",
+                output_column="STD_PRICE",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=_prepend_keys_specs(features, ["PRODUCT_ID"]),
+        )
+        sql = generator.generate()
+
+        self.assertIn("SUM(PRICE) AS _PARTIAL_SUM_PRICE", sql)
+        self.assertIn("COUNT(PRICE) AS _PARTIAL_COUNT_PRICE", sql)
+        self.assertIn("SUM(PRICE * PRICE) AS _PARTIAL_SUM_SQ_PRICE", sql)
+        self.assertNotIn("ARRAY_AGG", sql)
+        self.assertIn("GROUP BY USER_ID, PRODUCT_ID, TILE_START", sql)
+
+    def test_secondary_key_multi_entity_group_by(self) -> None:
+        """Multiple entity join keys all appear in the GROUP BY alongside the secondary key."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID", "SESSION_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=_prepend_keys_specs(features, ["AD_ID"]),
+        )
+        sql = generator.generate()
+
+        self.assertIn("GROUP BY USER_ID, SESSION_ID, AD_ID, TILE_START", sql)
+
+
+class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
+    """Unit tests for :class:`MergingSqlGenerator` with secondary-key aggregations.
+
+    Validates the merge pattern:
+      * Inner ``GROUP BY (entity..., TILE_BOUNDARY, sk)`` collapses scalar
+        partial tiles within each feature's window into one per-sk scalar.
+      * Outer ``ARRAY_AGG(... WITHIN GROUP (ORDER BY sk))`` emits element-aligned
+        keys/values arrays per ``(entity, boundary)``.
+      * Each ``(secondary_key, window)`` group produces its own keys-array
+        column (e.g. ``AD_ID_KEYS_1D`` and ``AD_ID_KEYS_7D`` are independent).
+    """
+
+    def _generator(
+        self,
+        features: list[AggregationSpec],
+        *,
+        secondary_key: str = "AD_ID",
+        **kwargs: object,
+    ) -> MergingSqlGenerator:
+        return MergingSqlGenerator(
+            tile_table=kwargs.get("tile_table", "DB.SCHEMA.USER_TILES"),  # type: ignore[arg-type]
+            join_keys=kwargs.get("join_keys", ["USER_ID"]),  # type: ignore[arg-type]
+            timestamp_col=kwargs.get("timestamp_col", "EVENT_TS"),  # type: ignore[arg-type]
+            feature_granularity=kwargs.get("feature_granularity", "1h"),  # type: ignore[arg-type]
+            features=_prepend_keys_specs(features, [secondary_key]),
+            spine_timestamp_col=kwargs.get("spine_timestamp_col", "query_ts"),  # type: ignore[arg-type]
+            fv_index=kwargs.get("fv_index", 0),  # type: ignore[arg-type]
+        )
+
+    def _secondary_cte(self, generator: MergingSqlGenerator, fv_index: int = 0) -> str:
+        ctes = generator.generate_all_ctes()
+        secondary = next(cte for cte in ctes if cte[0] == f"SECONDARY_KEY_MERGED_FV{fv_index}")
+        return secondary[1]
+
+    def test_inner_group_by_then_outer_array_agg(self) -> None:
+        """Merge CTE uses inner ``GROUP BY sk`` then outer ``ARRAY_AGG ORDER BY sk``."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # No array-in-tile representation — we read scalar partials and
+        # aggregate them on the read side.
+        self.assertNotIn("LATERAL FLATTEN", body)
+
+        # Inner: per-(entity, boundary, sk) scalar reduction.
+        self.assertIn("SUM(_PARTIAL_COUNT_IMPRESSION) AS IMPRESSIONS_PER_AD", body)
+        self.assertIn("GROUP BY USER_ID, TILE_BOUNDARY, AD_ID", body)
+
+        # Outer: collect per-sk scalars into element-aligned arrays. The keys
+        # column uses the user's literal window suffix (matches Feature
+        # default-output convention).
+        self.assertIn(
+            "ARRAY_AGG(AD_ID) WITHIN GROUP (ORDER BY AD_ID) AS AD_ID_KEYS_24H",
+            body,
+        )
+        self.assertIn(
+            "ARRAY_AGG(NVL(IMPRESSIONS_PER_AD, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID) AS IMPRESSIONS_PER_AD",
+            body,
+        )
+        # Outer is grouped only by (entity, boundary) — the sk is collapsed.
+        self.assertIn("GROUP BY USER_ID, TILE_BOUNDARY", body)
+
+    def test_avg_reduces_sum_over_count_per_secondary_key(self) -> None:
+        """AVG uses ``SUM(_PARTIAL_SUM)/SUM(_PARTIAL_COUNT)`` per secondary key."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.AVG,
+                source_column="PRICE",
+                window="24h",
+                output_column="AVG_PRICE_PER_PRODUCT",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features, secondary_key="PRODUCT_ID"))
+
+        # The inner expression divides summed partials, guarded against /0.
+        self.assertIn(
+            "CASE WHEN SUM(_PARTIAL_COUNT_PRICE) > 0 "
+            "THEN SUM(_PARTIAL_SUM_PRICE) / SUM(_PARTIAL_COUNT_PRICE) "
+            "ELSE NULL END AS AVG_PRICE_PER_PRODUCT",
+            body,
+        )
+
+    def test_stddev_uses_parallel_variance_formula_per_secondary_key(self) -> None:
+        r"""STD merges across tiles via the parallel-variance formula per ``sk``.
+
+        Per ``(entity, boundary, sk)`` the inner expression computes
+        ``SQRT(GREATEST(0, SUM(SUM_SQ)/SUM(COUNT) - (SUM(SUM)/SUM(COUNT))^2))``
+        from scalar partials, then the outer query ``ARRAY_AGG``\ s those
+        per-sk standard deviations into one element-aligned array.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.STD,
+                source_column="PRICE",
+                window="24h",
+                output_column="STD_PRICE_PER_PRODUCT",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features, secondary_key="PRODUCT_ID"))
+
+        # Inner per-sk expression is the parallel-variance formula wrapped in SQRT,
+        # guarded against /0 and clamped to non-negative before the SQRT.
+        self.assertIn(
+            "CASE WHEN SUM(_PARTIAL_COUNT_PRICE) > 0 "
+            "THEN SQRT(GREATEST(0, "
+            "SUM(_PARTIAL_SUM_SQ_PRICE) / SUM(_PARTIAL_COUNT_PRICE) "
+            "- POWER(SUM(_PARTIAL_SUM_PRICE) / SUM(_PARTIAL_COUNT_PRICE), 2))) "
+            "ELSE NULL END AS STD_PRICE_PER_PRODUCT",
+            body,
+        )
+        # Outer wraps the per-sk scalar into the final value array.
+        self.assertIn(
+            "ARRAY_AGG(NVL(STD_PRICE_PER_PRODUCT, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY PRODUCT_ID) AS STD_PRICE_PER_PRODUCT",
+            body,
+        )
+
+    def test_variance_uses_parallel_variance_formula_per_secondary_key(self) -> None:
+        """VAR mirrors STD but without the outer SQRT.
+
+        ``GREATEST(0, ...)`` is still applied so floating-point cancellation
+        cannot push the result slightly negative.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.VAR,
+                source_column="PRICE",
+                window="24h",
+                output_column="VAR_PRICE_PER_PRODUCT",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features, secondary_key="PRODUCT_ID"))
+
+        self.assertIn(
+            "CASE WHEN SUM(_PARTIAL_COUNT_PRICE) > 0 "
+            "THEN GREATEST(0, "
+            "SUM(_PARTIAL_SUM_SQ_PRICE) / SUM(_PARTIAL_COUNT_PRICE) "
+            "- POWER(SUM(_PARTIAL_SUM_PRICE) / SUM(_PARTIAL_COUNT_PRICE), 2)) "
+            "ELSE NULL END AS VAR_PRICE_PER_PRODUCT",
+            body,
+        )
+        self.assertNotIn("SQRT(", body)
+
+    def test_multi_window_emits_one_keys_column_per_window(self) -> None:
+        """Features on different windows each get their own keys column.
+
+        ``{sk}_KEYS_24H`` is independent from ``{sk}_KEYS_7D`` and the groups
+        are joined on ``(entity, boundary)`` side-by-side.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="CLICKS",
+                window="7d",
+                output_column="CLICKS_7D",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        self.assertIn("AD_ID_KEYS_24H", body)
+        self.assertIn("AD_ID_KEYS_7D", body)
+        # Multi-group subqueries are stitched together with LEFT JOIN.
+        self.assertIn("LEFT JOIN", body)
+        # Each feature has its own value-array column.
+        self.assertIn("AS IMPRESSIONS_24H", body)
+        self.assertIn("AS CLICKS_7D", body)
+
+    def test_features_sharing_window_and_offset_share_single_keys_column(self) -> None:
+        """Two features on the same ``(window, offset)`` share one keys array."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="CLICKS",
+                window="24h",
+                output_column="CLICKS_24H",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # Exactly one keys column because both features share ``(24h, 0)``.
+        self.assertEqual(body.count("AS AD_ID_KEYS_24H"), 1)
+
+    def test_same_window_different_offsets_emit_distinct_keys_columns(self) -> None:
+        """Same window with different offsets must not share a keys column.
+
+        Each ``(window, offset)`` group gets its own keys column suffixed with
+        ``_OFFSET_{offset}`` for non-zero offsets so the merge CTE can group
+        them independently.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="2h",
+                output_column="AMOUNT_2H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="2h",
+                output_column="AMOUNT_2H_OFFSET_1H",
+                offset="1h",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        self.assertIn("AS AD_ID_KEYS_2H", body)
+        self.assertIn("AS AD_ID_KEYS_2H_OFFSET_1H", body)
+        # The two groups are stitched with a LEFT JOIN so each value column
+        # lands alongside its own keys column.
+        self.assertIn("LEFT JOIN", body)
+
+    def test_window_filter_applied_as_where_on_inner_query(self) -> None:
+        """Window filtering is a ``WHERE`` clause on the inner per-sk query.
+
+        Using ``WHERE`` (rather than ``CASE WHEN ... ELSE 0``) ensures secondary
+        keys inactive in this window are absent from the keys array — they
+        don't appear with zero values.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="2h",
+                output_column="AMOUNT_PER_AD_2H",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        self.assertIn("WHERE TILE_START >= DATEADD(HOUR, -2, TILE_BOUNDARY)", body)
+        # No CASE WHEN ... ELSE 0 pattern in the inner per-sk expression.
+        self.assertNotIn("ELSE 0 END AS AMOUNT_PER_AD_2H", body)
+        # Nulls in the secondary key dimension are filtered out.
+        self.assertIn("WHERE AD_ID IS NOT NULL", body)
+
+    def test_per_group_window_filter_uses_its_own_window(self) -> None:
+        """Each ``(window, offset)`` subquery filters by its *own* window, not the max.
+
+        Regression: a 1h feature must not over-include tiles that a sibling
+        7d feature needs — the short-window group bounds itself to 1h.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="1h",
+                output_column="IMPRESSIONS_1H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="CLICKS",
+                window="7d",
+                output_column="CLICKS_7D",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # Both per-window filters are present; neither group uses the other's window.
+        self.assertIn("DATEADD(HOUR, -1, TILE_BOUNDARY)", body)
+        self.assertIn("DATEADD(HOUR, -168, TILE_BOUNDARY)", body)
+
+    def test_tiles_joined_pulls_through_secondary_key_column(self) -> None:
+        """``TILES_JOINED`` exposes the secondary-key column for the merge CTE."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        generator = self._generator(features)
+        tiles_joined = next(cte for cte in generator.generate_all_ctes() if cte[0] == "TILES_JOINED_FV0")
+        cte_body = tiles_joined[1]
+
+        self.assertIn("TILES.AD_ID", cte_body)
+
+    def test_secondary_key_fv_routes_all_features_through_secondary_path(self) -> None:
+        """When a secondary key is set on the FV, every feature flows through ``SECONDARY_KEY_MERGED``.
+
+        With the FV-level refactor, ``aggregation_secondary_keys`` is uniform
+        across the FV — there's no mix of "simple" and "secondary-key" features
+        within the same FV, so only ``SECONDARY_KEY_MERGED_FV0`` is emitted.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_PER_AD",
+            ),
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        ctes = self._generator(features).generate_all_ctes()
+        cte_names = [cte[0] for cte in ctes]
+        self.assertIn("SECONDARY_KEY_MERGED_FV0", cte_names)
+        self.assertNotIn("SIMPLE_MERGED_FV0", cte_names)
+
+        fv_cte = next(cte for cte in ctes if cte[0] == "FV000")
+        self.assertIn("SECONDARY_KEY_MERGED_FV0", fv_cte[1])
+        self.assertIn("LEFT JOIN", fv_cte[1])
+
+    def test_secondary_key_combined_cte_coalesces_to_empty_array(self) -> None:
+        """Combined CTE wraps each secondary-key column in COALESCE(..., ARRAY_CONSTRUCT()).
+
+        Entities with no events in the window produce [] instead of NULL so
+        consumers always receive an array and never NULL.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        ctes = self._generator(features).generate_all_ctes()
+        fv_cte = next(cte for cte in ctes if cte[0] == "FV000")
+        body = fv_cte[1]
+
+        # Both the keys column and the value column are wrapped.
+        self.assertIn("COALESCE(secondary_key.AD_ID_KEYS_24H, ARRAY_CONSTRUCT())", body)
+        self.assertIn("COALESCE(secondary_key.IMPRESSIONS_PER_AD, ARRAY_CONSTRUCT())", body)
+
+    def test_secondary_key_supports_sketch_aggregations(self) -> None:
+        """Sketch aggregations work with a secondary key.
+
+        HLL/T-Digest states are mergeable; per ``(entity, sk)`` we
+        ``HLL_COMBINE`` / ``APPROX_PERCENTILE_COMBINE`` then estimate, and the
+        outer ``ARRAY_AGG`` collects the per-sk estimates into the value array.
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.APPROX_COUNT_DISTINCT,
+                source_column="USER_AGENT",
+                window="24h",
+                output_column="UNIQUE_AGENTS_PER_AD",
+            ),
+            AggregationSpec(
+                function=AggregationType.APPROX_PERCENTILE,
+                source_column="LATENCY_MS",
+                window="24h",
+                output_column="P95_LATENCY_PER_AD",
+                params={"percentile": 0.95},
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # HLL: HLL_ESTIMATE(HLL_COMBINE(HLL_IMPORT(_PARTIAL_HLL_USER_AGENT))) per sk
+        self.assertIn(
+            "HLL_ESTIMATE(HLL_COMBINE(HLL_IMPORT(_PARTIAL_HLL_USER_AGENT))) AS UNIQUE_AGENTS_PER_AD",
+            body,
+        )
+        # T-Digest: APPROX_PERCENTILE_ESTIMATE(APPROX_PERCENTILE_COMBINE(state), pct)
+        self.assertIn(
+            "APPROX_PERCENTILE_ESTIMATE(APPROX_PERCENTILE_COMBINE(_PARTIAL_TDIGEST_LATENCY_MS), 0.95)"
+            " AS P95_LATENCY_PER_AD",
+            body,
+        )
+        # Outer ARRAY_AGG wraps each per-sk estimate.
+        self.assertIn(
+            "ARRAY_AGG(NVL(UNIQUE_AGENTS_PER_AD, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID) AS UNIQUE_AGENTS_PER_AD",
+            body,
+        )
+        self.assertIn(
+            "ARRAY_AGG(NVL(P95_LATENCY_PER_AD, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID) AS P95_LATENCY_PER_AD",
+            body,
+        )
 
 
 if __name__ == "__main__":

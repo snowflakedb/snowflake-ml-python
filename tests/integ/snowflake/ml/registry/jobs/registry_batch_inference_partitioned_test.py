@@ -877,6 +877,7 @@ class TestBatchInferencePartitionedInteg(registry_batch_inference_test_base.Regi
             pip_requirements=["transformers", "torch==2.6.0"],
             options={"embed_local_ml_library": True},
             signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
         )
 
         job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()

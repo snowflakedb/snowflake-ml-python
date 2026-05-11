@@ -22,7 +22,6 @@ requirements:
   build:
     - python
     - bazel==7.6.1
-    - pip
   run:
     - aiohttp!=4.0.0a0, !=4.0.0a1
     - anyio>=3.5.0,<5

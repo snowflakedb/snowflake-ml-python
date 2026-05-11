@@ -1,13 +1,13 @@
 """Shared integration test fixtures for streaming feature views (class-scoped Online Service, FeatureStore).
 
-See ``feature_store_streaming_fv_test`` for the main streaming FV suite. Other modules (e.g. stream ingest)
+See ``feature_store_streaming_fv_bundled`` for the main streaming FV suite. Other modules (e.g. stream ingest)
 reuse this base to avoid duplicating Online Service provisioning.
 
 **Standalone mode** (default): each test class creates unique databases, schemas, roles,
 and an Online Service via ``setUpClass``, and tears everything down in ``tearDownClass``.
 
 **Module-level runner mode**: when ``_module_state`` is set on the class (by a runner such as
-``feature_store_spec_oft_e2e_integ_test``), ``setUpClass`` pulls shared session/DB/FS/entity
+``feature_store_spec_oft_bundle_test``), ``setUpClass`` pulls shared session/DB/FS/entity
 from that dict and skips independent provisioning.  ``tearDownClass`` is a no-op (the runner
 handles cleanup).
 """
@@ -16,7 +16,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import pandas as pd
 from fs_integ_test_base import FeatureStoreIntegTestBase
@@ -30,6 +30,7 @@ from snowflake.ml.feature_store.online_service import (
     fetch_online_service_status,
 )
 from snowflake.ml.feature_store.stream_source import StreamSource
+from snowflake.snowpark import Session
 from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.types import (
     BooleanType,
@@ -102,6 +103,101 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def wait_online_service_running_with_query_endpoint(
+    *,
+    session: Session,
+    fs: FeatureStore,
+    producer_role: str,
+    consumer_role: str,
+    recreate_budget: int = 2,
+    attempt_timeout_s: float = 900.0,
+    poll_interval_s: float = 30.0,
+    reuse_if_running: bool = True,
+    on_recreate: Optional[Callable[[], None]] = None,
+) -> None:
+    """Bring up (or reuse) the spec-OFT Online Service and poll until RUNNING with a query endpoint.
+
+    Each attempt (the initial create plus each recreate) gets its own
+    ``attempt_timeout_s`` budget; the total wall-clock cap is
+    ``(1 + recreate_budget) * attempt_timeout_s``. SPCS bring-up for the
+    Postgres-backed Online Service runtime takes ~15 min, so a single shared
+    deadline across attempts effectively wastes the recreate budget.
+
+    Args:
+        session: Active Snowpark session that owns ``fs``.
+        fs: ``FeatureStore`` whose schema hosts the Online Service.
+        producer_role: Role passed to ``create_online_service``; must own ``fs``'s schema.
+        consumer_role: Role passed to ``create_online_service``; granted to the session role.
+        recreate_budget: Maximum number of drop+recreate attempts after the initial create.
+        attempt_timeout_s: Per-attempt deadline for reaching RUNNING with a query endpoint.
+        poll_interval_s: Sleep between status polls.
+        reuse_if_running: When ``True``, return immediately if the Online Service is already
+            RUNNING with a query endpoint. Set to ``False`` for tests that must exercise the
+            full create/poll/drop cycle.
+        on_recreate: Optional callback invoked after each ``drop_online_service`` and before the
+            subsequent ``create_online_service`` (e.g. to re-issue ``USE DATABASE`` /
+            ``USE SCHEMA`` if dropping the service reset the session context).
+
+    Raises:
+        RuntimeError: When the recreate budget is exhausted and the Online Service still
+            reports ERROR, or when no attempt reaches RUNNING within its per-attempt deadline.
+    """
+
+    def _status() -> Any:
+        return fetch_online_service_status(
+            session, fs._config.database, fs._config.schema, statement_params=fs._telemetry_stmp
+        )
+
+    def _has_query_endpoint(st: Any) -> bool:
+        return st.status == "RUNNING" and any(ep.name == "query" for ep in st.endpoints)
+
+    if reuse_if_running:
+        st = _status()
+        if _has_query_endpoint(st):
+            return
+        if st.status == "ERROR":
+            logger.warning("Online Service in ERROR state on entry; dropping before re-creation.")
+            try:
+                fs.drop_online_service()
+            except Exception:
+                logger.warning("drop_online_service failed; continuing with create.", exc_info=True)
+            if on_recreate is not None:
+                on_recreate()
+
+    try:
+        fs.create_online_service(producer_role, consumer_role)
+    except Exception as e:
+        logger.warning("create_online_service raised: %s; will poll for RUNNING.", e)
+
+    last = ""
+    while True:
+        attempt_deadline = time.time() + attempt_timeout_s
+        while time.time() < attempt_deadline:
+            st = _status()
+            last = st.status
+            if _has_query_endpoint(st):
+                return
+            if st.status == "ERROR":
+                if recreate_budget <= 0:
+                    raise RuntimeError(f"Online Service ERROR (message={st.message!r}, last={last!r}).")
+                logger.warning("Online Service ERROR during startup: %r; recreating.", st.message)
+                recreate_budget -= 1
+                try:
+                    fs.drop_online_service()
+                except Exception:
+                    logger.warning("drop_online_service failed; continuing.", exc_info=True)
+                if on_recreate is not None:
+                    on_recreate()
+                fs.create_online_service(producer_role, consumer_role)
+                break
+            time.sleep(poll_interval_s)
+        else:
+            raise RuntimeError(
+                f"Online Service did not reach RUNNING with a query endpoint within "
+                f"{attempt_timeout_s:.0f}s (last={last!r})."
+            )
+
+
 class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
     """Shared fixtures: class-scoped DB, Feature Store, and Online Service.
 
@@ -110,7 +206,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
     in ``tearDownClass``.
 
     **Module-level runner**: when ``_module_state`` is set on the class (by a
-    runner such as ``feature_store_spec_oft_e2e_integ_test``), ``setUpClass``
+    runner such as ``feature_store_spec_oft_bundle_test``), ``setUpClass``
     pulls shared session/DB/FS/entity from that dict and skips independent
     provisioning.  ``tearDownClass`` is a no-op (the runner handles cleanup).
     """
@@ -250,35 +346,20 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             super().tearDownClass()
 
     @classmethod
-    def _wait_online_service_running_with_query_endpoint(cls) -> None:
-        deadline = time.time() + 900.0
-        while time.time() < deadline:
-            st = cls.fs.get_online_service_status()
-            if st.status == "RUNNING" and any(ep.name == "query" for ep in st.endpoints):
-                return
-            time.sleep(5)
-        raise RuntimeError("Online Service did not reach RUNNING with a query endpoint within timeout.")
-
-    @classmethod
     def _provision_online_service_for_postgres_tests_class(cls) -> None:
         producer = cls._session.get_current_role().strip('"')
-        consumer = f"SML_SFVRT_C_{uuid.uuid4().hex[:8]}".upper()
+        consumer = f"SNOWML_TEST_SPEC_OFT_C_{uuid.uuid4().hex[:8]}".upper()
         cls._online_service_producer_role = producer
         cls._online_service_consumer_role = consumer
         cls._session.sql(f"CREATE ROLE IF NOT EXISTS {SqlIdentifier(consumer)}").collect()
         cls._session.sql(f"GRANT ROLE {SqlIdentifier(consumer)} TO ROLE {cls._session.get_current_role()}").collect()
 
-        st = fetch_online_service_status(
-            cls._session,
-            cls.fs._config.database,
-            cls.fs._config.schema,
-            statement_params=cls.fs._telemetry_stmp,
+        wait_online_service_running_with_query_endpoint(
+            session=cls._session,
+            fs=cls.fs,
+            producer_role=producer,
+            consumer_role=consumer,
         )
-        if st.status == "RUNNING" and any(ep.name == "query" for ep in st.endpoints):
-            return
-
-        cls.fs.create_online_service(producer, consumer)
-        cls._wait_online_service_running_with_query_endpoint()
 
     def setUp(self) -> None:
         self._session = type(self)._session
@@ -296,32 +377,63 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         self.fs = type(self).fs
         self.user_entity = type(self).user_entity
 
+        self._tracked_stream_source_names: list[str] = []
+        self._tracked_feature_view_keys: list[tuple[str, str]] = []
+        self._orig_register_feature_view = self.fs.register_feature_view
+        self._orig_register_stream_source = self.fs.register_stream_source
+
+        def _register_feature_view_tracked(*args: Any, **kwargs: Any) -> Any:
+            registered = self._orig_register_feature_view(*args, **kwargs)
+            name_id = SqlIdentifier(str(registered.name), case_sensitive=True).identifier()
+            self._tracked_feature_view_keys.append((name_id, str(registered.version)))
+            return registered
+
+        def _register_stream_source_tracked(stream_source: StreamSource, *args: Any, **kwargs: Any) -> Any:
+            out = self._orig_register_stream_source(stream_source, *args, **kwargs)
+            self._tracked_stream_source_names.append(self._stream_source_ref_key(str(stream_source.name)))
+            return out
+
+        self.fs.register_feature_view = _register_feature_view_tracked  # type: ignore[method-assign]
+        self.fs.register_stream_source = _register_stream_source_tracked  # type: ignore[method-assign]
+
+    def _restore_fs_registration_hooks(self) -> None:
+        if getattr(self, "_orig_register_feature_view", None) is not None:
+            self.fs.register_feature_view = self._orig_register_feature_view  # type: ignore[method-assign]
+        if getattr(self, "_orig_register_stream_source", None) is not None:
+            self.fs.register_stream_source = self._orig_register_stream_source  # type: ignore[method-assign]
+
     def tearDown(self) -> None:
         if os.environ.get("SKIP_FV_TEARDOWN"):
+            self._restore_fs_registration_hooks()
             return
-        stmp = self.fs._telemetry_stmp
         try:
-            for row in self.fs.list_feature_views().collect(statement_params=stmp):
-                name = SqlIdentifier(row["NAME"], case_sensitive=True).identifier()
-                ver = row["VERSION"]
+            for name, ver in reversed(getattr(self, "_tracked_feature_view_keys", [])):
                 try:
                     self.fs.delete_feature_view(name, str(ver))
                 except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            for row in self.fs.list_stream_sources().collect(statement_params=stmp):
+                    logger.warning(
+                        "tearDown: delete_feature_view(%r, %r) failed; leaking to next-run TTL sweep.",
+                        name,
+                        ver,
+                        exc_info=True,
+                    )
+            for stream_key in reversed(getattr(self, "_tracked_stream_source_names", [])):
                 try:
-                    self.fs.delete_stream_source(str(row["NAME"]))
+                    self.fs.delete_stream_source(stream_key)
                 except Exception:
-                    pass
-        except Exception:
-            pass
-        try:
-            self.fs.register_entity(self.user_entity)
-        except Exception:
-            pass
+                    logger.warning(
+                        "tearDown: delete_stream_source(%r) failed; leaking to next-run TTL sweep.",
+                        stream_key,
+                        exc_info=True,
+                    )
+            try:
+                self.fs.register_entity(self.user_entity)
+            except Exception:
+                # Re-registering the shared user_entity after per-test deletes is idempotent;
+                # "already exists" is the expected case. Log at debug so real failures still surface.
+                logger.debug("tearDown: register_entity(user_entity) raised.", exc_info=True)
+        finally:
+            self._restore_fs_registration_hooks()
 
     def _create_feature_store(self) -> FeatureStore:
         return self.fs
@@ -539,33 +651,31 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         feature_store: Optional[FeatureStore] = None,
         streaming_fv_metadata_name: Optional[str] = None,
         streaming_fv_version: Optional[str] = None,
+        wait_backfill_dropped: bool = False,
     ) -> None:
         """Wait until the UDF-transformed (DT) table is non-empty after backfill.
 
-        The ``$BACKFILL`` table is intentionally NOT checked: the OFT refresh may
-        delete it before we get a chance to poll.
+        By default, the ``$BACKFILL`` table is not checked since OFT refresh might drop it before
+        polling. Set ``wait_backfill_dropped=True`` to also wait for ``$BACKFILL`` to be dropped,
+        which avoids races when chaining ``register_feature_view(..., overwrite=True)``.
 
-        When ``feature_store``, ``streaming_fv_metadata_name`` (use ``str(registered.name)``), and
-        ``streaming_fv_version`` are provided, polls ``INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION`` for the
-        async backfill ``query_id`` stored in streaming metadata (``StreamingMetadata.backfill_query_id``)
-        until ``EXECUTION_STATUS`` is terminal, then verifies the DT has rows. That avoids relying only on
-        blind table polling for the long-running ``INSERT ALL`` job.
-
-        If metadata has no ``backfill_query_id`` or query-history lookup fails, falls back to row-count polling
-        for the full timeout.
 
         Args:
             fq_udf: Fully qualified UDF-transformed dynamic table name.
             timeout_s: Max seconds to wait for backfill completion and DT rows.
             feature_store: Optional client used to read streaming metadata and
-                ``backfill_query_id``.
+                ``backfill_query_id``. Required when ``wait_backfill_dropped=True``.
             streaming_fv_metadata_name: Feature view name for metadata lookup
-                (typically ``str(registered.name)``).
+                (typically ``str(registered.name)``). Required when ``wait_backfill_dropped=True``.
             streaming_fv_version: Feature view version for metadata lookup.
+                Required when ``wait_backfill_dropped=True``.
+            wait_backfill_dropped: If ``True``, after the DT has rows, also wait until the
+                OFT-managed ``$BACKFILL`` table is gone from the schema.
 
         Raises:
             AssertionError: Via ``self.fail`` on missing metadata, failed or
-                unfinished backfill query, or empty DT after ``timeout_s``.
+                unfinished backfill query, empty DT after ``timeout_s``, or (when
+                ``wait_backfill_dropped=True``) the backfill table still present after timeout.
         """
         deadline = time.time() + timeout_s
         query_id: Optional[str] = None
@@ -615,11 +725,29 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                     ex,
                 )
 
+        dt_populated = False
         while time.time() < deadline:
             udf_count = self._session.table(fq_udf).count()
             if udf_count > 0:
-                return
+                dt_populated = True
+                break
             time.sleep(2)
 
-        hint = f" (backfill_query_id={qid_for_hint!r}, used_query_poll={polled_query})" if qid_for_hint else ""
-        self.fail(f"Backfill did not populate DT within {timeout_s}s{hint}")
+        if not dt_populated:
+            hint = f" (backfill_query_id={qid_for_hint!r}, used_query_poll={polled_query})" if qid_for_hint else ""
+            self.fail(f"Backfill did not populate DT within {timeout_s}s{hint}")
+
+        if wait_backfill_dropped:
+            if feature_store is None or not streaming_fv_metadata_name or not streaming_fv_version:
+                self.fail(
+                    "wait_backfill_dropped=True requires feature_store, "
+                    "streaming_fv_metadata_name, and streaming_fv_version."
+                )
+            schema_path = feature_store._config.full_schema_path
+            backfill_like = f"{streaming_fv_metadata_name}${streaming_fv_version}$UDF_TRANSFORMED$BACKFILL"
+            while time.time() < deadline:
+                rows = self._session.sql(f"SHOW TABLES LIKE '{backfill_like}' IN SCHEMA {schema_path}").collect()
+                if not rows:
+                    return
+                time.sleep(2)
+            self.fail(f"Backfill table {backfill_like} was not consumed/dropped by OFT within {timeout_s}s.")

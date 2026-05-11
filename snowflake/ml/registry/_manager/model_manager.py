@@ -73,7 +73,6 @@ class ModelManager:
         options: Optional[type_hints.ModelSaveOption] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> model_version_impl.ModelVersion:
-
         database_name_id, schema_name_id, model_name_id = self._parse_fully_qualified_name(model_name)
 
         model_exists = self._model_ops.validate_existence(
@@ -305,6 +304,7 @@ class ModelManager:
             ext_modules=ext_modules,
             options=model_params.options,
             task=task,
+            prefer_pip_for_automatic_dependencies=model_params.prefer_pip_for_automatic_dependencies,
             experiment_info=experiment_info,
         )
 

@@ -52,6 +52,7 @@ class ModelPackager:
         code_paths: Optional[list[model_types.CodePathLike]] = None,
         options: model_types.ModelSaveOption,
         task: model_types.Task = model_types.Task.UNKNOWN,
+        prefer_pip_for_automatic_dependencies: Optional[bool] = None,
     ) -> model_meta.ModelMetadata:
         if (signatures is None) and (sample_input_data is None) and not model_handler.is_auto_signature_model(model):
             raise snowml_exceptions.SnowflakeMLException(
@@ -81,6 +82,7 @@ class ModelPackager:
             resource_constraint=resource_constraint,
             python_version=python_version,
             task=task,
+            prefer_pip_for_automatic_dependencies=prefer_pip_for_automatic_dependencies,
             target_platforms=target_platforms,
             **options,
         ) as meta:

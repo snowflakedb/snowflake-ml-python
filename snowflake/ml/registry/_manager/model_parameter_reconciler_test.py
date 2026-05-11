@@ -1,3 +1,4 @@
+import contextlib
 import sys
 import warnings
 from typing import Any, cast
@@ -9,6 +10,7 @@ from snowflake.ml._internal import env_utils
 from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.model import type_hints as model_types
+from snowflake.ml.model._packager.model_env import model_env as packager_model_env
 from snowflake.ml.model.custom_model import CustomModel
 from snowflake.ml.model.volatility import Volatility
 from snowflake.ml.registry._manager import model_parameter_reconciler
@@ -23,6 +25,14 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         """Set up common test fixtures."""
         self.database_name = sql_identifier.SqlIdentifier("TEST_DB")
         self.schema_name = sql_identifier.SqlIdentifier("TEST_SCHEMA")
+        # Avoid MockSession/MagicMock SQL for DESC ARTIFACT REPOSITORY during reconcile.
+        self._pypi_access_patcher = mock.patch.object(
+            model_parameter_reconciler.ModelParameterReconciler,
+            "_pypi_shared_repository_accessible",
+            return_value=True,
+        )
+        self._pypi_access_patcher.start()
+        self.addCleanup(self._pypi_access_patcher.stop)
 
     def _create_reconciler(self, **kwargs: Any) -> model_parameter_reconciler.ModelParameterReconciler:
         """Helper to create reconciler with default context."""
@@ -63,6 +73,59 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
 
         expected = {"pip": "TEST_DB.TEST_SCHEMA.MY_REPO", "conda": "OTHER_DB.PUBLIC.CONDA_REPO"}
         self.assertEqual(result.artifact_repository_map, expected)
+
+    def test_explicit_pip_requirements_injects_shared_pypi_repository_for_warehouse(self) -> None:
+        """Warehouse + explicit pip_requirements inject shared PyPI artifact repo when accessible."""
+        reconciler = self._create_reconciler(
+            pip_requirements=["pandas>=1.3.0"],
+            artifact_repository_map=None,
+            target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+        )
+        expected = reconciler._transform_artifact_repository_map(
+            {"pip": model_parameter_reconciler._PYPI_SHARED_REPOSITORY_FQN}
+        )
+        result = reconciler.reconcile()
+        self.assertEqual(result.artifact_repository_map, expected)
+
+    def test_implicit_pip_only_packaging_injects_shared_pypi_repository_for_warehouse(self) -> None:
+        """Implicit pip-only injects shared repo for Warehouse (flag on, no conda deps, not local conda)."""
+        with mock.patch.object(packager_model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                reconciler = self._create_reconciler(
+                    conda_dependencies=None,
+                    pip_requirements=None,
+                    artifact_repository_map=None,
+                    target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                )
+                expected = reconciler._transform_artifact_repository_map(
+                    {"pip": model_parameter_reconciler._PYPI_SHARED_REPOSITORY_FQN}
+                )
+                result = reconciler.reconcile()
+                self.assertEqual(result.artifact_repository_map, expected)
+                self.assertTrue(result.prefer_pip_for_automatic_dependencies)
+
+    def test_implicit_pip_only_packaging_falls_back_when_shared_repository_unavailable(self) -> None:
+        """Implicit pip-only + inaccessible shared repo: no injection; automatic deps stay on conda."""
+        self._pypi_access_patcher.stop()
+        try:
+            with mock.patch.object(
+                model_parameter_reconciler.ModelParameterReconciler,
+                "_pypi_shared_repository_accessible",
+                return_value=False,
+            ):
+                with mock.patch.object(packager_model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+                    with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                        reconciler = self._create_reconciler(
+                            conda_dependencies=None,
+                            pip_requirements=None,
+                            artifact_repository_map=None,
+                            target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                        )
+                        result = reconciler.reconcile()
+                        self.assertIsNone(result.artifact_repository_map)
+                        self.assertFalse(result.prefer_pip_for_automatic_dependencies)
+        finally:
+            self._pypi_access_patcher.start()
 
     def test_save_location_none_options(self) -> None:
         """Test that None options returns None save_location."""
@@ -114,7 +177,14 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             )
         )
 
-    def test_pip_requirements_warehouse_warning_when_target_platforms_none(self) -> None:
+    @mock.patch.object(
+        model_parameter_reconciler.ModelParameterReconciler,
+        "_pypi_shared_repository_accessible",
+        return_value=False,
+    )
+    def test_pip_requirements_warehouse_warning_when_target_platforms_none(
+        self, _mock_pypi_access: mock.MagicMock
+    ) -> None:
         """Test that a warning is issued when pip_requirements are set without artifact_repository_map
         and target_platforms is None (defaulting behavior)."""
         reconciler = self._create_reconciler(
@@ -127,7 +197,14 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         ):
             reconciler.reconcile()
 
-    def test_pip_requirements_warehouse_error_when_explicitly_targeting_warehouse(self) -> None:
+    @mock.patch.object(
+        model_parameter_reconciler.ModelParameterReconciler,
+        "_pypi_shared_repository_accessible",
+        return_value=False,
+    )
+    def test_pip_requirements_warehouse_error_when_explicitly_targeting_warehouse(
+        self, _mock_pypi_access: mock.MagicMock
+    ) -> None:
         """Test that an error is raised when pip_requirements are set without artifact_repository_map
         and target_platforms explicitly includes WAREHOUSE."""
         reconciler = self._create_reconciler(
@@ -290,14 +367,17 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
     def test_is_warehouse_runnable(self) -> None:
         """Test _is_warehouse_runnable logic using conda channels and pip requirements."""
         reconciler = self._create_reconciler()
-        self.assertTrue(reconciler._is_warehouse_runnable({}))
-        self.assertTrue(reconciler._is_warehouse_runnable({"": ["pkg1"]}))
-        self.assertTrue(reconciler._is_warehouse_runnable({"https://repo.anaconda.com/pkgs/snowflake": ["pkg1"]}))
+        self.assertTrue(reconciler._is_warehouse_runnable({}, None, False))
+        self.assertTrue(reconciler._is_warehouse_runnable({"": ["pkg1"]}, None, False))
+        self.assertTrue(
+            reconciler._is_warehouse_runnable({"https://repo.anaconda.com/pkgs/snowflake": ["pkg1"]}, None, False)
+        )
 
-        self.assertFalse(reconciler._is_warehouse_runnable({"conda-forge": ["pkg1"]}))
+        self.assertFalse(reconciler._is_warehouse_runnable({"conda-forge": ["pkg1"]}, None, False))
 
         reconciler = self._create_reconciler(pip_requirements=["numpy"])
-        self.assertFalse(reconciler._is_warehouse_runnable({}))
+        self.assertFalse(reconciler._is_warehouse_runnable({}, None, False))
+        self.assertTrue(reconciler._is_warehouse_runnable({}, {"pip": "db.schema.repo"}, False))
 
     def test_explainability_validation(self) -> None:
         """Test explainability validation logic for different platform configurations."""
@@ -484,28 +564,40 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         else:
             mock_conda_result = {}
 
-        with mock.patch.object(
-            env_utils, "validate_conda_dependency_string_list", return_value=mock_conda_result
-        ) as mock_validate_conda:
+        # Pip + no artifact map: without shared repo access, warehouse is not runnable → explainability defaults off.
+        pypi_patch = (
+            mock.patch.object(
+                model_parameter_reconciler.ModelParameterReconciler,
+                "_pypi_shared_repository_accessible",
+                return_value=False,
+            )
+            if kwargs.get("pip_requirements") and disable_explainability
+            else contextlib.nullcontext()
+        )
+
+        with pypi_patch:
             with mock.patch.object(
-                env_utils,
-                "get_matched_package_versions_in_information_schema",
-                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-            ) as mock_get_versions:
-                result = reconciler.reconcile()
+                env_utils, "validate_conda_dependency_string_list", return_value=mock_conda_result
+            ) as mock_validate_conda:
+                with mock.patch.object(
+                    env_utils,
+                    "get_matched_package_versions_in_information_schema",
+                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+                ) as mock_get_versions:
+                    result = reconciler.reconcile()
 
-                mock_validate_conda.assert_called_once()
-                if kwargs.get("target_platforms") != [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
-                    mock_get_versions.assert_called_once()
-                else:
-                    mock_get_versions.assert_not_called()
+                    mock_validate_conda.assert_called_once()
+                    if kwargs.get("target_platforms") != [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
+                        mock_get_versions.assert_called_once()
+                    else:
+                        mock_get_versions.assert_not_called()
 
-                if disable_explainability:
-                    assert result.options is not None
-                    self.assertEqual(result.options["enable_explainability"], False)
-                else:
-                    assert result.options is not None
-                    self.assertNotIn("enable_explainability", result.options)
+                    if disable_explainability:
+                        assert result.options is not None
+                        self.assertEqual(result.options["enable_explainability"], False)
+                    else:
+                        assert result.options is not None
+                        self.assertNotIn("enable_explainability", result.options)
 
         if disable_explainability:
             reconciler = model_parameter_reconciler.ModelParameterReconciler(

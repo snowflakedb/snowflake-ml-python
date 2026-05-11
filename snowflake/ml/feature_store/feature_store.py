@@ -1963,10 +1963,11 @@ class FeatureStore:
             self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
                 statement_params=self._telemetry_stmp
             )
-            if feature_view.refresh_freq == "DOWNSTREAM":
-                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
+            # CRON-based FVs have a companion Task with the same name. Drop it
+            # unconditionally — IF EXISTS makes this a no-op for duration-based FVs.
+            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
 
         # Delete online feature table if it exists
         if feature_view.online:
@@ -3000,30 +3001,127 @@ class FeatureStore:
         )
 
     def _build_offline_update_queries(
-        self, feature_view: FeatureView, refresh_freq: Optional[str], warehouse: Optional[str], desc: str
-    ) -> tuple[str, Optional[str]]:
-        """Build offline update query and its rollback query."""
+        self,
+        feature_view: FeatureView,
+        refresh_freq: Optional[str],
+        warehouse: Optional[str],
+        desc: str,
+    ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """Build offline update operations and their rollback operations.
+
+        For CRON-based refresh, the DT must keep ``TARGET_LAG = 'DOWNSTREAM'``
+        and the actual cron schedule lives on a companion Task — Dynamic Tables
+        do not accept cron expressions in ``TARGET_LAG``. Duration-based refresh
+        sets ``TARGET_LAG`` directly on the DT and there is no Task.
+
+        The presence/absence of the companion Task is what disambiguates a
+        user-set ``refresh_freq='DOWNSTREAM'`` from a cron-driven FV (whose DT
+        also carries ``TARGET_LAG='DOWNSTREAM'``) when reading state back via
+        ``get_feature_view``. Maintain that invariant across all four
+        ``(old_kind, new_kind)`` transitions:
+
+            duration ↔ duration : DT-only ALTER; no Task involvement.
+            duration → cron     : ALTER DT to DOWNSTREAM, then create the Task.
+            cron     → duration : ALTER DT to the new lag, then drop the Task.
+            cron     ↔ cron     : ALTER DT, then SUSPEND/SET SCHEDULE/RESUME the Task.
+
+        ("duration" above includes a literal ``"DOWNSTREAM"`` value.)
+
+        Args:
+            feature_view: The currently registered ``FeatureView`` whose
+                offline state is being mutated; supplies the existing
+                refresh_freq/warehouse/desc used to construct the rollback.
+            refresh_freq: New refresh frequency requested by the caller, or
+                ``None`` to keep the existing value.
+            warehouse: New warehouse identifier requested by the caller, or
+                ``None`` to keep the existing value.
+            desc: New description to set on the DT/view.
+
+        Returns:
+            A tuple of ``(operations, rollback_operations)`` where each is a
+            list of ``(op_type, sql)`` tuples consumable by
+            ``_execute_atomic_operations``.
+        """
+        fqn = feature_view.fully_qualified_name()
+
         if feature_view.status == FeatureViewStatus.STATIC:
-            update_query = f"""
-                ALTER VIEW {feature_view.fully_qualified_name()} SET
-                COMMENT = '{desc}'
-            """
-            return update_query, None  # No rollback needed for comment changes
-        else:
-            warehouse_id = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
-            # TODO: SNOW-2260633 Handle cron expression updates for refresh_freq
-            update_query = f"""
-                ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
-                TARGET_LAG = '{refresh_freq or feature_view.refresh_freq}'
-                WAREHOUSE = {warehouse_id}
-                COMMENT = '{desc}'
-            """
-            rollback_query = f"""ALTER DYNAMIC TABLE {feature_view.fully_qualified_name()} SET
-                    TARGET_LAG = '{feature_view.refresh_freq}'
-                    WAREHOUSE = {feature_view.warehouse}
-                    COMMENT = '{feature_view.desc}'
-                """
-            return update_query, rollback_query
+            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = '{desc}'")], []
+
+        # Managed (Dynamic-Table-backed) FVs always have a refresh_freq — the
+        # only refresh_freq=None case is an external (View-backed) FV, which
+        # is STATIC and handled above.
+        assert feature_view.refresh_freq is not None, "Managed FV must have a refresh_freq"
+        new_warehouse = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
+        old_warehouse = feature_view.warehouse
+        effective_freq: str = refresh_freq if refresh_freq is not None else feature_view.refresh_freq
+        new_is_cron = effective_freq != "DOWNSTREAM" and timeparse(effective_freq) is None
+        old_freq: str = feature_view.refresh_freq
+        old_is_cron = old_freq != "DOWNSTREAM" and timeparse(old_freq) is None
+
+        new_target_lag = "DOWNSTREAM" if new_is_cron else effective_freq
+        old_target_lag = "DOWNSTREAM" if old_is_cron else old_freq
+
+        def alter_dt(op_type: str, *, target_lag: str, wh: Optional[SqlIdentifier], comment: str) -> tuple[str, str]:
+            return (
+                op_type,
+                f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'" f" WAREHOUSE = {wh} COMMENT = '{comment}'",
+            )
+
+        def create_task_ops(op_type: str, *, cron_expr: str, wh: Optional[SqlIdentifier]) -> list[tuple[str, str]]:
+            # CREATE OR REPLACE keeps the operation idempotent even if a stale
+            # task with the same name happens to exist (e.g. partial prior failure).
+            task_obj_info = _FeatureStoreObjInfo(
+                _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION
+            )
+            tag_path = self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)
+            return [
+                (
+                    op_type,
+                    f"CREATE OR REPLACE TASK {fqn} WAREHOUSE = {wh} "
+                    f"SCHEDULE = 'USING CRON {cron_expr}' "
+                    f"AS ALTER DYNAMIC TABLE {fqn} REFRESH",
+                ),
+                (op_type, f"ALTER TASK {fqn} SET TAG {tag_path}='{task_obj_info.to_json()}'"),
+                (op_type, f"ALTER TASK {fqn} RESUME"),
+            ]
+
+        def drop_task_op(op_type: str) -> tuple[str, str]:
+            return (op_type, f"DROP TASK IF EXISTS {fqn}")
+
+        def alter_task_schedule_ops(op_type: str, *, cron_expr: str) -> list[tuple[str, str]]:
+            # ALTER TASK SET SCHEDULE requires the task to be suspended.
+            return [
+                (op_type, f"ALTER TASK {fqn} SUSPEND"),
+                (op_type, f"ALTER TASK {fqn} SET SCHEDULE = 'USING CRON {cron_expr}'"),
+                (op_type, f"ALTER TASK {fqn} RESUME"),
+            ]
+
+        operations: list[tuple[str, str]] = [
+            alter_dt("OFFLINE_UPDATE", target_lag=new_target_lag, wh=new_warehouse, comment=desc)
+        ]
+        if old_is_cron and new_is_cron:
+            operations.extend(alter_task_schedule_ops("OFFLINE_UPDATE", cron_expr=effective_freq))
+        elif old_is_cron and not new_is_cron:
+            operations.append(drop_task_op("OFFLINE_UPDATE"))
+        elif not old_is_cron and new_is_cron:
+            operations.extend(create_task_ops("OFFLINE_UPDATE", cron_expr=effective_freq, wh=new_warehouse))
+
+        rollback_ops: list[tuple[str, str]] = [
+            alter_dt(
+                "OFFLINE_ROLLBACK",
+                target_lag=old_target_lag,
+                wh=old_warehouse,
+                comment=feature_view.desc,
+            )
+        ]
+        if old_is_cron and new_is_cron:
+            rollback_ops.extend(alter_task_schedule_ops("OFFLINE_ROLLBACK", cron_expr=old_freq))
+        elif old_is_cron and not new_is_cron:
+            rollback_ops.extend(create_task_ops("OFFLINE_ROLLBACK", cron_expr=old_freq, wh=old_warehouse))
+        elif not old_is_cron and new_is_cron:
+            rollback_ops.append(drop_task_op("OFFLINE_ROLLBACK"))
+
+        return operations, rollback_ops
 
     @dataclass(frozen=True)
     class _OnlineUpdateStrategy:
@@ -3156,12 +3254,11 @@ class FeatureStore:
         rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
 
         # Plan offline updates
-        offline_update, offline_rollback = self._build_offline_update_queries(
+        offline_ops, offline_rollback_ops = self._build_offline_update_queries(
             feature_view, refresh_freq, warehouse, desc
         )
-        operations.append(("OFFLINE_UPDATE", offline_update))
-        if offline_rollback:
-            rollback_operations.append(("OFFLINE_ROLLBACK", offline_rollback))
+        operations.extend(offline_ops)
+        rollback_operations.extend(offline_rollback_ops)
 
         # Plan online updates
         online_strategy = self._plan_online_update(feature_view, online_config)
@@ -3395,8 +3492,24 @@ class FeatureStore:
         all_feature_cols = [spec.get_sql_column_name() for spec in feature_view.aggregation_specs]
         if feature_names:
             # Filter to requested features
-            feature_names_upper = [f.upper() for f in feature_names]
-            all_feature_cols = [c for c in all_feature_cols if c.strip('"').upper() in feature_names_upper]
+            requested = {SqlIdentifier(f).resolved() for f in feature_names}
+            keys_cols_to_keep: set[str] = set()
+            keys_spec_by_window_offset = {
+                (spec.window, spec.offset): spec
+                for spec in feature_view.aggregation_specs
+                if spec.function.is_secondary_key_array()
+            }
+            if keys_spec_by_window_offset:
+                for spec in feature_view.aggregation_specs:
+                    if spec.function.is_secondary_key_array():
+                        continue
+                    if SqlIdentifier(spec.get_sql_column_name()).resolved() in requested:
+                        keys_spec = keys_spec_by_window_offset.get((spec.window, spec.offset))
+                        if keys_spec is not None:
+                            keys_cols_to_keep.add(keys_spec.get_sql_column_name())
+            all_feature_cols = [
+                c for c in all_feature_cols if SqlIdentifier(c).resolved() in requested or c in keys_cols_to_keep
+            ]
 
         feature_cols_str = ", ".join(all_feature_cols)
         # CTE name format matches generator: FV{index:03d}
@@ -4981,6 +5094,34 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
         return complete_query
 
+    def _resolve_task_schedule(self, fv_name: SqlIdentifier, fallback: str) -> str:
+        """Look up the Task schedule for a cron-driven feature view.
+
+        CRON-based FVs use ``TARGET_LAG = 'DOWNSTREAM'`` on the DT while the
+        actual cron schedule lives on a companion Task with the same name.
+        This helper retrieves that schedule so the reconstructed
+        ``FeatureView`` carries the real cron expression instead of
+        ``'DOWNSTREAM'``.
+
+        Args:
+            fv_name: Resolved physical name of the feature view (e.g. ``FV$V1``).
+            fallback: Value to return when no Task is found (i.e. the FV was
+                truly registered with ``refresh_freq='DOWNSTREAM'``).
+
+        Returns:
+            The cron expression from the Task (with the ``USING CRON `` prefix
+            stripped), or ``fallback`` if no Task exists.
+        """
+        task_rows = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {self._config.full_schema_path}"
+        ).collect(statement_params=self._telemetry_stmp)
+        if not task_rows:
+            return fallback
+        schedule: str = task_rows[0]["schedule"]
+        if schedule.upper().startswith("USING CRON "):
+            schedule = schedule[len("USING CRON ") :]
+        return schedule
+
     def _get_entity_name(self, raw_name: SqlIdentifier) -> SqlIdentifier:
         return SqlIdentifier(identifier.concat_names([_ENTITY_TAG_PREFIX, raw_name]))
 
@@ -5238,7 +5379,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         values.append(row["owner"])
         values.append(row["comment"])
         values.append(fv_metadata.entities)
-        values.append(row["target_lag"] if "target_lag" in row else None)
+        # CRON-based FVs use TARGET_LAG='DOWNSTREAM' on the DT and store the actual
+        # cron expression on a companion Task. Recover it so list_feature_views()
+        # surfaces the same value the user originally passed in (matching the
+        # round-trip behavior of get_feature_view / register_feature_view).
+        target_lag = row["target_lag"] if "target_lag" in row else None
+        if target_lag == "DOWNSTREAM":
+            target_lag = self._resolve_task_schedule(FeatureView._get_physical_name(name, version), target_lag)
+        values.append(target_lag)
         values.append(row["refresh_mode"] if "refresh_mode" in row else None)
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
         values.append(row["warehouse"] if "warehouse" in row else None)
@@ -5460,6 +5608,13 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             else:
                 feature_descs = self._fetch_column_descs("DYNAMIC TABLE", fv_name)
 
+            # CRON-based FVs use TARGET_LAG='DOWNSTREAM' on the DT and store the
+            # actual cron expression on a companion Task. Recover it so the
+            # round-trip (register → get → update) preserves what the user passed.
+            refresh_freq = row["target_lag"]
+            if refresh_freq == "DOWNSTREAM":
+                refresh_freq = self._resolve_task_schedule(fv_name, refresh_freq)
+
             fv = FeatureView._construct_feature_view(
                 name=name,
                 entities=entities,
@@ -5473,7 +5628,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     else FeatureViewStatus.MASKED
                 ),
                 feature_descs=feature_descs,
-                refresh_freq=row["target_lag"],
+                refresh_freq=refresh_freq,
                 database=self._config.database.identifier(),
                 schema=self._config.schema.identifier(),
                 warehouse=(

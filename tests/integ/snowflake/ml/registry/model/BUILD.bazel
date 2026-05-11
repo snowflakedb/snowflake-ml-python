@@ -393,6 +393,21 @@ py_test(
 )
 
 py_test(
+    name = "registry_pip_only_warehouse_artifact_injection_test",
+    srcs = ["registry_pip_only_warehouse_artifact_injection_test.py"],
+    imports = ["."],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":registry_model_test_base",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+    ],
+)
+
+py_test(
     name = "registry_prophet_model_test",
     timeout = "long",
     srcs = ["registry_prophet_model_test.py"],

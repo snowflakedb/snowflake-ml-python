@@ -29,19 +29,47 @@ DEFAULT_CUDA_VERSION = "12.4"
 _ENABLE_PIP_ONLY_PACKAGING = False
 
 
+def resolve_prefer_pip_for_automatic_dependencies(
+    *,
+    target_platforms: Optional[list[model_types.TargetPlatform]],
+    conda_dependencies: Optional[list[str]],
+    force_conda_defaults: bool = False,
+) -> bool:
+    """Return whether automatic packaging deps should go on pip (vs conda).
+
+    True for SPCS-only ``target_platforms``, or when ``_ENABLE_PIP_ONLY_PACKAGING``
+    is set (client import of ``enable_pip_only_packaging``), the user gave no conda
+    dependencies, and :func:`~snowflake.ml._internal.env_utils.is_local_conda_environment`
+    is false.
+
+    Args:
+        target_platforms: Deployment targets for the model, or ``None`` for defaults.
+        conda_dependencies: User-specified conda dependency strings, or ``None`` / empty if none.
+        force_conda_defaults: When True (e.g. Registry could not use pip index for Warehouse), use conda defaults.
+
+    Returns:
+        Whether ``ModelEnv`` should prefer pip when adding automatic packaging dependencies.
+    """
+    if target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
+        return True
+    if force_conda_defaults:
+        return False
+    return bool(_ENABLE_PIP_ONLY_PACKAGING and not conda_dependencies and not env_utils.is_local_conda_environment())
+
+
 class ModelEnv:
     def __init__(
         self,
         conda_env_rel_path: Optional[str] = None,
         pip_requirements_rel_path: Optional[str] = None,
-        prefer_pip: bool = False,
+        prefer_pip_for_automatic_dependencies: bool = False,
         target_platforms: Optional[list[model_types.TargetPlatform]] = None,
     ) -> None:
         if conda_env_rel_path is None:
             conda_env_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_CONDA_ENV_FILENAME)
         if pip_requirements_rel_path is None:
             pip_requirements_rel_path = os.path.join(_DEFAULT_ENV_DIR, _DEFAULT_PIP_REQUIREMENTS_FILENAME)
-        self.prefer_pip: bool = prefer_pip
+        self.prefer_pip_for_automatic_dependencies: bool = prefer_pip_for_automatic_dependencies
         self.conda_env_rel_path = pathlib.PurePosixPath(pathlib.Path(conda_env_rel_path).as_posix())
         self.pip_requirements_rel_path = pathlib.PurePosixPath(pathlib.Path(pip_requirements_rel_path).as_posix())
         self.artifact_repository_map: Optional[dict[str, str]] = None
@@ -152,7 +180,11 @@ class ModelEnv:
             pkgs: A list of ModelDependency namedtuple to be appended.
             check_local_version: Flag to indicate if it is required to pin to local version. Defaults to False.
         """
-        if (self.pip_requirements or self.prefer_pip) and not self.conda_dependencies and pkgs:
+        if (
+            (self.pip_requirements or self.prefer_pip_for_automatic_dependencies)
+            and not self.conda_dependencies
+            and pkgs
+        ):
             pip_pkg_reqs: list[str] = []
             if self.targets_warehouse and not self.artifact_repository_map:
                 self._warn_once(
@@ -251,7 +283,7 @@ class ModelEnv:
     def _is_pip_only_path(self) -> bool:
         """Check if this model will use the pip-only packaging path."""
         has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())
-        return self.prefer_pip and _ENABLE_PIP_ONLY_PACKAGING and not has_conda_deps
+        return self.prefer_pip_for_automatic_dependencies and _ENABLE_PIP_ONLY_PACKAGING and not has_conda_deps
 
     def _substitute_conda_gpu_packages(self) -> None:
         """Replace conda packages with their GPU variants (xgboost→py-xgboost-gpu, tensorflow→tensorflow-gpu)."""

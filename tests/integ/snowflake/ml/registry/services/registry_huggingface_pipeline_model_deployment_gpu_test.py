@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import tempfile
 from typing import Any, Optional
@@ -9,8 +10,9 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model._signatures import core as signature_core
 from snowflake.ml.model.inference_engine import InferenceEngine
-from snowflake.ml.model.models import huggingface_pipeline
+from snowflake.ml.model.models import huggingface, huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -360,6 +362,123 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
             model_name="google/gemma-3-1b-it",
             inference_engine=InferenceEngine.VLLM,
             requires_token=True,  # This is a gated model
+        )
+
+    @pytest.mark.conda_incompatible
+    def test_structured_output_with_response_format(self) -> None:
+        """Test structured output via response_format on mv.run and REST ingress.
+
+        REST flat, wide, split, and records are exercised via ``RestInferencePayloadFormat``.
+
+        Requires the updated proxy image that handles response_format.
+        Skipped when image override is not set.
+        """
+        if not self._has_image_override():
+            self.skipTest("Skipping structured output test — image override not set")
+
+        # Build a params-based signature with response_format appended
+        params_with_response_format = list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.params) + [
+            signature_core.ParamGroupSpec(
+                name="response_format",
+                default_value=None,
+                specs=[
+                    signature_core.ParamSpec(
+                        name="type", dtype=signature_core.DataType.STRING, default_value="json_schema"
+                    ),
+                    signature_core.ParamGroupSpec(
+                        name="json_schema",
+                        default_value=None,
+                        specs=[
+                            signature_core.ParamSpec(
+                                name="name", dtype=signature_core.DataType.STRING, default_value=""
+                            ),
+                            signature_core.ParamSpec(
+                                name="description", dtype=signature_core.DataType.STRING, default_value=None
+                            ),
+                            signature_core.ParamSpec(
+                                name="schema", dtype=signature_core.DataType.OBJECT, default_value=None
+                            ),
+                            signature_core.ParamSpec(
+                                name="strict", dtype=signature_core.DataType.BOOL, default_value=None
+                            ),
+                        ],
+                    ),
+                ],
+            ),
+        ]
+
+        signature_with_rf = signature_core.ModelSignature(
+            inputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.inputs),
+            outputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.outputs),
+            params=params_with_response_format,
+        )
+
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "capital-city",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "city": {"type": "string"},
+                        "country": {"type": "string"},
+                    },
+                    "required": ["city", "country"],
+                },
+            },
+        }
+
+        x_df = pd.DataFrame.from_records(
+            [
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "What is the capital of France?",
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ],
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(
+                res.columns,
+                pd.Index(["id", "object", "created", "model", "choices", "usage"], dtype="object"),
+                check_order=False,
+            )
+            content = res["choices"].iloc[0][0]["message"]["content"]
+            parsed = json.loads(content)
+            self.assertIn("city", parsed)
+            self.assertIn("country", parsed)
+
+        self._test_registry_model_deployment(
+            model=huggingface.TransformersPipeline(
+                task="text-generation",
+                model="google/gemma-4-E2B-it",
+                compute_pool_for_log=None,
+            ),
+            prediction_assert_fns={
+                "__call__": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            signatures={"__call__": signature_with_rf},
+            service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
+            params={"response_format": response_format},
+            rest_inference_formats=(
+                registry_model_deployment_test_base.RestInferencePayloadFormat.FLAT,
+                registry_model_deployment_test_base.RestInferencePayloadFormat.WIDE,
+                registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_SPLIT,
+                registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS,
+            ),
         )
 
     def _get_image_as_base64_str(self) -> str:

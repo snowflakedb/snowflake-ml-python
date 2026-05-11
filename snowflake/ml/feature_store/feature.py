@@ -17,6 +17,8 @@ from snowflake.ml.feature_store.aggregation import (
 )
 
 _NO_OFFSET = "0"
+_KEYS = "keys"
+_LIFETIME = "lifetime"
 
 
 class Feature:
@@ -95,10 +97,11 @@ class Feature:
     def _default_output_name(self) -> str:
         """Generate a default output column name."""
         if is_lifetime_window(self._window):
-            window_suffix = "lifetime"
+            window_suffix = _LIFETIME
         else:
             window_suffix = self._window.replace(" ", "").lower()
-        base_name = f"{self._column}_{self._function.value}_{window_suffix}"
+        function_value = _KEYS if self._function.is_secondary_key_array() else self._function.value
+        base_name = f"{self._column}_{function_value}_{window_suffix}"
 
         offset_seconds = interval_to_seconds(self._offset) if self._offset != _NO_OFFSET else 0
         if offset_seconds > 0:

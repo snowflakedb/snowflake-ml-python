@@ -31,32 +31,6 @@ _SNOWFLAKE_PKG_NAME = "snowflake"
 _SNOWFLAKE_ML_PKG_NAME = f"{_SNOWFLAKE_PKG_NAME}.ml"
 
 
-def _resolve_prefer_pip(
-    *,
-    target_platforms: Optional[list[model_types.TargetPlatform]],
-    conda_dependencies: Optional[list[str]],
-) -> bool:
-    """Return whether automatic packaging deps should go on pip (vs conda).
-
-    True for SPCS-only ``target_platforms``, or when ``model_env._ENABLE_PIP_ONLY_PACKAGING``
-    is set (client import of ``enable_pip_only_packaging``), the user gave no conda
-    dependencies, and :func:`~snowflake.ml._internal.env_utils.is_local_conda_environment`
-    is false.
-
-    Args:
-        target_platforms: Deployment targets for the model, or ``None`` for defaults.
-        conda_dependencies: User-specified conda dependency strings, or ``None`` / empty if none.
-
-    Returns:
-        Whether ``ModelEnv`` should prefer pip when adding automatic packaging dependencies.
-    """
-    if target_platforms == [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
-        return True
-    return bool(
-        model_env._ENABLE_PIP_ONLY_PACKAGING and not conda_dependencies and not env_utils.is_local_conda_environment()
-    )
-
-
 @contextmanager
 def create_model_metadata(
     *,
@@ -75,6 +49,7 @@ def create_model_metadata(
     target_platforms: Optional[list[model_types.TargetPlatform]] = None,
     python_version: Optional[str] = None,
     task: model_types.Task = model_types.Task.UNKNOWN,
+    prefer_pip_for_automatic_dependencies: Optional[bool] = None,
     **kwargs: Any,
 ) -> Generator["ModelMetadata", None, None]:
     """Create a generator for model metadata object. Use generator to ensure correct register and unregister for
@@ -101,6 +76,9 @@ def create_model_metadata(
         task: The task of the Model Version. It is an enum class Task with values TABULAR_REGRESSION,
             TABULAR_BINARY_CLASSIFICATION, TABULAR_MULTI_CLASSIFICATION, TABULAR_RANKING, or UNKNOWN. By default,
             it is set to Task.UNKNOWN and may be overridden by inferring from the Model Object.
+        prefer_pip_for_automatic_dependencies: When set (e.g. by Registry after reconciliation), use this for
+            routing automatic packaging dependencies to pip vs conda. When ``None``, derive via
+            :func:`~snowflake.ml.model._packager.model_env.model_env.resolve_prefer_pip_for_automatic_dependencies`.
         **kwargs: Dict of attributes and values of the metadata. Used when loading from file.
 
     Raises:
@@ -129,9 +107,14 @@ def create_model_metadata(
         else:
             raise ValueError("`snowflake.ml` is imported via a way that embedding local ML library is not supported.")
 
-    prefer_pip = _resolve_prefer_pip(
-        target_platforms=target_platforms,
-        conda_dependencies=conda_dependencies,
+    resolved_prefer_pip_for_automatic_dependencies = (
+        prefer_pip_for_automatic_dependencies
+        if prefer_pip_for_automatic_dependencies is not None
+        else model_env.resolve_prefer_pip_for_automatic_dependencies(
+            target_platforms=target_platforms,
+            conda_dependencies=conda_dependencies,
+            force_conda_defaults=False,
+        )
     )
     env = _create_env_for_model_metadata(
         conda_dependencies=conda_dependencies,
@@ -140,7 +123,7 @@ def create_model_metadata(
         resource_constraint=resource_constraint,
         python_version=python_version,
         embed_local_ml_library=embed_local_ml_library,
-        prefer_pip=prefer_pip,
+        prefer_pip_for_automatic_dependencies=resolved_prefer_pip_for_automatic_dependencies,
         target_platforms=target_platforms,
     )
 
@@ -227,10 +210,13 @@ def _create_env_for_model_metadata(
     resource_constraint: Optional[dict[str, str]] = None,
     python_version: Optional[str] = None,
     embed_local_ml_library: bool = False,
-    prefer_pip: bool = False,
+    prefer_pip_for_automatic_dependencies: bool = False,
     target_platforms: Optional[list[model_types.TargetPlatform]] = None,
 ) -> model_env.ModelEnv:
-    env = model_env.ModelEnv(prefer_pip=prefer_pip, target_platforms=target_platforms)
+    env = model_env.ModelEnv(
+        prefer_pip_for_automatic_dependencies=prefer_pip_for_automatic_dependencies,
+        target_platforms=target_platforms,
+    )
 
     # Mypy doesn't like getter and setter have different types. See python/mypy #3004
     env.conda_dependencies = conda_dependencies

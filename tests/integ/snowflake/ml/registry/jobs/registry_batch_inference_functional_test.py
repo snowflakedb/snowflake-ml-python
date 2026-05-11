@@ -180,6 +180,21 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             expected_predictions=expected_predictions,
         )
 
+    def test_custom_image_repo(self) -> None:
+        """run_batch succeeds when image_repo is explicitly set on JobSpec."""
+        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+
+        self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sp_df,
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+            ),
+            expected_predictions=expected_predictions,
+        )
+
 
 if __name__ == "__main__":
     absltest.main()

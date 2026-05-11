@@ -88,6 +88,14 @@ def _get_messages(sig: dict[str, model_signature.ModelSignature]) -> list[dict[s
 class TestRegistryTransformerNonParamSpecSignatureInteg(
     registry_model_deployment_test_base.RegistryModelDeploymentTestBase
 ):
+    def setUp(self) -> None:
+        super().setUp()
+        self.session.sql("ALTER SESSION SET SPCS_MODEL_AUTO_POPULATE_GPU_FROM_COMPUTE_POOL = TRUE").collect()
+
+    def tearDown(self) -> None:
+        self.session.sql("ALTER SESSION UNSET SPCS_MODEL_AUTO_POPULATE_GPU_FROM_COMPUTE_POOL").collect()
+        super().tearDown()
+
     @classmethod
     def setUpClass(cls) -> None:
         super().setUpClass()

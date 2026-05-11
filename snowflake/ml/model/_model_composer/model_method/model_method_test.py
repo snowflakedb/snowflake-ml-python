@@ -360,6 +360,81 @@ class ModelMethodTest(parameterized.TestCase):
                     f.read(),
                 )
 
+    def test_model_method_table_function_model_init_once(self) -> None:
+        """model_init_once=True with TABLE_FUNCTION uses infer_table_function_init_once template."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                options=model_method.ModelMethodOptions(
+                    function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                    model_init_once=True,
+                ),
+            )
+            mm.save(pathlib.Path(workspace))
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_3_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+    def test_model_method_partitioned_table_function_model_init_once(self) -> None:
+        """model_init_once=True with partitioned TABLE_FUNCTION uses infer_partitioned_init_once template."""
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+
+        with (
+            tempfile.TemporaryDirectory() as workspace,
+            tempfile.TemporaryDirectory() as tmpdir,
+            platform_capabilities.PlatformCapabilities.mock_features(),
+        ):
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir,
+                name="model1",
+                model_type="custom",
+                signatures=_DUMMY_SIG,
+                function_properties={"predict": {model_meta_schema.FunctionProperties.PARTITIONED.value: True}},
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+            mm = model_method.ModelMethod(
+                meta,
+                "predict",
+                "python_runtime",
+                fg,
+                is_partitioned_function=True,
+                options=model_method.ModelMethodOptions(
+                    function_type=model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                    model_init_once=True,
+                ),
+            )
+            mm.save(pathlib.Path(workspace))
+            with open(pathlib.Path(workspace, "functions", "predict.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files(model_method_pkg)
+                        .joinpath("fixtures")
+                        .joinpath("function_4_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
     def test_model_method_model_init_once_false(self) -> None:
         """model_init_once=False uses the plain inference template regardless of model type."""
         fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))

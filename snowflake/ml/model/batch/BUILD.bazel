@@ -8,5 +8,6 @@ py_library(
     deps = [
         "//snowflake/ml/model/_client/model:batch_inference_definition",
         "//snowflake/ml/model/_client/model:batch_inference_specs",
+        "//snowflake/ml/model/_client/model:batch_inference_task",
     ],
 )

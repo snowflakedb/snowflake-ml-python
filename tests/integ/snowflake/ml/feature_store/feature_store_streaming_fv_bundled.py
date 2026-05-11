@@ -255,9 +255,13 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertEqual(ref_count, 0)
 
         fv_list = fs.list_feature_views().collect(statement_params=fs._telemetry_stmp)
-        self.assertEqual(len(fv_list), 0)
+        names = {row["NAME"] for row in fv_list}
+        self.assertNotIn(SqlIdentifier(f"STREAM_FV_{s}").resolved(), names)
 
-        remaining = self._session.sql(f"SHOW TABLES LIKE '%UDF_TRANSFORMED%' IN SCHEMA {schema_path}").collect()
+        # Scope to this FV's tables only; the schema is shared with sibling tests under pytest-xdist.
+        physical = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        like = f"{physical.resolved()}$UDF_TRANSFORMED%"
+        remaining = self._session.sql(f"SHOW TABLES LIKE '{like}' IN SCHEMA {schema_path}").collect()
         self.assertEqual(len(remaining), 0, "udf_transformed and backfill tables should be dropped")
 
     def test_delete_streaming_fv_allows_stream_source_delete(self) -> None:
@@ -289,7 +293,8 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         fs.delete_stream_source(stream)
 
         sources = fs.list_stream_sources().collect(statement_params=fs._telemetry_stmp)
-        self.assertEqual(len(sources), 0)
+        names = {row["NAME"] for row in sources}
+        self.assertNotIn(self._stream_source_ref_key(stream), names)
 
     # =========================================================================
     # Streaming + Tiled Features + Dataset Generation
@@ -767,8 +772,23 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             refresh_freq="1 minute",
         )
 
-        fs.register_feature_view(fv, "v1")
+        registered_v1 = fs.register_feature_view(fv, "v1")
         self.assertEqual(fs._metadata_manager.get_stream_source_ref_count(self._stream_source_ref_key(stream)), 1)
+
+        # Wait for v1 backfill to finish AND for the OFT to consume-and-drop $BACKFILL before the
+        # overwrite — otherwise the pending OFT drop races the overwrite preamble's CREATE OR
+        # REPLACE TABLE $BACKFILL and wipes the freshly recreated table out from under the new OFT.
+        physical_v1 = FeatureView._get_physical_name(registered_v1.name, registered_v1.version)
+        udf_table_v1 = FeatureView._get_udf_transformed_table_name(physical_v1)
+        fq_udf_v1 = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table_v1}"
+        self._wait_udf_and_backfill(
+            fq_udf_v1,
+            timeout_s=120,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered_v1.name),
+            streaming_fv_version=str(registered_v1.version),
+            wait_backfill_dropped=True,
+        )
 
         # Use a non-identity transform so the overwrite path exercises the map_in_pandas
         # column-collision case and actually runs the backfill SQL.
@@ -1114,7 +1134,8 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertEqual(ref_count, 0)
 
         fv_list = fs.list_feature_views().collect(statement_params=fs._telemetry_stmp)
-        self.assertEqual(len(fv_list), 0)
+        names = {row["NAME"] for row in fv_list}
+        self.assertNotIn(SqlIdentifier(f"STREAM_FV_{s}").resolved(), names)
 
 
 if __name__ == "__main__":

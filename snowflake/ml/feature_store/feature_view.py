@@ -20,13 +20,14 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 from snowflake.ml.feature_store import feature_store
-from snowflake.ml.feature_store.aggregation import AggregationSpec
+from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 from snowflake.ml.feature_store.tile_sql_generator import _TILE_START_COL
 from snowflake.ml.lineage import lineage_node
 from snowflake.snowpark import DataFrame, Session
+from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     DateType,
@@ -502,6 +503,52 @@ class FeatureViewSlice:
         return [name_to_indices_map[n] for n in self.names]
 
 
+def _prepend_keys_specs(
+    value_specs: list[AggregationSpec], secondary_keys: Optional[list[str]]
+) -> list[AggregationSpec]:
+    """Synthesize one ``_SECONDARY_KEY_ARRAY`` spec per unique
+    ``(secondary_key, window, offset)`` and prepend the synthesized specs as a
+    single leading block before all value specs, so every output column still
+    flows through the same ``Feature -> to_spec()`` pipeline (and naming
+    convention) without being interleaved among the user's value features.
+
+    Group ordering follows the first appearance of each ``(window, offset)``
+    in ``value_specs``; within a group, keys columns are emitted in
+    ``secondary_keys`` list order.
+
+    Args:
+        value_specs: User-defined value-aggregation specs in surface order.
+        secondary_keys: FV-level secondary keys; when ``None`` or empty the input
+            is returned unchanged.
+
+    Returns:
+        A new list containing all synthesized keys-specs (one per
+        ``(secondary_key, window, offset)``) followed by ``value_specs`` in their
+        original relative order.
+    """
+    if not secondary_keys:
+        return value_specs
+    seen_groups: set[tuple[str, str]] = set()
+    keys_specs: list[AggregationSpec] = []
+    for spec in value_specs:
+        if spec.is_lifetime():
+            continue
+        group_key = (spec.window, spec.offset)
+        if group_key in seen_groups:
+            continue
+        seen_groups.add(group_key)
+        for sk in secondary_keys:
+            keys_specs.append(
+                Feature(
+                    AggregationType._SECONDARY_KEY_ARRAY,
+                    sk,
+                    spec.window,
+                    offset=spec.offset,
+                ).to_spec()
+            )
+    return keys_specs + value_specs
+
+
 class FeatureView(lineage_node.LineageNode):
     """
     A FeatureView instance encapsulates a logical group of features.
@@ -523,6 +570,7 @@ class FeatureView(lineage_node.LineageNode):
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         features: Optional[list[Feature]] = None,
+        aggregation_secondary_keys: Optional[list[str]] = None,
         feature_aggregation_method: Optional[FeatureAggregationMethod] = None,
         rollup_config: Optional[RollupConfig] = None,
         storage_config: Optional[StorageConfig] = None,
@@ -577,6 +625,17 @@ class FeatureView(lineage_node.LineageNode):
             features: List of aggregation feature definitions using the ``Feature`` class.
                 Required when ``feature_granularity`` is specified. Defines the aggregations
                 to compute (e.g., SUM, COUNT, LAST_N) with their windows.
+            aggregation_secondary_keys: Optional FV-level secondary aggregation keys
+                (column names from ``feature_df``). Currently restricted to a list of
+                exactly one element. When set, every supported aggregation in ``features``
+                is additionally grouped by these keys, and at query time the output includes
+                a shared per-window keys array alongside array-valued feature columns.
+                Supported functions: SUM, COUNT, AVG, MIN, MAX, STD, VAR, APPROX_COUNT_DISTINCT,
+                APPROX_PERCENTILE. Each secondary key may not be an entity join key, must exist in
+                ``feature_df``, and is not supported with lifetime windows or list aggregations.
+
+                .. note::
+                    This feature is currently in private preview.
             feature_aggregation_method: The aggregation method for tiled streaming feature views.
                 Supports ``FeatureAggregationMethod.TILES`` (default) or
                 ``FeatureAggregationMethod.CONTINUOUS``.  Only applicable to streaming feature
@@ -684,6 +743,23 @@ class FeatureView(lineage_node.LineageNode):
         self._timestamp_col: Optional[SqlIdentifier] = None
         self._feature_granularity: Optional[str] = None
         self._aggregation_specs: Optional[list[AggregationSpec]] = None
+        # Currently restricted to a single element; multi-key support is
+        # reserved for a future change. The shape is plural-list now so the
+        # API is forward-compatible.
+        if aggregation_secondary_keys is not None:
+            snowpark_utils.warning(
+                "FeatureView.aggregation_secondary_keys",
+                "Parameter aggregation_secondary_keys is in private preview since 1.38.0. "
+                "Do not use it in production.",
+            )
+            if len(aggregation_secondary_keys) > 1:
+                raise ValueError(
+                    f"aggregation_secondary_keys currently supports a single element; "
+                    f"got {len(aggregation_secondary_keys)}: {aggregation_secondary_keys}"
+                )
+        self._aggregation_secondary_keys: Optional[list[str]] = (
+            [SqlIdentifier(k).identifier() for k in aggregation_secondary_keys] if aggregation_secondary_keys else None
+        )
         self._feature_aggregation_method: Optional[FeatureAggregationMethod] = None
         self._infer_schema_df: Optional[DataFrame] = None
         self._query: str = ""
@@ -702,6 +778,8 @@ class FeatureView(lineage_node.LineageNode):
             self._timestamp_col = SqlIdentifier(_TILE_START_COL)
             self._feature_granularity = parent.feature_granularity
             self._aggregation_specs = parent.aggregation_specs
+            if self._aggregation_secondary_keys is None:
+                self._aggregation_secondary_keys = parent.aggregation_secondary_keys
             self._refresh_freq = refresh_freq or parent.refresh_freq
             self._infer_schema_df = self._build_rollup_schema_df(rollup_config, entities)
             self._feature_desc = rollup_config.source._feature_desc
@@ -719,7 +797,9 @@ class FeatureView(lineage_node.LineageNode):
             self._timestamp_col = SqlIdentifier(timestamp_col)
             self._feature_granularity = feature_granularity
             if features is not None:
-                self._aggregation_specs = [f.to_spec() for f in features]
+                self._aggregation_specs = _prepend_keys_specs(
+                    [f.to_spec() for f in features], self._aggregation_secondary_keys
+                )
             self._refresh_freq = refresh_freq
 
             if feature_aggregation_method is not None and not (feature_granularity and features):
@@ -748,7 +828,28 @@ class FeatureView(lineage_node.LineageNode):
             self._feature_granularity = feature_granularity
             self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
             if features is not None:
-                self._aggregation_specs = [f.to_spec() for f in features]
+                self._aggregation_specs = _prepend_keys_specs(
+                    [f.to_spec() for f in features], self._aggregation_secondary_keys
+                )
+            elif self._aggregation_specs is not None:
+                has_secondary_key_specs = any(
+                    spec.function.is_secondary_key_array() for spec in self._aggregation_specs
+                )
+                if has_secondary_key_specs and self._aggregation_secondary_keys is None:
+                    # Load path: incoming specs already include synthesized
+                    # _SECONDARY_KEY_ARRAY specs. Derive the FV-level SKs
+                    # from them so callers don't have to thread it separately.
+                    sk_columns: list[str] = []
+                    seen_sk: set[str] = set()
+                    for spec in self._aggregation_specs:
+                        if spec.function.is_secondary_key_array() and spec.source_column not in seen_sk:
+                            seen_sk.add(spec.source_column)
+                            sk_columns.append(spec.source_column)
+                    self._aggregation_secondary_keys = sk_columns or None
+                elif self._aggregation_secondary_keys is not None and not has_secondary_key_specs:
+                    self._aggregation_specs = _prepend_keys_specs(
+                        self._aggregation_specs, self._aggregation_secondary_keys
+                    )
             self._refresh_freq = refresh_freq
             self._initialize_from_feature_df(
                 feature_df,
@@ -842,13 +943,41 @@ class FeatureView(lineage_node.LineageNode):
             ['TRIPDURATION', 'START_STATION_LATITUDE', 'END_STATION_LONGITUDE']
 
         """
-
         res = []
         for name in names:
             name = SqlIdentifier(name)
             if name not in self.feature_names:
                 raise ValueError(f"Feature name {name} not found in FeatureView {self.name}.")
             res.append(name)
+
+        # Auto-include the keys column for any value column the user requested
+        # whose keys-counterpart they did NOT also request. Missing keys are
+        # prepended in the order their corresponding value first appears.
+        unnamed_secondary_keys: list[SqlIdentifier] = []
+        if self.is_tiled and self._aggregation_specs is not None:
+            user_specified_columns = set(res)
+            spec_by_output = {SqlIdentifier(s.output_column): s for s in self._aggregation_specs}
+            # ``aggregation_secondary_keys`` is currently capped at length 1
+            keys_specs_by_window_offset: dict[tuple[str, str], list[AggregationSpec]] = {}
+            for s in self._aggregation_specs:
+                if s.function.is_secondary_key_array():
+                    keys_specs_by_window_offset.setdefault((s.window, s.offset), []).append(s)
+            seen_groups: set[tuple[str, str]] = set()
+            for name in res:
+                spec = spec_by_output.get(name)
+                if spec is None or spec.function.is_secondary_key_array():
+                    continue
+                group = (spec.window, spec.offset)
+                if group in seen_groups:
+                    continue
+                seen_groups.add(group)
+                for keys_spec in keys_specs_by_window_offset.get(group, []):
+                    keys_col = SqlIdentifier(keys_spec.output_column)
+                    if keys_col in user_specified_columns:
+                        continue
+                    unnamed_secondary_keys.append(keys_col)
+            res = unnamed_secondary_keys + res
+
         return FeatureViewSlice(self, res)
 
     def with_name(self, name: str) -> FeatureView:
@@ -1208,6 +1337,11 @@ class FeatureView(lineage_node.LineageNode):
     def aggregation_specs(self) -> Optional[list[AggregationSpec]]:
         """Get the aggregation specifications (internal use)."""
         return self._aggregation_specs
+
+    @property
+    def aggregation_secondary_keys(self) -> Optional[list[str]]:
+        """Get the FV-level secondary aggregation keys, if any."""
+        return self._aggregation_secondary_keys
 
     @property
     def feature_aggregation_method(self) -> Optional[FeatureAggregationMethod]:
@@ -1622,6 +1756,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             self._validate_window_offset_alignment()
             # Validate feature aliases are unique
             self._validate_unique_feature_aliases()
+            self._validate_secondary_key_features()
 
         # Validate Iceberg storage configuration
         if self._storage_config is not None and self._storage_config.format == StorageFormat.ICEBERG:
@@ -1689,6 +1824,61 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                     f"Use .alias() to provide distinct names for features."
                 )
             seen_aliases[alias] = 1
+
+    def _validate_secondary_key_features(self) -> None:
+        """Validate the FV-level ``aggregation_secondary_keys`` configuration.
+
+        Rules:
+            1. Each secondary key column must exist in ``feature_df``.
+            2. No secondary key may be an entity join key.
+            3. At least one aggregation feature must be defined.
+            4. Each aggregation must use a supported function. Simple scalars
+               (SUM/COUNT/AVG/MIN/MAX/STD/VAR) and sketches
+               (APPROX_COUNT_DISTINCT/APPROX_PERCENTILE) are mergeable per
+               ``(entity, sk)``; list aggregations are not yet supported.
+            5. Lifetime windows are not supported with secondary keys — the
+               read-side merge pattern requires a bounded window.
+
+        Raises:
+            ValueError: If secondary key validation fails.
+        """
+        if self._aggregation_secondary_keys is None:
+            return
+
+        if not self._aggregation_specs:
+            raise ValueError("aggregation_secondary_keys requires at least one aggregation feature to be defined.")
+
+        join_keys = {k.resolved() for e in self._entities for k in e.join_keys}
+        df_cols = self._get_column_names()
+        available_cols = {c.resolved() for c in df_cols} if df_cols is not None else None
+
+        for secondary_key in self._aggregation_secondary_keys:
+            key_resolved = SqlIdentifier(secondary_key).resolved()
+            if key_resolved in join_keys:
+                raise ValueError(
+                    f"aggregation_secondary_keys '{secondary_key}' cannot be an entity join key. "
+                    f"Use a distinct column (e.g. a non-entity attribute) as a secondary key."
+                )
+            if available_cols is not None and key_resolved not in available_cols:
+                raise ValueError(
+                    f"aggregation_secondary_keys '{secondary_key}' is not found in the feature "
+                    f"DataFrame columns. Available columns: {sorted(available_cols)}"
+                )
+
+        for spec in self._aggregation_specs:
+            if spec.function.is_secondary_key_array():
+                continue
+            if spec.function.is_list():
+                raise ValueError(
+                    f"aggregation_secondary_keys is not supported with list aggregations "
+                    f"(feature '{spec.output_column}' uses {spec.function.value.upper()}). "
+                    f"Supported: SUM, COUNT, AVG, MIN, MAX, STD, VAR, APPROX_COUNT_DISTINCT, APPROX_PERCENTILE."
+                )
+            if spec.is_lifetime():
+                raise ValueError(
+                    f"aggregation_secondary_keys is not supported with lifetime windows "
+                    f"(feature '{spec.output_column}')."
+                )
 
     def _get_column_names(self) -> Optional[list[SqlIdentifier]]:
         assert self._infer_schema_df is not None

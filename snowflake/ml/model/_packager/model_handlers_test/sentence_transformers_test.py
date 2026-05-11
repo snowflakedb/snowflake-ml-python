@@ -1,3 +1,4 @@
+import logging
 import os
 import random
 import tempfile
@@ -113,7 +114,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         embedding_dim = 384
 
         # Test encode method
-        sig = _auto_infer_signature("encode", embedding_dim)
+        sig = _auto_infer_signature("encode", embedding_dim, batch_size=32)
         assert sig is not None  # Type narrowing for mypy
         self.assertEqual(len(sig.inputs), 1)
         self.assertEqual(sig.inputs[0].name, "sentence")
@@ -125,13 +126,25 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
         self.assertEqual(sig.outputs[0]._shape, (embedding_dim,))
 
+        # Verify batch_size param is present
+        self.assertEqual(len(sig.params), 1)
+        self.assertEqual(sig.params[0].name, "batch_size")
+        assert isinstance(sig.params[0], model_signature.ParamSpec)
+        self.assertEqual(sig.params[0]._dtype, model_signature.DataType.INT64)
+        self.assertEqual(sig.params[0].default_value, 32)
+
+        # Test custom batch_size default
+        sig_custom = _auto_infer_signature("encode", embedding_dim, batch_size=64)
+        assert sig_custom is not None
+        self.assertEqual(sig_custom.params[0].default_value, 64)
+
         # Test all allowed methods
         for method in _ALLOWED_TARGET_METHODS:
-            method_sig = _auto_infer_signature(method, embedding_dim)
+            method_sig = _auto_infer_signature(method, embedding_dim, batch_size=32)
             self.assertIsNotNone(method_sig, f"Should infer signature for {method}")
 
         # Test unsupported method returns None
-        unsupported_sig = _auto_infer_signature("unsupported_method", embedding_dim)
+        unsupported_sig = _auto_infer_signature("unsupported_method", embedding_dim, batch_size=32)
         self.assertIsNone(unsupported_sig)
 
     def test_validate_sentence_transformers_signatures_valid(self) -> None:
@@ -336,6 +349,13 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             # Verify embedding dimension matches model
             expected_dim = model.get_sentence_embedding_dimension()
             self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+            # Verify batch_size param is present with default value
+            self.assertEqual(len(sig.params), 1)
+            self.assertEqual(sig.params[0].name, "batch_size")
+            assert isinstance(sig.params[0], model_signature.ParamSpec)
+            self.assertEqual(sig.params[0]._dtype, model_signature.DataType.INT64)
+            self.assertEqual(sig.params[0].default_value, 32)
 
             # Test that the model works correctly with auto-inferred signature
             pk.load(as_custom_model=True)
@@ -987,6 +1007,166 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
                 assert_frame_equal(embeddings_load, embeddings)
 
         return None
+
+    def test_batch_size_param_auto_inferred_custom_value(self) -> None:
+        """Test that auto-inferred signature includes batch_size param with the logged value as default."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=64),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            sig = pk.meta.signatures["encode"]
+            self.assertEqual(len(sig.params), 1)
+            self.assertEqual(sig.params[0].name, "batch_size")
+            assert isinstance(sig.params[0], model_signature.ParamSpec)
+            self.assertEqual(sig.params[0].default_value, 64)
+
+    def test_batch_size_param_explicit_signature_no_injection(self) -> None:
+        """Test that explicit signatures do NOT get batch_size param injected."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
+        embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
+        sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                signatures=sig,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            # Explicit signature should have no params added
+            self.assertEqual(len(pk.meta.signatures["encode"].params), 0)
+
+    def test_batch_size_param_explicit_signature_warning(self) -> None:
+        """Test that a warning is emitted when explicit signatures AND batch_size option are both provided."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
+        embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
+        sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
+
+        # Warning fires even when batch_size matches the default (32) — intent matters, not value
+        for explicit_batch_size in [32, 128]:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with self.assertLogs(
+                    "snowflake.ml.model._packager.model_handlers.sentence_transformers", level=logging.WARNING
+                ) as log_ctx:
+                    model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                        name="model",
+                        model=model,
+                        signatures=sig,
+                        metadata={"author": "test", "version": "1"},
+                        options=model_types.SentenceTransformersSaveOptions(batch_size=explicit_batch_size),
+                    )
+                self.assertTrue(any("batch_size" in msg and "will not be added" in msg for msg in log_ctx.output))
+
+    def test_batch_size_param_explicit_signature_paramspec_precedence(self) -> None:
+        """Test that a ParamSpec default in explicit signatures takes precedence over blob options."""
+        import inspect
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
+        embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
+
+        paramspec_batch_size = 64
+        blob_batch_size = 16
+
+        sig = {
+            "encode": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(sentences, embeddings).inputs,
+                outputs=model_signature.infer_signature(sentences, embeddings).outputs,
+                params=[
+                    model_signature.ParamSpec(
+                        name="batch_size",
+                        dtype=model_signature.DataType.INT64,
+                        default_value=paramspec_batch_size,
+                    ),
+                ],
+            )
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                signatures=sig,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=blob_batch_size),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+
+            fn_sig = inspect.signature(encode_method)
+            self.assertEqual(fn_sig.parameters["batch_size"].default, paramspec_batch_size)
+
+    def test_batch_size_param_runtime_override(self) -> None:
+        """Test that the inference method respects a non-default batch_size kwarg."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=32),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            test_data = pd.DataFrame({"sentence": ["Hello world", "Test sentence"]})
+
+            # Call with runtime override
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+            result = encode_method(test_data, batch_size=1)
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 2)
+
+    def test_batch_size_param_sample_input_data(self) -> None:
+        """Test that batch_size param is added when using sample_input_data for signature inference."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"text": ["test sentence 1", "test sentence 2"]})
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                sample_input_data=sentences,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=16),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            sig = pk.meta.signatures["encode"]
+            self.assertEqual(len(sig.params), 1)
+            self.assertEqual(sig.params[0].name, "batch_size")
+            assert isinstance(sig.params[0], model_signature.ParamSpec)
+            self.assertEqual(sig.params[0].default_value, 16)
 
 
 if __name__ == "__main__":

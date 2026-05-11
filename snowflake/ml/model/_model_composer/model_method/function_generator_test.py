@@ -114,6 +114,44 @@ class FunctionGeneratorTest(absltest.TestCase):
                     f.read(),
                 )
 
+    def test_function_generator_table_function_and_partitioned_init_once(self) -> None:
+        fg = function_generator.FunctionGenerator(pathlib.PurePosixPath("@a.b.c/abc/model"))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fg.generate(
+                pathlib.Path(tmpdir, "table_function_init_once.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                use_udf_init_once=True,
+            )
+            with open(pathlib.Path(tmpdir, "table_function_init_once.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_3_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
+            fg.generate(
+                pathlib.Path(tmpdir, "partitioned_init_once.py"),
+                "predict",
+                model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value,
+                is_partitioned_function=True,
+                use_udf_init_once=True,
+            )
+            with open(pathlib.Path(tmpdir, "partitioned_init_once.py"), encoding="utf-8") as f:
+                self.assertEqual(
+                    (
+                        importlib_resources.files("snowflake.ml.model._model_composer.model_method")
+                        .joinpath("fixtures")
+                        .joinpath("function_4_init_once.py")
+                        .read_text()
+                    ),
+                    f.read(),
+                )
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -193,12 +193,12 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.conda_dependencies, [])
         self.assertListEqual(env.pip_requirements, ["some-package==1.0.1"])
 
-        env = model_env.ModelEnv(prefer_pip=True)
+        env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
         env.include_if_absent([model_env.ModelDependency(requirement="channel::some-package", pip_name="some-package")])
         self.assertListEqual(env.conda_dependencies, [])
         self.assertListEqual(env.pip_requirements, ["some-package"])
 
-        env = model_env.ModelEnv(prefer_pip=True)
+        env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
         env.conda_dependencies = ["channel::some-package==1.0.1"]
         env.include_if_absent(
             [model_env.ModelDependency(requirement="another-package>=1.0,<2", pip_name="some-package")]
@@ -817,7 +817,7 @@ class ModelEnvTest(absltest.TestCase):
         """
         with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
             # XGBoost pip-only: should NOT substitute to py-xgboost-gpu
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["xgboost>=2.0.0"]
             env.cuda_version = "12.4"
             env.generate_env_for_cuda()
@@ -826,7 +826,7 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.conda_dependencies, [])
 
             # TensorFlow pip-only: should NOT substitute to tensorflow-gpu
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["tensorflow>=2.10.0"]
             env.cuda_version = "12.4"
             env.generate_env_for_cuda()
@@ -835,7 +835,7 @@ class ModelEnvTest(absltest.TestCase):
             self.assertListEqual(env.conda_dependencies, [])
 
             # Transformers pip-only: accelerate/scipy/bitsandbytes should still be added
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["transformers>=4.30.0", "torch>=2.0.0"]
             env.cuda_version = "12.4"
             env.generate_env_for_cuda()
@@ -847,7 +847,7 @@ class ModelEnvTest(absltest.TestCase):
 
     def test_generate_env_for_cuda_still_substitutes_on_conda_path(self) -> None:
         """Test that conda-specific GPU substitutions still work on the conda path."""
-        env = model_env.ModelEnv()  # prefer_pip=False by default
+        env = model_env.ModelEnv()  # prefer_pip_for_automatic_dependencies=False by default
         env.conda_dependencies = ["xgboost>=1.0.0"]
         env.cuda_version = "11.7"
         env.generate_env_for_cuda()
@@ -856,7 +856,7 @@ class ModelEnvTest(absltest.TestCase):
         self.assertListEqual(env.conda_dependencies, ["py-xgboost-gpu>=1.0.0"])
 
         with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", False):
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["xgboost>=1.0.0"]
             env.cuda_version = "11.7"
             env.generate_env_for_cuda()
@@ -867,7 +867,7 @@ class ModelEnvTest(absltest.TestCase):
     def test_save_as_dict_gpu_pytorch_has_extra_index_url(self) -> None:
         """Test that packaged GPU PyTorch model has correct extra index URL in requirements.txt."""
         with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
             env.cuda_version = "12.4"
 
@@ -891,7 +891,7 @@ class ModelEnvTest(absltest.TestCase):
     def test_save_as_dict_cpu_pytorch_no_extra_index_url(self) -> None:
         """Test that packaged CPU PyTorch model does NOT have extra index URL."""
         with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
-            env = model_env.ModelEnv(prefer_pip=True)
+            env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
             env.cuda_version = "12.4"  # Has cuda_version but is_gpu=False
 

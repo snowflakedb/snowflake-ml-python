@@ -15,6 +15,7 @@ from common_utils import (
     create_random_schema,
 )
 from fs_integ_test_base import FeatureStoreIntegTestBase
+from pytimeparse.timeparse import timeparse
 
 import snowflake.ml.feature_store.feature_view as fv_mod
 from snowflake.ml import dataset
@@ -1407,7 +1408,19 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0]["state"], "started")
-        self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
+        # CRON-based FVs round-trip the original cron expression rather than the
+        # underlying TARGET_LAG='DOWNSTREAM' that lives on the Dynamic Table.
+        self.assertEqual(fv.refresh_freq, "* * * * * America/Los_Angeles")
+        # The DT itself still has TARGET_LAG = 'DOWNSTREAM' — only the Task carries the cron.
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(dt_results[0]["target_lag"], "DOWNSTREAM")
+        # list_feature_views() should also surface the cron expression rather than
+        # the underlying DT TARGET_LAG ('DOWNSTREAM').
+        list_df = fs.list_feature_views(feature_view_name="my_fv").to_pandas()
+        self.assertEqual(len(list_df), 1)
+        self.assertEqual(list_df.iloc[0]["REFRESH_FREQ"], "* * * * * America/Los_Angeles")
         self._check_tag_value(
             fs,
             fv.fully_qualified_name(),
@@ -1427,6 +1440,53 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.delete_feature_view(fv)
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0)
+
+    def test_register_with_downstream_creates_no_task(self) -> None:
+        """User-set ``refresh_freq='DOWNSTREAM'`` must not create a companion Task.
+
+        Symmetric counterpart to ``test_register_with_cron_expr``. The Task's
+        presence is what disambiguates a user-set DOWNSTREAM FV from a
+        cron-driven FV (whose DT also carries ``TARGET_LAG='DOWNSTREAM'``).
+        If a stray Task were created here, ``_resolve_task_schedule`` would
+        later misreport ``refresh_freq`` as a cron expression on round-trip.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+        my_fv = FeatureView(
+            name="my_downstream_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="DOWNSTREAM",
+        )
+        my_fv = fs.register_feature_view(feature_view=my_fv, version="v1")
+        assert my_fv.version is not None
+
+        # No companion Task should exist.
+        task_name = FeatureView._get_physical_name(my_fv.name, my_fv.version).resolved()
+        tasks = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
+        self.assertEqual(0, len(tasks), "No companion task should be created for user-set DOWNSTREAM")
+
+        # The DT itself carries TARGET_LAG = 'DOWNSTREAM'.
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual("DOWNSTREAM", dt_results[0]["target_lag"])
+
+        # Round-trip via the catalog: _resolve_task_schedule must return the
+        # 'DOWNSTREAM' fallback because no task exists, NOT mistake the FV for
+        # a cron-driven one.
+        retrieved_fv = fs.get_feature_view("my_downstream_fv", "v1")
+        self.assertEqual("DOWNSTREAM", retrieved_fv.refresh_freq)
+        self.assertEqual(my_fv, retrieved_fv)
+
+        # list_feature_views() must agree with get_feature_view.
+        list_df = fs.list_feature_views(feature_view_name="my_downstream_fv").to_pandas()
+        self.assertEqual(1, len(list_df))
+        self.assertEqual("DOWNSTREAM", list_df.iloc[0]["REFRESH_FREQ"])
 
     @parameterized.parameters(  # type: ignore[misc]
         {"new_refresh_freq": "1 minute", "expected_refresh_freq": "1 minute"},
@@ -2631,7 +2691,130 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.update_feature_view("fv1", "v1", desc=empty_desc)
         check_fv_properties("fv1", "v1", "2 minutes", self._session.get_current_warehouse(), empty_desc)
 
-        # TODO(@ewezhou): add cron test
+    def test_update_managed_feature_view_cron(self) -> None:
+        """Test updating refresh_freq with a CRON expression on a managed FV.
+
+        CRON schedules cannot live on the Dynamic Table's TARGET_LAG (which must
+        stay 'DOWNSTREAM') — the actual schedule is applied to the companion
+        Snowflake Task. Verify both the registration and the update path.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("FOO", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, title FROM {self._mock_table}"
+        fv = FeatureView(
+            name="fv_cron",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="0 0 * * * UTC",
+        )
+        fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("FV_CRON"), fv.version)
+
+        task_results = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(task_results), 0, "Task should exist after registration")
+        self.assertIn("0 0", task_results[0]["schedule"])
+        # Round-trip preserves the original cron expression.
+        self.assertEqual(fv.refresh_freq, "0 0 * * * UTC")
+        # list_feature_views() should surface the cron expression, not 'DOWNSTREAM'.
+        list_df = fs.list_feature_views(feature_view_name="fv_cron").to_pandas()
+        self.assertEqual(len(list_df), 1)
+        self.assertEqual(list_df.iloc[0]["REFRESH_FREQ"], "0 0 * * * UTC")
+
+        # Update to a different cron schedule.
+        updated_fv = fs.update_feature_view("fv_cron", "v1", refresh_freq="30 6 * * * UTC")
+        self.assertEqual("30 6 * * * UTC", updated_fv.refresh_freq)
+
+        task_results = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(task_results), 0, "Task should still exist after update")
+        self.assertIn("30 6", task_results[0]["schedule"])
+
+        # The DT's TARGET_LAG should still be DOWNSTREAM — only the Task changed.
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual("DOWNSTREAM", dt_results[0]["target_lag"])
+        # list_feature_views() should reflect the updated cron schedule too.
+        list_df = fs.list_feature_views(feature_view_name="fv_cron").to_pandas()
+        self.assertEqual(len(list_df), 1)
+        self.assertEqual(list_df.iloc[0]["REFRESH_FREQ"], "30 6 * * * UTC")
+
+    @parameterized.parameters(  # type: ignore[misc]
+        # cron → non-cron: orphan Task must be dropped, otherwise get_feature_view
+        # would misreport the old cron schedule on the DOWNSTREAM target.
+        {"initial_freq": "0 0 * * * UTC", "updated_freq": "1 hour", "expected_round_trip": "1 hour"},
+        {"initial_freq": "0 0 * * * UTC", "updated_freq": "DOWNSTREAM", "expected_round_trip": "DOWNSTREAM"},
+        # non-cron → cron: Task must be created.
+        {"initial_freq": "1 hour", "updated_freq": "0 0 * * * UTC", "expected_round_trip": "0 0 * * * UTC"},
+        {"initial_freq": "DOWNSTREAM", "updated_freq": "0 0 * * * UTC", "expected_round_trip": "0 0 * * * UTC"},
+        {"initial_freq": "DOWNSTREAM", "updated_freq": "DOWNSTREAM", "expected_round_trip": "DOWNSTREAM"},
+    )
+    def test_update_managed_feature_view_cron_kind_transitions(
+        self, initial_freq: str, updated_freq: str, expected_round_trip: str
+    ) -> None:
+        """Verify update_feature_view preserves the Task-presence invariant across all cron-kind transitions.
+
+        The DT carries TARGET_LAG='DOWNSTREAM' both for an explicit user-set
+        DOWNSTREAM and for a cron-driven FV — only the existence of a companion
+        Task with the same name disambiguates them. update_feature_view must
+        therefore add/drop the Task whenever the cron-ness of refresh_freq
+        flips, otherwise the round-trip register → update → get is broken.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("FOO", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, title FROM {self._mock_table}"
+        fv = FeatureView(
+            name="fv_kind_transition",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq=initial_freq,
+        )
+        fv = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertEqual(initial_freq, fv.refresh_freq)
+        assert fv.version is not None
+
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("FV_KIND_TRANSITION"), fv.version)
+        schema_path = fs._config.full_schema_path
+
+        def task_count() -> int:
+            return len(
+                self._session.sql(f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {schema_path}").collect()
+            )
+
+        # Use the same cron detection as the product code (pytimeparse) — a string
+        # like "1 hour" contains a space but is a duration, not a cron expression.
+        def _is_cron(freq: str) -> bool:
+            return freq != "DOWNSTREAM" and timeparse(freq) is None
+
+        initial_is_cron = _is_cron(initial_freq)
+        self.assertEqual(1 if initial_is_cron else 0, task_count(), "Initial task presence mismatch")
+
+        updated_fv = fs.update_feature_view("fv_kind_transition", "v1", refresh_freq=updated_freq)
+        self.assertEqual(expected_round_trip, updated_fv.refresh_freq)
+
+        # Reload from the catalog to make sure get_feature_view (not just the in-memory return value)
+        # round-trips the new refresh_freq correctly.
+        retrieved_fv = fs.get_feature_view("fv_kind_transition", "v1")
+        self.assertEqual(expected_round_trip, retrieved_fv.refresh_freq)
+
+        updated_is_cron = _is_cron(updated_freq)
+        self.assertEqual(1 if updated_is_cron else 0, task_count(), "Updated task presence mismatch")
+
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_physical_name.resolved()}' IN SCHEMA {schema_path}"
+        ).collect()
+        expected_target_lag = "DOWNSTREAM" if updated_is_cron or updated_freq == "DOWNSTREAM" else updated_freq
+        self.assertEqual(expected_target_lag, dt_results[0]["target_lag"])
 
     def test_replace_feature_view(self) -> None:
         fs = self._create_feature_store()
@@ -4610,8 +4793,9 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
 
         self.assertEqual(registered_fv.version, "v1")
-        # CRON-based refresh uses TARGET_LAG = 'DOWNSTREAM' with a Task
-        self.assertEqual(registered_fv.refresh_freq, "DOWNSTREAM")
+        # CRON-based refresh uses TARGET_LAG = 'DOWNSTREAM' under the hood with a
+        # companion Task — but the round-trip surfaces the original cron expression.
+        self.assertEqual(registered_fv.refresh_freq, "0 * * * * America/Los_Angeles")
 
         # Verify the task was created
         task_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version).resolved()
