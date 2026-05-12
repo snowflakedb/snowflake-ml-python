@@ -176,6 +176,14 @@ class ListStageFilesFromDirectoryTablesTest(parameterized.TestCase):
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.session = cast(Session, self.m_session)
 
+    def _make_sql_side_effect(self, lazy_df: mock.MagicMock, refresh_df: mock.MagicMock) -> mock.MagicMock:
+        def side_effect(sql: str) -> mock.MagicMock:
+            if sql.startswith("ALTER STAGE"):
+                return refresh_df
+            return lazy_df
+
+        return mock.MagicMock(side_effect=side_effect)
+
     @parameterized.parameters(  # type: ignore[misc]
         ("@DB.SCHEMA.MY_STAGE",),
         ("DB.SCHEMA.MY_STAGE",),
@@ -183,25 +191,54 @@ class ListStageFilesFromDirectoryTablesTest(parameterized.TestCase):
     def test_composes_lazy_dataframe(self, stage_name: str) -> None:
         lazy_df = mock.MagicMock()
         final_df = mock.MagicMock()
+        refresh_df = mock.MagicMock()
         lazy_df.select.return_value = final_df
 
-        with mock.patch.object(self.session, "sql", return_value=lazy_df) as mock_sql:
+        with mock.patch.object(
+            self.session, "sql", side_effect=self._make_sql_side_effect(lazy_df, refresh_df)
+        ) as mock_sql:
             result = stage_file.list_stage_files_from_directory_tables(self.session, stage_name)
 
-        mock_sql.assert_called_once_with("SELECT RELATIVE_PATH FROM DIRECTORY(@DB.SCHEMA.MY_STAGE)")
+        mock_sql.assert_any_call("ALTER STAGE DB.SCHEMA.MY_STAGE REFRESH")
+        mock_sql.assert_any_call("SELECT RELATIVE_PATH FROM DIRECTORY(@DB.SCHEMA.MY_STAGE)")
+        refresh_df.collect.assert_called_once()
         lazy_df.select.assert_called_once()
         self.assertIs(result, final_df)
 
-        # The function must compose a plan only — it must not execute anything.
+        # The function must compose the listing plan only — it must not execute the SELECT.
         lazy_df.collect.assert_not_called()
         final_df.collect.assert_not_called()
 
         (col_expr,), _ = lazy_df.select.call_args
         self.assertEqual(col_expr.getName(), '"FILE_PATH"')
 
+    def test_refreshes_by_default(self) -> None:
+        lazy_df = mock.MagicMock()
+        refresh_df = mock.MagicMock()
+
+        with mock.patch.object(
+            self.session, "sql", side_effect=self._make_sql_side_effect(lazy_df, refresh_df)
+        ) as mock_sql:
+            stage_file.list_stage_files_from_directory_tables(self.session, "@DB.SCHEMA.STAGE")
+
+        refresh_calls = [c for c in mock_sql.call_args_list if c.args[0].startswith("ALTER STAGE")]
+        self.assertEqual(len(refresh_calls), 1)
+        self.assertEqual(refresh_calls[0].args[0], "ALTER STAGE DB.SCHEMA.STAGE REFRESH")
+        refresh_df.collect.assert_called_once()
+
+    def test_skips_refresh_when_disabled(self) -> None:
+        lazy_df = mock.MagicMock()
+        with mock.patch.object(self.session, "sql", return_value=lazy_df) as mock_sql:
+            stage_file.list_stage_files_from_directory_tables(self.session, "@DB.SCHEMA.STAGE", refresh=False)
+
+        mock_sql.assert_called_once_with("SELECT RELATIVE_PATH FROM DIRECTORY(@DB.SCHEMA.STAGE)")
+        for call in mock_sql.call_args_list:
+            self.assertFalse(call.args[0].startswith("ALTER STAGE"))
+
     def test_custom_column_name(self) -> None:
         lazy_df = mock.MagicMock()
-        with mock.patch.object(self.session, "sql", return_value=lazy_df):
+        refresh_df = mock.MagicMock()
+        with mock.patch.object(self.session, "sql", side_effect=self._make_sql_side_effect(lazy_df, refresh_df)):
             stage_file.list_stage_files_from_directory_tables(self.session, "@DB.SCHEMA.STAGE", column_name="IMAGES")
 
         (col_expr,), _ = lazy_df.select.call_args

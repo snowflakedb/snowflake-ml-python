@@ -33,7 +33,7 @@ def _conda_toolchain_impl(module_ctx):
         },
         "core": {
             "compatible_target": [Label("//bazel/platforms:core_conda_channel")],
-            "environment": Label("//ci/internal:conda-env-core.yml"),
+            "environment": Label("//bazel/environments:conda-env-core.yml"),
         },
     }
 
@@ -43,7 +43,7 @@ def _conda_toolchain_impl(module_ctx):
                 Label("//bazel/platforms:core_conda_channel"),
                 Label("//bazel/platforms:{}_conda_channel".format(group_name)),
             ],
-            "environment": Label("//ci/internal:conda-env-{}.yml".format(group_name)),
+            "environment": Label("//bazel/environments:conda-env-{}.yml".format(group_name)),
         }
         for group_name in OPTIONAL_DEPENDENCY_GROUPS.keys()
     })

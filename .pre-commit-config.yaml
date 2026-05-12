@@ -11,6 +11,15 @@ repos:
         files: BUILD\.bazel$
         stages:
           - pre-commit
+      - id: gazelle-proxy
+        name: Check proxy BUILD files are up to date
+        description: Run Gazelle in diff mode to verify BUILD files match Go source
+        entry: bash -c 'PATH="$HOME/go/bin:$PATH" exec bazelisk run //model_container_services_deployment/proxy:gazelle_ci'
+        language: system
+        files: ^model_container_services_deployment/proxy/
+        pass_filenames: false
+        stages:
+          - pre-commit
   - repo: https://github.com/asottile/pyupgrade
     rev: v2.31.1
     hooks:

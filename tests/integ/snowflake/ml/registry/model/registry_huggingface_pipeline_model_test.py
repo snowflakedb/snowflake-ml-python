@@ -876,7 +876,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="zero-shot-image-classification",
-            model="openai/clip-vit-base-patch32",
+            model="wkcn/TinyCLIP-ViT-39M-16-Text-19M-YFCC15M",
         )
 
         with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:

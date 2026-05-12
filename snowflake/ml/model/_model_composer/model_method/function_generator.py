@@ -58,9 +58,13 @@ class FunctionGenerator:
                     error_code=error_codes.INVALID_DATA,
                     original_exception=ValueError("Partitioned inference api functions must have type TABLE_FUNCTION."),
                 )
-            template_filename = "infer_partitioned.py_template"
+            template_filename = (
+                "infer_partitioned_init_once.py_template" if use_udf_init_once else "infer_partitioned.py_template"
+            )
         elif function_type.lower() == ModelMethodFunctionTypes.FUNCTION.value.lower() and use_udf_init_once:
             template_filename = "infer_function_init_once.py_template"
+        elif function_type.lower() == ModelMethodFunctionTypes.TABLE_FUNCTION.value.lower() and use_udf_init_once:
+            template_filename = "infer_table_function_init_once.py_template"
         else:
             template_filename = f"infer_{function_type.lower()}.py_template"
 

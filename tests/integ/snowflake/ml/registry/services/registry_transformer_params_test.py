@@ -5,7 +5,8 @@ handled across all invocation paths: mv.run, REST flat, REST split, REST records
 
 Uses SmolLM2-135M-Instruct (supports both object and string content formats) so both
 ParamSpec signatures are tested. Deploys one model per (engine × logging × signature)
-combination, then reuses each across subtests covering full/partial/default params,
+combination (no explicit gpu_requests variant), then reuses each across subtests covering
+full/partial/default params,
 extra columns, and invalid inputs.
 """
 
@@ -204,7 +205,6 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         engine: InferenceEngine,
         compute_pool_for_log: Optional[str],
         signature: dict[str, model_signature.ModelSignature],
-        gpu_requests: Optional[str] = None,
     ) -> tuple[Any, str]:
         logging_style = "remote" if compute_pool_for_log else "local"
         deploy_label = f"{engine.name}/{logging_style}"
@@ -228,7 +228,6 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
             model=model,
             prediction_assert_fns={"__call__": (test_input, check_result)},
             options=options,
-            gpu_requests=gpu_requests,
             service_compute_pool=service_compute_pool,
             inference_engine_options=self._get_inference_engine_options_for_inference_engine(engine),
             signatures=signature,
@@ -367,11 +366,10 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     @parameterized.named_parameters(  # type: ignore[misc]
         *[
             dict(
-                testcase_name=f"{engine.name}_{log}_{fmt}_{'gpu' if gpu == '1' else 'no_gpu'}",
+                testcase_name=f"{engine.name}_{log}_{fmt}",
                 engine=engine,
                 compute_pool_for_log=pool,
                 signature=sig,
-                gpu_requests=gpu,
             )
             for engine, pool_pairs in [
                 (InferenceEngine.VLLM, [("local", None), ("remote", DEFAULT_CPU_COMPUTE_POOL)]),
@@ -383,7 +381,6 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
                 _PARAM_SPEC_SIGNATURES,
                 ["object" if _is_object_content(s) else "string" for s in _PARAM_SPEC_SIGNATURES],
             )
-            for gpu in ["1", None]
         ]
     )
     @pytest.mark.conda_incompatible
@@ -392,14 +389,13 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         engine: InferenceEngine,
         compute_pool_for_log: Optional[str],
         signature: dict[str, model_signature.ModelSignature],
-        gpu_requests: Optional[str],
     ) -> None:
         """Deploy once, then run all param variants across every invocation path."""
         logging_style = "remote" if compute_pool_for_log else "local"
         content_fmt = "object" if _is_object_content(signature) else "string"
-        ctx = f"{engine.name}/{logging_style}/{content_fmt}/{'gpu' if gpu_requests == '1' else 'no_gpu'}"
+        ctx = f"{engine.name}/{logging_style}/{content_fmt}"
 
-        mv, endpoint = self._deploy(engine, compute_pool_for_log, signature, gpu_requests=gpu_requests)
+        mv, endpoint = self._deploy(engine, compute_pool_for_log, signature)
         messages = _get_messages(signature)
 
         with self.subTest("mv_run"):

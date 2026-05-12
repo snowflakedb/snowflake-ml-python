@@ -9,7 +9,9 @@ filegroup(
         "fixtures/function_1_init_once.py",
         "fixtures/function_2.py",
         "fixtures/function_3.py",
+        "fixtures/function_3_init_once.py",
         "fixtures/function_4.py",
+        "fixtures/function_4_init_once.py",
         "fixtures/function_5.py",
     ],
 )
@@ -34,7 +36,9 @@ py_library(
         "infer_function.py_template",
         "infer_function_init_once.py_template",
         "infer_partitioned.py_template",
+        "infer_partitioned_init_once.py_template",
         "infer_table_function.py_template",
+        "infer_table_function_init_once.py_template",
     ],
     deps = [
         "//snowflake/ml/model:type_hints",

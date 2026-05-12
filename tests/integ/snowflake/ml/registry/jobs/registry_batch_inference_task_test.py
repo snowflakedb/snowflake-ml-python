@@ -20,7 +20,7 @@ except ModuleNotFoundError:
 
 from snowflake.ml.model import custom_model, model_signature
 from snowflake.ml.model.batch import (
-    BatchInferenceDefinition,
+    BatchInferenceTask,
     FileEncoding,
     InputFormat,
     InputSpec,
@@ -34,8 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 class TestModel(custom_model.CustomModel):
-    """A model with multiple inference methods for testing different BatchInferenceDefinition features."""
-
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
 
@@ -60,8 +58,6 @@ class TestModel(custom_model.CustomModel):
 
 
 class FailureModel(custom_model.CustomModel):
-    """A model that deliberately raises during inference to test failure handling."""
-
     def __init__(self, context: custom_model.ModelContext) -> None:
         super().__init__(context)
 
@@ -89,9 +85,6 @@ _TEST_MODEL_SIGNATURES = {
             model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="output"),
             model_signature.FeatureSpec(dtype=model_signature.DataType.DOUBLE, name="received_float_param"),
         ],
-        params=[
-            model_signature.ParamSpec(name="float_param", dtype=model_signature.DataType.DOUBLE, default_value=0.5),
-        ],
     ),
     "predict_file": model_signature.ModelSignature(
         inputs=[
@@ -103,8 +96,8 @@ _TEST_MODEL_SIGNATURES = {
     ),
     "predict_quoted": model_signature.ModelSignature(
         inputs=[
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="col_a"),
-            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="col_b"),
+            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name='"col_a"'),
+            model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name='"col_b"'),
         ],
         outputs=[
             model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="output"),
@@ -113,7 +106,7 @@ _TEST_MODEL_SIGNATURES = {
 }
 
 
-class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     _DAG_POLL_INTERVAL_SEC = 15
     _DAG_POLL_MAX_ATTEMPTS = 120  # 30 min total
 
@@ -132,7 +125,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         *,
         signatures: Any = None,
     ) -> Any:
-        """Log a model to registry and return the ModelVersion."""
         name = f"model_{uuid.uuid4().hex[:8]}"
         version = f"ver_{self._run_id}"
         from tests.integ.snowflake.ml.test_utils import test_env_utils
@@ -152,17 +144,10 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         )
 
     def _set_task_image_overrides(self, task_fqn: str) -> None:
-        """Set image override session parameters on a DAG task via ALTER TASK."""
         for param, value in self._get_batch_image_override_session_params().items():
             self.session.sql(f"ALTER TASK IF EXISTS {task_fqn} SET {param} = '{value}'").collect()
 
     def _apply_dag_task_image_overrides(self) -> None:
-        """Suspend root task, set image overrides on batch inference child, then resume.
-
-        DAG tasks run in a system-managed context, not the user's session, so session-level
-        image override parameters don't apply. This sets them at the task level instead.
-        The root task must be suspended before altering any child task in the DAG.
-        """
         if not self._has_image_override():
             return
         root_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}"
@@ -202,7 +187,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         )
 
     def _deploy_and_run_dag(self, dag: "DAG") -> None:
-        """Deploy a DAG, apply image overrides on the batch inference child task, and trigger a run."""
         api_root = Root(self.session)
         schema = api_root.databases[self._test_db].schemas[self._test_schema]
         dag_op = DAGOperation(schema)
@@ -224,11 +208,19 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         success_files = [row["name"] for row in list_results if row["name"].endswith("_SUCCESS")]
         self.assertGreater(len(success_files), 0, f"No _SUCCESS file found under {base_stage_location}")
 
-    def _run_batch_inference_dag(self, defn: BatchInferenceDefinition, base_stage_location: str) -> None:
-        """Create a basic data_preparation >> batch_inference DAG, deploy, and verify success.
-
-        Only verifies the task succeeds and produces output; correctness is tested in other tests.
-        """
+    def _run_batch_inference_dag(
+        self,
+        base_stage_location: str,
+        *,
+        model_version: Any,
+        X: Any,
+        compute_pool: str,
+        output_spec: OutputSpec,
+        job_spec: JobSpec,
+        input_spec: Optional[InputSpec] = None,
+        inference_engine_options: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Create a basic data_preparation >> batch_inference DAG, deploy, and verify success."""
         dag = DAG(
             self._dag_name,
             schedule=timedelta(days=1),
@@ -238,51 +230,42 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=model_version,
+                X=X,
+                compute_pool=compute_pool,
+                output_spec=output_spec,
+                input_spec=input_spec,
+                job_spec=job_spec,
+                inference_engine_options=inference_engine_options,
+            )
             data_prep_task >> batch_inference_task
 
         self._deploy_and_run_dag(dag)
         self._assert_dag_succeeded(dag, base_stage_location)
 
-    def test_batch_inference_definition_dag(self) -> None:
+    def test_batch_inference_task_dag(self) -> None:
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/dag_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_dag",
-            ),
+            job_spec=JobSpec(function_name="predict", job_name_prefix="test_dag"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
-    def test_batch_inference_definition_dag_return_value(self) -> None:
+    def test_batch_inference_task_dag_return_value(self) -> None:
         """Verify that a successor task can read the batch inference task return value."""
-        if not self._has_image_override():
-            self.skipTest("Requires image override configuration.")
-
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         _, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        defn = BatchInferenceDefinition(
-            model_version=self._mv,
-            X=input_df,
-            compute_pool=self._TEST_CPU_COMPUTE_POOL,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-            ),
-        )
-
-        # 4. Create result table to capture the return value from the successor task
         result_table = f"{self._test_db}.{self._test_schema}.dag_result_{uuid.uuid4().hex[:8]}"
         self.session.sql(f"CREATE TABLE {result_table} (return_value VARCHAR)").collect()
 
-        # 5. Create and deploy DAG: data_preparation >> batch_inference >> verify_return_value
         data_prep_sql = "SELECT 'data_preparation done'"
         verify_sql = f"INSERT INTO {result_table} (return_value)" f" SELECT SYSTEM$GET_PREDECESSOR_RETURN_VALUE()"
 
@@ -295,13 +278,19 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition=data_prep_sql)
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=self._mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                job_spec=JobSpec(function_name="predict"),
+            )
             verify_task = DAGTask("verify_return_value", definition=verify_sql)
             data_prep_task >> batch_inference_task >> verify_task
 
         self._deploy_and_run_dag(dag)
 
-        # 6. Poll for DAG completion and assert SUCCEEDED (the verify_return_value child is the last task)
         run = self._poll_dag_run_completion(dag)
         self.assertEqual(
             run.state,
@@ -309,13 +298,12 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
             f"DAG run {run.state}: task={run.first_error_task_name} error={run.first_error_message}",
         )
 
-        # 7. Assert the return value contains the expected output_stage_location
         rows = self.session.sql(f"SELECT return_value FROM {result_table}").collect()
         self.assertLen(rows, 1, f"Expected 1 row in result table, got {len(rows)}")
         result = json.loads(rows[0]["RETURN_VALUE"])
         self.assertEqual(result["output_stage_location"], output_stage_location)
 
-    def test_batch_inference_definition_dag_failure(self) -> None:
+    def test_batch_inference_task_dag_failure(self) -> None:
         """Verify that a DAG task with a failing model reaches FAILED state."""
         model = FailureModel(custom_model.ModelContext())
         signature = model_signature.ModelSignature(
@@ -332,18 +320,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         _, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
 
-        defn = BatchInferenceDefinition(
-            model_version=mv,
-            X=input_df,
-            compute_pool=self._TEST_CPU_COMPUTE_POOL,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-            ),
-        )
-
-        # 4. Create marker table and deploy DAG: data_preparation >> batch_inference >> successor
-        # The successor task should NOT run because batch_inference fails.
         marker_table = f"{self._test_db}.{self._test_schema}.dag_marker_{uuid.uuid4().hex[:8]}"
         self.session.sql(f"CREATE TABLE {marker_table} (marker VARCHAR)").collect()
 
@@ -359,24 +335,28 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition=data_prep_sql)
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                job_spec=JobSpec(function_name="predict"),
+            )
             successor_task = DAGTask("successor", definition=successor_sql)
             data_prep_task >> batch_inference_task >> successor_task
 
         self._deploy_and_run_dag(dag)
 
-        # 5. Poll for completion and assert failure
         run = self._poll_dag_run_completion(dag)
         self.assertEqual(run.state, "FAILED", f"Expected FAILED but got {run.state}: {run.first_error_message}")
         self.assertIn("BATCH_INFERENCE", (run.first_error_task_name or "").upper())
         self.assertRegex(run.first_error_message or "", r"Job .+ failed to complete.*Exited with status: FAILED")
 
-        # 6. Verify no _SUCCESS file was created
         success_file = output_stage_location.rstrip("/") + "/_SUCCESS"
         list_results = self.session.sql(f"LIST {success_file}").collect()
         self.assertEqual(len(list_results), 0, f"_SUCCESS file should not exist at: {success_file}")
 
-        # 7. Verify successor task was never triggered
         rows = self.session.sql(f"SELECT * FROM {marker_table}").collect()
         self.assertEqual(len(rows), 0, "Successor task should not have run after batch inference failure")
 
@@ -385,18 +365,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/serverless_base_stage/"
 
-        defn = BatchInferenceDefinition(
-            model_version=self._mv,
-            X=input_df,
-            compute_pool=self._TEST_CPU_COMPUTE_POOL,
-            output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_serverless",
-            ),
-        )
-
-        # Serverless DAG uses managed compute instead of a user warehouse
         dag = DAG(
             self._dag_name,
             schedule=timedelta(days=1),
@@ -406,7 +374,14 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=self._mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(base_stage_location=base_stage_location),
+                job_spec=JobSpec(function_name="predict", job_name_prefix="test_serverless"),
+            )
             data_prep_task >> batch_inference_task
 
         self._deploy_and_run_dag(dag)
@@ -417,22 +392,18 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/params_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             input_spec=InputSpec(params={"float_param": 0.9}),
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict_with_params",
-                job_name_prefix="test_params",
-            ),
+            job_spec=JobSpec(function_name="predict_with_params", job_name_prefix="test_params"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_column_handling(self) -> None:
         """Verify batch inference works with InputSpec column_handling in a DAG task."""
-        # Upload a small text file to stage
         input_files_stage = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/column_handling_input_files/"
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tmp:
             tmp.write("hello from column handling test")
@@ -448,7 +419,8 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         input_df = self.session.create_dataframe([[stage_file_path]], schema=["FILE_CONTENT"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/column_handling_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
@@ -461,55 +433,34 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
                 }
             ),
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict_file",
-                job_name_prefix="test_column_handling",
-            ),
+            job_spec=JobSpec(function_name="predict_file", job_name_prefix="test_column_handling"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_post_actions(self) -> None:
         """Verify batch inference works when the input DataFrame has post_actions."""
-        # Write data to stage as parquet, then read back via session.read.parquet().
-        # Reading parquet creates temp file format objects whose cleanup generates post_actions.
         parquet_stage = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/post_actions_parquet/"
         self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"]).write.copy_into_location(
             parquet_stage, file_format_type="parquet", overwrite=True
         )
         input_df = self.session.read.parquet(parquet_stage)
         self.assertGreater(len(input_df.queries["post_actions"]), 0, "Expected post_actions")
-        # Parquet columns are unnamed ($1, $2) and typed VARIANT; cast to match model signature.
         input_df = input_df.select(F.col("$1").cast("BIGINT").alias("C1"), F.col("$2").cast("BIGINT").alias("C2"))
 
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/post_actions_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_post_actions",
-            ),
+            job_spec=JobSpec(function_name="predict", job_name_prefix="test_post_actions"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_repeated_dag_execution(self) -> None:
         """Verify batch inference DAG task succeeds on repeated executions."""
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/repeated_base_stage/"
-
-        defn = BatchInferenceDefinition(
-            model_version=self._mv,
-            X=input_df,
-            compute_pool=self._TEST_CPU_COMPUTE_POOL,
-            output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_repeated",
-            ),
-        )
 
         dag = DAG(
             self._dag_name,
@@ -520,7 +471,14 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=self._mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(base_stage_location=base_stage_location),
+                job_spec=JobSpec(function_name="predict", job_name_prefix="test_repeated"),
+            )
             data_prep_task >> batch_inference_task
 
         api_root = Root(self.session)
@@ -538,7 +496,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
             run = self._poll_dag_run_completion(dag, exclude_run_ids=existing_run_ids)
             self.assertEqual(run.state, "SUCCEEDED", f"Run {i + 1} failed: {run.first_error_message}")
 
-        # Verify that each run produced a _SUCCESS file under the base stage
         list_results = self.session.sql(f"LIST {base_stage_location}").collect()
         success_files = [row["name"] for row in list_results if row["name"].endswith("_SUCCESS")]
         self.assertEqual(
@@ -557,22 +514,17 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/sql_query_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_sql_query",
-            ),
+            job_spec=JobSpec(function_name="predict", job_name_prefix="test_sql_query"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_complex_query(self) -> None:
         """Verify batch inference works with a complex multi-query DataFrame (JOIN + select)."""
-        # Build a DataFrame from two persisted tables joined together.
-        # This produces a multi-query DataFrame with multiple entries in queries["queries"].
         table_a = f"{self._test_db}.{self._test_schema}.complex_a_{uuid.uuid4().hex[:8]}"
         table_b = f"{self._test_db}.{self._test_schema}.complex_b_{uuid.uuid4().hex[:8]}"
         self.session.create_dataframe([[0, 10], [1, 20]], schema=["KEY", "C1"]).write.save_as_table(
@@ -588,21 +540,17 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/complex_query_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_complex_query",
-            ),
+            job_spec=JobSpec(function_name="predict", job_name_prefix="test_complex_query"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_quoted_identifiers(self) -> None:
         """Verify batch inference works with quoted (lowercase) model name and column names."""
-        # Register a model with a quoted lowercase name; uses predict_quoted which reads "col_a".
         quoted_model_name = f'"batch_quoted_{uuid.uuid4().hex[:8]}"'
         model = TestModel(custom_model.ModelContext())
         version = f"ver_{self._run_id}"
@@ -621,7 +569,6 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
             options={"embed_local_ml_library": True},
         )
 
-        # Create input with quoted lowercase column names, persisted to a real table
         input_table = f"{self._test_db}.{self._test_schema}.quoted_input_{uuid.uuid4().hex[:8]}"
         self.session.create_dataframe([[0, 0], [1, 1]], schema=['"col_a"', '"col_b"']).write.save_as_table(
             input_table, mode="overwrite"
@@ -630,36 +577,19 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/quoted_id_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
             output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict_quoted",
-                job_name_prefix="test_quoted",
-            ),
+            job_spec=JobSpec(function_name="predict_quoted", job_name_prefix="test_quoted"),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
 
     def test_user_privileges(self) -> None:
-        """Verify batch inference works when the root DAG task uses EXECUTE AS USER.
-
-        Requires IMPERSONATE privilege on the current user granted to the current role.
-        """
+        """Verify batch inference works when the root DAG task uses EXECUTE AS USER."""
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/user_privileges_base_stage/"
-
-        defn = BatchInferenceDefinition(
-            model_version=self._mv,
-            X=input_df,
-            compute_pool=self._TEST_CPU_COMPUTE_POOL,
-            output_spec=OutputSpec(base_stage_location=base_stage_location),
-            job_spec=JobSpec(
-                function_name="predict",
-                job_name_prefix="test_user_privs",
-            ),
-        )
 
         dag = DAG(
             self._dag_name,
@@ -670,7 +600,14 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
 
         with dag:
             data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
-            batch_inference_task = DAGTask("batch_inference", definition=defn)
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=self._mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(base_stage_location=base_stage_location),
+                job_spec=JobSpec(function_name="predict", job_name_prefix="test_user_privs"),
+            )
             data_prep_task >> batch_inference_task
 
         api_root = Root(self.session)
@@ -692,11 +629,12 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
         self._assert_dag_succeeded(dag, base_stage_location)
 
     def test_custom_image_repo(self) -> None:
-        """BatchInferenceDefinition runs successfully when image_repo is explicitly set on JobSpec."""
+        """BatchInferenceTask runs successfully when image_repo is explicitly set on JobSpec."""
         input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
         base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/custom_repo_base_stage/"
 
-        defn = BatchInferenceDefinition(
+        self._run_batch_inference_dag(
+            base_stage_location,
             model_version=self._mv,
             X=input_df,
             compute_pool=self._TEST_CPU_COMPUTE_POOL,
@@ -707,7 +645,44 @@ class TestBatchInferenceDefinitionInteg(registry_batch_inference_test_base.Regis
                 job_name_prefix="test_custom_repo",
             ),
         )
-        self._run_batch_inference_dag(defn, base_stage_location)
+
+    def test_passes_dagtask_kwargs(self) -> None:
+        """Verify DAGTask kwargs (e.g. comment) flow through to the deployed Snowflake task."""
+        input_df = self.session.create_dataframe([[0, 0], [1, 1]], schema=["C1", "C2"])
+        base_stage_location = f"@{self._test_db}.{self._test_schema}.{self._test_stage}/dagtask_kwargs_base_stage/"
+        expected_comment = "snowml-batch-inference-task-integ"
+
+        dag = DAG(
+            self._dag_name,
+            schedule=timedelta(days=1),
+            warehouse=self._TEST_SPCS_WH,
+            stage_location=f"@{self._test_db}.{self._test_schema}.{self._test_stage}",
+        )
+
+        with dag:
+            data_prep_task = DAGTask("data_preparation", definition="SELECT 'data_preparation done'")
+            batch_inference_task = BatchInferenceTask(
+                "batch_inference",
+                model_version=self._mv,
+                X=input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                output_spec=OutputSpec(base_stage_location=base_stage_location),
+                job_spec=JobSpec(function_name="predict", job_name_prefix="test_kwargs"),
+                comment=expected_comment,
+            )
+            data_prep_task >> batch_inference_task
+
+        self._deploy_and_run_dag(dag)
+
+        # Verify the DAGTask kwarg landed on the deployed Snowflake task
+        child_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}$BATCH_INFERENCE"
+        rows = self.session.sql(
+            f"SHOW TASKS LIKE '{self._dag_name}$BATCH_INFERENCE' IN SCHEMA {self._test_db}.{self._test_schema}"
+        ).collect()
+        self.assertGreater(len(rows), 0, f"Task {child_task_fqn} not found")
+        self.assertEqual(rows[0]["comment"], expected_comment)
+
+        self._assert_dag_succeeded(dag, base_stage_location)
 
 
 if __name__ == "__main__":

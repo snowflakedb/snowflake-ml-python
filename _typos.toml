@@ -11,6 +11,7 @@ NDFrame = "NDFrame"
 MAPE = "MAPE"
 fpr = "fpr"
 fwe = "fwe"
+gir = "gir"
 
 [type.po]
 extend-glob = ["*.ipynb"]

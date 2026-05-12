@@ -181,8 +181,8 @@ class BaseModelSaveOption(TypedDict):
     enable_explainability: Whether to enable explainability features for the model.
     save_location: Local directory path to save the model and metadata.
     model_init_once: When True, the model is loaded once per worker process at startup, eliminating
-        model-loading overhead on the first inference batch. Only applies to FUNCTION methods; ignored
-        for TABLE_FUNCTION methods. Defaults to False.
+        model-loading overhead on the first inference batch. Applies to FUNCTION and TABLE_FUNCTION
+        (including partitioned) warehouse methods. Defaults to False.
     """
 
     embed_local_ml_library: NotRequired[bool]

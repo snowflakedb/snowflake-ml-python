@@ -117,9 +117,9 @@ class ModelComposer:
         code_paths: Optional[list[model_types.CodePathLike]] = None,
         task: model_types.Task = model_types.Task.UNKNOWN,
         experiment_info: Optional["ExperimentInfo"] = None,
+        prefer_pip_for_automatic_dependencies: Optional[bool] = None,
         options: Optional[model_types.ModelSaveOption] = None,
     ) -> model_meta.ModelMetadata:
-
         if not options:
             options = model_types.BaseModelSaveOption()
 
@@ -138,6 +138,7 @@ class ModelComposer:
             ext_modules=ext_modules,
             code_paths=code_paths,
             task=task,
+            prefer_pip_for_automatic_dependencies=prefer_pip_for_automatic_dependencies,
             options=options,
         )
         assert self.packager.meta is not None

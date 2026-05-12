@@ -268,15 +268,6 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         if compute_pool is None:
             compute_pool = self._TEST_CPU_COMPUTE_POOL if job_spec.gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
-        # Merge image_repo into job_spec if not already set
-        if job_spec.image_repo is None:
-            job_spec = JobSpec(
-                **{
-                    **job_spec.model_dump(),
-                    "image_repo": ".".join([self._test_db, self._test_schema, self._test_image_repo]),
-                }
-            )
-
         batch_job = mv.run_batch(
             X,
             compute_pool=compute_pool,

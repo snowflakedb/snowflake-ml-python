@@ -1,5 +1,33 @@
 # Release History
 
+## 1.39.0
+
+### New Features
+
+### Bug Fixes
+
+* Feature Store: `update_feature_view` now correctly handles every transition between duration-based
+  and CRON-based `refresh_freq`. Previously a CRON expression was forwarded to the Dynamic Table's
+  `TARGET_LAG` (which Snowflake rejects), `duration → cron` failed because the companion Task did not
+  yet exist, and `cron → duration` left the Task orphaned and continuing to fire on its old schedule.
+  All four `(old, new)` transitions now correctly create, alter, or drop the Task as needed, with
+  symmetric rollback on failure.
+
+### Behavior Changes
+
+* Feature Store: For CRON-based feature views, `get_feature_view()`, `list_feature_views()`, and
+  `register_feature_view()` now return the original cron expression as `refresh_freq` instead of
+  `"DOWNSTREAM"`. The underlying Dynamic Table still uses `TARGET_LAG = 'DOWNSTREAM'` with a companion
+  Task — this is purely a display change so the round-trip preserves what the user passed in.
+
+* Registry: When `target_platforms` includes WAREHOUSE and pip installs are needed without a user-supplied
+  `pip` artifact repository, `log_model` injects `snowflake.snowpark.pypi_shared_repository` after
+  verifying access. This applies to explicit `pip_requirements` and to pip-only packaging when there are
+  no user conda dependencies. If `pypi_shared_repository` is inaccessible in the pip-only case, automatic packaging
+  dependencies fall back to conda instead of forcing pip-only without an index.
+
+### Deprecations
+
 ## 1.38.0
 
 ### New Features
@@ -26,6 +54,10 @@
 ## 1.37.0 (2026-04-29)
 
 ### New Features
+
+* Registry (PrPr): The `model_init_once` save option now applies to **TABLE_FUNCTION** model methods (including
+  partitioned table functions) for warehouse deployments, in addition to scalar **FUNCTION** methods. The generated
+  handler uses the same eager `@udf_init_once` model load path as UDFs.
 
 * Experiment Tracking: `end_run` now accepts an optional `status` argument (`"FINISHED"` or `"FAILED"`) to explicitly
   set the final run status. When a run's context manager exits with an exception, the status is automatically set to

@@ -13,7 +13,7 @@ from snowflake.ml.model._client.ops.model_ops import ModelOperator
 from snowflake.ml.model._model_composer import model_composer
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model.volatility import Volatility
-from snowflake.ml.registry._manager import model_manager
+from snowflake.ml.registry._manager import model_manager, model_parameter_reconciler
 from snowflake.ml.test_utils import mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
 from snowflake.snowpark import Row, Session
@@ -37,9 +37,32 @@ class ModelManagerTest(parameterized.TestCase):
             },
         }
 
+    def _expected_injected_shared_pypi_artifact_repository_map(self) -> dict[str, str]:
+        """Matches ModelParameterReconciler artifact map after injecting snowflake.snowpark.pypi_shared_repository."""
+        db_id, schema_id, repo_id = sql_identifier.parse_fully_qualified_name(
+            model_parameter_reconciler._PYPI_SHARED_REPOSITORY_FQN
+        )
+        return {
+            "pip": sql_identifier.get_fully_qualified_name(
+                db_id,
+                schema_id,
+                repo_id,
+                self.m_r._database_name,
+                self.m_r._schema_name,
+            )
+        }
+
     def setUp(self) -> None:
         self.m_session = mock_session.MockSession(conn=None, test_case=self)
         self.c_session = cast(Session, self.m_session)
+        # Reconcile may DESC shared PyPI artifact repo on Warehouse paths; MockSession requires pre-registered SQL.
+        self._pypi_shared_repo_access_patcher = mock.patch.object(
+            model_parameter_reconciler.ModelParameterReconciler,
+            "_pypi_shared_repository_accessible",
+            return_value=True,
+        )
+        self._pypi_shared_repo_access_patcher.start()
+        self.addCleanup(self._pypi_shared_repo_access_patcher.stop)
         with platform_capabilities.PlatformCapabilities.mock_features():
             self.m_r = model_manager.ModelManager(
                 self.c_session,
@@ -242,6 +265,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -330,6 +354,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -395,7 +420,7 @@ class ModelManagerTest(parameterized.TestCase):
                 sample_input_data=None,
                 conda_dependencies=None,
                 pip_requirements=m_pip_requirements,
-                artifact_repository_map=None,
+                artifact_repository_map=self._expected_injected_shared_pypi_artifact_repository_map(),
                 resource_constraint=None,
                 target_platforms=None,
                 python_version=None,
@@ -409,6 +434,7 @@ class ModelManagerTest(parameterized.TestCase):
                     "volatility": Volatility.IMMUTABLE,
                 },
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -486,6 +512,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=m_ext_modules,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -561,6 +588,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -706,9 +734,15 @@ class ModelManagerTest(parameterized.TestCase):
                     {"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE}
                     if target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
                     or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                    or target_platforms == [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
                     else {"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE}
                 ),
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=(
+                    target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
+                    or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                    or target_platforms == [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
+                ),
                 experiment_info=None,
             )
 
@@ -773,6 +807,9 @@ class ModelManagerTest(parameterized.TestCase):
                     else {"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE}
                 ),
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=(
+                    target_platform_constant == target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY
+                ),
                 experiment_info=None,
             )
 
@@ -835,6 +872,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
             mock_create_from_stage.assert_called_once_with(
@@ -1010,6 +1048,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=True,
                 experiment_info=None,
             )
 
@@ -1070,13 +1109,14 @@ class ModelManagerTest(parameterized.TestCase):
                 pip_requirements=None,
                 artifact_repository_map=None,
                 resource_constraint=None,
-                target_platforms=[target_platform.TargetPlatform.WAREHOUSE],
+                target_platforms=target_platform.WAREHOUSE_ONLY,
                 python_version=None,
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
                 options=expected_options,
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 
@@ -1152,6 +1192,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 
@@ -1181,6 +1222,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 
@@ -1210,6 +1252,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 
@@ -1261,6 +1304,7 @@ class ModelManagerTest(parameterized.TestCase):
                 ext_modules=None,
                 options={"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
+                prefer_pip_for_automatic_dependencies=False,
                 experiment_info=None,
             )
 

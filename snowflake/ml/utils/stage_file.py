@@ -117,22 +117,33 @@ def list_stage_files_from_directory_tables(
     stage_name: str,
     *,
     column_name: str = "FILE_PATH",
+    refresh: bool = True,
 ) -> DataFrame:
     """
     List files from a Snowflake stage's directory table and return a DataFrame with fully qualified paths.
 
     Unlike :func:`list_stage_files`, this utility queries the stage's directory table
     (``SELECT RELATIVE_PATH FROM DIRECTORY(@stage)``) rather than issuing a ``LIST`` command.
-    The stage must have its directory table enabled and refreshed for the listing to be populated.
+    The stage must have its directory table enabled for the listing to be populated.
 
-    The returned DataFrame is lazy — no query is executed by this call. The caller materializes
-    the plan when they need the rows (e.g. ``ModelVersion.run_batch``, ``collect``, ``to_pandas``).
+    By default the directory table is refreshed (``ALTER STAGE ... REFRESH``) before the
+    listing is composed so recent uploads are reflected. Pass ``refresh=False`` to skip
+    the refresh when the caller has already refreshed externally or knows the stage is
+    up to date.
+
+    The returned DataFrame is lazy — the ``SELECT`` is not executed by this call. The
+    caller materializes the plan when they need the rows (e.g. ``ModelVersion.run_batch``,
+    ``collect``, ``to_pandas``). Note that when ``refresh=True`` one eager ``ALTER STAGE
+    ... REFRESH`` round-trip is issued before the lazy plan is returned.
 
     Args:
         session: Active Snowpark session.
         stage_name: Fully qualified stage reference, e.g. ``"@DB.SCHEMA.STAGE"``. A subpath is
             not supported — only a bare stage reference is accepted.
         column_name: Name of the output column. Defaults to ``"FILE_PATH"``.
+        refresh: If ``True`` (default), issue ``ALTER STAGE ... REFRESH`` before reading
+            the directory table so the listing reflects the current stage contents.
+            Set to ``False`` to skip the refresh.
 
     Returns:
         DataFrame with a single column containing fully qualified stage paths, suitable as the
@@ -161,6 +172,9 @@ def list_stage_files_from_directory_tables(
             f"stage_name must be a bare stage reference like '@DB.SCHEMA.STAGE' "
             f"without a subpath, got: {stage_name}"
         )
+
+    if refresh:
+        session.sql(f"ALTER STAGE {stage_name[1:]} REFRESH").collect()
 
     return cast(
         DataFrame,

@@ -30,7 +30,7 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
                 "pip_requirements": ["prophet"],
                 "conda_dependencies": None,
                 "artifact_repository_map": None,
-                "expect_error": True,
+                "expect_error": False,
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value],

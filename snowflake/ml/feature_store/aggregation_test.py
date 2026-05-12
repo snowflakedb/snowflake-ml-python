@@ -667,5 +667,23 @@ class LifetimeWindowTest(absltest.TestCase):
         self.assertEqual(spec.get_cumulative_column_name("COUNT"), "_CUM_COUNT_AMOUNT")
 
 
+class SecondaryKeyArraySpecTest(parameterized.TestCase):
+    """Unit tests for the synthesized ``_SECONDARY_KEY_ARRAY`` spec."""
+
+    @parameterized.parameters(  # type: ignore[misc]
+        # No offset → bare ``{sk}_KEYS_{window}``.
+        ("ad_id", "24h", "0", "AD_ID_KEYS_24H"),
+        # Same window with non-zero offset gets a distinct column.
+        ("ad_id", "24h", "1h", "AD_ID_KEYS_24H_OFFSET_1H"),
+    )
+    def test_keys_spec_default_output_name(self, sk: str, window: str, offset: str, expected: str) -> None:
+        spec = Feature(AggregationType._SECONDARY_KEY_ARRAY, sk, window, offset=offset).to_spec()
+        self.assertEqual(spec.output_column, expected)
+
+    def test_keys_spec_rejects_lifetime_window(self) -> None:
+        with self.assertRaisesRegex(ValueError, "cannot use a lifetime window"):
+            Feature(AggregationType._SECONDARY_KEY_ARRAY, "ad_id", "lifetime").to_spec()
+
+
 if __name__ == "__main__":
     absltest.main()

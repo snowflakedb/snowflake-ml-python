@@ -78,7 +78,7 @@ class FeatureStoreLargeScaleTest(FeatureStoreIntegTestBase, parameterized.TestCa
         # Ensure dynamic table resolves source in FS schema
         self._session.sql(f"USE SCHEMA {fs._config.full_schema_path}").collect()
         fv = fs.register_feature_view(feature_view=fv, version="v1", block=True)
-        self.assertEqual(fv.refresh_freq, "DOWNSTREAM")
+        self.assertEqual(fv.refresh_freq, "* * * * * America/Los_Angeles")
         initial_count = self._session.sql(f"SELECT COUNT(*) AS C FROM {cloned_wine_data_fqn}").collect()[0]["C"]
         self.assertEqual(len(fs.read_feature_view(fv).collect()), initial_count)
 

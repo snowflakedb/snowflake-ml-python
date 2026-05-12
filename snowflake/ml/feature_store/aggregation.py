@@ -27,6 +27,7 @@ class AggregationType(Enum):
     - Simple aggregations (SUM, COUNT, AVG, MIN, MAX, STD, VAR): Stored as scalar partial results in tiles
     - Sketch aggregations (APPROX_COUNT_DISTINCT, APPROX_PERCENTILE): Stored as mergeable state in tiles
     - List aggregations (LAST_N, LAST_DISTINCT_N, FIRST_N, FIRST_DISTINCT_N): Stored as arrays in tiles
+    - Secondary-key array (_SECONDARY_KEY_ARRAY): Internal-only ARRAY_AGG of the secondary-key column
     """
 
     SUM = "sum"
@@ -42,6 +43,7 @@ class AggregationType(Enum):
     LAST_DISTINCT_N = "last_distinct_n"
     FIRST_N = "first_n"
     FIRST_DISTINCT_N = "first_distinct_n"
+    _SECONDARY_KEY_ARRAY = "secondary_key_array"
 
     def is_simple(self) -> bool:
         """Check if this is a simple aggregation (scalar result per tile).
@@ -80,6 +82,10 @@ class AggregationType(Enum):
             AggregationType.APPROX_COUNT_DISTINCT,
             AggregationType.APPROX_PERCENTILE,
         )
+
+    def is_secondary_key_array(self) -> bool:
+        """Check if this is the synthesized secondary-key ``ARRAY_AGG`` type."""
+        return self == AggregationType._SECONDARY_KEY_ARRAY
 
 
 # Internal column name prefixes used in tile tables.
@@ -167,6 +173,18 @@ class AggregationSpec:
                 raise ValueError(
                     f"Parameter 'percentile' must be a float between 0.0 and 1.0 for aggregation "
                     f"'{self.output_column}', got: {percentile}"
+                )
+
+        # Validate _SECONDARY_KEY_ARRAY specs
+        if self.function.is_secondary_key_array():
+            if self.params:
+                raise ValueError(
+                    f"_SECONDARY_KEY_ARRAY aggregation '{self.output_column}' must not carry params, "
+                    f"got: {self.params}"
+                )
+            if is_lifetime_window(self.window):
+                raise ValueError(
+                    f"_SECONDARY_KEY_ARRAY aggregation '{self.output_column}' cannot use a lifetime window."
                 )
 
         # Validate lifetime window support

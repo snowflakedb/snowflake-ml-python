@@ -1,13 +1,19 @@
 """Integration tests for Online Service APIs (create/get/drop)."""
 
-import time
+import logging
 import uuid
 
 from absl.testing import absltest
+from feature_store_streaming_fv_integ_base import (
+    wait_online_service_running_with_query_endpoint,
+)
 from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.feature_store import FeatureStore
+
+logger = logging.getLogger(__name__)
 
 
 class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
@@ -22,7 +28,7 @@ class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
         )
 
     def tearDown(self) -> None:
-        # Drop Online Service before base tearDown removes the database (network rules / policies).
+        # Drop Online Service before base tearDown removes the database.
         try:
             self.fs.drop_online_service()
         except Exception:
@@ -30,29 +36,25 @@ class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
         super().tearDown()
 
     def test_create_online_service_poll_until_running_then_drop(self) -> None:
-        producer = f"SML_FSRT_P_{uuid.uuid4().hex[:8]}".upper()
-        consumer = f"SML_FSRT_C_{uuid.uuid4().hex[:8]}".upper()
-        self._session.sql(f"CREATE ROLE IF NOT EXISTS {producer}").collect()
-        self._session.sql(f"CREATE ROLE IF NOT EXISTS {consumer}").collect()
+        # Producer must own the test schema; use the session role (mirrors bundle runner).
+        producer = self._session.get_current_role().strip('"')
+        consumer = f"SNOWML_TEST_SPEC_OFT_C_{uuid.uuid4().hex[:8]}".upper()
+        self._session.sql(f"CREATE ROLE IF NOT EXISTS {SqlIdentifier(consumer)}").collect()
+        self._session.sql(f"GRANT ROLE {SqlIdentifier(consumer)} TO ROLE {self._session.get_current_role()}").collect()
 
         try:
-            self.fs.create_online_service(producer, consumer)
-
-            deadline = time.time() + 900.0
-            last = ""
-            while time.time() < deadline:
-                st = self.fs.get_online_service_status()
-                last = st.status
-                if st.status == "RUNNING" and any(ep.name == "query" for ep in st.endpoints):
-                    break
-                time.sleep(5)
-            else:
-                self.fail(f"Online Service did not become RUNNING with query endpoint (last status={last!r}).")
-
+            # This test verifies the full create/poll/drop cycle, so disable the helper's
+            # reuse-if-already-running fast path.
+            wait_online_service_running_with_query_endpoint(
+                session=self._session,
+                fs=self.fs,
+                producer_role=producer,
+                consumer_role=consumer,
+                reuse_if_running=False,
+            )
             self.fs.drop_online_service()
         finally:
-            self._session.sql(f"DROP ROLE IF EXISTS {producer}").collect()
-            self._session.sql(f"DROP ROLE IF EXISTS {consumer}").collect()
+            self._session.sql(f"DROP ROLE IF EXISTS {SqlIdentifier(consumer)}").collect()
 
 
 if __name__ == "__main__":

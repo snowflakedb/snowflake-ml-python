@@ -121,12 +121,22 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
         artifact_repository_map: Optional[dict[str, str]] = None,
         target_platforms: Optional[list[str]] = None,
         expect_error: Optional[bool] = False,
+        conda_dependencies: Optional[list[str]] = None,
     ) -> None:
-        conda_dependencies = [
-            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
-        ]
-        if additional_dependencies:
-            conda_dependencies.extend(additional_dependencies)
+        # ``conda_dependencies`` when not None is the full list (e.g. [] for pip-only); when None, use default
+        # snowpark pin plus ``additional_dependencies``.
+        if conda_dependencies is None:
+            resolved_conda_dependencies = [
+                test_env_utils.get_latest_package_version_spec_in_server(
+                    self.session, "snowflake-snowpark-python!=1.12.0"
+                )
+            ]
+            if additional_dependencies:
+                resolved_conda_dependencies.extend(additional_dependencies)
+        else:
+            resolved_conda_dependencies = list(conda_dependencies)
+            if additional_dependencies:
+                resolved_conda_dependencies.extend(additional_dependencies)
 
         version_suffix = self._run_id
 
@@ -141,7 +151,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
                     model_name=name,
                     version_name=version,
                     sample_input_data=sample_input_data,
-                    conda_dependencies=conda_dependencies,
+                    conda_dependencies=resolved_conda_dependencies,
                     options=options,
                     signatures=None,
                     target_platforms=target_platforms,
@@ -155,7 +165,7 @@ class RegistryModelTestBase(common_test_base.CommonTestBase):
                 model_name=name,
                 version_name=version,
                 sample_input_data=sample_input_data,
-                conda_dependencies=conda_dependencies,
+                conda_dependencies=resolved_conda_dependencies,
                 options=options,
                 signatures=None,
                 target_platforms=target_platforms,

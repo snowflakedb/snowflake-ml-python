@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Allowlist of supported target methods for SentenceTransformer models.
 # Note: Not all methods are available in all sentence-transformers versions.
 _ALLOWED_TARGET_METHODS = ["encode", "encode_query", "encode_document", "encode_queries", "encode_documents"]
+_DEFAULT_BATCH_SIZE = 32
 
 # All potential default methods to check for availability on the model
 _POTENTIAL_DEFAULT_METHODS = [
@@ -60,6 +61,7 @@ def _get_available_default_methods(model: "sentence_transformers.SentenceTransfo
 def _auto_infer_signature(
     target_method: str,
     embedding_dim: int,
+    batch_size: Optional[int] = _DEFAULT_BATCH_SIZE,
 ) -> Optional[model_signature.ModelSignature]:
     """Auto-infer signature for SentenceTransformer models.
 
@@ -69,6 +71,7 @@ def _auto_infer_signature(
     Args:
         target_method: The target method name (e.g., "encode", "encode_query").
         embedding_dim: The dimension of the embedding vector output by the model.
+        batch_size: Default batch size for inference, exposed as a runtime param.
 
     Returns:
         A ModelSignature for the target method, or None if the method is not supported.
@@ -87,7 +90,34 @@ def _auto_infer_signature(
                 shape=(embedding_dim,),
             ),
         ],
+        params=[
+            model_signature.ParamSpec(
+                name="batch_size",
+                dtype=model_signature.DataType.INT64,
+                default_value=batch_size,
+            ),
+        ],
     )
+
+
+def _add_batch_size_param(
+    model_meta: model_meta_api.ModelMetadata,
+    batch_size: int,
+) -> None:
+    """Add batch_size as a runtime param to all signatures in model_meta."""
+    batch_size_param = model_signature.ParamSpec(
+        name="batch_size",
+        dtype=model_signature.DataType.INT64,
+        default_value=batch_size,
+    )
+    for method_name, sig in model_meta.signatures.items():
+        if any(p.name == "batch_size" for p in sig.params):
+            continue
+        model_meta.signatures[method_name] = model_signature.ModelSignature(
+            inputs=sig.inputs,
+            outputs=sig.outputs,
+            params=list(sig.params) + [batch_size_param],
+        )
 
 
 def _validate_sentence_transformers_signatures(
@@ -183,9 +213,12 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         if enable_explainability:
             raise NotImplementedError("Explainability is not supported for Sentence Transformer model.")
 
-        batch_size = kwargs.get("batch_size", 32)
-        if not isinstance(batch_size, int) or batch_size <= 0:
+        user_defined_batch_size: Optional[int] = kwargs.get("batch_size", None)
+        if user_defined_batch_size is not None and (
+            not isinstance(user_defined_batch_size, int) or user_defined_batch_size <= 0
+        ):
             raise ValueError("batch_size must be a positive integer")
+        batch_size = user_defined_batch_size or _DEFAULT_BATCH_SIZE
 
         # Validate target methods and signature (if possible)
         if not is_sub_model:
@@ -194,6 +227,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 model_meta=model_meta,
                 sample_input_data=sample_input_data,
                 batch_size=batch_size,
+                has_user_defined_batch_size=user_defined_batch_size is not None,
                 target_methods=kwargs.pop("target_methods", None),
             )
 
@@ -239,6 +273,8 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         sample_input_data: Optional[model_types.SupportedDataType],
         batch_size: int,
         target_methods: Optional[Sequence[str]],
+        *,
+        has_user_defined_batch_size: bool = False,
     ) -> model_meta_api.ModelMetadata:
         """Validate target methods and set signatures on model_meta.
 
@@ -253,6 +289,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             sample_input_data: Optional sample input data for signature inference.
             batch_size: Batch size for model inference.
             target_methods: Optional list of target methods to use.
+            has_user_defined_batch_size: Whether batch_size was explicitly provided by the caller.
 
         Returns:
             Updated model metadata with validated signatures.
@@ -300,6 +337,11 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
 
         # Case 1: User provided explicit signatures
         if model_meta.signatures:
+            if has_user_defined_batch_size:
+                logger.warning(
+                    "batch_size option will not be added as a configurable parameter to explicit signatures. "
+                    "To make batch_size configurable at runtime, add a batch_size ParamSpec to your signature."
+                )
             handlers_utils.validate_target_methods(model, list(model_meta.signatures.keys()))
             model_meta = handlers_utils.validate_signature(
                 model=model,
@@ -322,6 +364,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 get_prediction_fn=get_prediction,
             )
             _validate_sentence_transformers_signatures(model_meta.signatures)
+            _add_batch_size_param(model_meta, batch_size)
             return model_meta
 
         # Case 3: Auto-infer signature from model embedding dimension
@@ -336,6 +379,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             inferred_sig = _auto_infer_signature(
                 target_method=target_method,
                 embedding_dim=embedding_dim,
+                batch_size=batch_size,
             )
             if inferred_sig is None:
                 raise ValueError(
@@ -413,10 +457,10 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             raw_model: "sentence_transformers.SentenceTransformer",
             model_meta: model_meta_api.ModelMetadata,
         ) -> type[custom_model.CustomModel]:
-            batch_size = cast(
+            default_batch_size = cast(
                 model_meta_schema.SentenceTransformersModelBlobOptions,
                 model_meta.models[model_meta.name].options,
-            ).get("batch_size", None)
+            ).get("batch_size", _DEFAULT_BATCH_SIZE)
 
             def get_prediction(
                 raw_model: "sentence_transformers.SentenceTransformer",
@@ -431,8 +475,17 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                         f"This method may not be available in your version of sentence-transformers."
                     )
 
+                # Prefer the signature's ParamSpec default (matches server-side resolution),
+                # fall back to blob options for old models without a batch_size ParamSpec.
+                batch_size_param = next((p for p in signature.params if p.name == "batch_size"), None)
+                method_batch_size = (
+                    batch_size_param.default_value if batch_size_param is not None else default_batch_size
+                )
+
                 @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                def fn(
+                    self: custom_model.CustomModel, X: pd.DataFrame, *, batch_size: int = method_batch_size
+                ) -> pd.DataFrame:
                     X_list = X.iloc[:, 0].tolist()
 
                     return pd.DataFrame(

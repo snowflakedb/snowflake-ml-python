@@ -117,8 +117,6 @@ class ListStageFilesFromDirectoryTablesIntegTest(common_test_base.CommonTestBase
                 # Quote the local path so spaces are handled by PUT.
                 self.session.sql(f"PUT 'file://{filepath}' @{self._stage_name} AUTO_COMPRESS=FALSE").collect()
 
-        self.session.sql(f"ALTER STAGE {self._stage_name} REFRESH").collect()
-
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._test_db, if_exists=True)
         super().tearDown()

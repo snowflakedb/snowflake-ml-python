@@ -8,7 +8,7 @@ from absl.testing import absltest, parameterized
 from snowflake import snowpark
 from snowflake.ml.jobs import job_definition
 from snowflake.ml.jobs._interop import utils as interop_utils
-from snowflake.ml.jobs._utils import arg_protocol, feature_flags, type_utils
+from snowflake.ml.jobs._utils import arg_protocol, constants, feature_flags, type_utils
 
 
 def _make_uploaded_payload() -> type_utils.UploadedPayload:
@@ -27,13 +27,18 @@ class MLJobDefinitionTest(parameterized.TestCase):
         self.session.get_current_schema.return_value = "TEST_SCHEMA"
         self.uploaded_payload = _make_uploaded_payload()
 
-    def _expected_definition(self, runtime_value: str | None) -> job_definition.MLJobDefinition[[Any], Any]:
+    def _expected_definition(
+        self,
+        runtime_value: str | None,
+        env_vars: dict[str, str] | None = None,
+    ) -> job_definition.MLJobDefinition[[Any], Any]:
+        expected_env_vars = {constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "true", **(env_vars or {})}
         spec_options = type_utils.SpecOptions(
             stage_path=self.uploaded_payload.stage_path.as_posix(),
             args=None,
             enable_metrics=True,
             runtime=runtime_value,
-            env_vars={},
+            env_vars=expected_env_vars,
             enable_stage_mount_v2=feature_flags.FeatureFlags.ENABLE_STAGE_MOUNT_V2.is_enabled(),
         )
         job_options = type_utils.JobOptions(
@@ -274,6 +279,43 @@ class MLJobDefinitionTest(parameterized.TestCase):
             job_def._prepare_arguments("arg1", key="value")
         self.assertIn("Keyword arguments are not supported", str(ctx.exception))
         self.assertIn("ArgProtocol.NONE", str(ctx.exception))
+
+    def _register_with_env_vars(
+        self, env_vars: dict[str, str] | None = None
+    ) -> job_definition.MLJobDefinition[[Any], Any]:
+        with patch(
+            "snowflake.ml.jobs.job_definition.payload_utils.JobPayload",
+            return_value=MagicMock(upload=MagicMock(return_value=self.uploaded_payload)),
+        ), patch("snowflake.ml.jobs.job_definition.payload_utils.get_payload_name", return_value="entry"), patch(
+            "snowflake.ml.jobs.job_definition.runtime_env_utils.get_runtime_image",
+            return_value="/snowflake/image/image_repo/test_image:test_flag",
+        ):
+            result: job_definition.MLJobDefinition[[Any], Any] = job_definition.MLJobDefinition.register(
+                source="entry.py",
+                entrypoint="entry.py",
+                compute_pool="E2E_TEST_POOL",
+                stage_name="payload_stage",
+                session=self.session,
+                runtime_environment="/snowflake/image/image_repo/test_image:test_flag",
+                env_vars=env_vars,
+            )
+            return result
+
+    def test_register_sets_default_mlrs_use_embedded_scripts(self) -> None:
+        result = self._register_with_env_vars()
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars[constants.USE_EMBEDDED_SCRIPTS_ENV_VAR], "true")
+
+    def test_register_user_env_vars_override_mlrs_use_embedded_scripts(self) -> None:
+        result = self._register_with_env_vars(env_vars={constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "false"})
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars[constants.USE_EMBEDDED_SCRIPTS_ENV_VAR], "false")
+
+    def test_register_user_env_vars_preserve_default_mlrs_use_embedded_scripts(self) -> None:
+        result = self._register_with_env_vars(env_vars={"OTHER_VAR": "value"})
+        assert result.spec_options.env_vars is not None
+        self.assertEqual(result.spec_options.env_vars[constants.USE_EMBEDDED_SCRIPTS_ENV_VAR], "true")
+        self.assertEqual(result.spec_options.env_vars["OTHER_VAR"], "value")
 
 
 if __name__ == "__main__":

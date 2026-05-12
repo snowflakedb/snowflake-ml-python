@@ -8,6 +8,7 @@ import anyio
 import numpy as np
 import pandas as pd
 from _snowflake import vectorized
+from _snowflake import udf_init_once
 
 from snowflake.ml.model._packager import model_packager
 
@@ -36,44 +37,57 @@ MODEL_DIR_REL_PATH = "model"
 TARGET_METHOD = "predict"
 MAX_BATCH_SIZE = None
 
-# Retrieve the model
-IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
-import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
-model_dir_path = os.path.join(import_dir, MODEL_DIR_REL_PATH)
+# Initialized to None so the table function can detect whether load_model() has run yet.
+runner = None
 
-# Load the model
-pk = model_packager.ModelPackager(model_dir_path)
-pk.load(as_custom_model=True)
-assert pk.model, "model is not loaded"
-assert pk.meta, "model metadata is not loaded"
 
-# Determine the actual runner
-model = pk.model
-meta = pk.meta
-func = getattr(model, TARGET_METHOD)
-if inspect.iscoroutinefunction(func):
-    runner = functools.partial(anyio.run, func)
-else:
-    runner = functools.partial(func)
+@udf_init_once
+def load_model():
+    IMPORT_DIRECTORY_NAME = "snowflake_import_directory"
+    import_dir = sys._xoptions[IMPORT_DIRECTORY_NAME]
+    model_dir_path = os.path.join(import_dir, MODEL_DIR_REL_PATH)
 
-# Determine preprocess parameters
-features = meta.signatures[TARGET_METHOD].inputs
-input_cols = [feature.name for feature in features]
-dtype_map = {feature.name: feature.as_dtype() for feature in features}
+    # Load the model
+    pk = model_packager.ModelPackager(model_dir_path)
+    pk.load(as_custom_model=True)
+    assert pk.model, "model is not loaded"
+    assert pk.meta, "model metadata is not loaded"
 
-# Load inference parameters from method signature (if any)
-param_cols = []
-param_defaults = {}
-if hasattr(meta.signatures[TARGET_METHOD], "params") and meta.signatures[TARGET_METHOD].params:
-    for param_spec in meta.signatures[TARGET_METHOD].params:
-        param_cols.append(param_spec.name)
-        param_defaults[param_spec.name] = param_spec.default_value
+    # Determine the actual runner
+    model = pk.model
+    meta = pk.meta
+    func = getattr(model, TARGET_METHOD)
+
+    global runner
+    if inspect.iscoroutinefunction(func):
+        runner = functools.partial(anyio.run, func)
+    else:
+        runner = functools.partial(func)
+
+    # Determine preprocess parameters
+    features = meta.signatures[TARGET_METHOD].inputs
+    global input_cols
+    global dtype_map
+    input_cols = [feature.name for feature in features]
+    dtype_map = {feature.name: feature.as_dtype() for feature in features}
+
+    # Load inference parameters from method signature (if any)
+    global param_cols
+    global param_defaults
+    param_cols = []
+    param_defaults = {}
+    if hasattr(meta.signatures[TARGET_METHOD], "params") and meta.signatures[TARGET_METHOD].params:
+        for param_spec in meta.signatures[TARGET_METHOD].params:
+            param_cols.append(param_spec.name)
+            param_defaults[param_spec.name] = param_spec.default_value
 
 
 # Actual table function
 class infer:
-    @vectorized(input=pd.DataFrame, flatten_object_input=False)
-    def end_partition(self, df: pd.DataFrame) -> pd.DataFrame:
+    @vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input=False)
+    def process(self, df: pd.DataFrame) -> pd.DataFrame:
+        if runner is None:
+            load_model()
         df.columns = input_cols + param_cols
         input_df = df[input_cols].astype(dtype=dtype_map)
 

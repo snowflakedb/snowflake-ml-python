@@ -459,7 +459,7 @@ class ModelMetaEnvTest(absltest.TestCase):
                 )
 
     def test_model_meta_dependencies_default_pip_path_without_local_conda(self) -> None:
-        """Pip-only opt-in + no explicit conda deps + not in a conda env -> automatic deps on pip."""
+        """Pip-only opt-in + no explicit conda deps + not in a conda env -> pip path for automatic deps."""
         with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -470,7 +470,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
                     dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
                     dep_target.sort()
-                    self.assertTrue(meta.env.prefer_pip)
+                    self.assertTrue(meta.env.prefer_pip_for_automatic_dependencies)
                     self.assertListEqual(meta.env.conda_dependencies, [])
                     self.assertListEqual(meta.env.pip_requirements, dep_target)
 
@@ -488,12 +488,12 @@ class ModelMetaEnvTest(absltest.TestCase):
                     ) as meta:
                         meta.models["model1"] = _DUMMY_BLOB
 
-                    self.assertFalse(meta.env.prefer_pip)
+                    self.assertFalse(meta.env.prefer_pip_for_automatic_dependencies)
                     self.assertListEqual(meta.env.pip_requirements, [])
                     self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
 
                     loaded_meta = model_meta.ModelMetadata.load(tmpdir)
-                    self.assertFalse(loaded_meta.env.prefer_pip)
+                    self.assertFalse(loaded_meta.env.prefer_pip_for_automatic_dependencies)
                     self.assertListEqual(loaded_meta.env.pip_requirements, [])
                     self.assertListEqual(loaded_meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
 
@@ -513,7 +513,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
                     dep_target = _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML[:]
                     dep_target.sort()
-                    self.assertTrue(meta.env.prefer_pip)
+                    self.assertTrue(meta.env.prefer_pip_for_automatic_dependencies)
                     self.assertListEqual(meta.env.conda_dependencies, [])
                     self.assertListEqual(meta.env.pip_requirements, dep_target)
 
@@ -531,11 +531,11 @@ class ModelMetaEnvTest(absltest.TestCase):
                     ) as meta:
                         meta.models["model1"] = _DUMMY_BLOB
 
-                    self.assertFalse(meta.env.prefer_pip)
+                    self.assertFalse(meta.env.prefer_pip_for_automatic_dependencies)
                     self.assertListEqual(meta.env.pip_requirements, [])
                     self.assertListEqual(meta.env.conda_dependencies, _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML)
 
-    def test_model_meta_prefer_pip(self) -> None:
+    def test_model_meta_prefer_pip_for_automatic_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with model_meta.create_model_metadata(
                 model_dir_path=tmpdir,
@@ -546,7 +546,7 @@ class ModelMetaEnvTest(absltest.TestCase):
             ) as meta:
                 meta.models["model1"] = _DUMMY_BLOB
 
-        self.assertTrue(meta.env.prefer_pip)
+        self.assertTrue(meta.env.prefer_pip_for_automatic_dependencies)
 
 
 if __name__ == "__main__":

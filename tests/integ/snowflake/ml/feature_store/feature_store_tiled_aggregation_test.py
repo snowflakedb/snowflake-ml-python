@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
@@ -125,7 +125,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(registered_fv.status, FeatureViewStatus.ACTIVE)
         self.assertTrue(registered_fv.is_tiled)
         self.assertEqual(registered_fv.feature_granularity, "1h")
-        self.assertIsNotNone(registered_fv.aggregation_specs)
+        assert registered_fv.aggregation_specs is not None
         self.assertEqual(len(registered_fv.aggregation_specs), 2)
 
     def test_tiled_fv_requires_timestamp_col(self) -> None:
@@ -227,7 +227,7 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(retrieved_fv.version, registered_fv.version)
         self.assertTrue(retrieved_fv.is_tiled)
         self.assertEqual(retrieved_fv.feature_granularity, "1h")
-        self.assertIsNotNone(retrieved_fv.aggregation_specs)
+        assert retrieved_fv.aggregation_specs is not None
         self.assertEqual(len(retrieved_fv.aggregation_specs), 2)
 
     def test_tiled_fv_feature_names_returns_output_columns(self) -> None:
@@ -3358,6 +3358,668 @@ class LifetimeAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase)
         # Jan 6 query: Jan 1-5 tiles complete -> 150
         jan6_sum = float(result_pd.iloc[2]["TOTAL_AMOUNT"])
         self.assertEqual(jan6_sum, 150.0)
+
+
+@absltest.skip(
+    "Quarantined until the GS-side change for ARRAY-typed feature columns "
+    "(snowflake-eng/snowflake#437446) rolls to prod."
+)  # type: ignore[misc]
+class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase):
+    """Integration tests for secondary key aggregation feature views."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._active_feature_store: list[FeatureStore] = []
+
+        try:
+            self._session.sql(f"CREATE SCHEMA IF NOT EXISTS {self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}").collect()
+            self._events_table = self._create_ad_events_table()
+        except Exception as e:
+            self.tearDown()
+            raise Exception(f"Test setup failed: {e}")
+
+    def tearDown(self) -> None:
+        for fs in self._active_feature_store:
+            try:
+                fs._clear(dryrun=False)
+            except Exception as e:
+                if "Intentional Integ Test Error" not in str(e):
+                    raise Exception(f"Unexpected exception happens when clear: {e}")
+            self._session.sql(f"DROP SCHEMA IF EXISTS {fs._config.full_schema_path}").collect()
+
+        self._session.sql(f"DROP TABLE IF EXISTS {self._events_table}").collect()
+        super().tearDown()
+
+    def _create_ad_events_table(self) -> str:
+        """Create a table with ad impression data for testing secondary key aggregations."""
+        table_full_path = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.ad_events_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {table_full_path}
+                (user_id INT, event_ts TIMESTAMP_NTZ, ad_id VARCHAR(64), impression INT, amount FLOAT)
+            """
+        ).collect()
+
+        self._session.sql(
+            f"""INSERT INTO {table_full_path} (user_id, event_ts, ad_id, impression, amount)
+                VALUES
+                -- User 1 events: different ads at different times
+                (1, '2024-01-01 00:30:00', 'ad_a', 1, 10.0),
+                (1, '2024-01-01 00:45:00', 'ad_b', 1, 20.0),
+                (1, '2024-01-01 01:15:00', 'ad_a', 1, 30.0),
+                (1, '2024-01-01 01:45:00', 'ad_c', 1, 40.0),
+                (1, '2024-01-01 02:30:00', 'ad_b', 1, 50.0),
+                -- User 2 events
+                (2, '2024-01-01 01:00:00', 'ad_a', 1, 100.0),
+                (2, '2024-01-01 02:00:00', 'ad_a', 1, 200.0),
+                (2, '2024-01-01 03:00:00', 'ad_b', 1, 300.0)
+            """
+        ).collect()
+        return table_full_path
+
+    def _create_feature_store(self, name: Optional[str] = None) -> FeatureStore:
+        current_schema = (
+            create_random_schema(self._session, "FS_SECONDARY_KEY_TEST", database=self.test_db)
+            if name is None
+            else name
+        )
+        fs = FeatureStore(
+            self._session,
+            self.test_db,
+            current_schema,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._active_feature_store.append(fs)
+        self._session.use_database(self._dummy_db)
+        return fs
+
+    # =========================================================================
+    # Registration Tests for Secondary Key Aggregations
+    # =========================================================================
+
+    def test_register_secondary_key_feature_view(self) -> None:
+        """Test registering a feature view with secondary key aggregations."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_stats",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+
+        self.assertTrue(fv.is_tiled)
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        self.assertEqual(registered_fv.status, FeatureViewStatus.ACTIVE)
+        self.assertTrue(registered_fv.is_tiled)
+
+        self.assertEqual(registered_fv.aggregation_secondary_keys, ["AD_ID"])
+        assert registered_fv.aggregation_specs is not None
+        self.assertEqual(len(registered_fv.aggregation_specs), 2)
+
+    def test_secondary_key_multiple_aggregations(self) -> None:
+        """Test registering multiple aggregations with the same secondary key."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+            Feature.sum("amount", "2h").alias("amount_per_ad"),
+            Feature.avg("amount", "2h").alias("avg_amount_per_ad"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_multi_stats",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        assert registered_fv.aggregation_specs is not None
+        self.assertEqual(len(registered_fv.aggregation_specs), 4)
+        self.assertEqual(registered_fv.aggregation_secondary_keys, ["AD_ID"])
+
+        # End-to-end: read_feature_view with feature_names filter must keep the
+        # keys-array column whenever any value column in its (sk, window) group
+        # is requested. The keys/values arrays are element-aligned and are
+        # meaningless apart.
+        df = fs.read_feature_view(registered_fv, feature_names=["impressions_per_ad", "amount_per_ad"])
+        columns = [c.upper() for c in df.columns]
+        self.assertIn("IMPRESSIONS_PER_AD", columns)
+        self.assertIn("AMOUNT_PER_AD", columns)
+        self.assertIn("AD_ID_KEYS_2H", columns)
+        self.assertNotIn("AVG_AMOUNT_PER_AD", columns)
+
+    # =========================================================================
+    # Get Feature View Tests for Secondary Key Aggregations
+    # =========================================================================
+
+    def test_get_secondary_key_feature_view(self) -> None:
+        """Test that get_feature_view preserves secondary key information."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_stats_get",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        retrieved_fv = fs.get_feature_view("user_ad_stats_get", "v1")
+
+        self.assertTrue(retrieved_fv.is_tiled)
+        assert retrieved_fv.aggregation_specs is not None
+        self.assertEqual(len(retrieved_fv.aggregation_specs), 2)
+
+        # aggregation_secondary_keys is recovered on load from the synthesized
+        # _SECONDARY_KEY_ARRAY specs (each carries source_column = secondary_key);
+        # there is no separate top-level field in stored metadata.
+        self.assertEqual(retrieved_fv.aggregation_secondary_keys, ["AD_ID"])
+
+    # =========================================================================
+    # Feature Value Correctness Tests for Secondary Key Aggregations
+    # =========================================================================
+
+    @staticmethod
+    def _zip_keys_values(keys_cell: object, values_cell: object) -> dict[Any, Any]:
+        """Pair an element-aligned (keys, values) row into a dict."""
+        return dict(zip(json.loads(keys_cell), json.loads(values_cell)))  # type: ignore[arg-type]
+
+    def test_secondary_key_sum_and_count_values(self) -> None:
+        """Per-secondary-key SUM and COUNT return the right element-aligned arrays.
+
+        Tile layout with ``feature_granularity='1h'`` and ``window='2h'``, query
+        at 2024-01-01 04:00 covers tiles for hours 2 and 3, i.e. events in
+        ``[02:00, 04:00)``:
+
+        * User 1: ``(02:30, ad_b, 50)`` -> ``{ad_b: sum=50, count=1}``
+        * User 2: ``(02:00, ad_a, 200), (03:00, ad_b, 300)``
+                 -> ``{ad_a: sum=200, count=1; ad_b: sum=300, count=1}``
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.sum("amount", "2h").alias("amount_per_ad"),
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_values",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        spine_df = self._session.create_dataframe(
+            [
+                (1, datetime(2024, 1, 1, 4, 0, 0)),
+                (2, datetime(2024, 1, 1, 4, 0, 0)),
+            ],
+            schema=["user_id", "query_ts"],
+        )
+
+        result_pd = (
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("USER_ID")
+            .reset_index(drop=True)
+        )
+
+        self.assertEqual(len(result_pd), 2)
+
+        user1 = result_pd.iloc[0]
+        user1_amount = self._zip_keys_values(user1["AD_ID_KEYS_2H"], user1["AMOUNT_PER_AD"])
+        user1_impressions = self._zip_keys_values(user1["AD_ID_KEYS_2H"], user1["IMPRESSIONS_PER_AD"])
+        self.assertEqual(user1_amount, {"ad_b": 50.0})
+        self.assertEqual(user1_impressions, {"ad_b": 1})
+
+        user2 = result_pd.iloc[1]
+        user2_amount = self._zip_keys_values(user2["AD_ID_KEYS_2H"], user2["AMOUNT_PER_AD"])
+        user2_impressions = self._zip_keys_values(user2["AD_ID_KEYS_2H"], user2["IMPRESSIONS_PER_AD"])
+        self.assertEqual(user2_amount, {"ad_a": 200.0, "ad_b": 300.0})
+        self.assertEqual(user2_impressions, {"ad_a": 1, "ad_b": 1})
+
+    def test_secondary_key_point_in_time_correctness(self) -> None:
+        """Per-secondary-key aggregations are point-in-time correct.
+
+        Same FV, same user (user 1), three different spine timestamps. With
+        hourly granularity and a 2h window, the included tiles change with
+        ``query_ts``:
+
+        * 02:00 -> tiles [00:00, 02:00): ``ad_a`` (00:30, 01:15) and
+          ``ad_b`` (00:45) and ``ad_c`` (01:45)
+          -> impressions: ``{ad_a: 2, ad_b: 1, ad_c: 1}``
+          -> amount sum:  ``{ad_a: 40.0, ad_b: 20.0, ad_c: 40.0}``
+        * 03:00 -> tiles [01:00, 03:00): ``ad_a`` (01:15) and ``ad_c`` (01:45)
+          and ``ad_b`` (02:30)
+          -> impressions: ``{ad_a: 1, ad_b: 1, ad_c: 1}``
+          -> amount sum:  ``{ad_a: 30.0, ad_b: 50.0, ad_c: 40.0}``
+        * 04:00 -> tiles [02:00, 04:00): ``ad_b`` (02:30)
+          -> impressions: ``{ad_b: 1}``
+          -> amount sum:  ``{ad_b: 50.0}``
+
+        Added ``Feature.sum`` alongside ``Feature.count`` to validate
+        cross-aggregation PIT correctness, not just one function.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+            Feature.sum("amount", "2h").alias("amount_sum_per_ad"),
+        ]
+        sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_pit",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        spine_df = self._session.create_dataframe(
+            [
+                (1, datetime(2024, 1, 1, 2, 0, 0)),
+                (1, datetime(2024, 1, 1, 3, 0, 0)),
+                (1, datetime(2024, 1, 1, 4, 0, 0)),
+            ],
+            schema=["user_id", "query_ts"],
+        )
+
+        result_pd = (
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("QUERY_TS")
+            .reset_index(drop=True)
+        )
+
+        self.assertEqual(len(result_pd), 3)
+
+        impressions_per_row = [
+            self._zip_keys_values(row["AD_ID_KEYS_2H"], row["IMPRESSIONS_PER_AD"]) for _, row in result_pd.iterrows()
+        ]
+        self.assertEqual(impressions_per_row[0], {"ad_a": 2, "ad_b": 1, "ad_c": 1})
+        self.assertEqual(impressions_per_row[1], {"ad_a": 1, "ad_b": 1, "ad_c": 1})
+        self.assertEqual(impressions_per_row[2], {"ad_b": 1})
+
+        # Cross-aggregation PIT correctness — amount_sum tracks the same tile
+        # windows as impression_count.
+        amount_per_row = [
+            self._zip_keys_values(row["AD_ID_KEYS_2H"], row["AMOUNT_SUM_PER_AD"]) for _, row in result_pd.iterrows()
+        ]
+        self.assertEqual(amount_per_row[0], {"ad_a": 40.0, "ad_b": 20.0, "ad_c": 40.0})
+        self.assertEqual(amount_per_row[1], {"ad_a": 30.0, "ad_b": 50.0, "ad_c": 40.0})
+        self.assertEqual(amount_per_row[2], {"ad_b": 50.0})
+
+    def test_secondary_key_supports_multiple_windows(self) -> None:
+        """Test that different windows with the same secondary key produce per-window KEYS columns.
+
+        At query_ts = 2024-01-01 04:00 with hourly granularity:
+
+        * 2h window covers tiles [02:00, 04:00):
+          User 1 → ad_b @ 02:30 → impressions_2h = {ad_b: 1}
+          User 2 → ad_a @ 02:00, ad_b @ 03:00 → impressions_2h = {ad_a: 1, ad_b: 1}
+
+        * 4h window covers tiles [00:00, 04:00):
+          User 1 → ad_a (00:30, 01:15), ad_b (00:45, 02:30), ad_c (01:45)
+                 → amount_4h = {ad_a: 40.0, ad_b: 70.0, ad_c: 40.0}
+          User 2 → ad_a (01:00, 02:00), ad_b (03:00)
+                 → amount_4h = {ad_a: 300.0, ad_b: 300.0}
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_2h"),
+            Feature.sum("amount", "4h").alias("amount_4h"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="multi_window_secondary_key",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        retrieved_fv = fs.get_feature_view("multi_window_secondary_key", "v1")
+
+        feature_names = [str(name).upper() for name in retrieved_fv.feature_names]
+        self.assertIn("AD_ID_KEYS_2H", feature_names)
+        self.assertIn("AD_ID_KEYS_4H", feature_names)
+        self.assertIn("IMPRESSIONS_2H", feature_names)
+        self.assertIn("AMOUNT_4H", feature_names)
+
+        # End-to-end: read_feature_view should also surface the per-window
+        # keys-array columns alongside their value columns.
+        read_df = fs.read_feature_view(registered_fv)
+        read_columns = [c.upper() for c in read_df.columns]
+        self.assertIn("AD_ID_KEYS_2H", read_columns)
+        self.assertIn("AD_ID_KEYS_4H", read_columns)
+        self.assertIn("IMPRESSIONS_2H", read_columns)
+        self.assertIn("AMOUNT_4H", read_columns)
+
+        # Use generate_training_set at a fixed point-in-time to validate values,
+        # not just column presence.
+        spine_df = self._session.create_dataframe(
+            [
+                (1, datetime(2024, 1, 1, 4, 0, 0)),
+                (2, datetime(2024, 1, 1, 4, 0, 0)),
+            ],
+            schema=["user_id", "query_ts"],
+        )
+        result_pd = (
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("USER_ID")
+            .reset_index(drop=True)
+        )
+
+        self.assertEqual(len(result_pd), 2)
+
+        user1 = result_pd.iloc[0]
+        user1_impressions_2h = self._zip_keys_values(user1["AD_ID_KEYS_2H"], user1["IMPRESSIONS_2H"])
+        user1_amount_4h = self._zip_keys_values(user1["AD_ID_KEYS_4H"], user1["AMOUNT_4H"])
+        # 2h window (tiles [02:00, 04:00)): only ad_b at 02:30
+        self.assertEqual(user1_impressions_2h, {"ad_b": 1})
+        # 4h window (tiles [00:00, 04:00)): ad_a (10+30=40), ad_b (20+50=70), ad_c (40)
+        self.assertEqual(user1_amount_4h, {"ad_a": 40.0, "ad_b": 70.0, "ad_c": 40.0})
+
+        user2 = result_pd.iloc[1]
+        user2_impressions_2h = self._zip_keys_values(user2["AD_ID_KEYS_2H"], user2["IMPRESSIONS_2H"])
+        user2_amount_4h = self._zip_keys_values(user2["AD_ID_KEYS_4H"], user2["AMOUNT_4H"])
+        # 2h window (tiles [02:00, 04:00)): ad_a at 02:00 and ad_b at 03:00
+        self.assertEqual(user2_impressions_2h, {"ad_a": 1, "ad_b": 1})
+        # 4h window (tiles [00:00, 04:00)): ad_a (100+200=300), ad_b (300)
+        self.assertEqual(user2_amount_4h, {"ad_a": 300.0, "ad_b": 300.0})
+
+    def test_secondary_key_same_window_different_offset(self) -> None:
+        """Two SK features with the same window but different offsets get
+        independent keys-array columns (``..._OFFSET_{offset}``) and produce
+        distinct values.
+
+        Events table snapshot:
+
+        * User 1: ``00:30 ad_a (10)``, ``00:45 ad_b (20)``, ``01:15 ad_a (30)``,
+          ``01:45 ad_c (40)``, ``02:30 ad_b (50)``
+        * User 2: ``01:00 ad_a (100)``, ``02:00 ad_a (200)``, ``03:00 ad_b (300)``
+
+        At ``query_ts = 04:00``, granularity 1h:
+
+        * 2h window @ offset=0 → tiles [02:00, 04:00):
+          U1 → ``{ad_b: 1}``, U2 → ``{ad_a: 1, ad_b: 1}``
+        * 2h window @ offset=1h → tiles [01:00, 03:00):
+          U1 → ``{ad_a: 1, ad_b: 1, ad_c: 1}``, U2 → ``{ad_a: 2}``
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_now"),
+            Feature.count("impression", "2h", offset="1h").alias("impressions_prev"),
+        ]
+        sql = f"SELECT user_id, event_ts, ad_id, impression FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_offset",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        feature_names = {str(n).upper() for n in registered_fv.feature_names}
+        self.assertIn("AD_ID_KEYS_2H", feature_names)
+        self.assertIn("AD_ID_KEYS_2H_OFFSET_1H", feature_names)
+        self.assertIn("IMPRESSIONS_NOW", feature_names)
+        self.assertIn("IMPRESSIONS_PREV", feature_names)
+
+        spine_df = self._session.create_dataframe(
+            [
+                (1, datetime(2024, 1, 1, 4, 0, 0)),
+                (2, datetime(2024, 1, 1, 4, 0, 0)),
+            ],
+            schema=["user_id", "query_ts"],
+        )
+        result_pd = (
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            )
+            .to_pandas()
+            .sort_values("USER_ID")
+            .reset_index(drop=True)
+        )
+
+        self.assertEqual(len(result_pd), 2)
+
+        user1 = result_pd.iloc[0]
+        user1_now = self._zip_keys_values(user1["AD_ID_KEYS_2H"], user1["IMPRESSIONS_NOW"])
+        user1_prev = self._zip_keys_values(user1["AD_ID_KEYS_2H_OFFSET_1H"], user1["IMPRESSIONS_PREV"])
+        self.assertEqual(user1_now, {"ad_b": 1})
+        self.assertEqual(user1_prev, {"ad_a": 1, "ad_b": 1, "ad_c": 1})
+
+        user2 = result_pd.iloc[1]
+        user2_now = self._zip_keys_values(user2["AD_ID_KEYS_2H"], user2["IMPRESSIONS_NOW"])
+        user2_prev = self._zip_keys_values(user2["AD_ID_KEYS_2H_OFFSET_1H"], user2["IMPRESSIONS_PREV"])
+        self.assertEqual(user2_now, {"ad_a": 1, "ad_b": 1})
+        self.assertEqual(user2_prev, {"ad_a": 2})
+
+    def test_secondary_key_empty_array_when_no_events_in_window(self) -> None:
+        """Entity with no events in the window should return [] (not NULL).
+
+        User 3 has no events in the ad_events table. At any query_ts, the
+        keys array and every value array should be empty (``[]``) rather than
+        ``NULL``.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [
+            Feature.count("impression", "2h").alias("impressions_per_ad"),
+            Feature.sum("amount", "2h").alias("amount_per_ad"),
+        ]
+
+        sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_ad_empty",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+            aggregation_secondary_keys=["ad_id"],
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # User 3 has no events at all; query at any time should give empty arrays.
+        spine_df = self._session.create_dataframe(
+            [(3, datetime(2024, 1, 1, 4, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
+        result_pd = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[registered_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        ).to_pandas()
+
+        self.assertEqual(len(result_pd), 1)
+        row = result_pd.iloc[0]
+
+        # The combined CTE wraps every secondary-key column in
+        # COALESCE(..., ARRAY_CONSTRUCT()) so missing entities return [] not NULL.
+        # ``to_pandas`` JSON-encodes ARRAY columns; deserialize for assertions.
+        self.assertEqual(json.loads(row["AD_ID_KEYS_2H"]), [])
+        self.assertEqual(json.loads(row["IMPRESSIONS_PER_AD"]), [])
+        self.assertEqual(json.loads(row["AMOUNT_PER_AD"]), [])
+
+    def test_secondary_key_null_value_preserves_key(self) -> None:
+        """A secondary key whose only events have NULL aggregation source values
+        still appears in the keys array; the corresponding value-array slot is
+        NULL (for ``SUM``) or 0 (for ``COUNT``, which skips NULLs by definition).
+
+        Element-alignment between the keys array and every value array must be
+        preserved through NULLs — silently dropping an all-NULL key would shift
+        every downstream value into a different ad's slot.
+
+        At ``query_ts = 04:00`` with hourly granularity and a 2h window covering
+        tiles in ``[02:00, 04:00)``:
+
+        * ``ad_a``: two events (02:30, 02:45), both with ``amount = NULL``.
+        * ``ad_b``: one event (03:15) with ``amount = 50.0``.
+
+        Expected:
+
+        * ``AD_ID_KEYS_2H = ['ad_a', 'ad_b']``
+        * ``AMOUNT_PER_AD = {ad_a: None, ad_b: 50.0}`` — ``SUM`` of all-NULLs is
+          NULL, preserved by ``ARRAY_AGG``.
+        * ``IMPRESSIONS_PER_AD = {ad_a: 0, ad_b: 1}`` — ``COUNT(amount)`` skips
+          NULLs and yields a real 0.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        # Dedicated table so the all-NULL fixture stays isolated from the
+        # shared events table other tests rely on.
+        null_events_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.ad_events_null_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {null_events_table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, ad_id VARCHAR(64), impression INT, amount FLOAT)
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {null_events_table} (user_id, event_ts, ad_id, impression, amount)
+                VALUES
+                (1, '2024-01-01 02:30:00', 'ad_a', 1, NULL),
+                (1, '2024-01-01 02:45:00', 'ad_a', 1, NULL),
+                (1, '2024-01-01 03:15:00', 'ad_b', 1, 50.0)
+            """
+        ).collect()
+
+        try:
+            features = [
+                Feature.sum("amount", "2h").alias("amount_per_ad"),
+                Feature.count("amount", "2h").alias("impressions_per_ad"),
+            ]
+            sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {null_events_table}"
+            fv = FeatureView(
+                name="user_ad_null_value",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+                aggregation_secondary_keys=["ad_id"],
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            spine_df = self._session.create_dataframe(
+                [(1, datetime(2024, 1, 1, 4, 0, 0))],
+                schema=["user_id", "query_ts"],
+            )
+            result_pd = fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            ).to_pandas()
+
+            self.assertEqual(len(result_pd), 1)
+            row = result_pd.iloc[0]
+            amount_dict = self._zip_keys_values(row["AD_ID_KEYS_2H"], row["AMOUNT_PER_AD"])
+            impressions_dict = self._zip_keys_values(row["AD_ID_KEYS_2H"], row["IMPRESSIONS_PER_AD"])
+            self.assertEqual(amount_dict, {"ad_a": None, "ad_b": 50.0})
+            self.assertEqual(impressions_dict, {"ad_a": 0, "ad_b": 1})
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {null_events_table}").collect()
 
 
 if __name__ == "__main__":

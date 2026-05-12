@@ -1,8 +1,9 @@
+import enum
 import http
 import inspect
 import logging
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,6 +20,22 @@ from snowflake.ml.model import (
 from snowflake.ml.utils import authentication
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
+
+
+class RestInferencePayloadFormat(enum.Enum):
+    """JSON request body layout for ingress calls in registry deployment integ tests.
+
+    Flat vs wide matches inference server detection: wide rows have a dict at index 1 in ``data``.
+
+    * ``FLAT`` — ``{"data": [[row_id, feat_1, …, param_1, …], …]}`` (positional).
+    * ``WIDE`` — ``{"data": [[row_id, {names → values}], …]}`` (feature dict; params merged in).
+    * ``DATAFRAME_SPLIT`` / ``DATAFRAME_RECORDS`` — pandas-oriented envelopes; params are top-level ``params``.
+    """
+
+    FLAT = "flat"
+    WIDE = "wide"
+    DATAFRAME_SPLIT = "dataframe_split"
+    DATAFRAME_RECORDS = "dataframe_records"
 
 
 class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBase):
@@ -110,6 +127,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
+        rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
         python_version: Optional[str] = None,
         conda_dependencies: Optional[list[str]] = None,
     ) -> ModelVersion:
@@ -161,6 +179,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             experimental_options=experimental_options,
             params=params,
             skip_rest_api_test=skip_rest_api_test,
+            rest_inference_formats=rest_inference_formats,
         )
 
     def _deploy_model_service(
@@ -182,6 +201,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         experimental_options: Optional[dict[str, Any]] = None,
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
+        rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
     ) -> ModelVersion:
 
         if service_name is None:
@@ -243,22 +263,26 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         if skip_rest_api_test:
             return mv
 
+        # REST shape(s) to exercise: default is flat `{"data": ...}` only.
+        if rest_inference_formats is None:
+            formats = [RestInferencePayloadFormat.FLAT]
+        else:
+            formats = list(set(rest_inference_formats))
+
         endpoint = RegistryModelDeploymentTestBase._ensure_ingress_url(mv)
         jwt_token_generator = self._get_jwt_token_generator()
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
-            # For REST API, params need to be included as columns in the DataFrame
-            rest_api_input = test_input.copy()
-            if params:
-                for param_name, param_value in params.items():
-                    rest_api_input[param_name] = [param_value] * len(rest_api_input)
-            res_df = self._inference_using_rest_api(
-                self._to_external_data_format(rest_api_input),
-                endpoint=endpoint,
-                jwt_token_generator=jwt_token_generator,
-                target_method=target_method,
-            )
-            check_func(res_df)
+            for payload_format in formats:
+                request_payload = self._build_rest_inference_request_payload(payload_format, test_input, params)
+                with self.subTest(method=target_method, rest=payload_format):
+                    res_df = self._inference_using_rest_api(
+                        request_payload,
+                        endpoint=endpoint,
+                        jwt_token_generator=jwt_token_generator,
+                        target_method=target_method,
+                    )
+                    check_func(res_df)
 
         return mv
 
@@ -343,6 +367,67 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         test_input_arr = model_signature._convert_local_data_to_df(test_input).values
         test_input_arr = np.column_stack([range(test_input_arr.shape[0]), test_input_arr])
         return {"data": test_input_arr.tolist()}
+
+    def _build_rest_inference_request_payload(
+        self,
+        payload_format: RestInferencePayloadFormat,
+        test_input: pd.DataFrame,
+        params: Optional[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build JSON body for ingress inference for the given wire format.
+
+        Args:
+            payload_format: Request layout: flat ``data`` rows, wide ``data`` dict rows, split, or records.
+            test_input: Feature columns as used for mv.run (inference parameters are not columns here).
+            params: Optional inference-time parameters: extra DataFrame columns (flat), merged into each
+                row dict (wide), or top-level ``params`` (split/records).
+
+        Returns:
+            Request body suitable for ``_inference_using_rest_api``.
+
+        Raises:
+            AssertionError: If the payload format is not supported.
+        """
+        df = model_signature._convert_local_data_to_df(test_input)
+
+        if payload_format == RestInferencePayloadFormat.FLAT:
+            rest_api_input = df.copy()
+            if params:
+                for param_name, param_value in params.items():
+                    rest_api_input[param_name] = [param_value] * len(rest_api_input)
+            return self._to_external_data_format(rest_api_input)
+
+        if payload_format == RestInferencePayloadFormat.WIDE:
+            data_rows: list[list[Any]] = []
+            for i in range(len(df)):
+                row_dict: dict[str, Any] = {}
+                for col in df.columns:
+                    row_dict[str(col)] = df.iloc[i][col]
+                if params:
+                    row_dict.update(params)
+                data_rows.append([i, row_dict])
+            return {"data": data_rows}
+
+        if payload_format == RestInferencePayloadFormat.DATAFRAME_SPLIT:
+            columns = list(df.columns)
+            payload: dict[str, Any] = {
+                "dataframe_split": {
+                    "index": list(range(len(df))),
+                    "columns": columns,
+                    "data": df.values.tolist(),
+                },
+            }
+            if params:
+                payload["params"] = params
+            return payload
+
+        if payload_format == RestInferencePayloadFormat.DATAFRAME_RECORDS:
+            payload = {"dataframe_records": df.to_dict(orient="records")}
+            if params:
+                payload["params"] = params
+            return payload
+
+        raise AssertionError(f"Unhandled RestInferencePayloadFormat: {payload_format!r}")
 
     def _inference_using_rest_api(
         self,

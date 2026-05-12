@@ -38,6 +38,8 @@ class TilingSqlGenerator:
     2. Computes partial aggregations per (join_keys, tile_start)
     3. For simple aggregations: stores SUM/COUNT as scalars
     4. For list aggregations: stores pre-sorted arrays (ARRAY_AGG with ORDER BY)
+    5. For secondary key aggregations: stores scalar partials grouped by (join_keys, secondary_key, tile_start);
+       array_agg across secondary keys is deferred to the merge step
     """
 
     def __init__(
@@ -63,6 +65,13 @@ class TilingSqlGenerator:
         self._feature_granularity = feature_granularity
         self._features = features
 
+        # Derive the FV-level secondary key from the synthesized keys-specs
+        # (each carries ``source_column = secondary_key``).
+        self._secondary_key: Optional[str] = next(
+            (s.source_column for s in features if s.function.is_secondary_key_array()),
+            None,
+        )
+
         # Parse interval for SQL generation
         self._interval_value, self._interval_unit = parse_interval(feature_granularity)
 
@@ -75,6 +84,9 @@ class TilingSqlGenerator:
         Returns:
             SQL query for creating the tile Dynamic Table.
         """
+        if self._secondary_key is not None:
+            return self._generate_secondary_key_query()
+
         tile_columns = self._generate_tile_columns()
         # Join keys and timestamp_col are already properly formatted by SqlIdentifier
         join_keys_str = ", ".join(self._join_keys)
@@ -110,6 +122,34 @@ FROM (
 """
         return query.strip()
 
+    def _generate_secondary_key_query(self) -> str:
+        """Generate the tile query when the FV has an aggregation secondary key.
+
+        Tiles are scalar partials grouped by
+        ``(join_keys..., secondary_key, TILE_START)``. Re-aggregation across
+        secondary keys (``ARRAY_AGG``) is deferred to the merge step.
+
+        Returns:
+            SQL query for tile Dynamic Table creation.
+        """
+        assert self._secondary_key is not None  # invariant: gated by caller
+        join_keys_str = ", ".join(self._join_keys)
+        ts_col = self._timestamp_col
+        secondary_key = self._secondary_key
+
+        tile_columns = self._generate_tile_columns()
+
+        query = f"""
+SELECT
+    {join_keys_str},
+    {secondary_key},
+    TIME_SLICE({ts_col}, {self._interval_value}, '{self._interval_unit}', 'START') AS {_TILE_START_COL},
+    {', '.join(tile_columns)}
+FROM ({self._source_query})
+GROUP BY {join_keys_str}, {secondary_key}, {_TILE_START_COL}
+"""
+        return query.strip()
+
     def _generate_tile_columns(self) -> list[str]:
         """Generate the tile column expressions for all features.
 
@@ -130,6 +170,9 @@ FROM (
         ts_col = self._timestamp_col
 
         for spec in self._features:
+            # _SECONDARY_KEY_ARRAY specs have no tile partials
+            if spec.function.is_secondary_key_array():
+                continue
             src_col = spec.source_column
 
             if spec.function == AggregationType.SUM:
@@ -443,7 +486,8 @@ class MergingSqlGenerator:
     1. TILES_JOINED_FVi: Join tiles with spine, filtering by window and complete tiles only
     2. SIMPLE_MERGED_FVi: Aggregate simple features (SUM, COUNT, AVG)
     3. LIST_MERGED_FVi: Flatten and aggregate list features (LAST_N, etc.)
-    4. FVi: Combine simple and list results
+    4. SECONDARY_KEY_MERGED_FVi: Merge secondary key arrays across tiles
+    5. FVi: Combine simple, list, and secondary key results
     """
 
     def __init__(
@@ -475,13 +519,29 @@ class MergingSqlGenerator:
         self._spine_timestamp_col = spine_timestamp_col
         self._fv_index = fv_index
 
-        # Separate lifetime from non-lifetime features
-        self._lifetime_features = [f for f in features if f.is_lifetime()]
-        self._non_lifetime_features = [f for f in features if not f.is_lifetime()]
+        # Derive the FV-level secondary key from synthesized keys-specs.
+        self._secondary_key: Optional[str] = next(
+            (s.source_column for s in features if s.function.is_secondary_key_array()),
+            None,
+        )
 
-        # Separate non-lifetime features by type (simple vs list)
-        self._simple_features = [f for f in self._non_lifetime_features if f.function.is_simple()]
-        self._list_features = [f for f in self._non_lifetime_features if f.function.is_list()]
+        # Separate keys / lifetime / non-lifetime value features.
+        self._keys_specs: list[AggregationSpec] = [f for f in features if f.function.is_secondary_key_array()]
+        value_features = [f for f in features if not f.function.is_secondary_key_array()]
+        self._lifetime_features = [f for f in value_features if f.is_lifetime()]
+        self._non_lifetime_features = [f for f in value_features if not f.is_lifetime()]
+
+        # When an FV-level secondary key is set, every non-lifetime value feature
+        # flows through the secondary-key merge path (per-(entity, sk)
+        # re-aggregation + ARRAY_AGG by sk).
+        if self._secondary_key is not None:
+            self._secondary_key_features = list(self._non_lifetime_features)
+            self._simple_features: list[AggregationSpec] = []
+            self._list_features: list[AggregationSpec] = []
+        else:
+            self._secondary_key_features = []
+            self._simple_features = [f for f in self._non_lifetime_features if f.function.is_simple()]
+            self._list_features = [f for f in self._non_lifetime_features if f.function.is_list()]
 
         # Lifetime features are all simple (validation ensures only SUM, COUNT, AVG, MIN, MAX, STD, VAR)
         self._lifetime_simple_features = self._lifetime_features
@@ -509,8 +569,8 @@ class MergingSqlGenerator:
         3. TILES_JOINED: Join tiles to unique boundaries (for non-lifetime features)
         4. SIMPLE_MERGED: Aggregate simple non-lifetime features per boundary
         5. LIST_MERGED: Aggregate list non-lifetime features per boundary
-        6. LIFETIME_MERGED: ASOF JOIN for lifetime features (O(1) per boundary)
-        7. LIFETIME_LIST_MERGED: Scan tiles for lifetime list features
+        6. SECONDARY_KEY_MERGED: Merge secondary key arrays across tiles
+        7. LIFETIME_MERGED: ASOF JOIN for lifetime features (O(1) per boundary)
         8. FV: Join back to spine to expand results
 
         Returns:
@@ -536,11 +596,15 @@ class MergingSqlGenerator:
         if self._list_features:
             ctes.append(self._generate_list_merged_cte())
 
-        # CTE 6: Lifetime simple aggregations (using ASOF JOIN on cumulative columns)
+        # CTE 6: Secondary key aggregations (merge arrays across tiles)
+        if self._secondary_key_features:
+            ctes.append(self._generate_secondary_key_merged_cte())
+
+        # CTE 7: Lifetime simple aggregations (using ASOF JOIN on cumulative columns)
         if self._lifetime_simple_features:
             ctes.append(self._generate_lifetime_merged_cte())
 
-        # CTE 7: Combine all results and join back to spine
+        # CTE 8: Combine all results and join back to spine
         ctes.append(self._generate_combined_cte())
 
         return ctes
@@ -634,6 +698,8 @@ class MergingSqlGenerator:
                 tile_columns_set.add(spec.get_tile_column_name("LAST"))
             elif spec.function in (AggregationType.FIRST_N, AggregationType.FIRST_DISTINCT_N):
                 tile_columns_set.add(spec.get_tile_column_name("FIRST"))
+        if self._secondary_key is not None and self._secondary_key_features:
+            tile_columns_set.add(self._secondary_key)
         tile_columns = sorted(tile_columns_set)  # Sort for deterministic output
 
         tile_columns_str = ", ".join(f"TILES.{col}" for col in tile_columns)
@@ -858,6 +924,175 @@ class MergingSqlGenerator:
 
         return cte_name, cte_body.strip()
 
+    def _generate_secondary_key_merged_cte(self) -> tuple[str, str]:
+        """Generate the CTE for secondary-key aggregations.
+
+        Inner ``GROUP BY sk`` re-aggregates scalar partials per sk; outer
+        ``ARRAY_AGG ... ORDER BY sk`` produces element-aligned keys/values
+        arrays per ``(entity, boundary)``, one subquery per ``(window, offset)``.
+
+        Returns:
+            Tuple of (cte_name, cte_body) for the secondary key merged CTE.
+
+        Raises:
+            RuntimeError: Unsupported aggregation function (unreachable given
+                upstream FV-level validation).
+        """
+        assert self._secondary_key is not None  # invariant: gated by caller
+        cte_name = f"SECONDARY_KEY_MERGED_FV{self._fv_index}"
+        secondary_key = self._secondary_key
+
+        join_keys_list = list(self._join_keys)
+        group_by_cols = join_keys_list + [_TILE_BOUNDARY_COL]
+        group_by_str = ", ".join(group_by_cols)
+
+        # Group value features by their synthesized keys-spec: one subquery
+        # per (window, offset), emitting one keys column + N value-array
+        # columns. The keys-column name comes directly from the keys-spec,
+        # so the FV's column-naming convention lives in exactly one place
+        # (``Feature._default_output_name``).
+        keys_spec_by_window_offset: dict[tuple[str, str], AggregationSpec] = {
+            (s.window, s.offset): s for s in self._keys_specs
+        }
+
+        features_by_window_offset: dict[tuple[str, str], list[AggregationSpec]] = {}
+        for spec in self._secondary_key_features:
+            group_key = (spec.window, spec.offset)
+            features_by_window_offset.setdefault(group_key, []).append(spec)
+
+        # (keys_col, value_output_cols, subquery_sql) per (window, offset) group
+        subqueries: list[tuple[str, list[str], str]] = []
+
+        for window_offset, specs in features_by_window_offset.items():
+            # WHERE-filter on the inner query so sks with no events in this
+            # window are absent from the keys array rather than showing as zero.
+            tile_filter = self._get_tile_filter_condition(specs[0])
+
+            inner_exprs: list[str] = []
+            outer_exprs: list[str] = []
+            value_output_cols: list[str] = []
+            seen_output: set[str] = set()
+
+            for spec in specs:
+                output_col = spec.get_sql_column_name()
+                if output_col in seen_output:
+                    continue
+                seen_output.add(output_col)
+                value_output_cols.append(output_col)
+
+                if spec.function == AggregationType.SUM:
+                    partial = spec.get_tile_column_name("SUM")
+                    inner_exprs.append(f"SUM({partial}) AS {output_col}")
+                elif spec.function == AggregationType.COUNT:
+                    partial = spec.get_tile_column_name("COUNT")
+                    inner_exprs.append(f"SUM({partial}) AS {output_col}")
+                elif spec.function == AggregationType.MIN:
+                    partial = spec.get_tile_column_name("MIN")
+                    inner_exprs.append(f"MIN({partial}) AS {output_col}")
+                elif spec.function == AggregationType.MAX:
+                    partial = spec.get_tile_column_name("MAX")
+                    inner_exprs.append(f"MAX({partial}) AS {output_col}")
+                elif spec.function == AggregationType.AVG:
+                    sum_partial = spec.get_tile_column_name("SUM")
+                    count_partial = spec.get_tile_column_name("COUNT")
+                    inner_exprs.append(
+                        f"CASE WHEN SUM({count_partial}) > 0 "
+                        f"THEN SUM({sum_partial}) / SUM({count_partial}) "
+                        f"ELSE NULL END AS {output_col}"
+                    )
+                elif spec.function in (AggregationType.STD, AggregationType.VAR):
+                    # VAR = SUM(SUM_SQ)/SUM(COUNT) - (SUM(SUM)/SUM(COUNT))^2
+                    # across tiles within (entity, sk). GREATEST(0, ...) clamps
+                    # fp noise; mirrors the non-SK branch above.
+                    sum_partial = spec.get_tile_column_name("SUM")
+                    count_partial = spec.get_tile_column_name("COUNT")
+                    sum_sq_partial = spec.get_tile_column_name("SUM_SQ")
+                    variance_expr = (
+                        f"SUM({sum_sq_partial}) / SUM({count_partial}) "
+                        f"- POWER(SUM({sum_partial}) / SUM({count_partial}), 2)"
+                    )
+                    if spec.function == AggregationType.STD:
+                        body = f"SQRT(GREATEST(0, {variance_expr}))"
+                    else:
+                        body = f"GREATEST(0, {variance_expr})"
+                    inner_exprs.append(
+                        f"CASE WHEN SUM({count_partial}) > 0 " f"THEN {body} " f"ELSE NULL END AS {output_col}"
+                    )
+                elif spec.function == AggregationType.APPROX_COUNT_DISTINCT:
+                    # HLL states are mergeable across tiles per (entity, sk):
+                    # combine the HLL_IMPORT'd states then estimate.
+                    partial = spec.get_tile_column_name("HLL")
+                    inner_exprs.append(f"HLL_ESTIMATE(HLL_COMBINE(HLL_IMPORT({partial}))) AS {output_col}")
+                elif spec.function == AggregationType.APPROX_PERCENTILE:
+                    # T-Digest states are likewise mergeable across tiles per
+                    # (entity, sk): combine then estimate at the requested
+                    # percentile.
+                    partial = spec.get_tile_column_name("TDIGEST")
+                    percentile = spec.params.get("percentile", 0.5)
+                    inner_exprs.append(
+                        f"APPROX_PERCENTILE_ESTIMATE(APPROX_PERCENTILE_COMBINE({partial}), {percentile}) "
+                        f"AS {output_col}"
+                    )
+                else:
+                    # Unreachable — FV-level validation restricts this set.
+                    raise RuntimeError(
+                        f"Unsupported aggregation function {spec.function} for secondary key feature "
+                        f"'{spec.output_column}'."
+                    )
+
+                # ``ARRAY_AGG`` drops SQL NULLs; coerce to VARIANT JSON null
+                # so all-NULL (entity, sk, window) groups still occupy a slot
+                # and stay element-aligned with the keys array.
+                outer_exprs.append(
+                    f"ARRAY_AGG(NVL({output_col}, PARSE_JSON('null'))) "
+                    f"WITHIN GROUP (ORDER BY {secondary_key}) AS {output_col}"
+                )
+
+            keys_output_col = keys_spec_by_window_offset[window_offset].get_sql_column_name()
+            keys_agg = f"ARRAY_AGG({secondary_key}) WITHIN GROUP (ORDER BY {secondary_key}) AS {keys_output_col}"
+
+            subquery = f"""
+    (SELECT
+         {group_by_str},
+         {keys_agg},
+         {', '.join(outer_exprs)}
+     FROM (
+         SELECT
+             {group_by_str},
+             {secondary_key},
+             {', '.join(inner_exprs)}
+         FROM TILES_JOINED_FV{self._fv_index}
+         WHERE {tile_filter}
+         GROUP BY {group_by_str}, {secondary_key}
+     ) per_sk
+     WHERE {secondary_key} IS NOT NULL
+     GROUP BY {group_by_str}
+    )"""
+
+            subqueries.append((keys_output_col, value_output_cols, subquery))
+
+        if len(subqueries) == 1:
+            cte_body = subqueries[0][2].strip()
+        else:
+            # Multiple (sk, window) groups — LEFT JOIN on (entity_keys, boundary).
+            _, _, first_query = subqueries[0]
+            projected: list[str] = [f"sq0.{col}" for col in group_by_cols]
+            projected.append(f"sq0.{subqueries[0][0]}")
+            for col in subqueries[0][1]:
+                projected.append(f"sq0.{col}")
+            for i, (keys_col, value_cols, _) in enumerate(subqueries[1:], 1):
+                projected.append(f"sq{i}.{keys_col}")
+                for col in value_cols:
+                    projected.append(f"sq{i}.{col}")
+
+            result = f"SELECT {', '.join(projected)}\n    FROM {first_query} sq0"
+            for i, (_, _, query) in enumerate(subqueries[1:], 1):
+                join_cond = " AND ".join(f"sq0.{col} = sq{i}.{col}" for col in group_by_cols)
+                result += f"\n    LEFT JOIN {query} sq{i}\n    ON {join_cond}"
+            cte_body = result
+
+        return cte_name, cte_body.strip()
+
     def _generate_lifetime_merged_cte(self) -> tuple[str, str]:
         """Generate the CTE for lifetime simple aggregations using ASOF JOIN.
 
@@ -1073,6 +1308,15 @@ class MergingSqlGenerator:
         for spec in self._list_features:
             select_cols.append(f"list_agg.{spec.get_sql_column_name()}")
 
+        # Add secondary key columns: one COALESCE-wrapped array per non-lifetime spec
+        # (covers both synthesized keys-specs and value-array specs).
+        if self._secondary_key_features:
+            for spec in self._features:
+                if spec.is_lifetime():
+                    continue
+                col = spec.get_sql_column_name()
+                select_cols.append(f"COALESCE(secondary_key.{col}, ARRAY_CONSTRUCT()) AS {col}")
+
         # Add lifetime simple feature columns
         for spec in self._lifetime_simple_features:
             select_cols.append(f"lifetime.{spec.get_sql_column_name()}")
@@ -1091,6 +1335,11 @@ class MergingSqlGenerator:
 
         if self._list_features:
             joins.append(f"LEFT JOIN LIST_MERGED_FV{self._fv_index} list_agg ON {make_join_cond('list_agg')}")
+
+        if self._secondary_key_features:
+            joins.append(
+                f"LEFT JOIN SECONDARY_KEY_MERGED_FV{self._fv_index} secondary_key ON {make_join_cond('secondary_key')}"
+            )
 
         if self._lifetime_simple_features:
             joins.append(f"LEFT JOIN LIFETIME_MERGED_FV{self._fv_index} lifetime ON {make_join_cond('lifetime')}")

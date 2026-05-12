@@ -26,8 +26,9 @@ class ModelMethodOptions(TypedDict):
     case_sensitive: Specify when the name of the method should be considered as case sensitive when registered to SQL.
     function_type: One of `ModelMethodFunctionTypes` specifying function type.
     volatility: One of `Volatility` enum values specifying function volatility.
-    model_init_once: When True the init_once template is used; when False the standard template
-        is used. Populated by get_model_method_options_from_options() from the top-level save option.
+    model_init_once: When True the init_once template is used (FUNCTION, TABLE_FUNCTION, or partitioned
+        table function); when False the standard template is used. Populated by get_model_method_options_from_options()
+        from the top-level save option.
     """
 
     case_sensitive: NotRequired[bool]
@@ -179,8 +180,7 @@ class ModelMethod:
         self, workspace_path: pathlib.Path, options: Optional[function_generator.FunctionGenerateOptions] = None
     ) -> model_manifest_schema.ModelMethodDict:
         (workspace_path / ModelMethod.FUNCTIONS_DIR_REL_PATH).mkdir(parents=True, exist_ok=True)
-        is_table_function = self.function_type == model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION.value
-        use_udf_init_once = (not is_table_function) and bool(self.options.get("model_init_once", False))
+        use_udf_init_once = bool(self.options.get("model_init_once", False))
         if use_udf_init_once:
             warnings.warn(
                 "model_init_once is a Private Preview feature. It will only take effect if enabled server-side.",

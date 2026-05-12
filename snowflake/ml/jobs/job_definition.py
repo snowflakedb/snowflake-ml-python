@@ -166,7 +166,11 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
             self.session, self.compute_pool, self.runtime_environment
         )
 
-        combined_env_vars = {**uploaded_payload.env_vars, **(self.env_vars or {})}
+        combined_env_vars = {
+            **uploaded_payload.env_vars,
+            constants.USE_EMBEDDED_SCRIPTS_ENV_VAR: "true",
+            **(self.env_vars or {}),
+        }
         self.entrypoint_args = [v.as_posix() if isinstance(v, PurePath) else v for v in uploaded_payload.entrypoint]
         self.spec_options = type_utils.SpecOptions(
             stage_path=stage_path.as_posix(),
