@@ -78,6 +78,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
+            rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
         )
 
 

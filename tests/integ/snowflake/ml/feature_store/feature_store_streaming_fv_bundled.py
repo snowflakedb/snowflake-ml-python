@@ -184,6 +184,17 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         stream_config_data = json.loads(row["STREAM_CONFIG"])
         self.assertEqual(stream_config_data["stream_source"], self._stream_source_ref_key(stream))
         self.assertEqual(stream_config_data["transformation_fn"], "identity_transform")
+        # ``backfill_status`` is surfaced inside ``stream_config`` (not as
+        # a top-level column) so non-streaming FVs never see a misleading
+        # backfill field. Right after registration it is ``RUNNING``; the
+        # finalizer flips it to ``COMPLETED``/``FAILED`` once the graph
+        # terminates. We accept any of the three terminal/intermediate
+        # values to avoid racing the finalizer in a tight test.
+        self.assertIn(
+            stream_config_data.get("backfill_status"),
+            {"RUNNING", "COMPLETED", "FAILED"},
+            f"unexpected backfill_status: {stream_config_data!r}",
+        )
 
     def test_streaming_fv_ref_count(self) -> None:
         """Test that stream source ref_count is incremented on register."""

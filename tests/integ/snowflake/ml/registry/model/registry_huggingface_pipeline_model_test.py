@@ -765,12 +765,73 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIsInstance(row, dict)
                 self.assertIn("text", row)
 
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            for row in res["outputs"]:
+                self.assertIsInstance(row, dict)
+                self.assertIn("text", row)
+
         self._test_registry_model(
             model=model,
             prediction_assert_fns={
                 "": (
                     x_df,
                     check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Length control (INT64)
+                        "max_new_tokens": 20,
+                        "max_length": 100,
+                        "min_length": 1,
+                        "min_new_tokens": 1,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling strategy (BOOL, INT64, DOUBLE)
+                        "do_sample": False,
+                        "num_beams": 1,
+                        "num_beam_groups": 1,
+                        "penalty_alpha": 0.0,
+                        # Sampling parameters (INT64, DOUBLE)
+                        "temperature": 1.0,
+                        "top_k": 50,
+                        "top_p": 1.0,
+                        "min_p": 0.0,
+                        "typical_p": 1.0,
+                        "epsilon_cutoff": 0.0,
+                        "eta_cutoff": 0.0,
+                        # Diversity / repetition (DOUBLE, INT64)
+                        "diversity_penalty": 0.0,
+                        "repetition_penalty": 1.0,
+                        "encoder_repetition_penalty": 1.0,
+                        "length_penalty": 1.0,
+                        "no_repeat_ngram_size": 0,
+                        # Token manipulation (BOOL, INT64)
+                        "renormalize_logits": False,
+                        "remove_invalid_values": False,
+                        # Output control (INT64, BOOL)
+                        "num_return_sequences": 1,
+                        "output_attentions": False,
+                        "output_hidden_states": False,
+                        "output_scores": False,
+                        "output_logits": False,
+                        # Encoder-decoder (INT64)
+                        "encoder_no_repeat_ngram_size": 0,
+                        # Miscellaneous (DOUBLE, BOOL)
+                        "guidance_scale": 1.0,
+                        "low_memory": False,
+                        "use_cache": True,
+                        # Shaped params: list (INT64, shape=(-1,))
+                        "suppress_tokens": [1, 2, 3],
+                        "begin_suppress_tokens": [1, 2],
+                        # Task-specific (STRING)
+                        "return_language": "en",
+                    },
+                    check_res_with_params,
                 ),
             },
             additional_dependencies=["ffmpeg"],
@@ -1076,6 +1137,399 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 ),
             },
             additional_dependencies=["pillow==12.0"],
+        )
+
+    def test_text_generation_non_chat_pipeline_with_params(self) -> None:
+        import transformers
+
+        model = transformers.pipeline(
+            task="text-generation",
+            model="hf-internal-testing/tiny-random-gpt2",
+        )
+
+        x_df = pd.DataFrame(
+            [{"inputs": "Once upon a time"}],
+        )
+
+        def check_res(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("generated_text", row[0])
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                self.assertGreater(len(row), 0)
+                self.assertIn("generated_text", row[0])
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Length control (INT64)
+                        "max_new_tokens": 10,
+                        "min_new_tokens": 2,
+                        "max_length": 50,
+                        "min_length": 5,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling strategy (BOOL, INT64, DOUBLE)
+                        "do_sample": True,
+                        "num_beams": 1,
+                        "num_beam_groups": 1,
+                        "penalty_alpha": 0.0,
+                        # Sampling parameters (INT64, DOUBLE)
+                        "temperature": 0.8,
+                        "top_k": 50,
+                        "top_p": 0.9,
+                        "min_p": 0.0,
+                        "typical_p": 0.95,
+                        "epsilon_cutoff": 0.0,
+                        "eta_cutoff": 0.0,
+                        # Diversity / repetition (DOUBLE, INT64)
+                        "diversity_penalty": 0.0,
+                        "repetition_penalty": 1.2,
+                        "encoder_repetition_penalty": 1.0,
+                        "length_penalty": 1.0,
+                        "no_repeat_ngram_size": 3,
+                        # Token manipulation (BOOL, INT64)
+                        "renormalize_logits": True,
+                        "remove_invalid_values": False,
+                        # Output control (INT64, BOOL)
+                        "num_return_sequences": 1,
+                        "output_attentions": False,
+                        "output_hidden_states": False,
+                        "output_scores": False,
+                        "output_logits": False,
+                        # Token IDs (INT64)
+                        "pad_token_id": 0,
+                        "eos_token_id": 50256,
+                        # Encoder-decoder (INT64)
+                        "encoder_no_repeat_ngram_size": 0,
+                        # Assisted generation (INT64, STRING)
+                        "num_assistant_tokens": 5,
+                        "num_assistant_tokens_schedule": "heuristic",
+                        # Miscellaneous (DOUBLE, BOOL)
+                        "guidance_scale": 1.0,
+                        "low_memory": False,
+                        "use_cache": True,
+                        # Shaped params: list (INT64, shape=(-1,))
+                        "suppress_tokens": [50256],
+                        "begin_suppress_tokens": [50256],
+                        # Shaped params: list-of-lists (INT64, shape=(-1,-1))
+                        "bad_words_ids": [[50256]],
+                        "forced_decoder_ids": [[1, 50256]],
+                    },
+                    check_res_with_params,
+                ),
+            },
+        )
+
+    def test_summarization_pipeline_with_params(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_summarization_pipeline_with_params,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
+        import transformers
+
+        model = transformers.pipeline(task="summarization", model="Falconsai/text_summarization")
+
+        x_df = pd.DataFrame(
+            [
+                {
+                    "documents": (
+                        "Snowflake's Data Cloud is powered by an advanced data platform provided as a self-managed "
+                        "service. Snowflake enables data storage, processing, and analytic solutions."
+                    )
+                }
+            ],
+        )
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["summary_text"]))
+            self.assertEqual(res["summary_text"].dtype.type, str)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res_with_params,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Task-specific params (BOOL, STRING)
+                        "clean_up_tokenization_spaces": True,
+                        "truncation": "longest_first",
+                        # Length control (INT64)
+                        "max_new_tokens": 10,
+                        "max_length": 50,
+                        "min_length": 1,
+                        "min_new_tokens": 1,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling (BOOL, INT64, DOUBLE)
+                        "do_sample": True,
+                        "num_beams": 1,
+                        "num_beam_groups": 1,
+                        "temperature": 0.5,
+                        "top_k": 50,
+                        "top_p": 0.9,
+                        "min_p": 0.0,
+                        "typical_p": 1.0,
+                        # Repetition (DOUBLE, INT64)
+                        "repetition_penalty": 1.1,
+                        "no_repeat_ngram_size": 2,
+                        "length_penalty": 1.0,
+                        # Boolean flags
+                        "renormalize_logits": True,
+                        "remove_invalid_values": False,
+                        "output_attentions": False,
+                        "output_hidden_states": False,
+                        "output_scores": False,
+                        "low_memory": False,
+                        "use_cache": True,
+                        # INT64 scalars
+                        "num_return_sequences": 1,
+                        "encoder_no_repeat_ngram_size": 0,
+                    },
+                    check_res_with_params,
+                ),
+            },
+            additional_dependencies=[
+                "sentencepiece",
+            ],
+        )
+
+    def test_translation_pipeline_with_params(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_translation_pipeline_with_params,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
+        import transformers
+
+        model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")
+
+        x_df = pd.DataFrame([{"inputs": "Hello, how are you?"}])
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["translation_text"]))
+            self.assertEqual(res["translation_text"].dtype.type, str)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res_with_params,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Task-specific params (STRING)
+                        "src_lang": "en",
+                        "tgt_lang": "ja",
+                        # Length control (INT64)
+                        "max_new_tokens": 5,
+                        "max_length": 30,
+                        "min_length": 1,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling (BOOL, INT64, DOUBLE)
+                        "do_sample": False,
+                        "num_beams": 1,
+                        "temperature": 1.0,
+                        "top_k": 50,
+                        "top_p": 1.0,
+                        # Repetition (DOUBLE, INT64)
+                        "repetition_penalty": 1.0,
+                        "no_repeat_ngram_size": 0,
+                        "length_penalty": 1.0,
+                        # Boolean flags
+                        "renormalize_logits": False,
+                        "use_cache": True,
+                        # INT64 scalars
+                        "num_return_sequences": 1,
+                    },
+                    check_res_with_params,
+                ),
+            },
+            additional_dependencies=["sentencepiece"],
+        )
+
+    def test_text2text_generation_pipeline_with_params(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_text2text_generation_pipeline_with_params,
+             because it doesn't work with transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
+        import transformers
+
+        model = transformers.pipeline(
+            task="text2text-generation",
+            model="google-t5/t5-small",
+        )
+
+        x_df = pd.DataFrame(
+            [{"inputs": "translate English to French: Hello, how are you?"}],
+        )
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["generated_text"]))
+            self.assertEqual(res["generated_text"].dtype.type, str)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res_with_params,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Task-specific params (BOOL, STRING)
+                        "clean_up_tokenization_spaces": True,
+                        "truncation": "longest_first",
+                        # Length control (INT64)
+                        "max_new_tokens": 10,
+                        "max_length": 50,
+                        "min_length": 1,
+                        "min_new_tokens": 1,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling (BOOL, INT64, DOUBLE)
+                        "do_sample": True,
+                        "num_beams": 1,
+                        "num_beam_groups": 1,
+                        "temperature": 0.7,
+                        "top_k": 50,
+                        "top_p": 0.9,
+                        "min_p": 0.0,
+                        "typical_p": 1.0,
+                        # Repetition (DOUBLE, INT64)
+                        "repetition_penalty": 1.2,
+                        "no_repeat_ngram_size": 3,
+                        "length_penalty": 1.0,
+                        # Boolean flags
+                        "renormalize_logits": True,
+                        "remove_invalid_values": False,
+                        "output_attentions": False,
+                        "output_hidden_states": False,
+                        "output_scores": False,
+                        "low_memory": False,
+                        "use_cache": True,
+                        # INT64 scalars
+                        "num_return_sequences": 1,
+                        "encoder_no_repeat_ngram_size": 0,
+                    },
+                    check_res_with_params,
+                ),
+            },
+        )
+
+    def test_image_to_text_pipeline_with_params(self) -> None:
+        self.skipTest(
+            """SNOW-3425334: Skipping test_image_to_text_pipeline_with_params,
+             because image-to-text was removed in transformers 5.x.
+             TODO: Migrate these tests to use `TransformersPipelineModel`
+             after next image release 1.6.0"""
+        )
+        import transformers
+
+        model = transformers.pipeline(
+            task="image-to-text",
+            model="nlpconnect/vit-gpt2-image-captioning",
+        )
+
+        from PIL import Image
+
+        img = Image.new("RGB", (224, 224), color="red")
+        import io
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        img_bytes = buf.getvalue()
+
+        x_df = pd.DataFrame({"images": [img_bytes]})
+
+        def check_res_with_params(res: pd.DataFrame) -> None:
+            pd.testing.assert_index_equal(res.columns, pd.Index(["outputs"]))
+            for row in res["outputs"]:
+                self.assertIsInstance(row, list)
+                for entry in row:
+                    self.assertIn("generated_text", entry)
+
+        self._test_registry_model(
+            model=model,
+            prediction_assert_fns={
+                "": (
+                    x_df,
+                    check_res_with_params,
+                ),
+            },
+            params_assert_fns={
+                "": (
+                    x_df,
+                    {
+                        # Length control (INT64)
+                        "max_new_tokens": 10,
+                        "max_length": 50,
+                        "min_length": 1,
+                        # Stopping criteria (STRING, DOUBLE)
+                        "early_stopping": "never",
+                        "max_time": 60.0,
+                        # Sampling (BOOL, INT64, DOUBLE)
+                        "do_sample": False,
+                        "num_beams": 1,
+                        "temperature": 1.0,
+                        "top_k": 50,
+                        "top_p": 1.0,
+                        # Repetition (DOUBLE, INT64)
+                        "repetition_penalty": 1.0,
+                        "no_repeat_ngram_size": 0,
+                        "length_penalty": 1.0,
+                        # Boolean flags
+                        "renormalize_logits": False,
+                        "remove_invalid_values": False,
+                        "output_attentions": False,
+                        "output_hidden_states": False,
+                        "output_scores": False,
+                        "low_memory": False,
+                        "use_cache": True,
+                        # INT64 scalars
+                        "num_return_sequences": 1,
+                    },
+                    check_res_with_params,
+                ),
+            },
         )
 
 

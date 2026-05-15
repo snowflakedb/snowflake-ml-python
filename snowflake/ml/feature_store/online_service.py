@@ -10,7 +10,7 @@ import datetime
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from snowflake.ml._internal.exceptions import (
     error_codes,
@@ -779,7 +779,7 @@ def _postgres_online_query_result_schema(
 #   - Snowpark (``as_pandas=False``): ``_coerce_row_values_for_snowpark_local_schema``
 #     fixes values that Snowpark's literal-SQL layer rejects, then
 #     ``Session.create_dataframe(rows, schema)``.
-#   - Pandas fast path (``as_pandas=True``): ``_rows_to_pandas_for_postgres_online``
+#   - Pandas fast path (``as_pandas=True``): ``rows_to_pandas_for_postgres_online``
 #     builds a ``pandas.DataFrame`` directly with dtypes pinned to match
 #     ``Session.create_dataframe(...).to_pandas()``.
 # Type vocabulary comes from ``_snowflake_query_api_type_to_snowpark`` above.
@@ -890,8 +890,11 @@ def _parse_binary(value: Any) -> Any:
     return value
 
 
-def _rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: StructType) -> pd.DataFrame:
+def rows_to_pandas_for_postgres_online(rows: list[dict[str, Any]], schema: StructType) -> pd.DataFrame:
     """Build a ``pandas.DataFrame`` from Query API rows with dtypes matching Snowpark's ``.to_pandas()``.
+
+    Used by :meth:`FeatureStore.read_feature_view` (pandas branch) and
+    :meth:`FeatureStore.read_feature_group`.
 
     Schema is produced by ``_snowflake_query_api_type_to_snowpark``; per-type dtype mapping:
 
@@ -1090,6 +1093,7 @@ def read_postgres_online_features(
     feature_names: Optional[list[str]],
     *,
     join_key_field_types: dict[str, Any],
+    object_type: Literal["feature_view", "feature_group"] = "feature_view",
     timeout_sec: float = 120.0,
     http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
 ) -> tuple[list[dict[str, Any]], Any]:
@@ -1104,14 +1108,21 @@ def read_postgres_online_features(
         session: Snowpark session (reserved for future use). Auth requires ``SNOWFLAKE_PAT``; see
             :func:`online_service_http_client.online_service_pat_from_env`.
         query_url: Base URL for the ``query`` endpoint from Online Service status.
-        feature_view_name: Logical feature view name.
-        feature_view_version: Feature view version string (e.g. ``v1``).
+        feature_view_name: Logical name of the FV or FG (sent verbatim as the
+            request body's ``name`` field; the server resolves which OFT
+            via ``object_type``).
+        feature_view_version: FV or FG version string (e.g. ``v1``); sent as
+            the request body's ``version`` field.
         join_key_names: Flattened entity join key column names (same order as each row in ``keys``).
         keys: Non-empty list of entity rows; internally chunked to the API limit (10 rows per request).
         feature_names: If set, only these features are included (must appear in ``metadata.features``,
             matched case-insensitively); order follows this list. If ``None``, all features from
-            ``metadata.features`` are included, in response order.
+            ``metadata.features`` are included, in response order. Must be ``None`` when
+            ``object_type="feature_group"`` because the server rejects ``features`` filtering for
+            FeatureGroups (the FG always returns its full predetermined output column set).
         join_key_field_types: Snowpark types for join keys (from feature view ``output_schema``).
+        object_type: ``"feature_view"`` (default) or ``"feature_group"``. Sent as the ``object_type``
+            field on the Query API request body so the server resolves the right OFT.
         timeout_sec: Per-request timeout.
         http_client: Optional pooled client; when ``None``, each call opens a fresh connection.
 
@@ -1133,6 +1144,15 @@ def read_postgres_online_features(
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,
             original_exception=ValueError("join_key_names must be non-empty."),
+        )
+    if object_type == "feature_group" and feature_names is not None:
+        # Mirror the server-side validator so callers see a typed client-side error.
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "feature_names filtering is not supported for object_type='feature_group'; "
+                "FeatureGroups always return their predetermined output column set."
+            ),
         )
     for row in keys:
         if len(row) != len(join_key_names):
@@ -1169,7 +1189,7 @@ def read_postgres_online_features(
             body: dict[str, Any] = {
                 "name": str(feature_view_name),
                 "version": str(feature_view_version),
-                "object_type": "feature_view",
+                "object_type": object_type,
                 "metadata_options": {"include_names": True, "include_data_types": True},
                 "request_rows": request_rows,
             }

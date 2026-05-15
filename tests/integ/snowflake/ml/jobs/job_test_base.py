@@ -53,6 +53,7 @@ class JobTestBase(parameterized.TestCase):
     @classmethod
     def tearDownClass(cls) -> None:
         cls.dbm.drop_schema(cls.schema, if_exists=True)
+        cls.session.close()
         super().tearDownClass()
 
     def _submit_func_as_file(self, func: Callable[[], None], **kwargs: Any) -> jobs.MLJob[None]:

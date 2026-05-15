@@ -10,6 +10,36 @@ if TYPE_CHECKING:
     import transformers
 
 
+def _filter_none_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Filter out None-valued kwargs before forwarding to HuggingFace pipelines.
+
+    The UDF template substitutes default_value for every ParamSpec when the user sends NULL.
+    Since all generation ParamSpecs have default_value=None, unset params arrive here as
+    key=None. HF pipelines error on explicit None values, so we strip them.
+
+    For dict-valued params (from ParamGroupSpec, e.g. watermarking_config), the default is a
+    dict with all-None values. We recursively filter None entries within nested dicts and omit
+    any dict entirely if empty after filtering.
+
+    Args:
+        kwargs: Raw kwargs from the UDF runner, potentially containing None values.
+
+    Returns:
+        A new dict with None scalars removed and nested dicts cleaned of None entries.
+    """
+    filtered = {}
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            inner = _filter_none_kwargs(v)
+            if inner:
+                filtered[k] = inner
+        else:
+            filtered[k] = v
+    return filtered
+
+
 class HuggingFaceTaskHandler(ABC):
     """Abstract base class for task-specific HuggingFace pipeline inference logic.
 

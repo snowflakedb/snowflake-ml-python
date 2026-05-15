@@ -27,6 +27,7 @@ py_library(
         "aggregation.py",
         "entity.py",
         "feature.py",
+        "feature_group.py",
         "feature_store.py",
         "feature_view.py",
         "interval_utils.py",
@@ -69,6 +70,54 @@ py_package(
 py_test(
     name = "feature_view_test",
     srcs = ["feature_view_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_group_test",
+    srcs = ["feature_group_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_feature_group_test",
+    srcs = ["feature_store_feature_group_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_feature_group_read_test",
+    srcs = ["feature_store_feature_group_read_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_feature_group_training_set_test",
+    srcs = ["feature_store_feature_group_training_set_test.py"],
     tags = [
         "feature:feature_store",
         "short_regress",
@@ -189,6 +238,18 @@ py_test(
     name = "streaming_registration_test",
     srcs = ["streaming_registration_test.py"],
     tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_refresh_history_test",
+    srcs = ["feature_store_refresh_history_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
     deps = [
         ":feature_store_lib",
     ],

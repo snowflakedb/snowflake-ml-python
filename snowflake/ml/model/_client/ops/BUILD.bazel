@@ -139,6 +139,7 @@ py_library(
         "//snowflake/ml/_internal/utils:service_logger",
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/jobs:ml_job",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_client/model:batch_inference_serialization",

@@ -34,6 +34,7 @@ class MetadataObjectType(str, Enum):
 
     FEATURE_VIEW = "FEATURE_VIEW"
     STREAM_SOURCE = "STREAM_SOURCE"
+    FEATURE_GROUP = "FEATURE_GROUP"
 
 
 class MetadataType(str, Enum):
@@ -44,6 +45,7 @@ class MetadataType(str, Enum):
     ROLLUP_CONFIG = "ROLLUP_CONFIG"
     STREAM_SOURCE_CONFIG = "STREAM_SOURCE_CONFIG"
     STREAM_CONFIG = "STREAM_CONFIG"
+    FEATURE_GROUP_CONFIG = "FEATURE_GROUP_CONFIG"
 
 
 @dataclass
@@ -74,6 +76,15 @@ class AggregationMetadata:
         )
 
 
+# Allowed values for ``StreamingMetadata.backfill_state``.
+# ``RUNNING`` is written client-side at registration after task graph DDL succeeds.
+# ``COMPLETED``/``FAILED`` are written server-side by the finalizer task body.
+BACKFILL_STATE_RUNNING = "RUNNING"
+BACKFILL_STATE_COMPLETED = "COMPLETED"
+BACKFILL_STATE_FAILED = "FAILED"
+_VALID_BACKFILL_STATES = frozenset({BACKFILL_STATE_RUNNING, BACKFILL_STATE_COMPLETED, BACKFILL_STATE_FAILED})
+
+
 @dataclass
 class StreamingMetadata:
     """Streaming configuration metadata for streaming feature views.
@@ -85,7 +96,15 @@ class StreamingMetadata:
     transformation_fn_name: str
     transformation_fn_source: Optional[str] = None  # Full source code of the UDF
     backfill_start_time: Optional[str] = None  # ISO format, or None if no filter
-    backfill_query_id: Optional[str] = None  # AsyncJob query_id from backfill
+    backfill_root_task_name: Optional[str] = None  # Root task of the backfill task graph
+    backfill_finalize_task_name: Optional[str] = None  # Finalizer task of the backfill task graph
+    backfill_proc_name: Optional[str] = None  # Stored procedure that the root task CALLs
+    backfill_udtf_name: Optional[str] = None  # Per-FV permanent UDTF the proc invokes
+    backfill_udtf_signature: Optional[str] = None  # Argument-type signature for DROP FUNCTION
+    # ``RUNNING`` while the backfill task graph is in flight, ``COMPLETED`` /
+    # ``FAILED`` once the finalizer has observed terminal state. ``None`` for
+    # streaming FVs registered before this field existed.
+    backfill_state: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -97,19 +116,120 @@ class StreamingMetadata:
             d["transformation_fn_source"] = self.transformation_fn_source
         if self.backfill_start_time is not None:
             d["backfill_start_time"] = self.backfill_start_time
-        if self.backfill_query_id is not None:
-            d["backfill_query_id"] = self.backfill_query_id
+        if self.backfill_root_task_name is not None:
+            d["backfill_root_task_name"] = self.backfill_root_task_name
+        if self.backfill_finalize_task_name is not None:
+            d["backfill_finalize_task_name"] = self.backfill_finalize_task_name
+        if self.backfill_proc_name is not None:
+            d["backfill_proc_name"] = self.backfill_proc_name
+        if self.backfill_udtf_name is not None:
+            d["backfill_udtf_name"] = self.backfill_udtf_name
+        if self.backfill_udtf_signature is not None:
+            d["backfill_udtf_signature"] = self.backfill_udtf_signature
+        if self.backfill_state is not None:
+            d["backfill_state"] = self.backfill_state
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StreamingMetadata:
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        Unknown keys (e.g. legacy ``backfill_query_id`` from rows written by
+        earlier versions) are silently ignored. Unrecognized ``backfill_state``
+        values are dropped to ``None`` rather than crashing forward-loading.
+
+        Args:
+            data: JSON-decoded streaming metadata blob.
+
+        Returns:
+            ``StreamingMetadata`` instance.
+        """
+        raw_backfill_state = data.get("backfill_state")
+        if raw_backfill_state is not None and raw_backfill_state not in _VALID_BACKFILL_STATES:
+            raw_backfill_state = None
         return cls(
             stream_source_name=data["stream_source_name"],
             transformation_fn_name=data["transformation_fn_name"],
             transformation_fn_source=data.get("transformation_fn_source"),
             backfill_start_time=data.get("backfill_start_time"),
-            backfill_query_id=data.get("backfill_query_id"),
+            backfill_root_task_name=data.get("backfill_root_task_name"),
+            backfill_finalize_task_name=data.get("backfill_finalize_task_name"),
+            backfill_proc_name=data.get("backfill_proc_name"),
+            backfill_udtf_name=data.get("backfill_udtf_name"),
+            backfill_udtf_signature=data.get("backfill_udtf_signature"),
+            backfill_state=raw_backfill_state,
+        )
+
+
+@dataclass
+class FeatureGroupSourceRef:
+    """Persisted reference to one source FV inside a :class:`FeatureGroup`."""
+
+    fv_name: str
+    fv_version: str
+    slice_columns: Optional[list[str]] = None
+    alias: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-friendly dict."""
+        d: dict[str, Any] = {"fv_name": self.fv_name, "fv_version": self.fv_version}
+        if self.slice_columns is not None:
+            d["slice_columns"] = list(self.slice_columns)
+        if self.alias is not None:
+            d["alias"] = self.alias
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeatureGroupSourceRef:
+        """Build from a dict produced by :meth:`to_dict`."""
+        return cls(
+            fv_name=data["fv_name"],
+            fv_version=data["fv_version"],
+            slice_columns=list(data["slice_columns"]) if "slice_columns" in data else None,
+            alias=data.get("alias"),
+        )
+
+
+@dataclass
+class FeatureGroupMetadata:
+    """Persisted configuration for a registered :class:`FeatureGroup`, keyed by ``(name, version)``.
+
+    ``output_columns`` is captured at register time and persisted so
+    ``list_feature_groups`` does not have to rehydrate source FVs; ``Optional``
+    so legacy rows written before the field existed decode as ``None``.
+    """
+
+    name: str
+    version: str
+    desc: str
+    auto_prefix: bool
+    sources: list[FeatureGroupSourceRef]
+    output_columns: Optional[list[str]] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-friendly dict."""
+        d: dict[str, Any] = {
+            "name": self.name,
+            "version": self.version,
+            "desc": self.desc,
+            "auto_prefix": self.auto_prefix,
+            "sources": [s.to_dict() for s in self.sources],
+        }
+        if self.output_columns is not None:
+            d["output_columns"] = list(self.output_columns)
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeatureGroupMetadata:
+        """Build from a dict produced by :meth:`to_dict`."""
+        raw_output_columns = data.get("output_columns")
+        return cls(
+            name=data["name"],
+            version=data["version"],
+            desc=data.get("desc", ""),
+            auto_prefix=bool(data["auto_prefix"]),
+            sources=[FeatureGroupSourceRef.from_dict(s) for s in data.get("sources", [])],
+            output_columns=list(raw_output_columns) if raw_output_columns is not None else None,
         )
 
 
@@ -473,6 +593,98 @@ class FeatureStoreMetadataManager:
         if data is None:
             return None
         return StreamingMetadata.from_dict(data)
+
+    # =========================================================================
+    # Feature Group Metadata
+    # =========================================================================
+
+    def save_feature_group_metadata(self, metadata: FeatureGroupMetadata) -> None:
+        """Persist :class:`FeatureGroupMetadata` for a registered FeatureGroup.
+
+        Args:
+            metadata: The metadata to upsert.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_GROUP,
+            object_name=metadata.name,
+            version=metadata.version,
+            metadata_type=MetadataType.FEATURE_GROUP_CONFIG,
+            metadata=metadata.to_dict(),
+        )
+
+    def get_feature_group_metadata(self, name: str, version: str) -> Optional[FeatureGroupMetadata]:
+        """Read :class:`FeatureGroupMetadata` for a registered FeatureGroup.
+
+        Args:
+            name: FeatureGroup name (resolved identifier, no quoting).
+            version: FeatureGroup version (case-preserved string).
+
+        Returns:
+            The metadata, or ``None`` if no row exists.
+        """
+        data = self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_GROUP,
+            object_name=name,
+            version=version,
+            metadata_type=MetadataType.FEATURE_GROUP_CONFIG,
+        )
+        if data is None:
+            return None
+        return FeatureGroupMetadata.from_dict(data)
+
+    def list_feature_group_metadata(self) -> list[FeatureGroupMetadata]:
+        """Return every persisted :class:`FeatureGroupMetadata` row.
+
+        Used by :meth:`FeatureStore.list_feature_groups` to surface the
+        ``version`` column without N+1 metadata fetches.
+
+        Returns:
+            All FG metadata rows in unspecified order; empty list when the
+            metadata table doesn't exist or holds no FG rows.
+        """
+        if not self._check_table_exists():
+            return []
+
+        result = self._session.sql(
+            f"""
+            SELECT METADATA
+            FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_GROUP.value}'
+            AND METADATA_TYPE = '{MetadataType.FEATURE_GROUP_CONFIG.value}'
+            """
+        ).collect(statement_params=self._telemetry_stmp)
+
+        out: list[FeatureGroupMetadata] = []
+        for row in result:
+            metadata_value = row["METADATA"]
+            if isinstance(metadata_value, str):
+                data = json.loads(metadata_value)
+            else:
+                data = dict(metadata_value)
+            out.append(FeatureGroupMetadata.from_dict(data))
+        return out
+
+    def delete_feature_group_metadata(self, name: str, version: str) -> None:
+        """Delete the metadata row for a FeatureGroup ``(name, version)``, if present.
+
+        Args:
+            name: FeatureGroup name (resolved identifier, no quoting).
+            version: FeatureGroup version (case-preserved string).
+        """
+        if not self._check_table_exists():
+            return
+
+        normalized_name = name.strip('"')
+        self._session.sql(
+            f"""
+            DELETE FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_GROUP.value}'
+            AND OBJECT_NAME = '{normalized_name}'
+            AND VERSION = '{version}'
+            AND METADATA_TYPE = '{MetadataType.FEATURE_GROUP_CONFIG.value}'
+            """
+        ).collect(statement_params=self._telemetry_stmp)
 
     # =========================================================================
     # Stream Source

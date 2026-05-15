@@ -71,6 +71,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             gpu_requests="1",
             pip_requirements=pip_requirements,
             use_default_repo=use_default_repo,
+            rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
         )
 
     @parameterized.product(  # type: ignore[misc]

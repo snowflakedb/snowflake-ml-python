@@ -6,6 +6,7 @@ from typing import Any, Optional, Union
 import yaml
 
 from snowflake.ml._internal.utils import identifier, sql_identifier
+from snowflake.ml.feature_store import feature_view
 from snowflake.ml.model import inference_engine as inference_engine_module
 from snowflake.ml.model._client.service import model_deployment_spec_schema
 
@@ -148,6 +149,7 @@ class ModelDeploymentSpec:
         num_workers: Optional[int] = None,
         max_batch_rows: Optional[int] = None,
         autocapture: Optional[bool] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
     ) -> "ModelDeploymentSpec":
         """Add service specification to the deployment spec.
 
@@ -165,6 +167,11 @@ class ModelDeploymentSpec:
             num_workers: Number of workers.
             max_batch_rows: Maximum batch rows for inference.
             autocapture: Whether to enable inference table.
+            feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
+                registered FeatureView objects that supply feature columns at inference time. The list is plumbed into
+                the deploy spec's ``service.feature_retrieval.lookups`` block; today the server requires exactly one
+                FeatureView per function, but the list shape is preserved so a future relaxation does not require a
+                client change. Pass ``None`` (default) to omit the block entirely.
 
         Raises:
             ValueError: If a job spec already exists.
@@ -194,6 +201,11 @@ class ModelDeploymentSpec:
             autocapture=autocapture,
             **self._inference_spec,
         )
+        # `is not None` (not truthiness) so an empty dict is rejected loudly
+        # by _build_feature_retrieval_config rather than silently producing
+        # a service spec without the feature_retrieval block.
+        if feature_sources_per_function is not None:
+            self._service.feature_retrieval = _build_feature_retrieval_config(feature_sources_per_function)
         return self
 
     def add_job_spec(
@@ -519,3 +531,68 @@ class ModelDeploymentSpec:
         with file_path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(yaml_content, f)
         return str(file_path.resolve())
+
+
+def _build_feature_retrieval_config(
+    sources_per_function: dict[str, list[feature_view.FeatureView]],
+) -> model_deployment_spec_schema.FeatureRetrievalConfig:
+    """Translate ``{method_name: [FeatureView, ...]}`` into the deploy spec's
+    ``service.feature_retrieval.lookups`` block.
+
+    Each ``source`` is the FeatureView's logical 3-part name
+    (``DB.SCHEMA.NAME``) — NOT ``FeatureView.fully_qualified_name()`` which
+    appends ``$<version>`` and points at the physical OFT table. The server
+    resolves the logical name against its catalog and composes the physical
+    ``$<version>$ONLINE`` form internally; the wire ``version`` field
+    travels separately.
+
+    Args:
+        sources_per_function: Mapping from model method name to the list of
+            registered FeatureView objects whose columns should be looked up
+            at inference time for that method.
+
+    Returns:
+        A ``FeatureRetrievalConfig`` ready to be assigned to
+        ``Service.feature_retrieval``.
+
+    Raises:
+        ValueError: If ``sources_per_function`` itself is empty, if any
+            method's FeatureView list is empty, or if a FeatureView is
+            unregistered (no version / database / schema set).
+    """
+    if not sources_per_function:
+        raise ValueError(
+            "feature_sources_per_function is empty; pass None (or omit it) to skip the feature_retrieval block."
+        )
+    lookups: dict[str, list[model_deployment_spec_schema.FeatureLookup]] = {}
+    for method_name, fvs in sources_per_function.items():
+        if not fvs:
+            raise ValueError(
+                f"feature_sources_per_function[{method_name!r}] is empty; omit the entry instead of passing []."
+            )
+        method_lookups: list[model_deployment_spec_schema.FeatureLookup] = []
+        for fv in fvs:
+            # All three attributes are populated by FeatureStore.register_feature_view
+            # and are required to construct the wire-level (db, schema, name, version)
+            # tuple. A draft FV (no version) or a hand-built FV (no db/schema) is not
+            # deployable; surface this client-side rather than letting GS reject deeper
+            # in the pipeline with a less actionable error.
+            if fv.version is None or fv.database is None or fv.schema is None:
+                raise ValueError(
+                    f"FeatureView passed for method {method_name!r} is not registered; "
+                    f"call FeatureStore.register_feature_view first."
+                )
+            source = identifier.get_schema_level_object_identifier(
+                fv.database.identifier(),
+                fv.schema.identifier(),
+                fv.name.identifier(),
+            )
+            method_lookups.append(
+                model_deployment_spec_schema.FeatureLookup(
+                    source=source,
+                    type=model_deployment_spec_schema.FeatureRetrievalType.OFT_VNEXT,
+                    version=str(fv.version),
+                )
+            )
+        lookups[method_name] = method_lookups
+    return model_deployment_spec_schema.FeatureRetrievalConfig(lookups=lookups)

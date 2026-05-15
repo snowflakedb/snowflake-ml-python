@@ -76,6 +76,31 @@ class FeatureViewValidationTest(parameterized.TestCase):
             _aggregation_specs=specs,  # Pass directly, not via features
         )
 
+    @parameterized.parameters("30s", "59s")  # type: ignore[misc]
+    def test_batch_tiled_feature_granularity_below_min_rejected(self, granularity: str) -> None:
+        """Batch tiled FV with feature_granularity below '1m' raises ValueError at construction."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="2h",
+                output_column="TOTAL",
+            ),
+        ]
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "event_ts", "amount"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        with self.assertRaisesRegex(ValueError, "is below the minimum of '1m'"):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["user_id"])],
+                feature_df=mock_df,
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity=granularity,
+                _aggregation_specs=specs,
+            )
+
     def test_duplicate_feature_alias_raises_error(self) -> None:
         """Test that duplicate feature aliases raise ValueError."""
         specs = [
@@ -1082,6 +1107,9 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         unwrapped = FeatureStore._create_online_feature_table.__wrapped__  # type: ignore[attr-defined]
         mock_fs._create_online_feature_table = unwrapped.__get__(mock_fs)
         mock_fs._build_batch_feature_view_spec = FeatureStore._build_batch_feature_view_spec.__get__(mock_fs)
+        # SQL construction is in module-level ``feature_view.build_oft_*``;
+        # only the tag wrapper needs binding to the mock FeatureStore.
+        mock_fs._tag_oft = FeatureStore._tag_oft.__get__(mock_fs)
 
         mock_fs._session = MagicMock()
         if postgres_online_service_running:
@@ -1310,14 +1338,14 @@ class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
 
 
 class PostgresOnlinePandasBuilderTest(absltest.TestCase):
-    """Dtype-parity tests for ``_rows_to_pandas_for_postgres_online`` (Query API type vocabulary only)."""
+    """Dtype-parity tests for ``rows_to_pandas_for_postgres_online`` (Query API type vocabulary only)."""
 
     def _build(self, rows: list[dict[str, Any]], schema: StructType) -> Any:
         from snowflake.ml.feature_store.online_service import (
-            _rows_to_pandas_for_postgres_online,
+            rows_to_pandas_for_postgres_online,
         )
 
-        return _rows_to_pandas_for_postgres_online(rows, schema)
+        return rows_to_pandas_for_postgres_online(rows, schema)
 
     def test_empty_rows_preserves_columns_and_dtypes(self) -> None:
         schema = StructType(
@@ -1577,7 +1605,7 @@ class PostgresOnlinePandasBuilderTest(absltest.TestCase):
         )
 
 
-class FeatureAggregationMethodTest(absltest.TestCase):
+class FeatureAggregationMethodTest(parameterized.TestCase):
     """Tests for the feature_aggregation_method parameter on FeatureView."""
 
     def _make_mock_backfill_df(self) -> MagicMock:
@@ -1634,6 +1662,97 @@ class FeatureAggregationMethodTest(absltest.TestCase):
         )
         self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
 
+    def test_streaming_continuous_defaults_granularity_to_one_minute(self) -> None:
+        """CONTINUOUS streaming FV without feature_granularity defaults to '1m'."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1m",
+        )
+        self.assertEqual(fv.feature_granularity, "1m")
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+        self.assertTrue(fv.is_tiled)
+
+    def test_streaming_continuous_user_granularity_wins(self) -> None:
+        """CONTINUOUS streaming FV honors user-specified feature_granularity."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="5m",
+            features=[Feature.sum("AMOUNT", "10m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="5m",
+        )
+        self.assertEqual(fv.feature_granularity, "5m")
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+    def test_streaming_tiles_still_requires_granularity(self) -> None:
+        """TILES streaming FV without feature_granularity still raises ValueError."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        with self.assertRaisesRegex(ValueError, "features requires feature_granularity to be specified."):
+            FeatureView(
+                name="test_fv",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                stream_config=self._make_stream_config(),
+                timestamp_col="EVENT_TIME",
+                features=[Feature.sum("AMOUNT", "2m")],
+                feature_aggregation_method=FeatureAggregationMethod.TILES,
+            )
+
+    @parameterized.parameters("30s", "59s")  # type: ignore[misc]
+    def test_streaming_continuous_feature_granularity_below_min_rejected(self, granularity: str) -> None:
+        """Streaming CONTINUOUS FV with feature_granularity below '1m' raises ValueError on validate."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity=granularity,
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1m",
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+        with self.assertRaisesRegex(ValueError, "is below the minimum of '1m'"):
+            fv._validate()
+
+    def test_streaming_feature_granularity_one_minute_accepted(self) -> None:
+        """Streaming FV with feature_granularity exactly '1m' is accepted by validate."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="60s",
+            features=[Feature.sum("AMOUNT", "2m")],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1m",
+        )
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+        fv._validate()
+        self.assertEqual(fv.feature_granularity, "60s")
+
     def test_streaming_tiled_tiles_explicit(self) -> None:
         """Tiled streaming FV with explicit TILES."""
         from snowflake.ml.feature_store.feature import Feature
@@ -1651,7 +1770,9 @@ class FeatureAggregationMethodTest(absltest.TestCase):
 
     def test_streaming_non_tiled_rejects_agg_method(self) -> None:
         """Non-tiled streaming FV with feature_aggregation_method raises ValueError."""
-        with self.assertRaisesRegex(ValueError, "feature_aggregation_method requires"):
+        with self.assertRaisesRegex(
+            ValueError, "feature_granularity and feature_aggregation_method require features to be set."
+        ):
             FeatureView(
                 name="test_fv",
                 entities=[Entity(name="user", join_keys=["USER_ID"])],

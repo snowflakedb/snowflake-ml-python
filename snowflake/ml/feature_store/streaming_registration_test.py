@@ -2,7 +2,7 @@
 
 import datetime
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pandas as pd
 from absl.testing import absltest
@@ -78,10 +78,6 @@ def _make_mock_backfill_df() -> MagicMock:
     )
     mock_df.schema = schema
     mock_df.columns = [f.name for f in schema.fields]
-    # postamble calls backfill_df.to_df([...]) to prefix input columns before map_in_pandas.
-    renamed_df = MagicMock()
-    renamed_df.queries = {"queries": ["SELECT * FROM renamed_src"]}
-    mock_df.to_df.return_value = renamed_df
     return mock_df
 
 
@@ -94,7 +90,7 @@ class CleanupStreamingTest(absltest.TestCase):
     """Tests for cleanup_streaming_feature_view."""
 
     def test_drops_udf_and_backfill_tables_and_decrements_ref(self) -> None:
-        """Test that cleanup drops both udf_transformed and backfill tables and decrements ref count."""
+        """Cleanup drops both tables, decrements ref count, and skips task DDL when no task names are recorded."""
         session = MagicMock()
         metadata_manager = MagicMock()
         metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
@@ -127,7 +123,68 @@ class CleanupStreamingTest(absltest.TestCase):
         self.assertTrue(any("$UDF_TRANSFORMED'" in s or '$UDF_TRANSFORMED"' in s for s in drop_sqls))
         self.assertTrue(any("$BACKFILL" in s for s in drop_sqls))
 
+        # No backfill tasks recorded -> no ALTER TASK / DROP TASK calls.
+        sql_strs = [str(c) for c in session.sql.call_args_list]
+        self.assertFalse(any("ALTER TASK" in s for s in sql_strs))
+        self.assertFalse(any("DROP TASK" in s for s in sql_strs))
+
         # Verify ref count was decremented
+        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+
+    def test_safety_net_drops_leftover_backfill_tasks_and_proc(self) -> None:
+        """When task + proc names are present in metadata, cleanup suspends the root,
+        drops finalizer + root in order, and drops the backing procedure (safety net)."""
+        session = MagicMock()
+        metadata_manager = MagicMock()
+        metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="TXN_EVENTS",
+            transformation_fn_name="my_fn",
+            backfill_root_task_name="DB.SCH.TEST_FV$v1$BACKFILL_ROOT",
+            backfill_finalize_task_name="DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE",
+            backfill_proc_name="DB.SCH.TEST_FV$v1$BACKFILL_PROC",
+        )
+
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+        fv_metadata = _FeatureViewMetadata(
+            entities=["USER_ENTITY"],
+            timestamp_col="EVENT_TIME",
+            is_streaming=True,
+        )
+
+        cleanup_streaming_feature_view(
+            session=session,
+            feature_view_name=feature_view_name,
+            version="v1",
+            fv_name="TEST_FV",
+            fv_metadata=fv_metadata,
+            metadata_manager=metadata_manager,
+            get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+            telemetry_stmp={},
+        )
+
+        sql_strs = [str(c.args[0]) for c in session.sql.call_args_list]
+
+        suspend_idx = next(i for i, s in enumerate(sql_strs) if "ALTER TASK IF EXISTS" in s and "SUSPEND" in s)
+        finalize_drop_idx = next(
+            i for i, s in enumerate(sql_strs) if "DROP TASK IF EXISTS" in s and "$BACKFILL_FINALIZE" in s
+        )
+        root_drop_idx = next(i for i, s in enumerate(sql_strs) if "DROP TASK IF EXISTS" in s and "$BACKFILL_ROOT" in s)
+        proc_drop_idx = next(
+            i for i, s in enumerate(sql_strs) if "DROP PROCEDURE IF EXISTS" in s and "$BACKFILL_PROC" in s
+        )
+
+        # SUSPEND root, then drop finalizer, then drop root, then drop proc.
+        self.assertLess(suspend_idx, finalize_drop_idx)
+        self.assertLess(finalize_drop_idx, root_drop_idx)
+        self.assertLess(root_drop_idx, proc_drop_idx)
+        self.assertIn("DB.SCH.TEST_FV$v1$BACKFILL_ROOT", sql_strs[suspend_idx])
+        # Proc drop carries the full signature so Snowflake disambiguates correctly.
+        self.assertIn("(TIMESTAMP_NTZ, TIMESTAMP_NTZ)", sql_strs[proc_drop_idx])
+
+        # Tables are still dropped after task cleanup.
+        table_drops = [s for s in sql_strs if "DROP TABLE IF EXISTS" in s]
+        self.assertEqual(len(table_drops), 2)
+        # Ref count is still decremented.
         metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
 
     def test_cleanup_no_streaming_metadata(self) -> None:
@@ -385,6 +442,12 @@ class StreamingMetadataTest(absltest.TestCase):
         self.assertEqual(d["stream_source_name"], "TXN_EVENTS")
         self.assertEqual(d["transformation_fn_name"], "normalize_txn")
         self.assertNotIn("backfill_start_time", d)
+        self.assertNotIn("backfill_root_task_name", d)
+        self.assertNotIn("backfill_finalize_task_name", d)
+        self.assertNotIn("backfill_proc_name", d)
+        self.assertNotIn("backfill_udtf_name", d)
+        self.assertNotIn("backfill_udtf_signature", d)
+        self.assertNotIn("backfill_state", d)
         self.assertNotIn("backfill_query_id", d)
 
     def test_to_dict_full(self) -> None:
@@ -393,11 +456,25 @@ class StreamingMetadataTest(absltest.TestCase):
             stream_source_name="TXN_EVENTS",
             transformation_fn_name="normalize_txn",
             backfill_start_time="2024-06-01T00:00:00",
-            backfill_query_id="abc-123",
+            backfill_root_task_name="DB.SCH.TEST_FV$v1$BACKFILL_ROOT",
+            backfill_finalize_task_name="DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE",
+            backfill_proc_name="DB.SCH.TEST_FV$v1$BACKFILL_PROC",
+            backfill_udtf_name="DB.SCH.TEST_FV$v1$BACKFILL_UDTF",
+            backfill_udtf_signature="(VARCHAR, TIMESTAMP_NTZ, FLOAT)",
+            backfill_state="RUNNING",
         )
         d = meta.to_dict()
         self.assertEqual(d["backfill_start_time"], "2024-06-01T00:00:00")
-        self.assertEqual(d["backfill_query_id"], "abc-123")
+        self.assertEqual(d["backfill_root_task_name"], "DB.SCH.TEST_FV$v1$BACKFILL_ROOT")
+        self.assertEqual(d["backfill_finalize_task_name"], "DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE")
+        self.assertEqual(d["backfill_proc_name"], "DB.SCH.TEST_FV$v1$BACKFILL_PROC")
+        # UDTF name + signature must round-trip: rollback issues
+        # ``DROP FUNCTION <name><signature>`` and Snowflake disambiguates
+        # overloads by argument types.
+        self.assertEqual(d["backfill_udtf_name"], "DB.SCH.TEST_FV$v1$BACKFILL_UDTF")
+        self.assertEqual(d["backfill_udtf_signature"], "(VARCHAR, TIMESTAMP_NTZ, FLOAT)")
+        self.assertEqual(d["backfill_state"], "RUNNING")
+        self.assertNotIn("backfill_query_id", d)
 
     def test_from_dict_minimal(self) -> None:
         """Test construction from dictionary without optional fields."""
@@ -408,7 +485,12 @@ class StreamingMetadataTest(absltest.TestCase):
         meta = StreamingMetadata.from_dict(d)
         self.assertEqual(meta.stream_source_name, "TXN_EVENTS")
         self.assertIsNone(meta.backfill_start_time)
-        self.assertIsNone(meta.backfill_query_id)
+        self.assertIsNone(meta.backfill_root_task_name)
+        self.assertIsNone(meta.backfill_finalize_task_name)
+        self.assertIsNone(meta.backfill_proc_name)
+        self.assertIsNone(meta.backfill_udtf_name)
+        self.assertIsNone(meta.backfill_udtf_signature)
+        self.assertIsNone(meta.backfill_state)
 
     def test_from_dict_full(self) -> None:
         """Test construction with all fields."""
@@ -416,11 +498,45 @@ class StreamingMetadataTest(absltest.TestCase):
             "stream_source_name": "TXN_EVENTS",
             "transformation_fn_name": "normalize_txn",
             "backfill_start_time": "2024-06-01T00:00:00",
-            "backfill_query_id": "abc-123",
+            "backfill_root_task_name": "DB.SCH.TEST_FV$v1$BACKFILL_ROOT",
+            "backfill_finalize_task_name": "DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE",
+            "backfill_proc_name": "DB.SCH.TEST_FV$v1$BACKFILL_PROC",
+            "backfill_udtf_name": "DB.SCH.TEST_FV$v1$BACKFILL_UDTF",
+            "backfill_udtf_signature": "(VARCHAR, TIMESTAMP_NTZ, FLOAT)",
+            "backfill_state": "COMPLETED",
         }
         meta = StreamingMetadata.from_dict(d)
         self.assertEqual(meta.backfill_start_time, "2024-06-01T00:00:00")
-        self.assertEqual(meta.backfill_query_id, "abc-123")
+        self.assertEqual(meta.backfill_root_task_name, "DB.SCH.TEST_FV$v1$BACKFILL_ROOT")
+        self.assertEqual(meta.backfill_finalize_task_name, "DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE")
+        self.assertEqual(meta.backfill_proc_name, "DB.SCH.TEST_FV$v1$BACKFILL_PROC")
+        self.assertEqual(meta.backfill_udtf_name, "DB.SCH.TEST_FV$v1$BACKFILL_UDTF")
+        self.assertEqual(meta.backfill_udtf_signature, "(VARCHAR, TIMESTAMP_NTZ, FLOAT)")
+        self.assertEqual(meta.backfill_state, "COMPLETED")
+
+    def test_from_dict_drops_unknown_backfill_state(self) -> None:
+        """Forward-compat: an unrecognized ``backfill_state`` value is dropped to None."""
+        d = {
+            "stream_source_name": "TXN_EVENTS",
+            "transformation_fn_name": "normalize_txn",
+            "backfill_state": "BOGUS_FUTURE_STATE",
+        }
+        meta = StreamingMetadata.from_dict(d)
+        self.assertIsNone(meta.backfill_state)
+
+    def test_from_dict_ignores_legacy_backfill_query_id(self) -> None:
+        """Legacy rows that still carry a `backfill_query_id` key load cleanly without it."""
+        d = {
+            "stream_source_name": "TXN_EVENTS",
+            "transformation_fn_name": "normalize_txn",
+            # Old metadata schema; should be silently ignored.
+            "backfill_query_id": "legacy-q-id",
+        }
+        meta = StreamingMetadata.from_dict(d)
+        self.assertEqual(meta.stream_source_name, "TXN_EVENTS")
+        self.assertFalse(hasattr(meta, "backfill_query_id"))
+        self.assertIsNone(meta.backfill_root_task_name)
+        self.assertIsNone(meta.backfill_proc_name)
 
     def test_roundtrip(self) -> None:
         """Test dict roundtrip."""
@@ -428,11 +544,24 @@ class StreamingMetadataTest(absltest.TestCase):
             stream_source_name="SRC",
             transformation_fn_name="fn",
             backfill_start_time="2024-01-01T00:00:00",
-            backfill_query_id="q-id",
+            backfill_root_task_name="DB.SCH.FV$v1$BACKFILL_ROOT",
+            backfill_finalize_task_name="DB.SCH.FV$v1$BACKFILL_FINALIZE",
+            backfill_proc_name="DB.SCH.FV$v1$BACKFILL_PROC",
+            backfill_udtf_name="DB.SCH.FV$v1$BACKFILL_UDTF",
+            backfill_udtf_signature="(VARCHAR, FLOAT)",
+            backfill_state="FAILED",
         )
         restored = StreamingMetadata.from_dict(meta.to_dict())
         self.assertEqual(meta.stream_source_name, restored.stream_source_name)
-        self.assertEqual(meta.backfill_query_id, restored.backfill_query_id)
+        self.assertEqual(meta.backfill_root_task_name, restored.backfill_root_task_name)
+        self.assertEqual(meta.backfill_finalize_task_name, restored.backfill_finalize_task_name)
+        self.assertEqual(meta.backfill_proc_name, restored.backfill_proc_name)
+        # Both UDTF fields must round-trip: cleanup paths combine the name
+        # with the signature to form the ``DROP FUNCTION <name><sig>`` SQL,
+        # so a partial round-trip would leak the UDTF on FV deletion.
+        self.assertEqual(meta.backfill_udtf_name, restored.backfill_udtf_name)
+        self.assertEqual(meta.backfill_udtf_signature, restored.backfill_udtf_signature)
+        self.assertEqual(meta.backfill_state, restored.backfill_state)
 
 
 # ============================================================================
@@ -577,42 +706,24 @@ class StreamingWithFeaturesTest(absltest.TestCase):
         self.assertIsNone(fv.aggregation_specs)
 
     def test_streaming_with_granularity_requires_features(self) -> None:
-        """Test that feature_granularity without features raises error after init_from_df.
-
-        Note: This validation runs in _validate() which is called after
-        _initialize_from_feature_df during registration. At construction time,
-        streaming FVs skip _validate().
-        """
+        """Streaming FV with feature_granularity but no features raises ValueError at construction."""
         entity = _make_entity()
         stream_config = StreamConfig(
             stream_source="src",
             transformation_fn=_sample_transform,
             backfill_df=_make_mock_backfill_df(),
         )
-        # Construction succeeds (validation deferred)
-        fv = FeatureView(
-            name="test_fv",
-            entities=[entity],
-            stream_config=stream_config,
-            timestamp_col="EVENT_TIME",
-            feature_granularity="1h",
-            # features=None — missing!
-        )
-        # After _initialize_from_feature_df + _validate(), it would fail
-        mock_udf_df = MagicMock()
-        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
-        mock_udf_df.schema = StructType(
-            [
-                StructField("USER_ID", StringType()),
-                StructField("EVENT_TIME", TimestampType()),
-            ]
-        )
-        mock_udf_df.columns = ["USER_ID", "EVENT_TIME"]
-
-        fv._initialize_from_feature_df(mock_udf_df)
-
-        with self.assertRaisesRegex(ValueError, "feature_granularity requires features"):
-            fv._validate()
+        with self.assertRaisesRegex(
+            ValueError, "feature_granularity and feature_aggregation_method require features to be set."
+        ):
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                stream_config=stream_config,
+                timestamp_col="EVENT_TIME",
+                feature_granularity="1h",
+                # features=None — missing!
+            )
 
 
 # ============================================================================
@@ -709,6 +820,51 @@ class RunStreamingPreambleTest(absltest.TestCase):
 
         metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("OLD_SOURCE")
 
+    def test_preamble_overwrite_suspends_and_drops_old_backfill_objects(self) -> None:
+        """On overwrite, preamble suspends the old root task and drops finalizer + root + proc."""
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
+
+        fv = self._make_streaming_fv(backfill_df)
+        session = MagicMock()
+        metadata_manager = MagicMock()
+        metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="OLD_SOURCE",
+            transformation_fn_name="old_fn",
+            backfill_root_task_name="DB.SCH.TEST_FV$v1$BACKFILL_ROOT",
+            backfill_finalize_task_name="DB.SCH.TEST_FV$v1$BACKFILL_FINALIZE",
+            backfill_proc_name="DB.SCH.TEST_FV$v1$BACKFILL_PROC",
+        )
+
+        run_streaming_preamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=SqlIdentifier("TEST_FV$v1"),
+            overwrite=True,
+            metadata_manager=metadata_manager,
+            telemetry_stmp={},
+            get_stream_source_fn=lambda name: _make_stream_source(),
+            get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+        )
+
+        sql_strs = [str(c.args[0]) for c in session.sql.call_args_list]
+        suspend_idx = next(i for i, s in enumerate(sql_strs) if "ALTER TASK IF EXISTS" in s and "SUSPEND" in s)
+        finalize_drop_idx = next(
+            i for i, s in enumerate(sql_strs) if "DROP TASK IF EXISTS" in s and "$BACKFILL_FINALIZE" in s
+        )
+        root_drop_idx = next(i for i, s in enumerate(sql_strs) if "DROP TASK IF EXISTS" in s and "$BACKFILL_ROOT" in s)
+        proc_drop_idx = next(
+            i for i, s in enumerate(sql_strs) if "DROP PROCEDURE IF EXISTS" in s and "$BACKFILL_PROC" in s
+        )
+        # SUSPEND root, then drop finalizer, then drop root, then drop proc.
+        self.assertLess(suspend_idx, finalize_drop_idx)
+        self.assertLess(finalize_drop_idx, root_drop_idx)
+        self.assertLess(root_drop_idx, proc_drop_idx)
+        self.assertIn("(TIMESTAMP_NTZ, TIMESTAMP_NTZ)", sql_strs[proc_drop_idx])
+        # Old ref count still decremented.
+        metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("OLD_SOURCE")
+
     def test_preamble_no_overwrite_skips_decrement(self) -> None:
         """Without overwrite, preamble does not touch ref count."""
         backfill_df = _make_mock_backfill_df()
@@ -787,11 +943,438 @@ class RunStreamingPreambleTest(absltest.TestCase):
 
 
 class RunStreamingPostambleTest(absltest.TestCase):
-    """Tests for run_streaming_postamble."""
+    """Tests for run_streaming_postamble.
 
-    @patch("snowflake.snowpark.dataframe.map_in_pandas")
-    def test_postamble_saves_metadata_and_increments_ref(self, mock_map: MagicMock) -> None:
-        """Postamble saves metadata, increments ref count, kicks off INSERT ALL backfill."""
+    The postamble flow:
+      1. Build an inline ``CREATE TEMPORARY FUNCTION`` with the user
+         transformation source baked in.
+      2. Build the ``INSERT ALL ... LATERAL TABLE(<udtf>(...) OVER (PARTITION BY 1))``
+         SELECT.
+      3. Wrap (1) + (2) in a ``CREATE OR REPLACE PROCEDURE`` (SQL Scripting,
+         EXECUTE AS OWNER).
+      4. Create a root + finalizer task graph; the root task body is a
+         ``CALL <fq_proc>(<start>, SYSDATE())`` and the finalizer drops
+         the proc + UDTF + both tasks.
+      5. Resume the finalizer, then ``SYSTEM$TASK_DEPENDENTS_ENABLE`` on
+         the root to start the graph.
+    """
+
+    _METADATA_TABLE_PATH = "DB.SCH._FEATURE_STORE_METADATA"
+
+    def _fq(self, name: object) -> str:
+        return f"DB.SCH.{name}"
+
+    def _make_session_with_udf_schema(self) -> MagicMock:
+        session = MagicMock()
+        session.table.return_value.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT_CENTS", DoubleType()),
+                StructField("IS_LARGE", DoubleType()),
+            ]
+        )
+        return session
+
+    def _make_metadata_manager(self) -> MagicMock:
+        """Stub metadata manager whose ``table_path`` is a real string.
+
+        Without this, the finalizer's ``UPDATE <table>`` interpolates a
+        ``<MagicMock id=...>`` representation that produces invalid SQL.
+        """
+        metadata_manager = MagicMock()
+        metadata_manager.table_path = self._METADATA_TABLE_PATH
+        return metadata_manager
+
+    def test_postamble_creates_proc_then_task_graph_and_saves_metadata(self) -> None:
+        """Postamble emits proc DDL, then the root + finalizer, then activates the graph,
+        and persists all three names (proc + 2 tasks) in StreamingMetadata."""
+        backfill_df = _make_mock_backfill_df()
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+
+        result = run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=feature_view_name,
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+        )
+
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+
+        # 1a. The per-FV permanent UDTF DDL is emitted first. Snowflake
+        #     disallows CREATE TEMPORARY FUNCTION inside a stored procedure
+        #     (even via EXECUTE IMMEDIATE), so the UDTF is created as a
+        #     permanent function up-front and dropped by the finalizer.
+        udtf_idx = next(i for i, s in enumerate(sql_calls) if s.startswith("CREATE OR REPLACE FUNCTION"))
+        udtf_sql = sql_calls[udtf_idx]
+        self.assertIn("$BACKFILL_UDTF", udtf_sql)
+        self.assertIn("LANGUAGE PYTHON", udtf_sql)
+        self.assertIn("_sf_vectorized_input", udtf_sql)
+        self.assertIn("def _sample_transform", udtf_sql)
+
+        # 1b. The procedure DDL is emitted next; its body just does the
+        #     INSERT ALL referencing the UDTF (no embedded Python source).
+        proc_idx = next(i for i, s in enumerate(sql_calls) if s.startswith("CREATE OR REPLACE PROCEDURE"))
+        proc_sql = sql_calls[proc_idx]
+        self.assertIn("$BACKFILL_PROC", proc_sql)
+        self.assertIn("(WINDOW_START TIMESTAMP_NTZ, WINDOW_END TIMESTAMP_NTZ)", proc_sql)
+        self.assertIn("LANGUAGE SQL", proc_sql)
+        self.assertIn("EXECUTE AS OWNER", proc_sql)
+        self.assertIn("INSERT ALL INTO DB.SCH.UDF_TABLE INTO DB.SCH.UDF_TABLE$BACKFILL", proc_sql)
+        self.assertIn("OVER (PARTITION BY 1)", proc_sql)
+        # Proc body references the UDTF by fully-qualified name.
+        self.assertIn("$BACKFILL_UDTF", proc_sql)
+        # No embedded Python source in the proc body itself.
+        self.assertNotIn("def _sample_transform", proc_sql)
+        self.assertNotIn("LANGUAGE PYTHON", proc_sql)
+        self.assertNotIn("EXECUTE IMMEDIATE", proc_sql)
+        # The window-guard WHERE clause references the proc's parameters
+        # using the ``:NAME`` bind syntax (bare identifiers would resolve
+        # as column references in a SELECT and trigger
+        # ``invalid identifier`` at compile time).
+        self.assertIn(":WINDOW_START IS NULL OR", proc_sql)
+        self.assertIn(":WINDOW_END IS NULL OR", proc_sql)
+        # UDTF must be created before the proc references it.
+        self.assertLess(udtf_idx, proc_idx)
+
+        def _create_task_for_suffix(suffix: str) -> tuple[int, str]:
+            matches = []
+            for i, sql in enumerate(sql_calls):
+                if not sql.startswith("CREATE OR REPLACE TASK"):
+                    continue
+                first_line = sql.split("\n", 1)[0]
+                if suffix in first_line:
+                    matches.append((i, sql))
+            self.assertEqual(len(matches), 1, f"expected exactly one CREATE TASK for {suffix}, got {len(matches)}")
+            return matches[0]
+
+        # 2. Root task: schedule, single CALL of the proc with NULL/SYSDATE args.
+        root_idx, root_sql = _create_task_for_suffix("$BACKFILL_ROOT")
+        self.assertIn("SCHEDULE = '10 SECONDS'", root_sql)
+        self.assertIn("USER_TASK_MINIMUM_TRIGGER_INTERVAL_IN_SECONDS = 10", root_sql)
+        self.assertIn("SUSPEND_TASK_AFTER_NUM_FAILURES = 1", root_sql)
+        # No backfill_start_time -> first arg is NULL; the second is the
+        # window upper bound. Use SYSDATE() (UTC TIMESTAMP_NTZ) rather
+        # than CURRENT_TIMESTAMP()::TIMESTAMP_NTZ (TIMESTAMP_LTZ cast,
+        # depends on session/account TZ).
+        self.assertIn("CALL ", root_sql)
+        self.assertIn("$BACKFILL_PROC", root_sql)
+        self.assertIn("(NULL, SYSDATE())", root_sql)
+        self.assertNotIn("CURRENT_TIMESTAMP", root_sql)
+        self.assertIn("WHEN OTHER THEN", root_sql)
+        self.assertIn("RAISE;", root_sql)
+        # FV warehouse is preferred over the default.
+        self.assertIn("WAREHOUSE = MY_WH", root_sql)
+
+        # 3. Finalizer: FINALIZE = <root>; each cleanup step is wrapped
+        # in its own BEGIN..EXCEPTION block so a partial failure does
+        # not skip later steps. Order: backfill_state UPDATE first
+        # (terminal-state write), then suspend root, drop proc, drop UDTF,
+        # drop root, drop finalizer (self).
+        finalize_idx, finalize_sql = _create_task_for_suffix("$BACKFILL_FINALIZE")
+        self.assertIn("FINALIZE =", finalize_sql)
+        self.assertIn("$BACKFILL_ROOT", finalize_sql)
+        self.assertIn("ALTER TASK", finalize_sql)
+        self.assertIn(" SUSPEND", finalize_sql)
+        self.assertIn("DROP PROCEDURE IF EXISTS", finalize_sql)
+        self.assertIn("(TIMESTAMP_NTZ, TIMESTAMP_NTZ)", finalize_sql)
+        self.assertIn("DROP FUNCTION IF EXISTS", finalize_sql)
+        self.assertIn("$BACKFILL_UDTF", finalize_sql)
+        # Terminal-state UPDATE: writes COMPLETED/FAILED into the FV's
+        # streaming-metadata row by setting the ``backfill_state`` key
+        # in the JSON blob.
+        self.assertIn(f"UPDATE {self._METADATA_TABLE_PATH}", finalize_sql)
+        self.assertIn("OBJECT_INSERT(METADATA, 'backfill_state'", finalize_sql)
+        # The COMPLETED/FAILED selection comes from a TASK_HISTORY count
+        # comparison (every expected user-visible task succeeded => COMPLETED).
+        self.assertIn("INFORMATION_SCHEMA.TASK_HISTORY", finalize_sql)
+        self.assertIn("'COMPLETED'", finalize_sql)
+        self.assertIn("'FAILED'", finalize_sql)
+        # The match set is the FV's user-visible backfill tasks (root +
+        # any future windows), not the finalizer.
+        self.assertIn("$BACKFILL_ROOT", finalize_sql)
+        self.assertIn("$BACKFILL_W%", finalize_sql)
+        self.assertNotIn("$BACKFILL_FINALIZE'", finalize_sql)  # not in match set
+        # Each cleanup statement is in its own EXCEPTION-swallowing block;
+        # 6 steps (state update + suspend + drop proc + drop UDTF + drop
+        # root + drop finalizer).
+        self.assertGreaterEqual(finalize_sql.count("EXCEPTION WHEN OTHER THEN NULL"), 6)
+        # Drop order: state-update -> suspend -> proc -> udtf -> root ->
+        # finalizer (self-drop last so a self-drop failure cannot strand
+        # earlier cleanup work).
+        state_update_pos = finalize_sql.index("OBJECT_INSERT")
+        suspend_pos = finalize_sql.index(" SUSPEND")
+        proc_drop_pos = finalize_sql.index("DROP PROCEDURE IF EXISTS")
+        udtf_drop_pos = finalize_sql.index("DROP FUNCTION IF EXISTS")
+        first_task_drop_pos = finalize_sql.index("DROP TASK IF EXISTS")
+        second_task_drop_pos = finalize_sql.index("DROP TASK IF EXISTS", first_task_drop_pos + 1)
+        self.assertLess(state_update_pos, suspend_pos)
+        self.assertLess(suspend_pos, proc_drop_pos)
+        self.assertLess(proc_drop_pos, udtf_drop_pos)
+        self.assertLess(udtf_drop_pos, first_task_drop_pos)
+        self.assertIn("$BACKFILL_ROOT", finalize_sql[first_task_drop_pos:second_task_drop_pos])
+        self.assertIn("$BACKFILL_FINALIZE", finalize_sql[second_task_drop_pos:])
+
+        # Order of DDL emission: udtf before proc before root before finalizer.
+        self.assertLess(udtf_idx, proc_idx)
+        self.assertLess(proc_idx, root_idx)
+        self.assertLess(root_idx, finalize_idx)
+
+        # 4. Activation: RESUME finalizer, then SYSTEM$TASK_DEPENDENTS_ENABLE on root.
+        resume_idx = next(
+            i for i, s in enumerate(sql_calls) if "ALTER TASK" in s and "$BACKFILL_FINALIZE" in s and "RESUME" in s
+        )
+        enable_idx = next(i for i, s in enumerate(sql_calls) if "SYSTEM$TASK_DEPENDENTS_ENABLE" in s)
+        self.assertLess(finalize_idx, resume_idx)
+        self.assertLess(resume_idx, enable_idx)
+
+        # 5. Returned names are populated and fully qualified.
+        self.assertIn("$BACKFILL_ROOT", result.fq_backfill_root_task)
+        self.assertIn("$BACKFILL_FINALIZE", result.fq_backfill_finalize_task)
+        self.assertIn("$BACKFILL_PROC", result.fq_backfill_proc)
+        self.assertIn("$BACKFILL_UDTF", result.fq_backfill_udtf)
+        self.assertTrue(result.fq_backfill_root_task.startswith("DB.SCH."))
+        self.assertTrue(result.fq_backfill_finalize_task.startswith("DB.SCH."))
+        self.assertTrue(result.fq_backfill_proc.startswith("DB.SCH."))
+        self.assertTrue(result.fq_backfill_udtf.startswith("DB.SCH."))
+        # Signature is well-formed and parenthesized for direct interpolation.
+        self.assertTrue(result.fq_backfill_udtf_signature.startswith("("))
+        self.assertTrue(result.fq_backfill_udtf_signature.endswith(")"))
+
+        # 6a. Activation order: the resume SQLs must run AFTER
+        # ``save_streaming_metadata``. If the order were reversed, the
+        # finalizer could fire and try to ``UPDATE`` a metadata row that
+        # does not yet exist (writing nothing — leaving the FV stuck
+        # showing ``backfill_state='RUNNING'`` forever once the client
+        # finally writes its row, since the finalizer has already run).
+        # ``session.sql`` and ``metadata_manager`` are independent mocks,
+        # so the order is asserted indirectly: the postamble's last two
+        # ``session.sql`` statements must be the RESUME + ENABLE pair, and
+        # ``save_streaming_metadata`` must have been called by the time
+        # the postamble returns. The implementation guarantees no SQL is
+        # emitted between ``save_streaming_metadata`` and the
+        # resume-enable pair.
+        finalize_resume_idx = sql_calls.index(
+            next(s for s in sql_calls if "$BACKFILL_FINALIZE" in s and " RESUME" in s)
+        )
+        self.assertEqual(
+            finalize_resume_idx,
+            len(sql_calls) - 2,
+            "finalizer RESUME must be the second-to-last SQL, after metadata save",
+        )
+        self.assertTrue(
+            sql_calls[-1].startswith("SELECT SYSTEM$TASK_DEPENDENTS_ENABLE"),
+            f"final SQL must be SYSTEM$TASK_DEPENDENTS_ENABLE; got {sql_calls[-1]!r}",
+        )
+        # ``save_streaming_metadata`` was definitely invoked (raises
+        # StopIteration otherwise).
+        next(c for c in metadata_manager.mock_calls if c[0] == "save_streaming_metadata")
+
+        # 6b. Metadata: stream source + task names + proc name + UDTF name + state persisted.
+        metadata_manager.save_streaming_metadata.assert_called_once()
+        saved_meta = metadata_manager.save_streaming_metadata.call_args.kwargs["metadata"]
+        self.assertEqual(saved_meta.stream_source_name, "TXN_EVENTS")
+        self.assertEqual(saved_meta.transformation_fn_name, "_sample_transform")
+        self.assertEqual(saved_meta.backfill_root_task_name, result.fq_backfill_root_task)
+        self.assertEqual(saved_meta.backfill_finalize_task_name, result.fq_backfill_finalize_task)
+        self.assertEqual(saved_meta.backfill_proc_name, result.fq_backfill_proc)
+        self.assertEqual(saved_meta.backfill_udtf_name, result.fq_backfill_udtf)
+        self.assertEqual(saved_meta.backfill_udtf_signature, result.fq_backfill_udtf_signature)
+        # Initial state is RUNNING; the finalizer flips it to COMPLETED/FAILED later.
+        self.assertEqual(saved_meta.backfill_state, "RUNNING")
+
+        metadata_manager.increment_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+
+    def test_postamble_invokes_resource_callback_in_creation_order(self) -> None:
+        """``on_resource_created`` fires once per backfill resource, in creation order.
+
+        The contract guards against rollback leaks: each resource must be
+        registered with the caller **before** the next DDL runs, so that
+        a failure mid-postamble (UDTF created but proc/task DDL fails, or
+        proc + tasks created but ``save_streaming_metadata`` throws) still
+        leaves a complete cleanup trail.
+        """
+        backfill_df = _make_mock_backfill_df()
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+
+        events: list[tuple[str, str]] = []
+
+        result = run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=feature_view_name,
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+            on_resource_created=lambda kind, fq: events.append((kind, fq)),
+        )
+
+        # All four backfill resources are reported, exactly once each, in
+        # the dependency order (UDTF first, then proc, then root task,
+        # then finalizer task).
+        self.assertEqual(
+            [k for k, _ in events],
+            ["BACKFILL_UDTF", "BACKFILL_PROC", "BACKFILL_ROOT_TASK", "BACKFILL_FINALIZE_TASK"],
+        )
+        # The UDTF event includes the argument-type signature appended to
+        # the FQN so the rollback path can ``DROP FUNCTION`` directly
+        # without re-deriving input column types from the FV schema.
+        udtf_event = events[0][1]
+        self.assertTrue(udtf_event.startswith(result.fq_backfill_udtf))
+        self.assertTrue(udtf_event.endswith(result.fq_backfill_udtf_signature))
+        # Proc and task events are bare fully-qualified names (no signature).
+        self.assertEqual(events[1][1], result.fq_backfill_proc)
+        self.assertEqual(events[2][1], result.fq_backfill_root_task)
+        self.assertEqual(events[3][1], result.fq_backfill_finalize_task)
+
+    def test_postamble_callback_fires_before_metadata_save(self) -> None:
+        """If ``save_streaming_metadata`` raises, all created resources have already been reported.
+
+        This is the rollback-leak regression guard: previously, the caller
+        only learned about the UDTF/proc/tasks via the function's return
+        value, which is never delivered when an exception propagates from
+        ``save_streaming_metadata`` or ``increment_stream_source_ref_count``.
+        With ``on_resource_created`` the caller registers each resource
+        the moment its DDL succeeds, so the outer ``except`` rollback can
+        drop them.
+        """
+        backfill_df = _make_mock_backfill_df()
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="my_wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+        # Force the post-DDL metadata save to fail; the rollback contract
+        # demands that all four backfill resources still show up in
+        # ``events`` so the caller can drop them.
+        metadata_manager.save_streaming_metadata.side_effect = RuntimeError("boom")
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+
+        feature_view_name = FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1"))
+
+        events: list[tuple[str, str]] = []
+
+        with self.assertRaisesRegex(RuntimeError, "boom"):
+            run_streaming_postamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=feature_view_name,
+                preamble=preamble,
+                metadata_manager=metadata_manager,
+                default_warehouse=None,
+                get_fully_qualified_name_fn=self._fq,
+                telemetry_stmp={},
+                on_resource_created=lambda kind, fq: events.append((kind, fq)),
+            )
+
+        # Even though the postamble raised, every DDL-created resource has
+        # already been reported, so the caller's ``created_resources``
+        # tracker is complete.
+        self.assertEqual(
+            [k for k, _ in events],
+            ["BACKFILL_UDTF", "BACKFILL_PROC", "BACKFILL_ROOT_TASK", "BACKFILL_FINALIZE_TASK"],
+        )
+        # The ref-count increment must NOT have run, since metadata save
+        # failed first.
+        metadata_manager.increment_stream_source_ref_count.assert_not_called()
+        # The graph must NOT have been resumed: resume happens only after
+        # the metadata row (with backfill_state='RUNNING') has been written,
+        # so the finalizer can never race ahead of the row it must update.
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+        for sql in sql_calls:
+            self.assertFalse(
+                "$BACKFILL_FINALIZE" in sql and " RESUME" in sql,
+                f"finalizer was resumed despite metadata save failure: {sql!r}",
+            )
+            self.assertFalse(
+                "SYSTEM$TASK_DEPENDENTS_ENABLE" in sql,
+                f"task graph was enabled despite metadata save failure: {sql!r}",
+            )
+
+    def test_postamble_uses_default_warehouse_when_fv_has_none(self) -> None:
+        """Without an explicit FV warehouse, the FS default warehouse is used for both tasks."""
         backfill_df = _make_mock_backfill_df()
         entity = _make_entity()
         stream_config = StreamConfig(
@@ -806,19 +1389,8 @@ class RunStreamingPostambleTest(absltest.TestCase):
             timestamp_col="EVENT_TIME",
         )
 
-        session = MagicMock()
-        session.table.return_value.schema = StructType(
-            [StructField("USER_ID", StringType()), StructField("AMOUNT_CENTS", DoubleType())]
-        )
-        metadata_manager = MagicMock()
-
-        # mock map_in_pandas return — queries provides the SELECT SQL
-        transformed_df = MagicMock()
-        transformed_df.queries = {"queries": ["SELECT udtf(...) FROM source"]}
-        mock_map.return_value = transformed_df
-        async_job = MagicMock()
-        async_job.query_id = "test-query-id"
-        session.sql.return_value.collect.return_value = async_job
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
 
         from snowflake.ml.feature_store.streaming_registration import (
             StreamingPreambleResult,
@@ -834,45 +1406,26 @@ class RunStreamingPostambleTest(absltest.TestCase):
             session=session,
             feature_view=fv,
             version=FeatureViewVersion("v1"),
+            feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
             preamble=preamble,
             metadata_manager=metadata_manager,
+            default_warehouse=SqlIdentifier("default_wh"),
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
         )
 
-        # Verify INSERT ALL SQL was submitted
-        insert_all_call = session.sql.call_args
-        insert_sql = insert_all_call[0][0]
-        self.assertIn("INSERT ALL", insert_sql)
-        self.assertIn("DB.SCH.UDF_TABLE", insert_sql)
-        self.assertIn("DB.SCH.UDF_TABLE$BACKFILL", insert_sql)
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+        for sql in sql_calls:
+            if sql.startswith("CREATE OR REPLACE TASK"):
+                self.assertIn("WAREHOUSE = DEFAULT_WH", sql)
 
-        metadata_manager.save_streaming_metadata.assert_called_once()
-        saved_meta = metadata_manager.save_streaming_metadata.call_args
-        self.assertEqual(saved_meta.kwargs["metadata"].stream_source_name, "TXN_EVENTS")
-        self.assertEqual(saved_meta.kwargs["metadata"].transformation_fn_name, "_sample_transform")
-        self.assertEqual(saved_meta.kwargs["metadata"].backfill_query_id, "test-query-id")
-
-        metadata_manager.increment_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
-
-    @patch("snowflake.snowpark.dataframe.map_in_pandas")
-    def test_postamble_renames_input_columns_with_prefix(self, mock_map: MagicMock) -> None:
-        """Postamble prefixes backfill_df columns for map_in_pandas and unprefixes in the wrapper."""
+    def test_postamble_no_warehouse_raises(self) -> None:
+        """Postamble raises if neither the FV nor the FS provides a warehouse."""
         backfill_df = _make_mock_backfill_df()
-        renamed_backfill_df = MagicMock()
-        renamed_backfill_df.queries = {"queries": ["SELECT * FROM renamed_src"]}
-        backfill_df.to_df.return_value = renamed_backfill_df
-
-        captured = {}
-
-        def user_fn(df: pd.DataFrame) -> pd.DataFrame:
-            captured["user_fn_columns"] = list(df.columns)
-            df["AMOUNT_CENTS"] = (df["AMOUNT"] * 100).astype(int)
-            df["IS_LARGE"] = df["AMOUNT"] > 1000
-            return df
-
         entity = _make_entity()
         stream_config = StreamConfig(
             stream_source="txn_events",
-            transformation_fn=user_fn,
+            transformation_fn=_sample_transform,
             backfill_df=backfill_df,
         )
         fv = FeatureView(
@@ -882,21 +1435,10 @@ class RunStreamingPostambleTest(absltest.TestCase):
             timestamp_col="EVENT_TIME",
         )
 
-        session = MagicMock()
-        session.table.return_value.schema = StructType(
-            [StructField("USER_ID", StringType()), StructField("AMOUNT_CENTS", DoubleType())]
-        )
-        metadata_manager = MagicMock()
-
-        transformed_df = MagicMock()
-        transformed_df.queries = {"queries": ["SELECT udtf(...) FROM source"]}
-        mock_map.return_value = transformed_df
-        async_job = MagicMock()
-        async_job.query_id = "q"
-        session.sql.return_value.collect.return_value = async_job
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
 
         from snowflake.ml.feature_store.streaming_registration import (
-            _BACKFILL_INPUT_PREFIX,
             StreamingPreambleResult,
         )
 
@@ -906,42 +1448,24 @@ class RunStreamingPostambleTest(absltest.TestCase):
             resolved_source_name="TXN_EVENTS",
         )
 
-        run_streaming_postamble(
-            session=session,
-            feature_view=fv,
-            version=FeatureViewVersion("v1"),
-            preamble=preamble,
-            metadata_manager=metadata_manager,
-        )
+        with self.assertRaisesRegex(ValueError, "No warehouse available"):
+            run_streaming_postamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
+                preamble=preamble,
+                metadata_manager=metadata_manager,
+                default_warehouse=None,
+                get_fully_qualified_name_fn=self._fq,
+                telemetry_stmp={},
+            )
 
-        backfill_df.to_df.assert_called_once()
-        new_names = backfill_df.to_df.call_args[0][0]
-        expected_names = [f"{_BACKFILL_INPUT_PREFIX}{c}" for c in backfill_df.columns]
-        self.assertEqual(new_names, expected_names)
-
-        called_df = mock_map.call_args[0][0]
-        self.assertIs(called_df, renamed_backfill_df)
-
-        wrapper_fn = mock_map.call_args[0][1]
-        prefixed_pdf = pd.DataFrame(
-            {
-                f"{_BACKFILL_INPUT_PREFIX}USER_ID": ["u1", "u2"],
-                f"{_BACKFILL_INPUT_PREFIX}AMOUNT": [100.0, 2000.0],
-                f"{_BACKFILL_INPUT_PREFIX}EVENT_TIME": pd.to_datetime(["2024-01-01", "2024-01-02"]),
-            }
-        )
-        out = list(wrapper_fn(iter([prefixed_pdf])))
-        self.assertEqual(len(out), 1)
-        self.assertEqual(captured["user_fn_columns"], ["USER_ID", "AMOUNT", "EVENT_TIME"])
-        self.assertIn("AMOUNT_CENTS", out[0].columns)
-        self.assertIn("IS_LARGE", out[0].columns)
-
-    @patch("snowflake.snowpark.dataframe.map_in_pandas")
-    def test_postamble_with_backfill_start_time(self, mock_map: MagicMock) -> None:
-        """Postamble filters backfill_df and saves start_time in metadata."""
+    def test_postamble_with_backfill_start_time(self) -> None:
+        """``backfill_start_time`` is rendered as a TO_TIMESTAMP_NTZ literal in the root CALL,
+        and the ISO timestamp is preserved in metadata. The dataframe is not pre-filtered;
+        the proc's WHERE clause does the filtering server-side."""
         backfill_df = _make_mock_backfill_df()
-        filtered_df = MagicMock()
-        backfill_df.filter.return_value = filtered_df
 
         start_time = datetime.datetime(2024, 6, 1)
         entity = _make_entity()
@@ -956,18 +1480,11 @@ class RunStreamingPostambleTest(absltest.TestCase):
             entities=[entity],
             stream_config=stream_config,
             timestamp_col="EVENT_TIME",
+            warehouse="wh",
         )
 
-        session = MagicMock()
-        session.table.return_value.schema = StructType([StructField("C", StringType())])
-        metadata_manager = MagicMock()
-
-        transformed_df = MagicMock()
-        transformed_df.queries = {"queries": ["SELECT udtf(...) FROM src"]}
-        mock_map.return_value = transformed_df
-        async_job = MagicMock()
-        async_job.query_id = "q-id"
-        session.sql.return_value.collect.return_value = async_job
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
 
         from snowflake.ml.feature_store.streaming_registration import (
             StreamingPreambleResult,
@@ -983,13 +1500,188 @@ class RunStreamingPostambleTest(absltest.TestCase):
             session=session,
             feature_view=fv,
             version=FeatureViewVersion("v1"),
+            feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
             preamble=preamble,
             metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
         )
 
-        backfill_df.filter.assert_called_once()
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+        # The dataframe-level filter is NOT applied client-side anymore.
+        backfill_df.filter.assert_not_called()
+
+        root_sql = next(s for s in sql_calls if s.startswith("CREATE OR REPLACE TASK") and "$BACKFILL_ROOT" in s)
+        # The literal must round-trip into the CALL exactly.
+        self.assertIn("TO_TIMESTAMP_NTZ('2024-06-01T00:00:00')", root_sql)
+        self.assertIn("SYSDATE()", root_sql)
+
         saved_meta = metadata_manager.save_streaming_metadata.call_args.kwargs["metadata"]
         self.assertEqual(saved_meta.backfill_start_time, "2024-06-01T00:00:00")
+
+    def test_postamble_renders_user_fn_inside_udtf(self) -> None:
+        """The per-FV UDTF body embeds the user's transformation source verbatim.
+
+        Snowflake disallows ``CREATE TEMPORARY FUNCTION`` from inside a
+        stored procedure, so the UDTF is created as a permanent function
+        (named ``<fv>$<ver>$BACKFILL_UDTF``) at registration time. The
+        finalizer task drops it as part of cleanup. This test verifies the
+        UDTF DDL contains the user's source and the vectorized handler
+        class — the proc body itself only contains the ``INSERT ALL`` that
+        references the UDTF.
+        """
+        backfill_df = _make_mock_backfill_df()
+
+        def my_custom_transform(df: pd.DataFrame) -> pd.DataFrame:
+            df["AMOUNT_CENTS"] = (df["AMOUNT"] * 100).astype(int)
+            df["IS_LARGE"] = df["AMOUNT"] > 1000
+            return df
+
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=my_custom_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.T",
+            fq_backfill_table="DB.SCH.T$BACKFILL",
+            resolved_source_name="SRC",
+        )
+
+        run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=None,
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+        )
+
+        udtf_sql = next(
+            str(c.args[0])
+            for c in session.sql.call_args_list
+            if str(c.args[0]).startswith("CREATE OR REPLACE FUNCTION")
+        )
+        self.assertIn("$BACKFILL_UDTF", udtf_sql)
+        self.assertIn("LANGUAGE PYTHON", udtf_sql)
+        self.assertIn("def my_custom_transform", udtf_sql)
+        # Vectorized handler that calls the user fn by name.
+        self.assertIn("my_custom_transform(df)", udtf_sql)
+        self.assertIn("class _Handler", udtf_sql)
+        self.assertIn("_sf_vectorized_input", udtf_sql)
+        # The proc body itself only references the UDTF, no Python source.
+        proc_sql = next(
+            str(c.args[0])
+            for c in session.sql.call_args_list
+            if str(c.args[0]).startswith("CREATE OR REPLACE PROCEDURE")
+        )
+        self.assertNotIn("def my_custom_transform", proc_sql)
+        self.assertNotIn("class _Handler", proc_sql)
+        self.assertIn("$BACKFILL_UDTF", proc_sql)
+
+    def test_postamble_without_timestamp_col_omits_window_filter(self) -> None:
+        """When ``feature_view.timestamp_col`` is None, the proc SELECT has no WHERE.
+
+        Streaming FVs require a timestamp_col today, but the SELECT-builder
+        already supports the no-timestamp case for forward compatibility.
+        We exercise it here by calling the renderer directly.
+        """
+        from snowflake.ml.feature_store.streaming_registration import (
+            _render_backfill_insert_all_sql,
+        )
+
+        sql_with_ts = _render_backfill_insert_all_sql(
+            fq_udf_table="DB.SCH.T",
+            fq_backfill_table="DB.SCH.T$BACKFILL",
+            fq_udtf="DB.SCH.UDTF",
+            backfill_source_select="SELECT * FROM SRC",
+            input_col_names=["USER_ID", "AMOUNT", "EVENT_TIME"],
+            output_col_names=["USER_ID", "AMOUNT_CENTS"],
+            timestamp_col="EVENT_TIME",
+        )
+        # The window predicate must be applied INSIDE the source subquery
+        # (not as an outer WHERE after the implicit lateral join with the
+        # UDTF). With OVER (PARTITION BY 1) a vectorized UDTF receives the
+        # whole source as one partition, so an outer WHERE would still
+        # feed out-of-window rows to ``transformation_fn``.
+        self.assertIn("WHERE", sql_with_ts)
+        # Predicate is qualified by the inner alias ``_bf`` so it stays
+        # unambiguous if the source query is ever altered to emit a join.
+        self.assertIn('_bf."EVENT_TIME" >= :WINDOW_START', sql_with_ts)
+        self.assertIn('_bf."EVENT_TIME" < :WINDOW_END', sql_with_ts)
+        # The predicate must NOT be qualified by the outer source alias
+        # ``s.``: that would mean the WHERE landed after the UDTF
+        # cross-join, the bug we're guarding against. ``s."EVENT_TIME"``
+        # is allowed elsewhere (it's a UDTF input arg).
+        self.assertNotIn('s."EVENT_TIME" >=', sql_with_ts)
+        self.assertNotIn('s."EVENT_TIME" <', sql_with_ts)
+        # The UDTF call site comes AFTER the filtered source subquery.
+        self.assertLess(sql_with_ts.index("WHERE"), sql_with_ts.index("TABLE("))
+
+        sql_no_ts = _render_backfill_insert_all_sql(
+            fq_udf_table="DB.SCH.T",
+            fq_backfill_table="DB.SCH.T$BACKFILL",
+            fq_udtf="DB.SCH.UDTF",
+            backfill_source_select="SELECT * FROM SRC",
+            input_col_names=["USER_ID", "AMOUNT"],
+            output_col_names=["USER_ID", "AMOUNT_CENTS"],
+            timestamp_col=None,
+        )
+        self.assertNotIn(" WHERE ", sql_no_ts)
+        self.assertNotIn("WINDOW_START", sql_no_ts)
+        self.assertNotIn("WINDOW_END", sql_no_ts)
+        # Both still produce the TABLE(udtf(...) OVER (PARTITION BY 1)) shape.
+        # Note: Snowflake does not accept the explicit LATERAL keyword for
+        # vectorized-UDTF calls with OVER (PARTITION BY ...); the implicit
+        # lateral join via comma-FROM is the only supported form.
+        for sql in (sql_with_ts, sql_no_ts):
+            self.assertIn("INSERT ALL INTO DB.SCH.T INTO DB.SCH.T$BACKFILL", sql)
+            self.assertIn("TABLE(", sql)
+            self.assertNotIn("LATERAL TABLE(", sql)
+            self.assertIn("OVER (PARTITION BY 1)", sql)
+
+    def test_render_backfill_udtf_rejects_dollar_quote_collision(self) -> None:
+        """The renderer refuses to embed user source containing ``$$``.
+
+        The UDTF Python body is wrapped in ``$$ ... $$`` (Snowflake's only
+        dollar-quote variant), so any ``$$`` in the user code would
+        terminate the literal early and corrupt the DDL.
+        """
+        from snowflake.ml.feature_store.streaming_registration import (
+            _render_backfill_udtf_sql,
+        )
+
+        bad_source = "def f(df):\n    return df  # contains $$\n"
+        with self.assertRaisesRegex(ValueError, "reserved sentinel"):
+            _render_backfill_udtf_sql(
+                fq_udtf="DB.SCH.UDTF",
+                input_col_names=["A"],
+                input_col_types=["NUMBER(38,0)"],
+                output_col_names=["A"],
+                output_col_types=["NUMBER(38,0)"],
+                user_fn_name="f",
+                user_fn_source=bad_source,
+            )
 
 
 # ============================================================================

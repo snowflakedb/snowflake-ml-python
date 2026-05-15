@@ -9,7 +9,7 @@ from snowflake.ml._internal.utils import identifier, mixins
 if TYPE_CHECKING:
     from snowflake.ml.dataset import dataset
     from snowflake.ml.feature_store import feature_view
-    from snowflake.ml.model._client.model import model_version_impl
+    from snowflake.ml.model._client.model.model_version_impl import ModelVersion
 
 _PROJECT = "LINEAGE"
 DOMAIN_LINEAGE_REGISTRY: dict[str, type["LineageNode"]] = {}
@@ -87,7 +87,7 @@ class LineageNode(mixins.SerializableSessionMixin):
         self,
         direction: Literal["upstream", "downstream"] = "downstream",
         domain_filter: Optional[set[Literal["feature_view", "dataset", "model", "table", "view"]]] = None,
-    ) -> list[Union["feature_view.FeatureView", "dataset.Dataset", "model_version_impl.ModelVersion", "LineageNode"]]:
+    ) -> list[Union["feature_view.FeatureView", "dataset.Dataset", "ModelVersion", "LineageNode"]]:
         """
         Retrieves the lineage nodes connected to this node.
 

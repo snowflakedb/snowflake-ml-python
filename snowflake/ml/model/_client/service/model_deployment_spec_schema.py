@@ -1,6 +1,7 @@
+import enum
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 BaseModel.model_config["protected_namespaces"] = ()
 
@@ -22,6 +23,32 @@ class ImageBuild(BaseModel):
     external_access_integrations: Optional[list[str]] = None
 
 
+class FeatureRetrievalType(str, enum.Enum):
+    """Retriever backend used to look up feature columns at inference time.
+
+    The string values are the wire format and must stay in sync with the GS-side
+    ``ModelDeploymentSpecFeatureLookup`` ``type`` field; OFT_VNEXT is the only
+    value GS currently accepts. Inheriting from ``str`` keeps YAML/JSON
+    serialization as the plain string for backwards compatibility.
+    """
+
+    OFT_VNEXT = "oft_vnext"
+
+
+class FeatureLookup(BaseModel):
+    # Serialize the enum to its string value so the wire format stays "oft_vnext"
+    # rather than the Python repr of the enum member.
+    model_config = ConfigDict(use_enum_values=True)
+
+    source: str
+    type: FeatureRetrievalType
+    version: str
+
+
+class FeatureRetrievalConfig(BaseModel):
+    lookups: dict[str, list[FeatureLookup]]
+
+
 class Service(BaseModel):
     name: str
     compute_pool: str
@@ -35,6 +62,7 @@ class Service(BaseModel):
     max_batch_rows: Optional[int] = None
     autocapture: Optional[bool] = None
     inference_engine_spec: Optional[InferenceEngineSpec] = None
+    feature_retrieval: Optional[FeatureRetrievalConfig] = None
 
 
 class Input(BaseModel):
