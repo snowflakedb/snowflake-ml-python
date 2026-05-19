@@ -43,8 +43,13 @@ from snowflake.ml._internal.utils.sql_identifier import (
     to_sql_identifiers,
 )
 from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
-from snowflake.ml.feature_store import online_service, online_service_http_client
+from snowflake.ml.feature_store import (
+    feature_group as fg_mod,
+    online_service,
+    online_service_http_client,
+)
 from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
+from snowflake.ml.feature_store.feature_group import FeatureGroup
 from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
     _FEATURE_VIEW_NAME_DELIMITER,
@@ -225,10 +230,13 @@ class _FeatureStoreObjTypes(Enum):
     MANAGED_FEATURE_VIEW = "MANAGED_FEATURE_VIEW"  # Snowflake manages the refresh for the user
     EXTERNAL_FEATURE_VIEW = "EXTERNAL_FEATURE_VIEW"
     FEATURE_VIEW_REFRESH_TASK = "FEATURE_VIEW_REFRESH_TASK"
+    FEATURE_VIEW_BACKFILL_PROC = "FEATURE_VIEW_BACKFILL_PROC"
+    FEATURE_VIEW_BACKFILL_UDTF = "FEATURE_VIEW_BACKFILL_UDTF"
     TRAINING_DATA = "TRAINING_DATA"
     ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
     UDF_TRANSFORMED_TABLE = "UDF_TRANSFORMED_TABLE"
     INTERNAL_METADATA_TABLE = "INTERNAL_METADATA_TABLE"
+    FEATURE_GROUP = "FEATURE_GROUP"
 
     @classmethod
     def parse(cls, val: str) -> _FeatureStoreObjTypes:
@@ -373,7 +381,12 @@ def dispatch_decorator(
             @functools.wraps(f)
             def maybe_telemetry(self: FeatureStore, /, *args: _Args.args, **kargs: _Args.kwargs) -> _RT:
                 if skip_telemetry(self, *args, **kargs):
-                    return after_wh(self, *args, **kargs)
+                    # Mirror ``send_api_usage_telemetry``'s exception unwrap so the
+                    # hot/cold paths surface the same caller-visible error types.
+                    try:
+                        return after_wh(self, *args, **kargs)
+                    except snowml_exceptions.SnowflakeMLException as e:
+                        raise e.original_exception from e
                 return wrapped_with_telemetry(self, *args, **kargs)
 
             return maybe_telemetry
@@ -399,6 +412,17 @@ def _predicate_read_feature_view_skip_wh_switch(*args: Any, **kwargs: Any) -> bo
 
 def _predicate_read_feature_view_skip_telemetry(*args: Any, **kwargs: Any) -> bool:
     return _get_store_type(kwargs.get("store_type", fv_mod.StoreType.OFFLINE)) == fv_mod.StoreType.ONLINE
+
+
+# FG read is ONLINE-only today (OFFLINE is rejected upstream); both predicates
+# always skip — reads use HTTP (no warehouse) and run on a latency-sensitive path.
+# When OFFLINE FG reads land, gate on ``store_type`` like the FV predicates above.
+def _predicate_read_feature_group_skip_wh_switch(*args: Any, **kwargs: Any) -> bool:
+    return True
+
+
+def _predicate_read_feature_group_skip_telemetry(*args: Any, **kwargs: Any) -> bool:
+    return True
 
 
 class FeatureStore:
@@ -946,18 +970,39 @@ class FeatureStore:
                     feature_view.name, version, feature_view._rollup_metadata.to_dict()
                 )
 
-            # Step 5: Streaming postamble (metadata + ref_count + async backfill)
+            # Step 5: Streaming postamble (metadata + ref_count + server-side backfill task graph)
             if streaming_preamble is not None:
                 from snowflake.ml.feature_store.streaming_registration import (
                     run_streaming_postamble,
                 )
 
+                # Track each backfill resource as it's created so failures
+                # later in the postamble (metadata save, ref-count) still
+                # leave a complete cleanup trail. Reverse-order rollback
+                # then drops finalize -> root -> proc -> UDTF.
+                _streaming_kind_to_obj_type = {
+                    "BACKFILL_UDTF": _FeatureStoreObjTypes.FEATURE_VIEW_BACKFILL_UDTF,
+                    "BACKFILL_PROC": _FeatureStoreObjTypes.FEATURE_VIEW_BACKFILL_PROC,
+                    "BACKFILL_ROOT_TASK": _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK,
+                    "BACKFILL_FINALIZE_TASK": _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK,
+                }
+
+                def _track_streaming_resource(kind: str, fq_name: str) -> None:
+                    # For ``BACKFILL_UDTF``, ``fq_name`` already carries the
+                    # argument-type signature so ``DROP FUNCTION`` can use it.
+                    created_resources.append((_streaming_kind_to_obj_type[kind], fq_name))
+
                 run_streaming_postamble(
                     session=self._session,
                     feature_view=feature_view,
                     version=version,
+                    feature_view_name=feature_view_name,
                     preamble=streaming_preamble,
                     metadata_manager=self._metadata_manager,
+                    default_warehouse=self._default_warehouse,
+                    get_fully_qualified_name_fn=self._get_fully_qualified_name,
+                    telemetry_stmp=self._telemetry_stmp,
+                    on_resource_created=_track_streaming_resource,
                 )
                 streaming_ref_count_incremented = True
 
@@ -1731,21 +1776,135 @@ class FeatureStore:
             )
 
     def _get_offline_refresh_history(self, feature_view: FeatureView, verbose: bool) -> DataFrame:
-        """Get refresh history for offline feature view (dynamic table)."""
+        """Get refresh history for an offline feature view (dynamic table).
+
+        For streaming FVs with a server-side backfill task graph, also
+        includes ``INFORMATION_SCHEMA.TASK_HISTORY`` rows for the backfill
+        root and any future window children, projected into the same
+        5-column shape with ``REFRESH_ACTION='BACKFILL'``. The internal
+        finalizer task is filtered out — it has no user-meaningful
+        refresh semantics. Verbose mode keeps the DT-only schema and
+        emits a ``UserWarning`` (the two history views have incompatible
+        verbose columns).
+
+        Args:
+            feature_view: Feature view to query history for.
+            verbose: When True, return all columns from
+                ``DYNAMIC_TABLE_REFRESH_HISTORY`` and skip the backfill
+                ``UNION``.
+
+        Returns:
+            DataFrame with columns ``name, state, refresh_start_time,
+            refresh_end_time, refresh_action`` (or all DT columns when
+            ``verbose=True``).
+        """
         fv_resolved_name = FeatureView._get_physical_name(
             feature_view.name,
             feature_view.version,  # type: ignore[arg-type]
         ).resolved()
-        select_cols = "*" if verbose else "name, state, refresh_start_time, refresh_end_time, refresh_action"
-        return self._session.sql(
-            f"""
-            SELECT
-                {select_cols}
+        schema_resolved = self._config.schema.resolved()
+        db_resolved = self._config.database.resolved()
+
+        # UNION backfill task history only for streaming FVs that have a
+        # recorded ``backfill_root_task_name``; legacy streaming FVs predate
+        # the task-graph migration and fall through to DT-only history.
+        #
+        # ``user_visible_*`` patterns drive the user-facing UNION; the
+        # ``all_backfill`` pattern is kept for the verbose-mode hint that
+        # points users at full ``TASK_HISTORY`` (incl. the finalizer) for
+        # debugging.
+        user_visible_root_pattern: Optional[str] = None
+        user_visible_window_pattern: Optional[str] = None
+        all_backfill_pattern: Optional[str] = None
+        if feature_view.is_streaming:
+            try:
+                streaming_meta = self._metadata_manager.get_streaming_metadata(
+                    str(feature_view.name), str(feature_view.version)
+                )
+            except Exception:
+                streaming_meta = None
+            if streaming_meta is not None and streaming_meta.backfill_root_task_name:
+                from snowflake.ml.feature_store.streaming_registration import (
+                    _get_backfill_task_name_pattern,
+                    _get_user_visible_backfill_task_name_patterns,
+                )
+
+                physical = FeatureView._get_physical_name(
+                    feature_view.name,
+                    feature_view.version,  # type: ignore[arg-type]
+                )
+                all_backfill_pattern = _get_backfill_task_name_pattern(physical)
+                user_visible_root_pattern, user_visible_window_pattern = _get_user_visible_backfill_task_name_patterns(
+                    physical
+                )
+
+        if verbose:
+            if all_backfill_pattern is not None:
+                warnings.warn(
+                    "Streaming feature view backfill task history is not included in "
+                    "verbose mode because DYNAMIC_TABLE_REFRESH_HISTORY and TASK_HISTORY "
+                    "have different verbose schemas. Use the default (non-verbose) call "
+                    "to see backfill rows, or query INFORMATION_SCHEMA.TASK_HISTORY "
+                    f"directly with WHERE NAME LIKE '{all_backfill_pattern}' ESCAPE '\\\\' "
+                    "for full task-graph details (including the internal finalizer task).",
+                    UserWarning,
+                    stacklevel=3,
+                )
+            return self._session.sql(
+                f"""
+                SELECT *
+                FROM TABLE (
+                    {db_resolved}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY (RESULT_LIMIT => 10000)
+                )
+                WHERE NAME = '{fv_resolved_name}'
+                AND SCHEMA_NAME = '{schema_resolved}'
+                """
+            )
+
+        dt_history_sql = f"""
+            SELECT name, state, refresh_start_time, refresh_end_time, refresh_action
             FROM TABLE (
-                {self._config.database}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY (RESULT_LIMIT => 10000)
+                {db_resolved}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY (RESULT_LIMIT => 10000)
             )
             WHERE NAME = '{fv_resolved_name}'
-            AND SCHEMA_NAME = '{self._config.schema.resolved()}'
+            AND SCHEMA_NAME = '{schema_resolved}'
+            """
+
+        if user_visible_root_pattern is None or user_visible_window_pattern is None:
+            return self._session.sql(dt_history_sql)
+
+        # User-facing projection: surface the FV's physical name (matching
+        # the dynamic-table rows above) instead of the underlying task
+        # name; ``REFRESH_ACTION='BACKFILL'`` is the only label that
+        # distinguishes a backfill row from incremental refreshes. The
+        # finalizer task is intentionally excluded — it is internal cleanup
+        # plumbing with no user-meaningful refresh semantics. The ``LIKE``
+        # for window children is harmless in Phase 1 (no rows match) and
+        # extends to Phase 2 ``$BACKFILL_W<NNN>`` rows without DDL change.
+        backfill_history_sql = f"""
+            SELECT
+                '{fv_resolved_name}'                       AS name,
+                STATE                                      AS state,
+                COALESCE(QUERY_START_TIME, SCHEDULED_TIME) AS refresh_start_time,
+                COMPLETED_TIME                             AS refresh_end_time,
+                'BACKFILL'                                 AS refresh_action
+            FROM TABLE (
+                {db_resolved}.INFORMATION_SCHEMA.TASK_HISTORY (RESULT_LIMIT => 10000)
+            )
+            WHERE DATABASE_NAME = '{db_resolved}'
+              AND SCHEMA_NAME   = '{schema_resolved}'
+              AND (NAME = '{user_visible_root_pattern}' OR NAME LIKE '{user_visible_window_pattern}')
+            """
+
+        return self._session.sql(
+            f"""
+            SELECT name, state, refresh_start_time, refresh_end_time, refresh_action
+            FROM (
+                {dt_history_sql}
+                UNION ALL
+                {backfill_history_sql}
+            )
+            ORDER BY refresh_start_time DESC NULLS LAST
             """
         )
 
@@ -2006,6 +2165,120 @@ class FeatureStore:
         self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), str(feature_view.version))
 
         logger.info(f"Deleted FeatureView {feature_view.name}/{feature_view.version}.")
+
+    # =========================================================================
+    # FeatureGroup CRUD
+    # =========================================================================
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def register_feature_group(self, feature_group: FeatureGroup, version: str) -> FeatureGroup:
+        """Materialize a FeatureGroup as a Postgres-backed Online Feature Table.
+
+        Args:
+            feature_group: Draft FeatureGroup to register.
+            version: User-facing FeatureGroup version.
+
+        Returns:
+            FeatureGroup: equivalent to the input, with :attr:`FeatureGroup.version` populated.
+
+        Raises:
+            SnowflakeMLException: ``[ValueError]`` if any precondition is
+                violated (invalid version, unregistered / offline / non-Postgres
+                source, missing entity, mismatched join keys, or name collision).  # noqa: DAR402
+            SnowflakeMLException: ``[RuntimeError]`` if OFT creation, tagging, or
+                metadata write fails.  # noqa: DAR402
+
+        # noqa: DAR401
+        """
+        logger.warning("FeatureGroup is in private preview since 1.38.0. Do not use in production.")
+        return fg_mod.register_feature_group(self, feature_group, version)
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def list_feature_groups(self) -> DataFrame:
+        """List FeatureGroups registered in this FeatureStore.
+
+        Returns:
+            Snowpark DataFrame with one row per registered ``(name, version)``
+            and columns ``NAME, VERSION, DESC, OWNER, AUTO_PREFIX, SOURCES,
+            OUTPUT_COLUMNS``. Empty when no FGs are registered.
+        """
+        return fg_mod.list_feature_groups(self)
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def get_feature_group(self, name: str, version: str) -> FeatureGroup:
+        """Retrieve a previously registered FeatureGroup.
+
+        Args:
+            name: FeatureGroup name.
+            version: FeatureGroup version.
+
+        Returns:
+            FeatureGroup: equivalent to the registered original, with version populated.
+
+        Raises:
+            SnowflakeMLException: ``[ValueError]`` if no FeatureGroup with the
+                given *(name, version)* exists.  # noqa: DAR402
+        """
+        return fg_mod.get_feature_group(self, name, version)
+
+    @telemetry.send_api_usage_telemetry(project=_PROJECT)
+    def delete_feature_group(self, name: str, version: str) -> None:
+        """Delete a registered FeatureGroup (OFT and metadata row).
+
+        Idempotent on both the OFT (``DROP ... IF EXISTS``) and the metadata row.
+
+        Args:
+            name: FeatureGroup name.
+            version: FeatureGroup version.
+
+        Raises:
+            SnowflakeMLException: ``[RuntimeError]`` if ``DROP ONLINE FEATURE TABLE``
+                fails.  # noqa: DAR402
+        """
+        fg_mod.delete_feature_group(self, name, version)
+
+    @dispatch_decorator(
+        skip_wh_switch=_predicate_read_feature_group_skip_wh_switch,
+        skip_telemetry=_predicate_read_feature_group_skip_telemetry,
+    )
+    def read_feature_group(
+        self,
+        feature_group: Union[FeatureGroup, str],
+        version: Optional[str] = None,
+        *,
+        keys: list[list[Any]],
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.ONLINE,
+    ) -> pd.DataFrame:
+        """Read feature values from a registered :class:`FeatureGroup` for a batch of entity rows.
+
+        Issues a single ``POST /api/v1/query`` against the Postgres-backed OFT
+        with ``object_type=feature_group``; the server returns the FG's
+        predetermined output column set (no per-call feature subsetting).
+
+        Args:
+            feature_group: A hydrated :class:`FeatureGroup` (from
+                :meth:`get_feature_group`) or the FG name as a string. When a
+                string, *version* is required.
+            version: Required when *feature_group* is a string. When a
+                :class:`FeatureGroup` is passed, this is optional but must
+                agree with :attr:`~FeatureGroup.version` if supplied.
+            keys: Non-empty list of entity rows; each inner list aligns
+                column-wise with the FG's shared join keys.
+            store_type: Defaults to :attr:`StoreType.ONLINE` (the only path
+                supported today). :attr:`StoreType.OFFLINE` raises until
+                offline FG reads land.
+
+        Returns:
+            ``pandas.DataFrame`` with the join-key columns followed by the
+            FG's :attr:`~FeatureGroup.output_columns` (in source order).
+
+        Raises:
+            SnowflakeMLException: ``[ValueError]`` if *keys* is empty, the
+                version is missing/disagrees, the FG is unregistered, or the
+                Online Service is not yet RUNNING. ``[NotImplementedError]``
+                if *store_type* is anything other than :attr:`StoreType.ONLINE`.  # noqa: DAR402
+        """
+        return fg_mod.read_feature_group(self, feature_group, version, keys=keys, store_type=store_type)
 
     @dispatch_decorator()
     def list_entities(self) -> DataFrame:
@@ -2555,7 +2828,7 @@ class FeatureStore:
 
         return df
 
-    @dispatch_decorator()
+    @overload
     def generate_training_set(
         self,
         spine_df: DataFrame,
@@ -2569,8 +2842,37 @@ class FeatureStore:
         auto_prefix: bool = False,
         join_method: Literal["sequential", "cte"] = "sequential",
     ) -> DataFrame:
+        ...
+
+    @overload
+    def generate_training_set(
+        self,
+        spine_df: DataFrame,
+        *,
+        feature_group: Union[FeatureGroup, tuple[str, str]],
+        save_as: Optional[str] = None,
+        spine_timestamp_col: Optional[str] = None,
+        spine_label_cols: Optional[list[str]] = None,
+    ) -> DataFrame:
+        ...
+
+    @dispatch_decorator()  # type: ignore[misc]
+    def generate_training_set(
+        self,
+        spine_df: DataFrame,
+        features: Optional[list[Union[FeatureView, FeatureViewSlice]]] = None,
+        *,
+        feature_group: Optional[Union[FeatureGroup, tuple[str, str]]] = None,
+        save_as: Optional[str] = None,
+        spine_timestamp_col: Optional[str] = None,
+        spine_label_cols: Optional[list[str]] = None,
+        exclude_columns: Optional[list[str]] = None,
+        include_feature_view_timestamp_col: bool = False,
+        auto_prefix: bool = False,
+        join_method: Literal["sequential", "cte"] = "sequential",
+    ) -> DataFrame:
         """
-        Generate a training set from the specified Spine DataFrame and Feature Views.
+        Generate a training set from a spine DataFrame and either a list of FeatureViews or a FeatureGroup.
 
         For rollup feature views with temporal entity mappings (``mapping_valid_from_col``
         and ``mapping_valid_to_col``), this method uses point-in-time correct entity
@@ -2578,11 +2880,19 @@ class FeatureStore:
         supporting 1:N mappings (one child entity to multiple parent entities simultaneously).
         For inference with latest mappings, use ``retrieve_feature_values`` instead.
 
-        Result is materialized to a Snowflake Table if `save_as` is specified.
+        Pass exactly one of ``features`` or ``feature_group``. With ``feature_group``,
+        the FG-owned parameters (``auto_prefix``, ``join_method``, ``exclude_columns``,
+        ``include_feature_view_timestamp_col``) are predetermined by the FG and
+        must not be set explicitly.
+
+        Result is materialized to a Snowflake Table if ``save_as`` is specified.
 
         Args:
             spine_df: Snowpark DataFrame to join features into.
-            features: A list of FeatureView or FeatureViewSlice which contains features to be joined.
+            features: A list of FeatureView or FeatureViewSlice which contains features to be
+                joined. Mutually exclusive with ``feature_group``.
+            feature_group: A registered :class:`FeatureGroup` or a ``(name, version)`` tuple.
+                Mutually exclusive with ``features``.
             save_as: If specified, a new table containing the produced result will be created. Name can be a fully
                 qualified name or an unqualified name. If unqualified, defaults to the Feature Store database and schema
             spine_timestamp_col: Name of timestamp column in spine_df that will be used to join
@@ -2590,18 +2900,26 @@ class FeatureStore:
                 timestamp_col.
             spine_label_cols: Name of column(s) in spine_df that contains labels.
             exclude_columns: Name of column(s) to exclude from the resulting training set.
+                Only valid with the ``features`` overload (FGs return a predetermined column set).
             include_feature_view_timestamp_col: Generated dataset will include timestamp column of feature view
                 (if feature view has timestamp column) if set true. Default to false.
+                Only valid with the ``features`` overload.
             auto_prefix: If True, automatically prefix all feature columns with
                 '{feature_view_name}_{version}_'. Default False.
                 Use FeatureView.with_name() for custom prefixes.
+                Only valid with the ``features`` overload (FGs use ``FeatureGroup.auto_prefix``).
             join_method: Method for feature joins. "sequential" for layer-by-layer joins (default),
                 "cte" for CTE method. (Internal use only - subject to change)
+                Only valid with the ``features`` overload (FGs always use "cte").
 
         Returns:
             Returns a Snowpark DataFrame representing the training set.
 
         Raises:
+            SnowflakeMLException: [INVALID_ARGUMENT] Neither or both of ``features`` /
+                ``feature_group`` were provided, or an FG-incompatible parameter
+                (``exclude_columns``, ``include_feature_view_timestamp_col``,
+                ``auto_prefix``, non-default ``join_method``) was set with a FeatureGroup.
             SnowflakeMLException: [RuntimeError] Materialized table name already exists
             SnowflakeMLException: [RuntimeError] Failed to create materialized table.
 
@@ -2624,6 +2942,26 @@ class FeatureStore:
             {'queries': ['SELECT  *  FROM (my_training_set)'], 'post_actions': []}
 
         """
+        if (features is None) == (feature_group is None):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "generate_training_set requires exactly one of `features` or `feature_group`."
+                ),
+            )
+
+        if feature_group is not None:
+            features, auto_prefix, join_method = fg_mod.prepare_training_set_args(
+                self,
+                feature_group=feature_group,
+                exclude_columns=exclude_columns,
+                include_feature_view_timestamp_col=include_feature_view_timestamp_col,
+                auto_prefix=auto_prefix,
+                join_method=join_method,
+            )
+
+        features = cast(list[Union[FeatureView, FeatureViewSlice]], features)
+
         if spine_timestamp_col is not None:
             spine_timestamp_col = SqlIdentifier(spine_timestamp_col)
         if spine_label_cols is not None:
@@ -2838,9 +3176,7 @@ class FeatureStore:
 
             # Cache the result to a temporary table before creating the dataset
             # to ensure single query evaluation:
-            has_tiled_fv = any(
-                (fv.feature_view_ref if isinstance(fv, FeatureViewSlice) else fv).is_tiled for fv in features
-            )
+            has_tiled_fv = any(fg_mod.unwrap_fv(fv).is_tiled for fv in features)
             if has_tiled_fv:
                 result_df = result_df.cache_result()
 
@@ -2943,7 +3279,34 @@ class FeatureStore:
                         statement_params=self._telemetry_stmp
                     )
                 elif resource_type == _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK:
+                    # Suspend before drop: streaming-FV root tasks may be
+                    # mid-fire by the time rollback runs. SUSPEND is
+                    # idempotent (and a no-op for already-suspended tiled-FV
+                    # tasks). Suspend failures are logged so DROP still runs.
+                    try:
+                        self._session.sql(f"ALTER TASK IF EXISTS {resource_name} SUSPEND").collect(
+                            statement_params=self._telemetry_stmp
+                        )
+                    except Exception as suspend_error:
+                        logger.warning(
+                            f"Rollback: failed to suspend task {resource_name} before drop "
+                            f"(continuing with DROP anyway): {suspend_error}"
+                        )
                     self._session.sql(f"DROP TASK IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
+                elif resource_type == _FeatureStoreObjTypes.FEATURE_VIEW_BACKFILL_PROC:
+                    from snowflake.ml.feature_store.streaming_registration import (
+                        _get_backfill_proc_signature,
+                    )
+
+                    self._session.sql(
+                        f"DROP PROCEDURE IF EXISTS {resource_name}{_get_backfill_proc_signature()}"
+                    ).collect(statement_params=self._telemetry_stmp)
+                elif resource_type == _FeatureStoreObjTypes.FEATURE_VIEW_BACKFILL_UDTF:
+                    # ``resource_name`` already carries the UDTF arg-type
+                    # signature appended at registration time.
+                    self._session.sql(f"DROP FUNCTION IF EXISTS {resource_name}").collect(
                         statement_params=self._telemetry_stmp
                     )
                 elif resource_type == _FeatureStoreObjTypes.ONLINE_FEATURE_TABLE:
@@ -3187,7 +3550,7 @@ class FeatureStore:
         default_target_lag = (
             feature_view.online_config.target_lag
             if feature_view.online_config and feature_view.online_config.target_lag
-            else fv_mod._DEFAULT_TARGET_LAG
+            else fv_mod._BATCH_OFT_TARGET_LAG
         )
         final_config = fv_mod.OnlineConfig(
             enable=True,
@@ -3222,7 +3585,7 @@ class FeatureStore:
     ) -> _OnlineUpdateStrategy:
         """Plan operations to update existing online table configuration."""
         existing_config = feature_view.online_config or fv_mod.OnlineConfig(
-            enable=True, target_lag=fv_mod._DEFAULT_TARGET_LAG
+            enable=True, target_lag=fv_mod._BATCH_OFT_TARGET_LAG
         )
         if online_config.target_lag is None or online_config.target_lag == existing_config.target_lag:
             return self._OnlineUpdateStrategy([], [], existing_config)
@@ -3575,18 +3938,18 @@ class FeatureStore:
         join_key_field_types = {f.name: f.datatype for f in feature_view.output_schema.fields if f.name in join_set}
 
         rows, schema = online_service.read_postgres_online_features(
-            self._session,
-            query_url,
-            str(feature_view.name),
-            str(feature_view.version),
-            join_names,
-            keys,
-            feature_names,
+            session=self._session,
+            query_url=query_url,
+            feature_view_name=str(feature_view.name),
+            feature_view_version=str(feature_view.version),
+            join_key_names=join_names,
+            keys=keys,
+            feature_names=feature_names,
             join_key_field_types=join_key_field_types,
             http_client=self._get_or_create_online_http_client(),
         )
         if as_pandas:
-            return online_service._rows_to_pandas_for_postgres_online(rows, schema)
+            return online_service.rows_to_pandas_for_postgres_online(rows, schema)
         if not rows:
             return self._empty_dataframe_for_postgres_online_read(feature_view, feature_names)
         coerced = [online_service._coerce_row_values_for_snowpark_local_schema(r, schema) for r in rows]
@@ -4358,35 +4721,18 @@ class FeatureStore:
         feature_view: Union[FeatureView, FeatureViewSlice],
         auto_prefix: bool,
     ) -> Optional[str]:
-        """Get the prefix to apply for this feature view.
+        """Thin wrapper over :func:`feature_view.get_feature_prefix`.
 
-        Priority:
-        1. Explicit name from with_name() - highest priority
-        2. Auto prefix if auto_prefix=True
-        3. No prefix (default)
+        Kept on the class for backward compatibility with internal callers.
 
         Args:
             feature_view: The feature view instance.
             auto_prefix: Whether to auto-generate prefix.
 
         Returns:
-            Prefix string with trailing underscore, or None.
+            Prefix string with trailing underscore, or ``None``.
         """
-        # Priority 1: Explicit name
-        if hasattr(feature_view, "column_alias") and feature_view.column_alias is not None:
-            if feature_view.column_alias == "":
-                return None  # Explicit no-prefix
-            return f"{feature_view.column_alias}_"
-
-        # Priority 2: Auto prefix
-        if auto_prefix:
-            # For FeatureViewSlice, access name and version through feature_view_ref
-            if isinstance(feature_view, FeatureViewSlice):
-                return f"{feature_view.feature_view_ref.name}_{feature_view.feature_view_ref.version}_"
-            return f"{feature_view.name}_{feature_view.version}_"
-
-        # Priority 3: No prefix
-        return None
+        return fv_mod.get_feature_prefix(feature_view, auto_prefix)
 
     def _build_cte_query(
         self,
@@ -4775,7 +5121,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         # Check if any feature view is tiled - tiled FVs require CTE method and timestamp column
         has_tiled_fv = False
         for feature in features:
-            fv = feature.feature_view_ref if isinstance(feature, FeatureViewSlice) else feature
+            fv = fg_mod.unwrap_fv(feature)
             if fv.is_tiled:
                 has_tiled_fv = True
                 break
@@ -4796,7 +5142,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         # Extract column selections for each feature view
         feature_columns: list[str] = []
         for feature in features:
-            fv = feature.feature_view_ref if isinstance(feature, FeatureViewSlice) else feature
+            fv = fg_mod.unwrap_fv(feature)
             if fv.status == FeatureViewStatus.DRAFT:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
@@ -5416,9 +5762,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             storage_config_json = _DEFAULT_STORAGE_CONFIG_JSON
         values.append(storage_config_json)
 
-        # Stream config from metadata table (only for streaming FVs).
-        # Schema: {"stream_source": str, "transformation_fn": str,
-        #          "backfill_start_time"?: str, "backfill_query_id"?: str}
+        # Stream config (streaming FVs only). Schema:
+        # ``{"stream_source", "transformation_fn", "backfill_start_time"?,
+        #    "backfill_status"?}``. Surfacing ``backfill_status`` here (rather
+        # than as a top-level column) keeps streaming-only state scoped to
+        # streaming-only context — non-streaming FVs leave ``stream_config``
+        # null and never see a misleading "backfill" field that doesn't
+        # apply to their full-refresh semantics. Backfill task-graph names
+        # stay internal — used by cleanup/overwrite and ``get_refresh_history``.
         if fv_metadata.is_streaming:
             streaming_meta = self._metadata_manager.get_streaming_metadata(name, version)
             if streaming_meta:
@@ -5428,8 +5779,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 }
                 if streaming_meta.backfill_start_time is not None:
                     stream_config_data["backfill_start_time"] = streaming_meta.backfill_start_time
-                if streaming_meta.backfill_query_id is not None:
-                    stream_config_data["backfill_query_id"] = streaming_meta.backfill_query_id
+                if streaming_meta.backfill_state is not None:
+                    stream_config_data["backfill_status"] = streaming_meta.backfill_state
                 stream_config_json = json.dumps(stream_config_data)
             else:
                 stream_config_json = json.dumps({"stream_source": "unknown"})
@@ -5449,7 +5800,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         ``OnlineStoreType.HYBRID_TABLE`` is used (same as older clients without the column).
 
         Args:
-            name: Feature view name
+            name: Feature view name. Accepts either the raw stored name or the SQL-quoted form.
             version: Feature view version
             include_online_service_metadata: If True, includes additional Online Service metadata
                 (refresh_mode, scheduling_state) in the JSON for display purposes.
@@ -5465,6 +5816,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             SnowflakeMLException: If multiple online feature tables found for the given name/version,
                 or if the online feature table is missing required 'target_lag' column.
         """
+        # SQL-quoted input would be re-wrapped downstream and miss the OFT for case-sensitive names.
+        if not isinstance(name, SqlIdentifier) and len(name) >= 2 and name[0] == '"' and name[-1] == '"':
+            name = SqlIdentifier(name, case_sensitive=False).resolved()
+
         online_table_name = FeatureView._get_online_table_name(name, version)
 
         online_tables = self._find_object(object_type="ONLINE FEATURE TABLES", object_name=online_table_name)
@@ -5514,7 +5869,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 return online_config.to_json()
         else:
             # No online feature table found - return default disabled config
-            online_config = fv_mod.OnlineConfig(enable=False, target_lag=fv_mod._DEFAULT_TARGET_LAG)
+            online_config = fv_mod.OnlineConfig(enable=False, target_lag=fv_mod._BATCH_OFT_TARGET_LAG)
             return online_config.to_json()
 
     def _lookup_feature_view_metadata(self, row: Row, fv_name: str) -> tuple[_FeatureViewMetadata, str]:
@@ -5572,7 +5927,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         infer_schema_df = self._session.sql(f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}")
         desc = row["comment"]
 
-        online_config_json = self._determine_online_config_from_oft(name.identifier(), version)
+        online_config_json = self._determine_online_config_from_oft(name.resolved(), version)
         online_config = fv_mod.OnlineConfig.from_json(online_config_json)
 
         # Get storage_config from SHOW ICEBERG TABLES if marked as Iceberg in metadata
@@ -5705,10 +6060,22 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             self._hydrate_postgres_online_service(fv)
             return fv
 
-    def _hydrate_postgres_online_service(self, fv: FeatureView) -> None:
-        """Set ``_postgres_online_query_url`` and warn when Postgres online reads are not ready."""
-        if not fv.online or fv.online_config is None or fv.online_config.store_type != OnlineStoreType.POSTGRES:
-            return
+    def _resolve_postgres_online_query_url(self, *, log_label: str) -> Optional[str]:
+        """Fetch the Postgres OFT query endpoint URL or warn and return ``None``.
+
+        Failures (status not RUNNING, missing endpoint URL, transient
+        SYSTEM$ errors) are downgraded to ``UserWarning`` so callers can
+        still construct the target object and see the "Online Service not
+        RUNNING" error on first read.
+
+        Args:
+            log_label: Caller name embedded in the warning log
+                (e.g. ``"get_feature_view"``, ``"get_feature_group"``).
+
+        Returns:
+            The query endpoint URL when the Online Service is RUNNING and
+            advertises a ``query`` endpoint; ``None`` otherwise.
+        """
         try:
             st = online_service.fetch_online_service_status(
                 self._session,
@@ -5717,25 +6084,37 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 statement_params=self._telemetry_stmp,
             )
         except Exception as ex:
-            logger.warning("Could not fetch Online Service status during get_feature_view: %s", ex)
-            fv._postgres_online_query_url = None
+            logger.warning("Could not fetch Online Service status during %s: %s", log_label, ex)
             warnings.warn(
                 online_service.online_service_not_ready_message(),
                 category=UserWarning,
-                stacklevel=3,
+                stacklevel=4,
             )
-            return
+            return None
         query_url = online_service.endpoint_url(st, "query")
         if st.status == "RUNNING" and query_url:
             # Temporary: SYSTEM$ may return host-only query URLs until server sends full https URLs.
-            fv._postgres_online_query_url = query_url
-            return
-        fv._postgres_online_query_url = None
+            return query_url
         warnings.warn(
             online_service.online_service_not_ready_message(),
             category=UserWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
+        return None
+
+    def _hydrate_postgres_online_service(self, fv: FeatureView) -> None:
+        """Set ``_postgres_online_query_url`` and warn when Postgres online reads are not ready."""
+        if not fv.online or fv.online_config is None or fv.online_config.store_type != OnlineStoreType.POSTGRES:
+            return
+        fv._postgres_online_query_url = self._resolve_postgres_online_query_url(log_label="get_feature_view")
+
+    def _hydrate_fg_postgres_online_service(self, fg: FeatureGroup) -> None:
+        """Set ``FeatureGroup._postgres_online_query_url`` for read-time use.
+
+        Args:
+            fg: The reconstructed FeatureGroup whose query URL should be populated.
+        """
+        fg._postgres_online_query_url = self._resolve_postgres_online_query_url(log_label="get_feature_group")
 
     def _fetch_column_descs(self, obj_type: str, obj_name: SqlIdentifier) -> dict[str, str]:
         res = self._session.sql(f"DESC {obj_type} {self._get_fully_qualified_name(obj_name)}").collect(
@@ -5747,6 +6126,28 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             if r["comment"] is not None:
                 descs[SqlIdentifier(r["name"], case_sensitive=True).identifier()] = r["comment"]
         return descs
+
+    def _tag_oft(self, fully_qualified_oft_name: str, obj_type: _FeatureStoreObjTypes) -> None:
+        """Apply the FS object tag to a freshly-created OFT.
+
+        Wraps :func:`feature_view.execute_oft_set_tag`, supplying the
+        per-FeatureStore context (tag FQN, package version, telemetry params)
+        so the SQL builder stays a free function.
+
+        Args:
+            fully_qualified_oft_name: ``DB.SCHEMA.OFT_NAME``.
+            obj_type: ``_FeatureStoreObjTypes`` value embedded in the tag JSON;
+                discriminates FVs (``ONLINE_FEATURE_TABLE``) from FGs
+                (``FEATURE_GROUP``) for downstream listing.
+        """
+        obj_info = _FeatureStoreObjInfo(obj_type, snowml_version.VERSION)
+        fv_mod.execute_oft_set_tag(
+            self._session,
+            fully_qualified_oft_name=fully_qualified_oft_name,
+            fully_qualified_tag_name=self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG),
+            tag_value_json=obj_info.to_json(),
+            statement_params=self._telemetry_stmp,
+        )
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
     def _create_online_feature_table(
@@ -5789,8 +6190,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 if resolved_key not in seen_join_keys:
                     seen_join_keys.add(resolved_key)
                     ordered_join_keys.append(resolved_key)
-        quoted_join_keys = [f'"{key}"' for key in ordered_join_keys]
-        primary_key_clause = f"PRIMARY KEY ({', '.join(quoted_join_keys)})"
+        primary_key_clause = fv_mod.build_oft_primary_key_clause(ordered_join_keys)
 
         # Build online config clauses
         config = feature_view.online_config
@@ -5799,17 +6199,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError("OnlineConfig is required to create online feature table"),
             )
-        target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._DEFAULT_TARGET_LAG
-        # StreamingFeatureView OFTs require TARGET_LAG='0 seconds' for real-time serving
+        target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._BATCH_OFT_TARGET_LAG
+        # StreamingFeatureView OFTs are spec-backed and require request-time freshness.
         if feature_view.is_streaming:
-            target_lag_value = "0 seconds"
-        target_lag_clause = f"TARGET_LAG='{target_lag_value}'"
+            target_lag_value = fv_mod._NON_BATCH_OFT_TARGET_LAG
 
-        warehouse_clause = ""
-        if feature_view.warehouse:
-            warehouse_clause = f"WAREHOUSE={feature_view.warehouse}"
-        elif self._default_warehouse:
-            warehouse_clause = f"WAREHOUSE={self._default_warehouse}"
+        warehouse_clause = fv_mod.build_oft_warehouse_clause(feature_view.warehouse, self._default_warehouse)
 
         refresh_mode_clause = ""
         if feature_view.refresh_mode:
@@ -5888,28 +6283,18 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
         # Create online feature table
         try:
-            overwrite_clause = "OR REPLACE " if overwrite else ""
-
-            query_parts = [
-                f"CREATE {overwrite_clause}ONLINE FEATURE TABLE {fully_qualified_online_name}",
-                primary_key_clause,
-                refresh_mode_clause,
-                timestamp_clause,
-                warehouse_clause,
-                target_lag_clause,
-                source_clause,
-            ]
-
-            query = " ".join(part for part in query_parts if part)
+            query = fv_mod.build_oft_create_sql(
+                fully_qualified_oft_name=fully_qualified_online_name,
+                primary_key_clause=primary_key_clause,
+                target_lag=target_lag_value,
+                source_clause=source_clause,
+                warehouse_clause=warehouse_clause,
+                refresh_mode_clause=refresh_mode_clause,
+                timestamp_clause=timestamp_clause,
+                overwrite=overwrite,
+            )
             self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-
-            oft_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, snowml_version.VERSION)
-            tag_clause = f"""
-                ALTER ONLINE FEATURE TABLE {fully_qualified_online_name} SET TAG
-                {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{oft_obj_info.to_json()}'
-            """
-
-            self._session.sql(tag_clause).collect(statement_params=self._telemetry_stmp)
+            self._tag_oft(fully_qualified_online_name, _FeatureStoreObjTypes.ONLINE_FEATURE_TABLE)
         except Exception as e:
             logger.error(f"Failed to create online feature table for {feature_view.name}: {e}")
             raise snowml_exceptions.SnowflakeMLException(
@@ -5998,6 +6383,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             .set_offline_configs([offline_table_info])
             .set_properties(
                 entity_columns=entity_columns,
+                secondary_key_columns=feature_view.aggregation_secondary_keys,
                 timestamp_field=(feature_view.timestamp_col.resolved() if feature_view.timestamp_col else None),
                 granularity=feature_view.feature_granularity if feature_view.is_tiled else None,
                 agg_method=FeatureAggregationMethod.TILES if feature_view.is_tiled else None,

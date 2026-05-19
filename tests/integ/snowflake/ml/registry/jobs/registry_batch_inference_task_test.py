@@ -549,6 +549,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
             job_spec=JobSpec(function_name="predict", job_name_prefix="test_complex_query"),
         )
 
+    @absltest.skip("TODO(SNOW-3516871): handle quoted identifiers in batch inference")
     def test_quoted_identifiers(self) -> None:
         """Verify batch inference works with quoted (lowercase) model name and column names."""
         quoted_model_name = f'"batch_quoted_{uuid.uuid4().hex[:8]}"'

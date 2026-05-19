@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
+    _ONLINE_SERVICE_BACKED = True
+
     def setUp(self) -> None:
         super().setUp()
         self.fs = FeatureStore(

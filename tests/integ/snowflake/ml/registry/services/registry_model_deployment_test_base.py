@@ -11,6 +11,7 @@ import requests
 import retrying
 
 from snowflake.ml._internal.utils import identifier, jwt_generator
+from snowflake.ml.feature_store import feature_view as feature_view_mod
 from snowflake.ml.model import (
     ModelVersion,
     inference_engine,
@@ -130,6 +131,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
         python_version: Optional[str] = None,
         conda_dependencies: Optional[list[str]] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
     ) -> ModelVersion:
         # If conda_dependencies is not explicitly provided, add the default snowpark-python dependency.
         # Pass an empty list to skip conda dependencies (for pip-only tests).
@@ -180,6 +182,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             params=params,
             skip_rest_api_test=skip_rest_api_test,
             rest_inference_formats=rest_inference_formats,
+            feature_sources_per_function=feature_sources_per_function,
         )
 
     def _deploy_model_service(
@@ -202,6 +205,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         params: Optional[dict[str, Any]] = None,
         skip_rest_api_test: bool = False,
         rest_inference_formats: Optional[Sequence[RestInferencePayloadFormat]] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view_mod.FeatureView]]] = None,
     ) -> ModelVersion:
 
         if service_name is None:
@@ -209,7 +213,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         if service_compute_pool is None:
             service_compute_pool = self._TEST_CPU_COMPUTE_POOL if gpu_requests is None else self._TEST_GPU_COMPUTE_POOL
 
-        mv.create_service(
+        create_service_kwargs: dict[str, Any] = dict(
             service_name=service_name,
             service_compute_pool=service_compute_pool,
             gpu_requests=gpu_requests,
@@ -224,11 +228,10 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             inference_engine_options=inference_engine_options,
             experimental_options=experimental_options,
         )
-        while True:
-            service_status = mv.list_services().loc[0, "status"]
-            if service_status != "PENDING":
-                break
-            time.sleep(10)
+        if feature_sources_per_function is not None:
+            create_service_kwargs["feature_sources_per_function"] = feature_sources_per_function
+        mv.create_service(**create_service_kwargs)
+        self._wait_for_service_status(mv)
 
         for target_method, (test_input, check_func) in prediction_assert_fns.items():
             # Retry logic for inference calls as Proxy doesn't wait for model loading in the inference server.
@@ -321,14 +324,49 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             return True
         return False
 
+    def _wait_for_service_status(
+        self,
+        mv: ModelVersion,
+        *,
+        timeout_s: float = 1800.0,
+        poll_interval_s: float = 10.0,
+        expected_status: str = "RUNNING",
+    ) -> str:
+        """Poll until the service leaves PENDING; bounded at ``timeout_s``.
+
+        Args:
+            mv: Model version to poll.
+            timeout_s: Max seconds to wait.
+            poll_interval_s: Sleep between polls.
+            expected_status: Required terminal status after PENDING.
+
+        Returns:
+            The terminal status string.
+
+        Raises:
+            AssertionError: Service reached a status other than ``expected_status``.
+            TimeoutError: Service still PENDING after ``timeout_s``.
+        """
+        deadline = time.time() + timeout_s
+        last_status = "<unknown>"
+        while time.time() < deadline:
+            last_status = str(mv.list_services().loc[0, "status"])
+            if last_status != "PENDING":
+                if last_status != expected_status:
+                    raise AssertionError(f"Inference service did not reach {expected_status}: status={last_status!r}")
+                return last_status
+            time.sleep(poll_interval_s)
+        raise TimeoutError(f"Service did not leave PENDING within {timeout_s:.0f}s (last_status={last_status!r}).")
+
     @staticmethod
-    def _ensure_ingress_url(mv: ModelVersion) -> str:
-        while True:
+    def _ensure_ingress_url(mv: ModelVersion, *, timeout_s: float = 600.0) -> str:
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
             endpoint = mv.list_services().loc[0, "inference_endpoint"]
             if endpoint is not None:
-                break
+                return str(endpoint)
             time.sleep(10)
-        return endpoint
+        raise TimeoutError(f"Ingress endpoint did not appear within {timeout_s:.0f}s.")
 
     def _get_jwt_token_generator(self) -> Optional[jwt_generator.JWTGenerator]:
         """Get JWT token generator if private key is available."""

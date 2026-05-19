@@ -46,7 +46,9 @@ class TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
             else:
                 # Single-input: pipeline(["prompt1", "prompt2", ...])
                 input_data = X[signature.inputs[0].name].to_list()
-            return getattr(raw_model, target_method)(input_data)
+            # HF text-generation accepts generation params as flat kwargs.
+            filtered_kwargs = _task_handler._filter_none_kwargs(kwargs)
+            return getattr(raw_model, target_method)(input_data, **filtered_kwargs)
 
     @override
     def _needs_list_wrapping(

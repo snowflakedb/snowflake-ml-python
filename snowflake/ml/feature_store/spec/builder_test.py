@@ -2267,6 +2267,72 @@ class BatchValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported aggregation.*Postgres"):
             builder.build()
 
+    def test_secondary_key_array_spec_is_not_treated_as_unsupported(self) -> None:
+        """Synthesized _SECONDARY_KEY_ARRAY specs are skipped by the PG validator."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("AD_ID", StringType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                secondary_key_columns=["AD_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType._SECONDARY_KEY_ARRAY,
+                        source_column="AD_ID",
+                        window="24h",
+                        output_column="AD_ID_KEYS_24H",
+                    ),
+                    AggregationSpec(
+                        function=AggregationType.SUM,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="AMOUNT_SUM_24H",
+                    ),
+                ]
+            )
+        )
+        result = builder.build()
+        self.assertEqual(result.spec.ordered_secondary_key_column_names, ["AD_ID"])
+        self.assertEqual(len(result.spec.features), 2)
+        by_output = {f.output_column.name: f for f in result.spec.features}
+
+        keys_feature = by_output["AD_ID_KEYS_24H"]
+        self.assertIsNone(keys_feature.function)
+        self.assertEqual(keys_feature.source_column.name, "AD_ID")
+        self.assertEqual(keys_feature.source_column.type, "StringType")
+        self.assertEqual(keys_feature.output_column.type, "ArrayType")
+        self.assertEqual(keys_feature.output_column.element_type, "StringType")
+
+        sum_feature = by_output["AMOUNT_SUM_24H"]
+        self.assertEqual(sum_feature.function, "sum")
+        self.assertEqual(sum_feature.output_column.type, "DoubleType")
+        self.assertIsNone(sum_feature.output_column.element_type)
+
 
 # ============================================================================
 # Validation Tests — Realtime

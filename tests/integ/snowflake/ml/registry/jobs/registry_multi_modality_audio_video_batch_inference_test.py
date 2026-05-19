@@ -1,6 +1,8 @@
+import json
 import os
 import tempfile
 
+import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model.batch import (
@@ -72,6 +74,58 @@ class TestRegistryMultiModalityAudioVideoBatchInferenceInteg(
             output_spec=OutputSpec(stage_location=output_stage_location),
             job_spec=JobSpec(job_name=job_name, replicas=1, gpu_requests="1"),
             options={"cuda_version": "12.4"},
+        )
+
+    def test_audio_classification(self) -> None:
+        from transformers import pipeline
+
+        model = pipeline(task="audio-classification", model="MIT/ast-finetuned-audioset-10-10-0.4593")
+
+        (
+            job_name,
+            output_stage_location,
+            input_files_stage_location,
+        ) = self._prepare_job_name_and_stage_for_batch_inference()
+
+        audio_file_path = "tests/integ/snowflake/ml/test_data/batman_audio.mp3"
+        self.session.sql(
+            f"PUT 'file://{audio_file_path}' {input_files_stage_location} AUTO_COMPRESS=FALSE OVERWRITE=TRUE"
+        ).collect()
+
+        data = [[f"{input_files_stage_location}batman_audio.mp3"]] * 3
+        column_names = ["audio"]
+        input_df = self.session.create_dataframe(data, schema=column_names)
+
+        column_handling = {
+            "AUDIO": {
+                "input_format": InputFormat.FULL_STAGE_PATH,
+                "convert_to": FileEncoding.RAW_BYTES,
+            }
+        }
+
+        def check_audio_classification(res: pd.DataFrame) -> None:
+            self.assertIn("labels", res.columns)
+            self.assertEqual(len(res), 3)
+            for _, row in res.iterrows():
+                labels = json.loads(row["labels"])
+                self.assertIsInstance(labels, list)
+                self.assertGreater(len(labels), 0)
+                for entry in labels:
+                    self.assertIn("label", entry)
+                    self.assertIn("score", entry)
+                    self.assertIsInstance(entry["label"], str)
+                    self.assertIsInstance(entry["score"], float)
+                    self.assertGreaterEqual(entry["score"], 0.0)
+                    self.assertLessEqual(entry["score"], 1.0)
+
+        self._test_registry_batch_inference(
+            model=model,
+            X=input_df,
+            input_spec=InputSpec(column_handling=column_handling),
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(job_name=job_name, replicas=1, gpu_requests="1"),
+            options={"cuda_version": "12.4"},
+            prediction_assert_fn=check_audio_classification,
         )
 
     def test_video_classification(self) -> None:

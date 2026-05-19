@@ -57,8 +57,6 @@ class BatchInferenceTaskTest(absltest.TestCase):
             stage_location="@MY_DB.MY_SCHEMA.MY_STAGE",
         )
 
-    # ------ Ported from BatchInferenceDefinitionTest ------
-
     def test_constructor_stores_parameters(self) -> None:
         mv = self._create_mock_model_version()
         df = self._create_mock_dataframe()

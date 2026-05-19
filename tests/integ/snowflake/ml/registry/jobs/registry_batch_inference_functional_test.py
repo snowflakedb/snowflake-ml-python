@@ -195,6 +195,46 @@ class TestBatchInferenceFunctionalInteg(registry_batch_inference_test_base.Regis
             expected_predictions=expected_predictions,
         )
 
+    def test_user_facing_logs(self) -> None:
+        """With snowhouse logging enabled (prod default), only tee'd lines reach user-visible stdout.
+
+        Enable SPCS_MODEL_ENABLE_SNOWHOUSE_LOGGING_FOR_BATCH_INFERENCE to exercise the production routing
+        and verify the user-facing log surface.
+        """
+        param = self._SNOWHOUSE_LOGGING_PARAM
+        self.session.sql(f"ALTER SESSION SET {param} = true").collect()
+        try:
+            model, job_name, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+
+            job = self._test_registry_batch_inference(
+                model=model,
+                sample_input_data=sp_df,
+                X=input_df,
+                output_spec=OutputSpec(stage_location=output_stage_location),
+                job_spec=JobSpec(job_name=job_name),
+                expected_predictions=expected_predictions,
+            )
+
+            logs = job.get_logs(limit=-1)
+
+            # Required tee'd line — see anchor comment in ray_inference_job.py.
+            self.assertIn(
+                "Starting inference.",
+                logs,
+                f"Expected user-facing log line 'Starting inference.' missing from job logs:\n{logs}",
+            )
+
+            # Forbidden Snowhouse-only line — see anchor comment in ray_inference_job.py.
+            self.assertNotIn(
+                "Job configuration set:",
+                logs,
+                "Internal log 'Job configuration set:' leaked to user-facing stdout; "
+                f"expected snowhouse-only routing.\nLogs:\n{logs}",
+            )
+        finally:
+            # Restore base-class default so teardown sees the expected state.
+            self.session.sql(f"ALTER SESSION UNSET {param}").collect()
+
 
 if __name__ == "__main__":
     absltest.main()

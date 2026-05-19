@@ -181,10 +181,16 @@ class StreamConfig:
         transformation_fn: A **named** Python function with signature
             ``(pd.DataFrame) -> pd.DataFrame``.  Lambdas, callable classes,
             and interactively defined functions are not supported.
-        backfill_df: Snowpark DataFrame containing historical data for backfill.
-            The ``transformation_fn`` will be applied to this data server-side
-            via ``map_in_pandas`` and written to the udf_transformed table
-            asynchronously.
+        backfill_df: Snowpark DataFrame of historical data to backfill.
+            ``transformation_fn`` is applied to it server-side by a
+            Snowflake Task and the results are written to the
+            ``$UDF_TRANSFORMED`` table.
+
+            The DataFrame's SQL must be re-executable from a fresh
+            session. Don't build it from session-scoped temporary objects
+            (``DataFrame.cache_result()``, ``session.create_dataframe(local_data)``,
+            ``CREATE TEMPORARY TABLE/VIEW``); use a permanent table or a
+            view readable by the proc owner.
         backfill_start_time: Optional timestamp to filter backfill data.  When
             provided, only rows where ``timestamp_col >= backfill_start_time``
             are included in the backfill.

@@ -40,7 +40,10 @@ from snowflake.snowpark.types import (
 if TYPE_CHECKING:
     from snowflake.ml.feature_store.stream_config import StreamConfig
 
-_DEFAULT_TARGET_LAG = "10 seconds"
+_BATCH_OFT_TARGET_LAG = "10 seconds"  # default lag for batch FV OFTs when OnlineConfig.target_lag is unset.
+_NON_BATCH_OFT_TARGET_LAG = "0 seconds"  # default lag for non-batch OFTs (SFV, FG, and RTFV).
+_DEFAULT_CONTINUOUS_FEATURE_GRANULARITY = "1m"
+_MIN_FEATURE_GRANULARITY_SECONDS = 60
 _FEATURE_VIEW_NAME_DELIMITER = "$"
 _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS = ["FS_TIMESTAMP_COL_PLACEHOLDER_VAL", "NULL"]
 _TIMESTAMP_COL_PLACEHOLDER = "NULL"
@@ -549,6 +552,47 @@ def _prepend_keys_specs(
     return keys_specs + value_specs
 
 
+def _resolve_tiled_config(
+    *,
+    features: Optional[list[Feature]],
+    feature_granularity: Optional[str],
+    feature_aggregation_method: Optional[FeatureAggregationMethod],
+    aggregation_secondary_keys: Optional[list[str]],
+) -> tuple[Optional[str], Optional[list[AggregationSpec]], Optional[FeatureAggregationMethod]]:
+    """Resolve tiled-aggregation inputs into ``(granularity, specs, method)``.
+
+    Rules:
+        - ``features`` set + ``TILES`` (or no method) → ``feature_granularity`` required.
+        - ``features`` set + ``CONTINUOUS`` → ``feature_granularity`` defaults to ``"1m"``.
+        - ``feature_granularity`` or ``feature_aggregation_method`` set without
+          ``features`` → invalid.
+        - none of the three set → returns ``(None, None, None)`` (non-tiled FV).
+
+    Args:
+        features: User-supplied aggregation features.
+        feature_granularity: Tile interval (e.g. ``"1h"``).
+        feature_aggregation_method: ``TILES`` or ``CONTINUOUS``; ``None`` is treated as ``TILES``.
+        aggregation_secondary_keys: FV-level secondary keys threaded into the synthesized specs.
+
+    Returns:
+        Tuple of ``(resolved_granularity, aggregation_specs, resolved_method)``.
+
+    Raises:
+        ValueError: If the inputs do not satisfy the rules above.
+    """
+    if not features:
+        if feature_granularity is not None or feature_aggregation_method is not None:
+            raise ValueError("feature_granularity and feature_aggregation_method require features to be set.")
+        return None, None, None
+    if feature_granularity is None:
+        if feature_aggregation_method == FeatureAggregationMethod.CONTINUOUS:
+            feature_granularity = _DEFAULT_CONTINUOUS_FEATURE_GRANULARITY
+        else:
+            raise ValueError("features requires feature_granularity to be specified.")
+    specs = _prepend_keys_specs([f.to_spec() for f in features], aggregation_secondary_keys)
+    return feature_granularity, specs, feature_aggregation_method or FeatureAggregationMethod.TILES
+
+
 class FeatureView(lineage_node.LineageNode):
     """
     A FeatureView instance encapsulates a logical group of features.
@@ -639,7 +683,9 @@ class FeatureView(lineage_node.LineageNode):
             feature_aggregation_method: The aggregation method for tiled streaming feature views.
                 Supports ``FeatureAggregationMethod.TILES`` (default) or
                 ``FeatureAggregationMethod.CONTINUOUS``.  Only applicable to streaming feature
-                views with ``feature_granularity`` and ``features`` set.  Raises ``ValueError``
+                views with ``features`` set.  When ``FeatureAggregationMethod.CONTINUOUS`` is
+                used and ``feature_granularity`` is omitted, it defaults to ``"1m"``; an
+                explicit ``feature_granularity`` always takes precedence.  Raises ``ValueError``
                 if specified on batch or rollup feature views.
             rollup_config: Configuration for rolling up a tiled FeatureView to a coarser entity
                 level. When specified, this FeatureView will aggregate features from the source
@@ -795,21 +841,17 @@ class FeatureView(lineage_node.LineageNode):
             if timestamp_col is None:
                 raise ValueError("Streaming feature views require timestamp_col to be specified.")
             self._timestamp_col = SqlIdentifier(timestamp_col)
-            self._feature_granularity = feature_granularity
-            if features is not None:
-                self._aggregation_specs = _prepend_keys_specs(
-                    [f.to_spec() for f in features], self._aggregation_secondary_keys
-                )
             self._refresh_freq = refresh_freq
-
-            if feature_aggregation_method is not None and not (feature_granularity and features):
-                raise ValueError("feature_aggregation_method requires feature_granularity and features to be set.")
-            if feature_granularity and features:
-                self._feature_aggregation_method = (
-                    feature_aggregation_method
-                    if feature_aggregation_method is not None
-                    else FeatureAggregationMethod.TILES
-                )
+            (
+                self._feature_granularity,
+                self._aggregation_specs,
+                self._feature_aggregation_method,
+            ) = _resolve_tiled_config(
+                features=features,
+                feature_granularity=feature_granularity,
+                feature_aggregation_method=feature_aggregation_method,
+                aggregation_secondary_keys=self._aggregation_secondary_keys,
+            )
 
             # Warn if non-time-aggregated streaming FV has refresh_freq (a VIEW is more efficient)
             if self._aggregation_specs is None and refresh_freq is not None:
@@ -828,8 +870,11 @@ class FeatureView(lineage_node.LineageNode):
             self._feature_granularity = feature_granularity
             self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
             if features is not None:
-                self._aggregation_specs = _prepend_keys_specs(
-                    [f.to_spec() for f in features], self._aggregation_secondary_keys
+                self._feature_granularity, self._aggregation_specs, _ = _resolve_tiled_config(
+                    features=features,
+                    feature_granularity=feature_granularity,
+                    feature_aggregation_method=None,
+                    aggregation_secondary_keys=self._aggregation_secondary_keys,
                 )
             elif self._aggregation_specs is not None:
                 has_secondary_key_specs = any(
@@ -1752,6 +1797,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                     "refresh_freq is required for tile-based aggregations. "
                     "Tiled feature views must be managed (Dynamic Tables)."
                 )
+            from snowflake.ml.feature_store.interval_utils import interval_to_seconds
+
+            granularity_seconds = interval_to_seconds(self._feature_granularity)  # type: ignore[arg-type]
+            if granularity_seconds < _MIN_FEATURE_GRANULARITY_SECONDS:
+                raise ValueError(f"feature_granularity '{self._feature_granularity}' is below the minimum of '1m'.")
             # Validate window and offset are multiples of granularity
             self._validate_window_offset_alignment()
             # Validate feature aliases are unique
@@ -2293,6 +2343,181 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
             udf_name = f"{physical_name}{_UDF_TRANSFORMED_TABLE_SUFFIX}"
             return SqlIdentifier(udf_name, case_sensitive=True)
+
+
+def get_feature_prefix(
+    feature_view: Union[FeatureView, FeatureViewSlice],
+    auto_prefix: bool,
+) -> Optional[str]:
+    """Resolve the column prefix for a feature view reference.
+
+    Resolution order:
+
+    1. Explicit name from :meth:`FeatureView.with_name` /
+       :meth:`FeatureViewSlice.with_name` (empty string disables prefixing).
+    2. ``auto_prefix`` derived from ``"<fv_name>_<fv_version>_"``.
+    3. No prefix.
+
+    Args:
+        feature_view: The :class:`FeatureView` or :class:`FeatureViewSlice`
+            whose columns will be emitted under the resolved prefix.
+        auto_prefix: When ``True`` and no explicit alias was set via
+            :meth:`with_name`, derive the prefix from
+            ``"<feature_view.name>_<feature_view.version>_"``.
+
+    Returns:
+        The prefix string with a trailing underscore, or ``None`` if no
+        prefix should be applied.
+    """
+    if feature_view.column_alias is not None:
+        if feature_view.column_alias == "":
+            return None
+        return f"{feature_view.column_alias}_"
+
+    if auto_prefix:
+        if isinstance(feature_view, FeatureViewSlice):
+            return f"{feature_view.feature_view_ref.name}_{feature_view.feature_view_ref.version}_"
+        return f"{feature_view.name}_{feature_view.version}_"
+
+    return None
+
+
+# OFT DDL builders shared by the per-FV path
+# (FeatureStore._create_online_feature_table) and the per-FG path
+# (FeatureStore.register_feature_group); kept here as the single source of
+# truth for clause ordering, quoting, and WAREHOUSE precedence.
+
+
+def build_oft_primary_key_clause(ordered_resolved_keys: list[str]) -> str:
+    """Build a ``PRIMARY KEY (...)`` clause from already-resolved key names.
+
+    Args:
+        ordered_resolved_keys: Resolved (canonical) key names in the order
+            they should appear in the primary key tuple. Must be unique;
+            callers are responsible for de-duplicating beforehand.
+
+    Returns:
+        The ``PRIMARY KEY ("k1", "k2", ...)`` SQL fragment.
+    """
+    quoted = [f'"{k}"' for k in ordered_resolved_keys]
+    return f"PRIMARY KEY ({', '.join(quoted)})"
+
+
+def build_oft_warehouse_clause(
+    feature_view_warehouse: Optional[SqlIdentifier],
+    default_warehouse: Optional[SqlIdentifier],
+) -> str:
+    """Build the ``WAREHOUSE=...`` clause for ``CREATE ONLINE FEATURE TABLE``.
+
+    Precedence: FV-level warehouse > FeatureStore default; empty when
+    neither is set (HYBRID_TABLE OFTs do not require it).
+
+    Args:
+        feature_view_warehouse: Warehouse declared on the source FV, if any.
+        default_warehouse: FeatureStore-level default warehouse, if any.
+
+    Returns:
+        ``WAREHOUSE=<wh>`` or an empty string.
+    """
+    if feature_view_warehouse:
+        return f"WAREHOUSE={feature_view_warehouse}"
+    if default_warehouse:
+        return f"WAREHOUSE={default_warehouse}"
+    return ""
+
+
+def build_oft_create_sql(
+    *,
+    fully_qualified_oft_name: str,
+    primary_key_clause: str,
+    target_lag: str,
+    source_clause: str,
+    warehouse_clause: str = "",
+    refresh_mode_clause: str = "",
+    timestamp_clause: str = "",
+    overwrite: bool = False,
+) -> str:
+    """Single source of truth for ``CREATE ONLINE FEATURE TABLE`` SQL.
+
+    Clause order matters for the parser: ``PRIMARY KEY`` and the optional
+    metadata clauses must precede ``TARGET_LAG``, which must precede
+    ``FROM``.
+
+    Args:
+        fully_qualified_oft_name: ``DB.SCHEMA.OFT_NAME``.
+        primary_key_clause: Pre-built ``PRIMARY KEY (...)`` fragment from
+            :func:`build_oft_primary_key_clause`.
+        target_lag: Target lag value (e.g. ``"0 seconds"``).
+        source_clause: Either ``FROM <table>`` (HYBRID_TABLE) or
+            ``FROM SPECIFICATION $$...$$`` (POSTGRES).
+        warehouse_clause: Pre-built ``WAREHOUSE=...`` fragment, or empty.
+        refresh_mode_clause: Pre-built ``REFRESH_MODE='...'`` fragment, or empty.
+        timestamp_clause: Pre-built ``TIMESTAMP_COLUMN='...'`` fragment, or empty.
+        overwrite: When ``True``, emits ``CREATE OR REPLACE``.
+
+    Returns:
+        The fully-formed ``CREATE [OR REPLACE] ONLINE FEATURE TABLE ...`` SQL.
+    """
+    overwrite_clause = "OR REPLACE " if overwrite else ""
+    query_parts = [
+        f"CREATE {overwrite_clause}ONLINE FEATURE TABLE {fully_qualified_oft_name}",
+        primary_key_clause,
+        refresh_mode_clause,
+        timestamp_clause,
+        warehouse_clause,
+        f"TARGET_LAG='{target_lag}'",
+        source_clause,
+    ]
+    return " ".join(p for p in query_parts if p)
+
+
+def build_oft_set_tag_sql(
+    fully_qualified_oft_name: str,
+    fully_qualified_tag_name: str,
+    tag_value_json: str,
+) -> str:
+    """Build the post-create ``ALTER ... SET TAG`` SQL.
+
+    Args:
+        fully_qualified_oft_name: ``DB.SCHEMA.OFT_NAME``.
+        fully_qualified_tag_name: ``DB.SCHEMA.TAG_NAME``.
+        tag_value_json: Pre-serialized tag value JSON string.
+
+    Returns:
+        The fully-formed ``ALTER ONLINE FEATURE TABLE ... SET TAG ...`` SQL.
+    """
+    return (
+        f"ALTER ONLINE FEATURE TABLE {fully_qualified_oft_name} "
+        f"SET TAG {fully_qualified_tag_name} = '{tag_value_json}'"
+    )
+
+
+def execute_oft_set_tag(
+    session: Session,
+    *,
+    fully_qualified_oft_name: str,
+    fully_qualified_tag_name: str,
+    tag_value_json: str,
+    statement_params: Optional[dict[str, Any]] = None,
+) -> None:
+    """Build + execute the ``ALTER ... SET TAG`` SQL.
+
+    Split from :func:`build_oft_set_tag_sql` so tests can inspect the SQL
+    string without exercising the session.
+
+    Args:
+        session: Snowpark session to ``.sql(...).collect(...)`` against.
+        fully_qualified_oft_name: ``DB.SCHEMA.OFT_NAME``.
+        fully_qualified_tag_name: ``DB.SCHEMA.TAG_NAME``.
+        tag_value_json: Pre-serialized tag value JSON string.
+        statement_params: Telemetry statement params forwarded to ``collect``.
+    """
+    sql = build_oft_set_tag_sql(
+        fully_qualified_oft_name=fully_qualified_oft_name,
+        fully_qualified_tag_name=fully_qualified_tag_name,
+        tag_value_json=tag_value_json,
+    )
+    session.sql(sql).collect(statement_params=statement_params)
 
 
 lineage_node.DOMAIN_LINEAGE_REGISTRY["feature_view"] = FeatureView

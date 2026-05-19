@@ -60,6 +60,8 @@ use_repo(zig_toolchains, "zig_sdk")
 
 bazel_dep(name = "rules_go", version = "0.60.0")
 bazel_dep(name = "gazelle", version = "0.47.0")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+bazel_dep(name = "protobuf", version = "29.0", repo_name = "com_google_protobuf")
 
 go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
 go_sdk.download(version = "1.25.2")
@@ -83,6 +85,7 @@ use_repo(
     "io_opentelemetry_go_otel_sdk_log",
     "io_opentelemetry_go_otel_sdk_metric",
     "org_golang_google_grpc",
+    "org_golang_google_protobuf",
     "org_golang_x_sync",
     "org_uber_go_zap",
 )

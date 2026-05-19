@@ -10,10 +10,10 @@ if TYPE_CHECKING:
     import transformers
 
 
-class AutomaticSpeechRecognitionTaskHandler(_task_handler.HuggingFaceTaskHandler):
-    """Handles automatic speech recognition pipelines.
+class AudioClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
+    """Handles audio classification pipelines.
 
-    ASR pipelines accept a single audio input (bytes, str, np.ndarray, or dict),
+    Audio classification pipelines accept a single audio input (bytes, str, np.ndarray, or dict),
     not a list. Each audio input is processed individually.
     """
 
@@ -28,5 +28,4 @@ class AutomaticSpeechRecognitionTaskHandler(_task_handler.HuggingFaceTaskHandler
     ) -> Any:
         input_col = signature.inputs[0].name
         audio_inputs = X[input_col].to_list()
-        filtered_kwargs = _task_handler._filter_none_kwargs(kwargs)
-        return [getattr(raw_model, target_method)(audio, **filtered_kwargs) for audio in audio_inputs]
+        return [getattr(raw_model, target_method)(audio, **kwargs) for audio in audio_inputs]

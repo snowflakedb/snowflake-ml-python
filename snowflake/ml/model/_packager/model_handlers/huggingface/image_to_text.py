@@ -33,6 +33,11 @@ class ImageToTextTaskHandler(_task_handler.HuggingFaceTaskHandler):
 
         input_col = signature.inputs[0].name
         images = [Image.open(io.BytesIO(img_bytes)) for img_bytes in X[input_col].to_list()]
+        # HF image-to-text requires generation params packed into a generate_kwargs dict
+        # (unlike text pipelines which accept them as flat kwargs).
+        filtered_kwargs = _task_handler._filter_none_kwargs(kwargs)
+        if filtered_kwargs:
+            return getattr(raw_model, target_method)(images, generate_kwargs=filtered_kwargs)
         return getattr(raw_model, target_method)(images)
 
     @override

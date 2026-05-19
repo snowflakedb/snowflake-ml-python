@@ -13,6 +13,31 @@ from tests.integ.snowflake.ml.test_utils import (
     test_env_utils,
 )
 
+# Active prefix for online-service-backed test DBs; reclaimed by the bundle's
+# 3h targeted cleanup.
+SPEC_OFT_E2E_DB_PREFIX = "SNOWML_TEST_SPEC_OFT_E2E_DB_"
+SPEC_OFT_E2E_DUMMY_DB_PREFIX = "SNOWML_TEST_SPEC_OFT_E2E_DUMMY_DB_"
+
+# Pre-rename prefixes still lingering in long-running accounts. Cleanup-only.
+_LEGACY_SPEC_OFT_E2E_DB_PREFIXES: tuple[str, ...] = (
+    "SNOWML_SPEC_OFT_E2E_DB_",
+    "SNOWML_SPEC_OFT_E2E_DUMMY_DB_",
+)
+
+
+def cleanup_spec_oft_e2e_databases(dbm: db_manager.DBManager) -> None:
+    """3h sweep across every SPEC_OFT_E2E DB prefix (current + legacy).
+
+    Startup-only. Concurrent xdist workers in the same bundle shard share the
+    active per-run DB; calling this from teardown would race them. The 3h TTL
+    matches the bundle invariant (no single run exceeds 3h).
+
+    Args:
+        dbm: DBManager bound to the test session.
+    """
+    for prefix in (SPEC_OFT_E2E_DB_PREFIX, SPEC_OFT_E2E_DUMMY_DB_PREFIX, *_LEGACY_SPEC_OFT_E2E_DB_PREFIXES):
+        dbm.cleanup_databases(prefix=prefix.lower(), expire_hours=3)
+
 
 class FeatureStoreIntegTestBase(absltest.TestCase):
     """Base for Feature Store integration tests using per-test DBs via db_manager.
@@ -20,7 +45,34 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
     Exposes canonical surfaces `test_db` and `test_schema` for tests to reference.
     Provides an alternate warehouse name for scenarios that require a different
     warehouse than the session default (e.g., to validate warehouse switching).
+
+    Subclasses that provision a Feature Store Online Service must set
+    ``_ONLINE_SERVICE_BACKED = True`` so their DBs land under ``SPEC_OFT_E2E_*``
+    and are reclaimed by the bundle's 3h targeted cleanup.
     """
+
+    _ONLINE_SERVICE_BACKED: bool = False
+
+    @classmethod
+    def _generate_db_names(cls, run_id: str) -> tuple[str, str]:
+        """Return ``(test_db, dummy_db)`` per the subclass's online-service flag.
+
+        Args:
+            run_id: Short hex slug appended to the prefix.
+
+        Returns:
+            ``(test_db, dummy_db)`` upper-cased Snowflake database identifiers.
+        """
+        if cls._ONLINE_SERVICE_BACKED:
+            run_id_up = run_id.upper()
+            return (
+                f"{SPEC_OFT_E2E_DB_PREFIX}{run_id_up}",
+                f"{SPEC_OFT_E2E_DUMMY_DB_PREFIX}{run_id_up}",
+            )
+        return (
+            db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_DB").upper(),
+            db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_DUMMY_DB").upper(),
+        )
 
     def setUp(self) -> None:
         """Creates Snowpark and Snowflake environments for testing."""
@@ -28,15 +80,15 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
         self._dbm = db_manager.DBManager(self._session)
         self._evm = external_volume_manager.ExternalVolumeManager(self._session)
 
-        # Clean up stale resources from previous failed runs
+        # Stale-resource cleanup (startup-only; see ``cleanup_spec_oft_e2e_databases``).
         self._dbm.cleanup_databases(expire_hours=6)
+        cleanup_spec_oft_e2e_databases(self._dbm)
         self._dbm.cleanup_warehouses(expire_hours=6)
         self._dbm.cleanup_roles(expire_hours=6)
 
         # Create per-test resources with unique names
         run_id = uuid.uuid4().hex[:6]
-        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_DB").upper()
-        self._dummy_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_DUMMY_DB").upper()
+        self._test_db, self._dummy_db = type(self)._generate_db_names(run_id)
 
         # Use the session's existing warehouse instead of creating a new one
         # This significantly speeds up test setup (avoids 10-30+ second warehouse creation)

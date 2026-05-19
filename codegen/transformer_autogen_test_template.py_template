@@ -85,6 +85,15 @@ class {transform.test_class_name}(TestCase):
             fit_with_sproc: bool = True,
             inference_with_udf: bool = True
     ) -> None:
+        # sklearn _parallel_pairwise bug (https://github.com/scikit-learn/scikit-learn/issues/33877):
+        # when effective_n_jobs(None) > 1 (warehouse environment), Y is chunked but Y_norm_squared
+        # is passed through unchanged, causing a dimension mismatch in Birch._predict.
+        # Fixed in https://github.com/scikit-learn/scikit-learn/pull/33876 (sklearn 1.9.0).
+        # TODO(SNOW-952252): Re-enable when test env sklearn is bumped to >= 1.9.0.
+        if "{transform.original_class_name}" == "Birch" and (fit_with_sproc or inference_with_udf):  # type: ignore[comparison-overlap,unused-ignore]
+            import joblib
+            if joblib.effective_n_jobs(None) > 1:
+                self.skipTest("sklearn _parallel_pairwise bug causes dimension mismatch when n_jobs > 1")
 
         input_df_pandas = {transform.test_dataset_func}(as_frame=True).frame
         cols = [inflection.parameterize(c, "_").upper() for c in input_df_pandas.columns if not c.startswith("target")]

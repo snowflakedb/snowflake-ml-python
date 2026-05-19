@@ -441,6 +441,92 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
 
     # =========================================================================
+    # E2E: Batch tiled (timeseries) + secondary key — registration -> online read
+    # =========================================================================
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_batch_tiled_fv_spec_oft_secondary_key_online_read_by_key(self) -> None:
+        """Tiled batch FV with secondary keys: per-key SUM/COUNT arrays compose across multiple tiles in the window."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_TILED_SK_FV_{s}"
+        batch_key = f"U_BATCH_SK_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_TILED_SK_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AD_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+
+        yesterday_midnight = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        two_days_ago_midnight = "DATEADD('day', -2, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name}
+            SELECT column1, column2, column3, column4
+            FROM VALUES
+                ({batch_key!r}, DATEADD('hour', 1, {two_days_ago_midnight}), 'ad_a', 10.0),
+                ({batch_key!r}, DATEADD('hour', 2, {two_days_ago_midnight}), 'ad_b', 50.0),
+                ({batch_key!r}, DATEADD('hour', 1, {yesterday_midnight}), 'ad_a', 20.0),
+                ({batch_key!r}, DATEADD('hour', 2, {yesterday_midnight}), 'ad_c', 70.0)
+        """
+        ).collect()
+        feature_df = self._session.table(table_name)
+
+        features = [
+            Feature.sum("AMOUNT", "3d").alias("AMOUNT_SUM_3D"),
+            Feature.count("AMOUNT", "3d").alias("TXN_COUNT_3D"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            aggregation_secondary_keys=["AD_ID"],
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered.is_streaming)
+        self.assertTrue(registered.is_tiled)
+        self.assertTrue(registered.online)
+        self.assertEqual(registered.aggregation_secondary_keys, ["AD_ID"])
+
+        fv_live = fs.get_feature_view(fv.name, "v1")
+        self.assertEqual(fv_live.name, fv.name)
+        self.assertFalse(fv_live.is_streaming)
+        self.assertTrue(fv_live.is_tiled)
+        self.assertTrue(fv_live.online)
+        self.assertEqual(fv_live.aggregation_secondary_keys, ["AD_ID"])
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate(pdf):
+            self.assertIn("AD_ID_KEYS_3D", pdf.columns)
+            self.assertIn("AMOUNT_SUM_3D", pdf.columns)
+            self.assertIn("TXN_COUNT_3D", pdf.columns)
+            row = pdf.iloc[0]
+            # Keys are ARRAY_AGG(AD_ID) WITHIN GROUP (ORDER BY AD_ID) — alphabetical;
+            # value arrays must be co-ordered with the key array.
+            self.assertEqual(list(row["AD_ID_KEYS_3D"]), ["ad_a", "ad_b", "ad_c"])
+            self.assertEqual(list(row["AMOUNT_SUM_3D"]), [30.0, 50.0, 70.0])
+            self.assertEqual(list(row["TXN_COUNT_3D"]), [2, 1, 1])
+
+        self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch tiled sk")
+
+    # =========================================================================
     # E2E: Batch non-timeseries (with refresh_freq) — registration -> online read
     # =========================================================================
 

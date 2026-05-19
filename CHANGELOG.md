@@ -1,5 +1,20 @@
 # Release History
 
+## 1.40.0
+
+### New Features
+
+### Bug Fixes
+
+* Feature Store: `get_feature_view()` now correctly preserves `online_config` for feature views whose
+  names require SQL quoting (mixed case or special characters such as a space). Previously the returned
+  FeatureView reported `online=False` even when online was enabled at registration, causing
+  `read_feature_view(store_type=ONLINE)` to fail with "Online store is not enabled".
+
+### Behavior Changes
+
+### Deprecations
+
 ## 1.39.0
 
 ### New Features
@@ -31,6 +46,12 @@
 ## 1.38.0
 
 ### New Features
+
+* Registry: Auto-inferred signatures for HuggingFace pipeline models now include task-specific `ParamSpecs`,
+  allowing users to control inference behavior at prediction time via `params`. Generative tasks expose
+  GenerationConfig parameters (e.g. `temperature`, `max_new_tokens`, `top_p`); non-generative tasks expose
+  their own task-specific parameters (e.g. `top_k` for fill-mask, `aggregation_strategy` for
+  zero-shot-classification).
 
 ### Bug Fixes
 

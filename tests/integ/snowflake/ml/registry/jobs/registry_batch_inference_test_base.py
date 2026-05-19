@@ -95,6 +95,10 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
     _INDEX_COL = "INDEX"
     _BATCH_IMAGE_OVERRIDE_MODE: BatchImageOverrideMode = "full"
 
+    # Route batch-inference container logs to stdout (visible via batch_job.get_logs())
+    # instead of Snowhouse, so test failures are debuggable without internal log access.
+    _SNOWHOUSE_LOGGING_PARAM = "SPCS_MODEL_ENABLE_SNOWHOUSE_LOGGING_FOR_BATCH_INFERENCE"
+
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
         overrides: dict[str, Optional[str]] = {
             "SPCS_MODEL_BUILD_CONTAINER_URL": self.BUILDER_IMAGE_PATH,
@@ -111,11 +115,13 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
         if self._has_image_override():
             for key, value in self._get_batch_image_override_session_params().items():
                 self.session.sql(f"ALTER SESSION SET {key} = '{value}'").collect()
+        self.session.sql(f"ALTER SESSION SET {self._SNOWHOUSE_LOGGING_PARAM} = false").collect()
 
     def tearDown(self) -> None:
         if self._has_image_override():
             for key in self._get_batch_image_override_session_params():
                 self.session.sql(f"ALTER SESSION UNSET {key}").collect()
+        self.session.sql(f"ALTER SESSION UNSET {self._SNOWHOUSE_LOGGING_PARAM}").collect()
         super().tearDown()
 
     def _create_stage(self) -> None:

@@ -995,6 +995,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
     def test_create_service_same_pool(self) -> None:
@@ -1048,6 +1049,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
     def test_create_service_no_eai(self) -> None:
@@ -1101,6 +1103,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
     def test_create_service_async_job(self) -> None:
@@ -1155,6 +1158,7 @@ class ModelVersionImplTest(absltest.TestCase):
                 progress_status=mock_progress_status,
                 inference_engine_args=None,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
     def test_list_services(self) -> None:
@@ -3112,6 +3116,27 @@ class ModelVersionImplTest(absltest.TestCase):
                     input_spec=input_spec,
                     job_spec=job_spec,
                 )
+
+    def test_create_service_forwards_feature_sources_per_function(self) -> None:
+        # The mapping must reach ServiceOperator.create_service unmodified;
+        # downstream layers handle validation and serialization.
+        mock_progress_status = create_mock_progress_status()
+        sentinel_feature_sources = {"predict": [mock.sentinel.feature_view]}
+        with (
+            mock.patch.object(self.m_mv._service_ops, "create_service") as mock_create_service,
+            mock.patch("snowflake.ml.model.event_handler.ModelEventHandler") as mock_event_handler_cls,
+            mock.patch.object(self.m_mv, "_can_run_on_gpu", return_value=True),
+        ):
+            mock_event_handler = mock_event_handler_cls.return_value
+            mock_event_handler.status.return_value.__enter__.return_value = mock_progress_status
+
+            self.m_mv.create_service(
+                service_name="SERVICE",
+                service_compute_pool="SERVICE_COMPUTE_POOL",
+                feature_sources_per_function=sentinel_feature_sources,
+            )
+        _, kwargs = mock_create_service.call_args
+        self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
 
 
 if __name__ == "__main__":
