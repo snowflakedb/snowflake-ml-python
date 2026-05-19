@@ -32,7 +32,7 @@ from tests.integ.snowflake.ml.registry.services import (
 
 logger = logging.getLogger(__name__)
 
-_SMALL_MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
+_SMALL_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 # All OpenAI params — n=2 so we can verify params actually reach the model
 # (2 choices in response proves n was honoured).
@@ -103,12 +103,8 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         cls.cache_dir = tempfile.TemporaryDirectory()
         cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
         cls._original_hf_home = os.getenv("HF_HOME", None)
-        cls._original_hf_endpoint = None
         os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
         os.environ["HF_HOME"] = cls.cache_dir.name
-        if "HF_ENDPOINT" in os.environ:
-            cls._original_hf_endpoint = os.environ["HF_ENDPOINT"]
-            del os.environ["HF_ENDPOINT"]
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -121,8 +117,6 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         else:
             os.environ.pop("HF_HOME", None)
         cls.cache_dir.cleanup()
-        if cls._original_hf_endpoint:
-            os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
 
     # ========================================================================
     # Small helpers

@@ -1,10 +1,12 @@
 import pathlib
 import tempfile
+from typing import Union, cast
 
 import yaml
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.feature_store import feature_view
 from snowflake.ml.model import inference_engine
 from snowflake.ml.model._client.service import model_deployment_spec
 
@@ -1035,6 +1037,318 @@ class ModelDeploymentSpecTest(parameterized.TestCase):
                 result = yaml.safe_load(f)
                 # Verify partition_columns appears under job.input
                 self.assertEqual(result["job"]["input"]["partition_columns"], ["PARTITION_COL"])
+
+    def _make_fake_feature_view(
+        self,
+        *,
+        database: str = "FS_DB",
+        schema: str = "FS_SCHEMA",
+        name: str = "USER_FEATURES",
+        version: str = "V1",
+    ) -> feature_view.FeatureView:
+        # Returns a duck-typed stand-in for FeatureView. We construct the real type
+        # via cast() so call sites stay typed; instantiating a real FeatureView
+        # would require a Session and a registered entity, which is overkill for
+        # the YAML-shape assertions exercised here. The runtime shape used by
+        # _build_feature_retrieval_config is .database/.schema/.name (each
+        # .identifier()) and .version, all of which _FakeFeatureView provides.
+        return cast(
+            feature_view.FeatureView,
+            _FakeFeatureView(database=database, schema=schema, name=name, version=version),
+        )
+
+    def test_service_spec_with_feature_sources(self) -> None:
+        # End-to-end YAML shape: feature_sources_per_function lands in
+        # service.feature_retrieval.lookups with logical 3-part source name,
+        # type "oft_vnext", and version in its own field.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                min_instances=1,
+                max_instances=5,
+                feature_sources_per_function={
+                    "predict": [self._make_fake_feature_view()],
+                },
+            )
+            file_path = mds.save()
+            with open(file_path, encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+            self.assertEqual(
+                result["service"]["feature_retrieval"],
+                {
+                    "lookups": {
+                        "predict": [
+                            {
+                                "source": "FS_DB.FS_SCHEMA.USER_FEATURES",
+                                "type": "oft_vnext",
+                                "version": "V1",
+                            }
+                        ]
+                    }
+                },
+            )
+
+    def test_service_spec_without_feature_sources_omits_block(self) -> None:
+        # Default path: when feature_sources_per_function is None (or not passed),
+        # the feature_retrieval key MUST be absent from the YAML, otherwise GS
+        # would route the deploy through the FR validator unnecessarily.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                min_instances=1,
+                max_instances=5,
+            )
+            file_path = mds.save()
+            with open(file_path, encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+            self.assertNotIn("feature_retrieval", result["service"])
+
+    def test_service_spec_unregistered_feature_view_raises(self) -> None:
+        # FeatureView with version=None is the canonical "unregistered" shape;
+        # we surface this client-side so the user gets a localized error
+        # instead of an opaque deploy-time GS validation failure.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            unregistered = cast(
+                feature_view.FeatureView,
+                _FakeFeatureView(database="FS_DB", schema="FS_SCHEMA", name="UF", version=None),
+            )
+            with self.assertRaisesRegex(ValueError, "is not registered"):
+                mds.add_service_spec(
+                    service_name=sql_identifier.SqlIdentifier("service"),
+                    inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                    ingress_enabled=True,
+                    min_instances=1,
+                    max_instances=5,
+                    feature_sources_per_function={"predict": [unregistered]},
+                )
+
+    def test_service_spec_with_feature_sources_multi_method(self) -> None:
+        # Multi-method coverage: each function gets its own lookups bucket
+        # and per-bucket order is preserved.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                min_instances=1,
+                max_instances=5,
+                feature_sources_per_function={
+                    "predict": [self._make_fake_feature_view(name="USER_FEATURES", version="V1")],
+                    "explain": [self._make_fake_feature_view(name="ITEM_FEATURES", version="V2")],
+                },
+            )
+            file_path = mds.save()
+            with open(file_path, encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+            self.assertEqual(
+                result["service"]["feature_retrieval"]["lookups"],
+                {
+                    "predict": [
+                        {"source": "FS_DB.FS_SCHEMA.USER_FEATURES", "type": "oft_vnext", "version": "V1"},
+                    ],
+                    "explain": [
+                        {"source": "FS_DB.FS_SCHEMA.ITEM_FEATURES", "type": "oft_vnext", "version": "V2"},
+                    ],
+                },
+            )
+
+    def test_service_spec_feature_source_uses_logical_name_not_physical_fqn(self) -> None:
+        # Regression guard: the wire `source` MUST be the logical 3-part name
+        # (DB.SCHEMA.NAME), NOT FeatureView.fully_qualified_name() which appends
+        # `$<version>$ONLINE` and points at the physical OFT online table. A future
+        # refactor that switches to fully_qualified_name() must fail this test loudly.
+        fv = self._make_fake_feature_view(name="USER_FEATURES", version="V1")
+        # Stub fully_qualified_name() to a recognizable, wrong shape so any
+        # accidental use of it leaks into `source` and trips the assertion.
+        fv.fully_qualified_name = lambda: "FS_DB.FS_SCHEMA.USER_FEATURES$V1$ONLINE"  # type: ignore[method-assign]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                min_instances=1,
+                max_instances=5,
+                feature_sources_per_function={"predict": [fv]},
+            )
+            file_path = mds.save()
+            with open(file_path, encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+            source = result["service"]["feature_retrieval"]["lookups"]["predict"][0]["source"]
+        self.assertEqual(source, "FS_DB.FS_SCHEMA.USER_FEATURES")
+        self.assertNotIn("$", source, f"source must not contain $version$ONLINE, got {source!r}")
+
+    def test_service_spec_feature_source_preserves_case_sensitive_identifier(self) -> None:
+        # Case-sensitive FV name (e.g. created with "lowercase") must round-trip
+        # through SqlIdentifier.identifier() as a quoted form so the server
+        # resolves the same physical object.
+        fv = cast(
+            feature_view.FeatureView,
+            _FakeFeatureView(
+                database="FS_DB",
+                schema="FS_SCHEMA",
+                name=sql_identifier.SqlIdentifier('"user_features"', case_sensitive=False),
+                version="V1",
+            ),
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            mds.add_service_spec(
+                service_name=sql_identifier.SqlIdentifier("service"),
+                inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                ingress_enabled=True,
+                min_instances=1,
+                max_instances=5,
+                feature_sources_per_function={"predict": [fv]},
+            )
+            file_path = mds.save()
+            with open(file_path, encoding="utf-8") as f:
+                result = yaml.safe_load(f)
+        self.assertEqual(
+            result["service"]["feature_retrieval"]["lookups"]["predict"][0]["source"],
+            'FS_DB.FS_SCHEMA."user_features"',
+        )
+
+    def test_service_spec_empty_feature_sources_dict_raises(self) -> None:
+        # Empty dict is treated symmetrically with empty list per method:
+        # both surface a ValueError client-side instead of silently producing
+        # a service spec without the feature_retrieval block.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            with self.assertRaisesRegex(ValueError, "feature_sources_per_function is empty"):
+                mds.add_service_spec(
+                    service_name=sql_identifier.SqlIdentifier("service"),
+                    inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                    ingress_enabled=True,
+                    min_instances=1,
+                    max_instances=5,
+                    feature_sources_per_function={},
+                )
+
+    def test_service_spec_empty_feature_view_list_raises(self) -> None:
+        # An empty list is ambiguous (a method opted in to FR but supplied no
+        # source) and would produce an FR config block the server treats as
+        # malformed; reject up front with a clearer message.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mds = model_deployment_spec.ModelDeploymentSpec(workspace_path=pathlib.Path(tmpdir))
+            mds.add_model_spec(
+                database_name=sql_identifier.SqlIdentifier("db"),
+                schema_name=sql_identifier.SqlIdentifier("schema"),
+                model_name=sql_identifier.SqlIdentifier("model"),
+                version_name=sql_identifier.SqlIdentifier("version"),
+            )
+            mds.add_image_build_spec(
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("image_build_compute_pool"),
+                fully_qualified_image_repo_name="DB.SCHEMA.IMAGE_REPO",
+            )
+            with self.assertRaisesRegex(ValueError, "is empty"):
+                mds.add_service_spec(
+                    service_name=sql_identifier.SqlIdentifier("service"),
+                    inference_compute_pool_name=sql_identifier.SqlIdentifier("service_compute_pool"),
+                    ingress_enabled=True,
+                    min_instances=1,
+                    max_instances=5,
+                    feature_sources_per_function={"predict": []},
+                )
+
+
+class _FakeFeatureView:
+    """Duck-typed stand-in for snowflake.ml.feature_store.FeatureView used by
+    feature-retrieval spec tests. We avoid importing FeatureView into the
+    model-client test module to keep the dependency direction one-way
+    (feature_store may depend on model client, never the reverse).
+    """
+
+    def __init__(
+        self,
+        *,
+        database: str,
+        schema: str,
+        name: Union[str, sql_identifier.SqlIdentifier],
+        version: object,
+    ) -> None:
+        self.database = sql_identifier.SqlIdentifier(database) if database else None
+        self.schema = sql_identifier.SqlIdentifier(schema) if schema else None
+        self.name = name if isinstance(name, sql_identifier.SqlIdentifier) else sql_identifier.SqlIdentifier(name)
+        self.version = version
 
 
 if __name__ == "__main__":

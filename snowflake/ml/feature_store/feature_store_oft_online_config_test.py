@@ -99,5 +99,35 @@ class DetermineOnlineConfigFromOftTest(absltest.TestCase):
         self.assertEqual(data["scheduling_state"], "SUSPENDED")
 
 
+class CaseSensitiveNameOftLookupTest(parameterized.TestCase):
+    """Tests for case-sensitive feature view names in OFT lookup."""
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("uppercase_name", "MY_FV", "MY_FV$V1$ONLINE"),
+        ("mixed_case_name", '"UseR_BEHAVIOR_PROFILE"', "UseR_BEHAVIOR_PROFILE$V1$ONLINE"),
+        ("name_with_space", '"UseR_ BEHAVIOR_PROFILE"', "UseR_ BEHAVIOR_PROFILE$V1$ONLINE"),
+    )
+    def test_oft_lookup_succeeds_for_case_sensitive_names(self, name_input: str, real_stored_oft_name: str) -> None:
+        oft_row = Row(
+            TARGET_LAG="10 seconds",
+            REFRESH_MODE="INCREMENTAL",
+            SCHEDULING_STATE="RUNNING",
+            STORE_TYPE="postgres",
+        )
+
+        # Mimic Snowflake exact-match semantics: only return the row for the real stored name.
+        def fake_find_object(*, object_type: str, object_name: object) -> list[Row]:
+            self.assertEqual(object_type, "ONLINE FEATURE TABLES")
+            return [oft_row] if object_name.resolved() == real_stored_oft_name else []  # type: ignore[attr-defined]
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_find_object", fake_find_object)
+
+        cfg = OnlineConfig.from_json(fs._determine_online_config_from_oft(name_input, "V1"))
+
+        self.assertTrue(cfg.enable)
+        self.assertEqual(cfg.store_type, OnlineStoreType.POSTGRES)
+
+
 if __name__ == "__main__":
     absltest.main()

@@ -267,6 +267,72 @@ class OnlineServiceTest(absltest.TestCase):
             ],
         )
 
+    def test_read_postgres_online_features_object_type_feature_group(self) -> None:
+        """``object_type='feature_group'`` is forwarded into the request body verbatim."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+
+        response_payload = {
+            "request_id": "r1",
+            "status": "success",
+            "results": [{"features": [10.5, 99]}],
+            "metadata": {
+                "features": [
+                    {"name": "purchase_amount"},
+                    {"name": "score"},
+                ],
+            },
+        }
+
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.append(request)
+            body = json.loads(request.content.decode("utf-8"))
+            self.assertEqual(body["name"], "my_fg")
+            self.assertEqual(body["version"], "v1")
+            self.assertEqual(body["object_type"], "feature_group")
+            self.assertNotIn("features", body)
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
+
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with _patch_online_http_client_with_transport(handler):
+                rows, _schema = online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/svc",
+                    "my_fg",
+                    "v1",
+                    ["user_id"],
+                    [[1]],
+                    None,
+                    join_key_field_types={"user_id": StringType()},
+                    object_type="feature_group",
+                )
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(rows, [{"user_id": 1, "purchase_amount": 10.5, "score": 99}])
+
+    def test_read_postgres_online_features_rejects_feature_names_for_feature_group(self) -> None:
+        """``feature_names`` filtering is incompatible with ``object_type='feature_group'``."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with self.assertRaisesRegex(
+                snowml_exceptions.SnowflakeMLException,
+                "feature_names filtering is not supported for object_type='feature_group'",
+            ):
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/svc",
+                    "my_fg",
+                    "v1",
+                    ["user_id"],
+                    [[1]],
+                    ["purchase_amount"],
+                    join_key_field_types={"user_id": StringType()},
+                    object_type="feature_group",
+                )
+
     def test_read_postgres_online_features_feature_name_subset(self) -> None:
         """Optional ``feature_names`` restricts columns to a subset of ``metadata.features`` (server spelling)."""
         session = create_autospec(Session)

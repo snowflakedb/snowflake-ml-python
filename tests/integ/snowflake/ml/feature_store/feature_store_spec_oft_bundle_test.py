@@ -19,6 +19,11 @@ from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
     wait_online_service_running_with_query_endpoint,
 )
+from fs_integ_test_base import (
+    SPEC_OFT_E2E_DB_PREFIX,
+    SPEC_OFT_E2E_DUMMY_DB_PREFIX,
+    cleanup_spec_oft_e2e_databases,
+)
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
@@ -32,17 +37,19 @@ from tests.integ.snowflake.ml.test_utils import (
 
 logger = logging.getLogger(__name__)
 
-_DB_PREFIX = "SNOWML_TEST_SPEC_OFT_E2E_DB_"
-_DUMMY_DB_PREFIX = "SNOWML_TEST_SPEC_OFT_E2E_DUMMY_DB_"
-
 _module_state: dict | None = None
+
+# Per-process fallback when pytest-xdist is not the runner (e.g. Bazel `py_test`
+# with `absltest.main()`). Prevents concurrent CI builds across branches from
+# colliding on a shared ``..._LOCAL`` DB.
+_RUN_ID_FALLBACK = uuid.uuid4().hex[:12].upper()
 
 
 def _run_id() -> str:
     # PYTEST_XDIST_TESTRUNUID is set once per pytest invocation and is identical across all xdist
     # workers in the same run, so all workers converge on the same DB name (one shared OFT per job).
-    raw = os.environ.get("PYTEST_XDIST_TESTRUNUID") or "LOCAL"
-    return "".join(c for c in raw.upper() if c.isalnum())[:12] or "LOCAL"
+    raw = os.environ.get("PYTEST_XDIST_TESTRUNUID") or _RUN_ID_FALLBACK
+    return "".join(c for c in raw.upper() if c.isalnum())[:12] or _RUN_ID_FALLBACK
 
 
 def _shard_schema_name() -> str:
@@ -58,18 +65,13 @@ def setUpModule() -> None:
     evm = external_volume_manager.ExternalVolumeManager(session)
 
     dbm.cleanup_databases(expire_hours=6)
-    # Targeted shorter TTL for this bundle's own run-scoped DBs (and the dummy
-    # DB) so orphaned Postgres-backed OFT runtimes are reclaimed within ~3 hours
-    # instead of the global 6h. Safe because run_id is scoped to a single pytest
-    # invocation and the bundle's own wall-clock never exceeds 3h.
-    dbm.cleanup_databases(prefix=_DB_PREFIX.lower(), expire_hours=3)
-    dbm.cleanup_databases(prefix=_DUMMY_DB_PREFIX.lower(), expire_hours=3)
+    cleanup_spec_oft_e2e_databases(dbm)
     dbm.cleanup_warehouses(expire_hours=6)
     dbm.cleanup_roles(expire_hours=6)
 
     run_id = _run_id()
-    test_db = f"{_DB_PREFIX}{run_id}"
-    dummy_db = f"{_DUMMY_DB_PREFIX}{run_id}"
+    test_db = f"{SPEC_OFT_E2E_DB_PREFIX}{run_id}"
+    dummy_db = f"{SPEC_OFT_E2E_DUMMY_DB_PREFIX}{run_id}"
 
     session_warehouse = session.get_current_warehouse()
     if not session_warehouse:
@@ -178,6 +180,7 @@ def tearDownModule() -> None:
 from feature_store_batch_online_read_bundled import (  # noqa: E402,F401
     FeatureStoreBatchOnlineReadIntegTest,
 )
+from feature_store_feature_group_bundled import FeatureGroupIntegTest  # noqa: E402,F401
 from feature_store_stream_ingest_bundled import (  # noqa: E402,F401
     FeatureStoreStreamIngestIntegTest,
 )
@@ -186,6 +189,7 @@ from feature_store_streaming_fv_bundled import (  # noqa: E402,F401
 )
 
 FeatureStoreBatchOnlineReadIntegTest.__module__ = __name__
+FeatureGroupIntegTest.__module__ = __name__
 FeatureStoreStreamIngestIntegTest.__module__ = __name__
 StreamingFeatureViewIntegTest.__module__ = __name__
 

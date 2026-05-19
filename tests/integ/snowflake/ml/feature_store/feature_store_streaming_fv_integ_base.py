@@ -19,12 +19,16 @@ import uuid
 from typing import Any, Callable, Optional
 
 import pandas as pd
-from fs_integ_test_base import FeatureStoreIntegTestBase
+from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
-from snowflake.ml.feature_store.feature_view import StoreType
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewVersion,
+    StoreType,
+)
 from snowflake.ml.feature_store.online_service import (
     endpoint_url,
     fetch_online_service_status,
@@ -213,6 +217,10 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
 
     _module_state: dict | None = None
 
+    # Standalone setUpClass provisions an Online Service; bundle/module-state
+    # path is unaffected (DB names come from the runner).
+    _ONLINE_SERVICE_BACKED = True
+
     @classmethod
     def _init_from_module_state(cls) -> None:
         """Populate class attrs from the module-level runner state."""
@@ -251,14 +259,12 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             cls._evm = external_volume_manager.ExternalVolumeManager(cls._session)
 
             cls._dbm.cleanup_databases(expire_hours=6)
+            cleanup_spec_oft_e2e_databases(cls._dbm)
             cls._dbm.cleanup_warehouses(expire_hours=6)
             cls._dbm.cleanup_roles(expire_hours=6)
 
             run_id = uuid.uuid4().hex[:6]
-            cls._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(run_id, "FS_DB").upper()
-            cls._dummy_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
-                run_id, "FS_DUMMY_DB"
-            ).upper()
+            cls._test_db, cls._dummy_db = cls._generate_db_names(run_id)
 
             session_warehouse = cls._session.get_current_warehouse()
             if not session_warehouse:
@@ -618,30 +624,62 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
     def _stream_source_ref_key(self, stream_name: str) -> str:
         return SqlIdentifier(stream_name).resolved()
 
-    def _streaming_backfill_query_status(self, query_id: str) -> tuple[Optional[str], Optional[str]]:
-        """Return ``(EXECUTION_STATUS, ERROR_MESSAGE)`` from session query history, or ``(None, None)`` if absent."""
-        safe = snowpark_utils.escape_single_quotes(query_id)  # type: ignore[no-untyped-call]
+    _BACKFILL_TERMINAL_STATES = frozenset({"SUCCEEDED", "FAILED", "FAILED_AND_AUTO_SUSPENDED", "CANCELLED", "SKIPPED"})
+    _BACKFILL_FAILURE_STATES = frozenset({"FAILED", "FAILED_AND_AUTO_SUSPENDED", "CANCELLED"})
+
+    def _streaming_backfill_root_task_status(
+        self,
+        *,
+        database: str,
+        schema: str,
+        physical_fv_name: str,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """``(STATE, ERROR_MESSAGE, QUERY_ID)`` of the latest root task run.
+
+        Reads ``TASK_HISTORY`` for ``<fv>$<ver>$BACKFILL_ROOT``. The root row
+        is the reliable terminal-state signal — the finalizer drops itself
+        mid-run and may not record cleanly.
+
+        Args:
+            database: FS database (unquoted).
+            schema: FS schema (unquoted).
+            physical_fv_name: ``<fv>$<ver>`` physical FV name.
+
+        Returns:
+            ``(STATE, ERROR_MESSAGE, QUERY_ID)`` of the latest run, or
+            all-``None`` while the graph is warming up.
+        """
+        safe_db = snowpark_utils.escape_single_quotes(database)  # type: ignore[no-untyped-call]
+        safe_schema = snowpark_utils.escape_single_quotes(schema)  # type: ignore[no-untyped-call]
+        safe_root_name = snowpark_utils.escape_single_quotes(  # type: ignore[no-untyped-call]
+            f"{physical_fv_name}$BACKFILL_ROOT"
+        )
         rows = self._session.sql(
             f"""
-            SELECT EXECUTION_STATUS, ERROR_MESSAGE
-            FROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY_BY_SESSION(RESULT_LIMIT => 10000))
-            WHERE QUERY_ID = '{safe}'
-            ORDER BY START_TIME DESC
+            SELECT STATE, ERROR_MESSAGE, QUERY_ID
+            FROM TABLE(INFORMATION_SCHEMA.TASK_HISTORY(RESULT_LIMIT => 1000))
+            WHERE DATABASE_NAME = '{safe_db}'
+              AND SCHEMA_NAME   = '{safe_schema}'
+              AND NAME = '{safe_root_name}'
+            ORDER BY SCHEDULED_TIME DESC
             LIMIT 1
             """
         ).collect()
         if not rows:
-            return None, None
+            return None, None, None
         row = rows[0].as_dict()
-        status: Optional[str] = None
+        state: Optional[str] = None
         err: Optional[str] = None
+        qid: Optional[str] = None
         for k, v in row.items():
             ku = k.upper()
-            if ku == "EXECUTION_STATUS" and v is not None:
-                status = str(v).upper()
+            if ku == "STATE" and v is not None:
+                state = str(v).upper()
             elif ku == "ERROR_MESSAGE" and v is not None:
                 err = str(v)
-        return status, err
+            elif ku == "QUERY_ID" and v is not None:
+                qid = str(v)
+        return state, err, qid
 
     def _wait_udf_and_backfill(
         self,
@@ -653,34 +691,42 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         streaming_fv_version: Optional[str] = None,
         wait_backfill_dropped: bool = False,
     ) -> None:
-        """Wait until the UDF-transformed (DT) table is non-empty after backfill.
+        """Wait until the backfill task graph reports terminal state and the DT has rows.
 
-        By default, the ``$BACKFILL`` table is not checked since OFT refresh might drop it before
-        polling. Set ``wait_backfill_dropped=True`` to also wait for ``$BACKFILL`` to be dropped,
-        which avoids races when chaining ``register_feature_view(..., overwrite=True)``.
+        When all three of ``feature_store``, ``streaming_fv_metadata_name`` (use
+        ``str(registered.name)``), and ``streaming_fv_version`` are passed,
+        polls ``TASK_HISTORY`` for the root task; the root's terminal STATE
+        is the authoritative signal (the finalizer drops itself before its
+        own row finishes recording). Then waits for the DT
+        (``$UDF_TRANSFORMED``) to be non-empty.
 
+        By default the ``$BACKFILL`` table is not checked because the OFT
+        refresh may have already drained it. Set ``wait_backfill_dropped=True``
+        to also wait for ``$BACKFILL`` to disappear from the schema — this
+        avoids races when chaining ``register_feature_view(..., overwrite=True)``
+        where the next overwrite's ``CREATE OR REPLACE TABLE $BACKFILL`` can
+        otherwise collide with a pending OFT-managed drop.
 
         Args:
-            fq_udf: Fully qualified UDF-transformed dynamic table name.
+            fq_udf: Fully-qualified UDF-transformed dynamic table name.
             timeout_s: Max seconds to wait for backfill completion and DT rows.
-            feature_store: Optional client used to read streaming metadata and
-                ``backfill_query_id``. Required when ``wait_backfill_dropped=True``.
-            streaming_fv_metadata_name: Feature view name for metadata lookup
-                (typically ``str(registered.name)``). Required when ``wait_backfill_dropped=True``.
-            streaming_fv_version: Feature view version for metadata lookup.
+            feature_store: Optional client for metadata + DB/schema resolution.
                 Required when ``wait_backfill_dropped=True``.
-            wait_backfill_dropped: If ``True``, after the DT has rows, also wait until the
-                OFT-managed ``$BACKFILL`` table is gone from the schema.
+            streaming_fv_metadata_name: FV name (typically ``str(registered.name)``).
+                Required when ``wait_backfill_dropped=True``.
+            streaming_fv_version: FV version. Required when
+                ``wait_backfill_dropped=True``.
+            wait_backfill_dropped: If ``True``, after the DT has rows also
+                wait until the OFT-managed ``$BACKFILL`` table is gone from
+                the schema.
 
         Raises:
-            AssertionError: Via ``self.fail`` on missing metadata, failed or
-                unfinished backfill query, empty DT after ``timeout_s``, or (when
-                ``wait_backfill_dropped=True``) the backfill table still present after timeout.
+            AssertionError: On missing metadata, failed task, empty DT after
+                ``timeout_s``, or (when ``wait_backfill_dropped=True``) the
+                backfill table still present after timeout.
         """
         deadline = time.time() + timeout_s
-        query_id: Optional[str] = None
-        polled_query = False
-        qid_for_hint: Optional[str] = None
+        meta_name_resolved: Optional[str] = None
         if feature_store is not None and streaming_fv_metadata_name and streaming_fv_version:
             meta = feature_store._metadata_manager.get_streaming_metadata(
                 streaming_fv_metadata_name,
@@ -691,37 +737,63 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                     f"No streaming metadata for feature view {streaming_fv_metadata_name!r} "
                     f"version {streaming_fv_version!r}"
                 )
-            query_id = meta.backfill_query_id
+            if not meta.backfill_root_task_name:
+                self.fail(
+                    f"Streaming metadata for {streaming_fv_metadata_name!r} version "
+                    f"{streaming_fv_version!r} has no backfill_root_task_name; the FV "
+                    "may have been registered with an older client that did not create "
+                    "a server-side backfill task graph."
+                )
+            physical_fv_name = FeatureView._get_physical_name(
+                SqlIdentifier(streaming_fv_metadata_name),
+                FeatureViewVersion(streaming_fv_version),
+            ).resolved()
+            database = feature_store._config.database.resolved()
+            schema = feature_store._config.schema.resolved()
+            meta_name_resolved = f"{physical_fv_name}$BACKFILL_ROOT"
 
-        if query_id:
-            qid_for_hint = query_id
             try:
-                last_status: Optional[str] = None
+                last_state: Optional[str] = None
+                last_qid: Optional[str] = None
                 while time.time() < deadline:
-                    status, err_msg = self._streaming_backfill_query_status(query_id)
-                    last_status = status
-                    if status is None:
+                    state, err_msg, qid = self._streaming_backfill_root_task_status(
+                        database=database,
+                        schema=schema,
+                        physical_fv_name=physical_fv_name,
+                    )
+                    last_state = state
+                    if qid is not None:
+                        last_qid = qid
+                    if state is None:
                         time.sleep(2)
                         continue
-                    if status in ("SUCCESS", "SUCCESS_WITH_ERRORS"):
-                        polled_query = True
+                    if state == "SUCCEEDED":
                         break
-                    if "FAIL" in status or status.startswith("CANCEL") or status.startswith("ABORT"):
+                    if state in self._BACKFILL_FAILURE_STATES:
                         detail = f" {err_msg}" if err_msg else ""
-                        self.fail(f"Streaming backfill query {query_id} ended with {status}.{detail}")
+                        qid_hint = f" (query_id={last_qid!r})" if last_qid else ""
+                        self.fail(
+                            f"Streaming backfill root task {meta_name_resolved!r} ended with "
+                            f"STATE={state}.{detail}{qid_hint}"
+                        )
+                    if state in self._BACKFILL_TERMINAL_STATES:
+                        # SKIPPED (overlap with a still-running fire) — not
+                        # terminal for our purposes; keep polling.
+                        time.sleep(2)
+                        continue
                     time.sleep(2)
                 else:
+                    qid_hint = f" (last_query_id={last_qid!r})" if last_qid else ""
                     self.fail(
-                        f"Backfill query {query_id} did not report SUCCESS within {timeout_s}s "
-                        f"(last_status={last_status!r})"
+                        f"Streaming backfill root task {meta_name_resolved!r} did not reach "
+                        f"SUCCEEDED within {timeout_s}s (last_state={last_state!r}){qid_hint}"
                     )
             except AssertionError:
                 raise
             except Exception as ex:
                 logger.warning(
-                    "Could not poll QUERY_HISTORY_BY_SESSION for backfill query_id=%r: %s; "
-                    "falling back to table row polling.",
-                    query_id,
+                    "Could not poll TASK_HISTORY for backfill root task %r: %s; " "falling back to table row polling.",
+                    meta_name_resolved,
                     ex,
                 )
 
@@ -734,7 +806,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             time.sleep(2)
 
         if not dt_populated:
-            hint = f" (backfill_query_id={qid_for_hint!r}, used_query_poll={polled_query})" if qid_for_hint else ""
+            hint = f" (backfill_root_task={meta_name_resolved!r})" if meta_name_resolved else ""
             self.fail(f"Backfill did not populate DT within {timeout_s}s{hint}")
 
         if wait_backfill_dropped:

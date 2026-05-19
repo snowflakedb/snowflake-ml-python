@@ -225,6 +225,7 @@ class FeatureViewSpecBuilder:
 
         # Properties
         self._entity_columns: list[str] = []
+        self._secondary_key_columns: Optional[list[str]] = None
         self._timestamp_field: Optional[str] = None
         self._granularity_sec: Optional[int] = None
         self._agg_method: Optional[FeatureAggregationMethod] = None
@@ -266,6 +267,7 @@ class FeatureViewSpecBuilder:
         self,
         *,
         entity_columns: Optional[list[str]] = None,
+        secondary_key_columns: Optional[list[str]] = None,
         timestamp_field: Optional[str] = None,
         granularity: Optional[str] = None,
         agg_method: Optional[FeatureAggregationMethod] = None,
@@ -286,6 +288,8 @@ class FeatureViewSpecBuilder:
         Args:
             entity_columns: Ordered list of entity/join-key column names
                 (Streaming/Batch only; must be ``None`` for RTFV/FG).
+            secondary_key_columns: Optional ordered list of secondary aggregation
+                key column names
             timestamp_field: Optional timestamp column name.
             granularity: Optional tile interval (e.g., ``"1h"``). Converted to seconds.
             agg_method: Optional aggregation method.
@@ -295,8 +299,8 @@ class FeatureViewSpecBuilder:
             self for method chaining.
 
         Raises:
-            ValueError: If ``entity_columns`` is provided for a
-                :class:`FeatureViewKind.RealtimeFeatureView` or
+            ValueError: If ``entity_columns`` or ``secondary_key_columns`` is
+                provided for a :class:`FeatureViewKind.RealtimeFeatureView` or
                 :class:`FeatureViewKind.FeatureGroup`.
         """
         if entity_columns is not None and self._kind in (
@@ -307,7 +311,16 @@ class FeatureViewSpecBuilder:
                 f"{self._kind.value}.set_properties(entity_columns=...) is not allowed; "
                 f"entity columns are derived from upstream FeatureView sources."
             )
+        if secondary_key_columns is not None and self._kind in (
+            FeatureViewKind.RealtimeFeatureView,
+            FeatureViewKind.FeatureGroup,
+        ):
+            raise ValueError(
+                f"{self._kind.value}.set_properties(secondary_key_columns=...) is not allowed; "
+                f"secondary aggregation keys are only defined on Streaming/Batch feature views."
+            )
         self._entity_columns = list(entity_columns) if entity_columns is not None else []
+        self._secondary_key_columns = list(secondary_key_columns) if secondary_key_columns else None
         self._timestamp_field = timestamp_field
         self._granularity_sec = interval_to_seconds(granularity) if granularity else None
         self._agg_method = agg_method
@@ -538,6 +551,7 @@ class FeatureViewSpecBuilder:
             ordered_entity_column_names = self._entity_columns
         spec = Spec(
             ordered_entity_column_names=ordered_entity_column_names,
+            ordered_secondary_key_column_names=self._secondary_key_columns,
             sources=external_sources,
             features=spec_features,
             timestamp_field=self._timestamp_field,
@@ -714,28 +728,37 @@ class FeatureViewSpecBuilder:
                     f"{list(column_map.keys())}"
                 )
 
+            is_secondary_key_array = agg_spec.function.is_secondary_key_array()
+
             # Determine output column type based on aggregation function.
-            predetermined = _AGG_PREDETERMINED_OUTPUT.get(agg_spec.function)
-            if predetermined is not None:
+            if is_secondary_key_array:
                 output_col = FSColumn(
                     name=agg_spec.output_column,
-                    type=predetermined.type,
-                    precision=predetermined.precision,
-                    scale=predetermined.scale,
-                    length=predetermined.length,
-                    timezone=predetermined.timezone,
+                    type="ArrayType",
+                    element_type=source_col.type,
                 )
             else:
-                # SUM, MIN, MAX, LAST_N, etc. preserve source column type
-                # including precision/scale/length/timezone.
-                output_col = FSColumn(
-                    name=agg_spec.output_column,
-                    type=source_col.type,
-                    precision=source_col.precision,
-                    scale=source_col.scale,
-                    length=source_col.length,
-                    timezone=source_col.timezone,
-                )
+                predetermined = _AGG_PREDETERMINED_OUTPUT.get(agg_spec.function)
+                if predetermined is not None:
+                    output_col = FSColumn(
+                        name=agg_spec.output_column,
+                        type=predetermined.type,
+                        precision=predetermined.precision,
+                        scale=predetermined.scale,
+                        length=predetermined.length,
+                        timezone=predetermined.timezone,
+                    )
+                else:
+                    # SUM, MIN, MAX, LAST_N, etc. preserve source column type
+                    # including precision/scale/length/timezone.
+                    output_col = FSColumn(
+                        name=agg_spec.output_column,
+                        type=source_col.type,
+                        precision=source_col.precision,
+                        scale=source_col.scale,
+                        length=source_col.length,
+                        timezone=source_col.timezone,
+                    )
 
             # interval_to_seconds() returns -1 as a sentinel for lifetime
             # windows.  Convert non-positive values to None so they are
@@ -746,11 +769,13 @@ class FeatureViewSpecBuilder:
             raw_offset = interval_to_seconds(agg_spec.offset) if agg_spec.offset != "0" else 0
             offset_sec = raw_offset if raw_offset > 0 else None
 
+            function_value: Optional[str] = None if is_secondary_key_array else agg_spec.function.value
+
             spec_features.append(
                 Feature(
                     source_column=source_col,
                     output_column=output_col,
-                    function=agg_spec.function.value,
+                    function=function_value,
                     window_sec=window_sec,
                     offset_sec=offset_sec,
                     function_params=(agg_spec.params if agg_spec.params else None),
@@ -1088,7 +1113,11 @@ class FeatureViewSpecBuilder:
         """Reject aggregation functions not supported by the PG online store."""
         if not self._agg_specs:
             return
-        unsupported = [spec.function for spec in self._agg_specs if spec.function not in _PG_SUPPORTED_AGGREGATIONS]
+        unsupported = [
+            spec.function
+            for spec in self._agg_specs
+            if not spec.function.is_secondary_key_array() and spec.function not in _PG_SUPPORTED_AGGREGATIONS
+        ]
         if unsupported:
             names = sorted({fn.value for fn in unsupported})
             allowed = sorted(fn.value for fn in _PG_SUPPORTED_AGGREGATIONS)

@@ -27,14 +27,14 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.WAREHOUSE.value],
-                "pip_requirements": ["prophet"],
+                "pip_requirements": ["prophet==1.1.5", "numpy==1.26.4"],
                 "conda_dependencies": None,
                 "artifact_repository_map": None,
                 "expect_error": False,
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES.value],
-                "pip_requirements": ["prophet"],
+                "pip_requirements": ["prophet==1.1.5", "numpy==1.26.4"],
                 "conda_dependencies": None,
                 "artifact_repository_map": None,
                 "expect_error": False,
@@ -42,20 +42,24 @@ class TestRegistryTargetPlatformsInteg(registry_model_test_base.RegistryModelTes
             {
                 "target_platforms": [type_hints.TargetPlatform.WAREHOUSE.value],
                 "pip_requirements": None,
-                "conda_dependencies": ["conda-forge::prophet"],
+                "conda_dependencies": ["conda-forge::prophet==1.1.5"],
                 "artifact_repository_map": False,
                 "expect_error": True,
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.WAREHOUSE.value],
                 "pip_requirements": None,
-                "conda_dependencies": ["prophet"],
+                "conda_dependencies": ["prophet==1.1.5"],
                 "artifact_repository_map": False,
                 "expect_error": False,
             },
             {
                 "target_platforms": [type_hints.TargetPlatform.WAREHOUSE.value],
-                "pip_requirements": ["prophet", "pandas==2.1.4"],  # Pin pandas version to override snowpark
+                "pip_requirements": [
+                    "prophet==1.1.5",
+                    "numpy==1.26.4",
+                    "pandas==2.1.4",  # Pin pandas version to override snowpark
+                ],
                 "conda_dependencies": None,
                 "artifact_repository_map": True,
                 "expect_error": False,

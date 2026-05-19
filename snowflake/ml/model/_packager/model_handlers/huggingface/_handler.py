@@ -520,6 +520,7 @@ def _get_task_handler(
     """
     from snowflake.ml.model._packager.model_handlers.huggingface import (
         _default,
+        audio_classification,
         audio_text_to_text,
         automatic_speech_recognition,
         conversational,
@@ -568,6 +569,7 @@ def _get_task_handler(
         "object-detection": object_detection.ObjectDetectionTaskHandler,
         "document-question-answering": document_question_answering.DocumentQuestionAnsweringTaskHandler,
         "visual-question-answering": visual_question_answering.VisualQuestionAnsweringTaskHandler,
+        "audio-classification": audio_classification.AudioClassificationTaskHandler,
         "automatic-speech-recognition": automatic_speech_recognition.AutomaticSpeechRecognitionTaskHandler,
         "video-classification": video_classification.VideoClassificationTaskHandler,
         "conversational": conversational.ConversationalTaskHandler,

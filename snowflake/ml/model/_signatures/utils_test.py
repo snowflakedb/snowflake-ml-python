@@ -45,6 +45,39 @@ class HuggingFacePipelineSignatureAutoInferTest(absltest.TestCase):
         self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
         self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
 
+    def test_audio_classification_signature_auto_infer(self) -> None:
+        sig = utils.huggingface_pipeline_signature_auto_infer(task="audio-classification", params={})
+        self.assertIsNotNone(sig)
+        assert sig is not None
+
+        expected_sig = core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="audio", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            params=[
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=None),
+                core.ParamSpec(name="function_to_apply", dtype=core.DataType.STRING, default_value="softmax"),
+            ],
+        )
+
+        self.assertEqual(len(sig.inputs), len(expected_sig.inputs))
+        self.assertEqual(sig.inputs[0], expected_sig.inputs[0])
+        self.assertEqual(len(sig.outputs), len(expected_sig.outputs))
+        self.assertEqual(sig.outputs[0], expected_sig.outputs[0])
+        self.assertEqual(len(sig.params), len(expected_sig.params))
+        for i in range(len(sig.params)):
+            self.assertEqual(sig.params[i], expected_sig.params[i])
+
     def test_document_question_answering_signature_auto_infer(self) -> None:
         sig = utils.huggingface_pipeline_signature_auto_infer(task="document-question-answering", params={})
         self.assertIsNotNone(sig)
@@ -571,6 +604,106 @@ class HuggingFaceParamSpecTest(absltest.TestCase):
         input_names = {spec.name.upper() for spec in sig.inputs}
         param_names = {p.name.upper() for p in sig.params}
         self.assertTrue(input_names.isdisjoint(param_names))
+
+    # --- generation param specs constant ---
+
+    def test_generation_param_specs_count(self) -> None:
+        self.assertEqual(len(utils._GENERATION_PARAM_SPECS), 60)
+
+    def test_generation_param_specs_all_defaults_none(self) -> None:
+        for spec in utils._GENERATION_PARAM_SPECS:
+            if isinstance(spec, core.ParamGroupSpec):
+                for child in spec.specs:
+                    self.assertIsNone(child.default_value, f"{spec.name}.{child.name} should have default_value=None")
+            else:
+                self.assertIsNone(spec.default_value, f"{spec.name} should have default_value=None")
+
+    def test_generation_param_specs_watermarking_config(self) -> None:
+        group_specs = [s for s in utils._GENERATION_PARAM_SPECS if isinstance(s, core.ParamGroupSpec)]
+        self.assertEqual(len(group_specs), 1)
+        wm = group_specs[0]
+        self.assertEqual(wm.name, "watermarking_config")
+        child_names = {c.name for c in wm.specs}
+        self.assertEqual(child_names, {"greenlist_ratio", "bias", "hashing_key", "seeding_scheme", "context_width"})
+
+    # --- summarization ---
+
+    def test_summarization_params(self) -> None:
+        param_names = self._get_param_names("summarization")
+        self.assertIn("clean_up_tokenization_spaces", param_names)
+        self.assertIn("truncation", param_names)
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_summarization_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("summarization")
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertTrue(generation_names.issubset(param_names))
+
+    # --- text2text-generation ---
+
+    def test_text2text_generation_params(self) -> None:
+        param_names = self._get_param_names("text2text-generation")
+        self.assertIn("clean_up_tokenization_spaces", param_names)
+        self.assertIn("truncation", param_names)
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_text2text_generation_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("text2text-generation")
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertTrue(generation_names.issubset(param_names))
+
+    # --- translation ---
+
+    def test_translation_params(self) -> None:
+        param_names = self._get_param_names("translation_en_to_fr")
+        self.assertIn("src_lang", param_names)
+        self.assertIn("tgt_lang", param_names)
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_translation_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("translation_en_to_fr")
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertTrue(generation_names.issubset(param_names))
+
+    # --- image-to-text ---
+
+    def test_image_to_text_params(self) -> None:
+        param_names = self._get_param_names("image-to-text")
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_image_to_text_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("image-to-text")
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertEqual(generation_names, param_names)
+
+    # --- automatic-speech-recognition ---
+
+    def test_asr_params(self) -> None:
+        param_names = self._get_param_names("automatic-speech-recognition")
+        self.assertIn("return_timestamps", param_names)
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_asr_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("automatic-speech-recognition")
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertTrue(generation_names.issubset(param_names))
+
+    # --- text-generation (non-chat) ---
+
+    def test_text_generation_non_chat_params(self) -> None:
+        param_names = self._get_param_names("text-generation", has_chat_template=False)
+        self.assertIn("temperature", param_names)
+        self.assertIn("max_new_tokens", param_names)
+
+    def test_text_generation_non_chat_includes_all_generation_params(self) -> None:
+        param_names = self._get_param_names("text-generation", has_chat_template=False)
+        generation_names = {p.name for p in utils._GENERATION_PARAM_SPECS}
+        self.assertEqual(generation_names, param_names)
 
 
 class ModelSignatureMiscTest(absltest.TestCase):

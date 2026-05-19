@@ -20,6 +20,7 @@ py_library(
         ":model_deployment_spec_schema",
         "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/model:inference_engine",
     ],
 )
@@ -34,6 +35,7 @@ py_test(
     deps = [
         ":model_deployment_spec",
         "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/feature_store:feature_store_lib",
         "//snowflake/ml/model:inference_engine",
     ],
 )

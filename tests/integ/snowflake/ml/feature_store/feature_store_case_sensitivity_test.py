@@ -12,6 +12,7 @@ from snowflake.ml.feature_store import (  # type: ignore[attr-defined]
     FeatureStore,
     FeatureView,
 )
+from snowflake.ml.feature_store.feature_view import OnlineConfig, StoreType
 
 # A list of names to be tested.
 #   Each tuple is consisted of:
@@ -435,6 +436,44 @@ class FeatureStoreCaseSensitivityTest(FeatureStoreIntegTestBase, parameterized.T
         for name in diff_names:
             self.assertEqual(len(fs._find_object("SCHEMAS", SqlIdentifier(name))), 0)
         self._session.sql(f"DROP SCHEMA IF EXISTS {self.test_db}.{equi_names[0]}").collect()
+
+    # Regression: case-sensitive FV names lost online=True after get_feature_view round-trip.
+    @parameterized.parameters(  # type: ignore[misc]
+        ('"UseR_BEHAVIOR_PROFILE"',),
+        ('"UseR_ BEHAVIOR_PROFILE"',),
+        ('"abc"',),
+    )
+    def test_online_config_round_trip_for_case_sensitive_names(self, fv_name: str) -> None:
+        current_schema = create_random_schema(self._session, "TEST_ONLINE_CASE_SENSITIVE", database=self.test_db)
+        fs = FeatureStore(
+            self._session,
+            self.test_db,
+            current_schema,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        )
+        self._active_fs.append(fs)
+
+        df = self._session.sql(f"SELECT a, b FROM {self._mock_table}")
+        e = Entity(name="my_cool_entity", join_keys=["a"])
+        fs.register_entity(e)
+        fv = FeatureView(
+            name=fv_name,
+            entities=[e],
+            feature_df=df,
+            refresh_freq="1 minute",
+            online_config=OnlineConfig(enable=True),
+        )
+        fs.register_feature_view(fv, "v1")
+
+        retrieved_fv = fs.get_feature_view(fv_name, "v1")
+        self.assertEqual(retrieved_fv.name, SqlIdentifier(fv_name))
+        self.assertTrue(retrieved_fv.online)
+        self.assertIsNotNone(retrieved_fv.online_config)
+        self.assertTrue(retrieved_fv.online_config.enable)
+
+        online_data = fs.read_feature_view(retrieved_fv, store_type=StoreType.ONLINE)
+        self.assertEqual(len(online_data.collect()), 2)
 
     def test_feature_view_version(self) -> None:
         current_schema = create_random_schema(self._session, "TEST_FEATURE_VIEW_VERSION", database=self.test_db)

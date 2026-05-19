@@ -181,11 +181,12 @@ class FSColumn(BaseModel):
     """A single column with name and serialized Snowpark type info."""
 
     name: str
-    type: str  # e.g. "StringType", "DecimalType" — from type(dt).__name__
+    type: str  # e.g. "StringType", "DecimalType", "ArrayType" — from type(dt).__name__
     length: Optional[int] = None  # StringType
     precision: Optional[int] = None  # DecimalType
     scale: Optional[int] = None  # DecimalType
     timezone: Optional[str] = None  # TimestampType
+    element_type: Optional[str] = None
 
 
 class Source(BaseModel):
@@ -275,6 +276,7 @@ class Spec(BaseModel):
     """The core specification describing sources, features, and transformations."""
 
     ordered_entity_column_names: list[str]
+    ordered_secondary_key_column_names: Optional[list[str]] = None
     sources: list[Source]
     features: list[Feature]
     timestamp_field: Optional[str] = None

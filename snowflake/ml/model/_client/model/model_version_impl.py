@@ -8,6 +8,7 @@ import pandas as pd
 
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import sql_identifier
+from snowflake.ml.feature_store import feature_view
 from snowflake.ml.jobs import job
 from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import inference_engine, openai_signatures, task, type_hints
@@ -1224,6 +1225,7 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -1265,6 +1267,10 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
+            feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
+                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
+                service will fetch any missing feature columns from these sources before invoking the model. Currently
+                only one FeatureView per function is supported.
         """
         ...
 
@@ -1290,6 +1296,7 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -1331,6 +1338,10 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
+            feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
+                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
+                service will fetch any missing feature columns from these sources before invoking the model. Currently
+                only one FeatureView per function is supported.
         """
         ...
 
@@ -1371,6 +1382,7 @@ class ModelVersion(lineage_node.LineageNode):
         autocapture: Optional[bool] = None,
         inference_engine_options: Optional[dict[str, Any]] = None,
         experimental_options: Optional[dict[str, Any]] = None,
+        feature_sources_per_function: Optional[dict[str, list[feature_view.FeatureView]]] = None,
     ) -> Union[str, async_job.AsyncJob]:
         """Create an inference service with the given spec.
 
@@ -1414,6 +1426,10 @@ class ModelVersion(lineage_node.LineageNode):
                 `engine` is the type of the inference engine to use.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
+            feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
+                registered :class:`FeatureView` objects whose columns should be looked up at inference time. The model
+                service will fetch any missing feature columns from these sources before invoking the model. Currently
+                only one FeatureView per function is supported.
 
 
         Raises:
@@ -1523,6 +1539,7 @@ class ModelVersion(lineage_node.LineageNode):
                     progress_status=status,
                     inference_engine_args=inference_engine_args,
                     autocapture=autocapture,
+                    feature_sources_per_function=feature_sources_per_function,
                 )
                 status.update(label="Model service created successfully", state="complete", expanded=False)
                 return result

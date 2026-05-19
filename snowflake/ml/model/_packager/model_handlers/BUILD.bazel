@@ -465,6 +465,15 @@ py_library(
 )
 
 py_library(
+    name = "huggingface_audio_classification_handler",
+    srcs = ["huggingface/audio_classification.py"],
+    deps = [
+        ":huggingface_task_handler",
+        "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_library(
     name = "huggingface_automatic_speech_recognition_handler",
     srcs = ["huggingface/automatic_speech_recognition.py"],
     deps = [
@@ -499,6 +508,7 @@ py_library(
     deps = [
         ":_base",
         ":_utils",
+        ":huggingface_audio_classification_handler",
         ":huggingface_audio_text_to_text_handler",
         ":huggingface_automatic_speech_recognition_handler",
         ":huggingface_conversational_handler",

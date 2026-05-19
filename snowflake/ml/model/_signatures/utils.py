@@ -114,6 +114,93 @@ def rename_pandas_df(data: pd.DataFrame, features: Sequence[core.BaseFeatureSpec
     return data
 
 
+_GENERATION_PARAM_SPECS: list[core.BaseParamSpec] = [
+    # Length control
+    core.ParamSpec(name="max_length", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="max_new_tokens", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="min_length", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="min_new_tokens", dtype=core.DataType.INT64, default_value=None),
+    # Stopping criteria
+    core.ParamSpec(name="early_stopping", dtype=core.DataType.STRING, default_value=None),
+    core.ParamSpec(name="max_time", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="stop_strings", dtype=core.DataType.STRING, default_value=None, shape=(-1,)),
+    # Sampling strategy
+    core.ParamSpec(name="do_sample", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="num_beams", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="num_beam_groups", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="penalty_alpha", dtype=core.DataType.DOUBLE, default_value=None),
+    # Sampling parameters
+    core.ParamSpec(name="temperature", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="top_p", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="min_p", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="top_h", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="typical_p", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="epsilon_cutoff", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="eta_cutoff", dtype=core.DataType.DOUBLE, default_value=None),
+    # Diversity / repetition
+    core.ParamSpec(name="diversity_penalty", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="repetition_penalty", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="encoder_repetition_penalty", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="length_penalty", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="no_repeat_ngram_size", dtype=core.DataType.INT64, default_value=None),
+    # Token manipulation
+    core.ParamSpec(name="bad_words_ids", dtype=core.DataType.INT64, default_value=None, shape=(-1, -1)),
+    core.ParamSpec(name="force_words_ids", dtype=core.DataType.INT64, default_value=None, shape=(-1, -1)),
+    core.ParamSpec(name="renormalize_logits", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="forced_bos_token_id", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="forced_eos_token_id", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="remove_invalid_values", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="token_healing", dtype=core.DataType.BOOL, default_value=None),
+    # Output control
+    core.ParamSpec(name="num_return_sequences", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="output_attentions", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="output_hidden_states", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="output_scores", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="output_logits", dtype=core.DataType.BOOL, default_value=None),
+    # Token IDs
+    core.ParamSpec(name="pad_token_id", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="bos_token_id", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="eos_token_id", dtype=core.DataType.INT64, default_value=None),
+    # Encoder-decoder
+    core.ParamSpec(name="encoder_no_repeat_ngram_size", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="decoder_start_token_id", dtype=core.DataType.INT64, default_value=None),
+    # Assisted generation
+    core.ParamSpec(name="is_assistant", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="num_assistant_tokens", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="num_assistant_tokens_schedule", dtype=core.DataType.STRING, default_value=None),
+    core.ParamSpec(name="assistant_confidence_threshold", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="prompt_lookup_num_tokens", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="max_matching_ngram_size", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="assistant_early_exit", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="assistant_lookbehind", dtype=core.DataType.INT64, default_value=None),
+    core.ParamSpec(name="target_lookbehind", dtype=core.DataType.INT64, default_value=None),
+    # Miscellaneous
+    core.ParamSpec(name="guidance_scale", dtype=core.DataType.DOUBLE, default_value=None),
+    core.ParamSpec(name="low_memory", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="disable_compile", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="prefill_chunk_size", dtype=core.DataType.INT64, default_value=None),
+    # Suppression
+    core.ParamSpec(name="suppress_tokens", dtype=core.DataType.INT64, default_value=None, shape=(-1,)),
+    core.ParamSpec(name="begin_suppress_tokens", dtype=core.DataType.INT64, default_value=None, shape=(-1,)),
+    core.ParamSpec(name="forced_decoder_ids", dtype=core.DataType.INT64, default_value=None, shape=(-1, -1)),
+    # Cache
+    core.ParamSpec(name="use_cache", dtype=core.DataType.BOOL, default_value=None),
+    core.ParamSpec(name="cache_implementation", dtype=core.DataType.STRING, default_value=None),
+    # Watermarking
+    core.ParamGroupSpec(
+        name="watermarking_config",
+        specs=[
+            core.ParamSpec(name="greenlist_ratio", dtype=core.DataType.DOUBLE, default_value=None),
+            core.ParamSpec(name="bias", dtype=core.DataType.DOUBLE, default_value=None),
+            core.ParamSpec(name="hashing_key", dtype=core.DataType.INT64, default_value=None),
+            core.ParamSpec(name="seeding_scheme", dtype=core.DataType.STRING, default_value=None),
+            core.ParamSpec(name="context_width", dtype=core.DataType.INT64, default_value=None),
+        ],
+    ),
+]
+
+
 def huggingface_pipeline_signature_auto_infer(
     task: str,
     params: dict[str, Any],
@@ -227,6 +314,11 @@ def huggingface_pipeline_signature_auto_infer(
             outputs=[
                 core.FeatureSpec(name="summary_text", dtype=core.DataType.STRING),
             ],
+            params=[
+                core.ParamSpec(name="clean_up_tokenization_spaces", dtype=core.DataType.BOOL, default_value=None),
+                core.ParamSpec(name="truncation", dtype=core.DataType.STRING, default_value=None),
+            ]
+            + _GENERATION_PARAM_SPECS,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TableQuestionAnsweringPipeline
@@ -332,6 +424,10 @@ def huggingface_pipeline_signature_auto_infer(
                     ],
                 )
             ],
+            params=[
+                core.ParamSpec(name="return_timestamps", dtype=core.DataType.STRING, default_value=None),
+            ]
+            + _GENERATION_PARAM_SPECS,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.VideoClassificationPipeline
@@ -431,6 +527,7 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 ),
             ],
+            params=list(_GENERATION_PARAM_SPECS),
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ObjectDetectionPipeline
@@ -547,6 +644,7 @@ def huggingface_pipeline_signature_auto_infer(
                     shape=(-1,),
                 )
             ],
+            params=list(_GENERATION_PARAM_SPECS),
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ImageTextToTextPipeline
@@ -580,6 +678,11 @@ def huggingface_pipeline_signature_auto_infer(
             outputs=[
                 core.FeatureSpec(name="generated_text", dtype=core.DataType.STRING),
             ],
+            params=[
+                core.ParamSpec(name="clean_up_tokenization_spaces", dtype=core.DataType.BOOL, default_value=None),
+                core.ParamSpec(name="truncation", dtype=core.DataType.STRING, default_value=None),
+            ]
+            + _GENERATION_PARAM_SPECS,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.TranslationPipeline
@@ -597,6 +700,11 @@ def huggingface_pipeline_signature_auto_infer(
             outputs=[
                 core.FeatureSpec(name="translation_text", dtype=core.DataType.STRING),
             ],
+            params=[
+                core.ParamSpec(name="src_lang", dtype=core.DataType.STRING, default_value=None),
+                core.ParamSpec(name="tgt_lang", dtype=core.DataType.STRING, default_value=None),
+            ]
+            + _GENERATION_PARAM_SPECS,
         )
 
     # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.ZeroShotClassificationPipeline
@@ -616,6 +724,28 @@ def huggingface_pipeline_signature_auto_infer(
                     name="hypothesis_template", dtype=core.DataType.STRING, default_value="This example is {}."
                 ),
                 core.ParamSpec(name="multi_label", dtype=core.DataType.BOOL, default_value=False),
+            ],
+        )
+
+    # https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.AudioClassificationPipeline
+    if task == "audio-classification":
+        return core.ModelSignature(
+            inputs=[
+                core.FeatureSpec(name="audio", dtype=core.DataType.BYTES),
+            ],
+            outputs=[
+                core.FeatureGroupSpec(
+                    name="labels",
+                    specs=[
+                        core.FeatureSpec(name="label", dtype=core.DataType.STRING),
+                        core.FeatureSpec(name="score", dtype=core.DataType.DOUBLE),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            params=[
+                core.ParamSpec(name="top_k", dtype=core.DataType.INT64, default_value=None),
+                core.ParamSpec(name="function_to_apply", dtype=core.DataType.STRING, default_value="softmax"),
             ],
         )
 

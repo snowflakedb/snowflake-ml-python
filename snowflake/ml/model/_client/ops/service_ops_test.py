@@ -246,6 +246,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=False,
+                feature_sources_per_function=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -407,6 +408,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -569,6 +571,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
             mock_add_image_build_spec.assert_called_once_with(
                 image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
@@ -926,6 +929,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
             # This is the key assertion - verify add_inference_engine_spec was called
@@ -1093,6 +1097,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
             # key assertions -- image build is not called and inference engine model is called
@@ -1255,6 +1260,7 @@ class ServiceOpsTest(parameterized.TestCase):
                 num_workers=1,
                 max_batch_rows=1024,
                 autocapture=None,
+                feature_sources_per_function=None,
             )
 
             # Key assertion: verify add_inference_engine_spec was called with PYTHON_GENERIC
@@ -2496,6 +2502,82 @@ class ServiceOpsTest(parameterized.TestCase):
         new_threads = set(threading.enumerate()) - threads_before
         leaked = {t for t in new_threads if t.name == "service-log-streamer"}
         self.assertEmpty(leaked, f"Log-streaming thread leaked after error: {leaked}")
+
+    def test_create_service_forwards_feature_sources_per_function(self) -> None:
+        # Pure passthrough check: ensure ServiceOperator hands the (sentinel)
+        # FeatureView mapping to ModelDeploymentSpec.add_service_spec
+        # untouched. Validation/serialization is covered in
+        # model_deployment_spec_test; here we just pin the wiring.
+        self._add_snowflake_version_check_mock_operations(self.m_session)
+        current_version = version.Version(snowml_version.VERSION)
+        # Inlined deployment spec mode skips the temp-stage SQL path, keeping
+        # this wiring test free of unrelated mocks.
+        with platform_capabilities.PlatformCapabilities.mock_features(
+            features={platform_capabilities.INLINE_DEPLOYMENT_SPEC_PARAMETER: current_version}
+        ):
+            self.m_ops = service_ops.ServiceOperator(
+                self.c_session,
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+            )
+        sentinel_feature_sources = {"predict": [mock.sentinel.feature_view]}
+        with (
+            mock.patch.object(self.m_ops._model_deployment_spec, "save"),
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_model_spec"),
+            mock.patch.object(
+                self.m_ops._model_deployment_spec,
+                "add_service_spec",
+            ) as mock_add_service_spec,
+            mock.patch.object(self.m_ops._model_deployment_spec, "add_image_build_spec"),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "deploy_model",
+                return_value=(str(uuid.uuid4()), self._create_mock_async_job()),
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "get_service_container_statuses",
+                return_value=[
+                    service_sql.ServiceStatusInfo(
+                        service_status=service_sql.ServiceStatus.PENDING,
+                        instance_id=0,
+                        instance_status="PENDING",
+                        container_status="PENDING",
+                        message=None,
+                    )
+                ],
+            ),
+            mock.patch.object(self.m_ops._service_client, "get_service_logs", return_value=""),
+            mock.patch.object(self.m_ops, "_wait_for_service_status", return_value=None),
+        ):
+            self.m_ops.create_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("VERSION"),
+                service_database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
+                service_schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                image_build_compute_pool_name=sql_identifier.SqlIdentifier("IMAGE_BUILD_COMPUTE_POOL"),
+                service_compute_pool_name=sql_identifier.SqlIdentifier("SERVICE_COMPUTE_POOL"),
+                image_repo_name="IMAGE_REPO_DB.IMAGE_REPO_SCHEMA.IMAGE_REPO",
+                ingress_enabled=True,
+                min_instances=0,
+                max_instances=1,
+                cpu_requests=None,
+                memory_requests=None,
+                gpu_requests=None,
+                num_workers=None,
+                max_batch_rows=None,
+                force_rebuild=False,
+                build_external_access_integrations=None,
+                block=True,
+                statement_params=self.m_statement_params,
+                progress_status=create_mock_progress_status(),
+                feature_sources_per_function=sentinel_feature_sources,
+            )
+        _, kwargs = mock_add_service_spec.call_args
+        self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
 
 
 if __name__ == "__main__":

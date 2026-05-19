@@ -12,6 +12,7 @@ requirements:
   build:
     - python
     - bazel==7.6.1
+    - pip
   run:
     - python>=3.9,<3.14
 

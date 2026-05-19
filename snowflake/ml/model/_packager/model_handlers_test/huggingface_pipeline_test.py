@@ -1480,6 +1480,48 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         self.assertEqual(res["outputs"][0]["text"], "decoded")
         self.assertEqual(fake_pipeline.calls, [b"fake audio"])
 
+    def test_audio_classification_handler(self) -> None:
+        """Test that audio classification pipelines process each audio input individually."""
+
+        class FakeAudioClassificationPipeline:
+            def __init__(self) -> None:
+                self.task = "audio-classification"
+                self.calls: list[bytes] = []
+
+            def __call__(self, audio: bytes) -> list[dict[str, Any]]:
+                self.calls.append(audio)
+                return [{"label": "Speech", "score": 0.95}, {"label": "Music", "score": 0.05}]
+
+        fake_pipeline = FakeAudioClassificationPipeline()
+        signature = utils.huggingface_pipeline_signature_auto_infer(
+            task="audio-classification",
+            params={},
+        )
+        self.assertIsNotNone(signature)
+        assert signature is not None
+
+        meta = model_meta.ModelMetadata(
+            name="fake_audio_cls",
+            env=model_env.ModelEnv(),
+            model_type="huggingface_pipeline",
+            signatures={"__call__": signature},
+        )
+
+        custom_model = TransformersPipelineHandler.convert_as_custom_model(
+            raw_model=fake_pipeline,
+            model_meta=meta,
+        )
+
+        res = custom_model(pd.DataFrame({"audio": [b"audio1", b"audio2"]}))  # type: ignore[operator]
+
+        self.assertEqual(fake_pipeline.calls, [b"audio1", b"audio2"])
+        self.assertEqual(len(res), 2)
+        self.assertIsInstance(res["labels"][0], list)
+        self.assertEqual(len(res["labels"][0]), 2)
+        self.assertEqual(res["labels"][0][0]["label"], "Speech")
+        self.assertAlmostEqual(res["labels"][0][0]["score"], 0.95)
+        self.assertEqual(res["labels"][1][0]["label"], "Speech")
+
     def test_image_pipeline_bytes_to_pil_conversion(self) -> None:
         """Test that image pipelines correctly convert bytes to PIL Images."""
         from PIL import Image

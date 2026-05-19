@@ -23,7 +23,9 @@ class Text2TextGenerationTaskHandler(_task_handler.HuggingFaceTaskHandler):
         **kwargs: Any,
     ) -> Any:
         input_data = X[signature.inputs[0].name].to_list()
-        return getattr(raw_model, target_method)(input_data)
+        # HF text2text-generation accepts generation params as flat kwargs.
+        filtered_kwargs = _task_handler._filter_none_kwargs(kwargs)
+        return getattr(raw_model, target_method)(input_data, **filtered_kwargs)
 
     @override
     def _needs_list_wrapping(

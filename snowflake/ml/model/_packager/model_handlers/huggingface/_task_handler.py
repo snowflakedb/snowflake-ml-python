@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Optional
 
+import numpy as np
 import pandas as pd
 from packaging import version
 
@@ -8,6 +9,58 @@ from snowflake.ml.model import model_signature
 
 if TYPE_CHECKING:
     import transformers
+
+
+def _to_native(v: Any) -> Any:
+    """Convert numpy scalars and arrays to Python native types.
+
+    HuggingFace validators use isinstance(x, int) checks which reject numpy.int64.
+    Params arriving from the Snowflake UDF system are numpy-typed, so we coerce
+    them before forwarding to HF pipelines.
+
+    Args:
+        v: Value to coerce.
+
+    Returns:
+        Python native equivalent of the input value.
+    """
+    if isinstance(v, np.generic):
+        return v.item()
+    if isinstance(v, np.ndarray):
+        return v.tolist()
+    if isinstance(v, list):
+        return [_to_native(x) for x in v]
+    return v
+
+
+def _filter_none_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Filter out None-valued kwargs and coerce numpy types before forwarding to HuggingFace pipelines.
+
+    The UDF template substitutes default_value for every ParamSpec when the user sends NULL.
+    Since all generation ParamSpecs have default_value=None, unset params arrive here as
+    key=None. HF pipelines error on explicit None values, so we strip them.
+
+    For dict-valued params (from ParamGroupSpec, e.g. watermarking_config), the default is a
+    dict with all-None values. We recursively filter None entries within nested dicts and omit
+    any dict entirely if empty after filtering.
+
+    Args:
+        kwargs: Raw kwargs from the UDF runner, potentially containing None values.
+
+    Returns:
+        A new dict with None scalars removed, nested dicts cleaned, and numpy types coerced.
+    """
+    filtered = {}
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            inner = _filter_none_kwargs(v)
+            if inner:
+                filtered[k] = inner
+        else:
+            filtered[k] = _to_native(v)
+    return filtered
 
 
 class HuggingFaceTaskHandler(ABC):
