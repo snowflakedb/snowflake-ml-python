@@ -2,6 +2,7 @@ import datetime
 import uuid
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from absl.testing import absltest
 
@@ -1248,6 +1249,193 @@ class TestCustomModelWithAllDataTypesWarehouseInteg(common_test_base.CommonTestB
         self.assertEqual(row["RECEIVED_INT"], 99)
         self.assertEqual(row["RECEIVED_BOOL"], False)
         self.assertEqual(row["RECEIVED_STRING"], "custom")
+
+
+class DemoModelWithStrictDtypeCheck(custom_model.CustomModel):
+    """Custom model that strictly validates received param dtypes.
+
+    Mirrors MLflow's ``enforce_param_datatype`` behavior: rejects narrower numpy
+    integer widths than the declared ParamSpec dtype. Used to confirm the wrapper
+    applies the cast for every template family — without the cast Snowflake's
+    Arrow transport narrows BIGINT scalar literals to ``np.int8``/``np.int16``,
+    which would fail the ``np.int64`` check below.
+    """
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    def _validate_and_predict(
+        self,
+        input_df: pd.DataFrame,
+        repeat: int,
+        ratio: float,
+    ) -> pd.DataFrame:
+        if not isinstance(repeat, np.int64):
+            raise TypeError(f"Expected np.int64 for `repeat`, got {type(repeat).__name__}: {repeat!r}")
+        if not isinstance(ratio, np.float64):
+            raise TypeError(f"Expected np.float64 for `ratio`, got {type(ratio).__name__}: {ratio!r}")
+        return pd.DataFrame(
+            {
+                "output": input_df["feature"] * float(ratio) * int(repeat),
+                "received_repeat_type": [type(repeat).__name__] * len(input_df),
+                "received_ratio_type": [type(ratio).__name__] * len(input_df),
+            }
+        )
+
+
+class DemoModelWithStrictDtypeCheckInference(DemoModelWithStrictDtypeCheck):
+    """Scalar inference flavor for ``infer_function`` / ``infer_table_function``."""
+
+    @custom_model.inference_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        repeat: int = 1,
+        ratio: float = 1.0,
+    ) -> pd.DataFrame:
+        return self._validate_and_predict(input_df, repeat, ratio)
+
+
+class DemoModelWithStrictDtypeCheckPartitioned(DemoModelWithStrictDtypeCheck):
+    """Partitioned flavor for ``infer_partitioned``."""
+
+    @custom_model.partitioned_api
+    def predict(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        repeat: int = 1,
+        ratio: float = 1.0,
+    ) -> pd.DataFrame:
+        return self._validate_and_predict(input_df, repeat, ratio)
+
+
+class TestDtypeCastRegressionWarehouseInteg(common_test_base.CommonTestBase):
+    """Regression coverage for the scalar-param dtype cast across all three template families.
+
+    The six wrapper templates (``infer_function``, ``infer_table_function``,
+    ``infer_partitioned`` × init_once / non-init_once) all carry the same
+    ``param_dtype_map`` cast logic. This class is the integration safety net
+    against drift: each test logs a model that strict-checks the received param
+    dtype, so any template that loses the cast will surface as a warehouse-side
+    ``TypeError`` rather than a silent dtype narrowing.
+    """
+
+    _PARAMS = [
+        model_signature.ParamSpec(
+            name="repeat",
+            dtype=model_signature.DataType.INT64,
+            default_value=1,
+        ),
+        model_signature.ParamSpec(
+            name="ratio",
+            dtype=model_signature.DataType.DOUBLE,
+            default_value=1.0,
+        ),
+    ]
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._run_id = uuid.uuid4().hex
+        self._test_db = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(self._run_id, "db").upper()
+        self._test_schema = db_manager.TestObjectNameGenerator.get_snowml_test_object_name(
+            self._run_id, "schema"
+        ).upper()
+        self._db_manager = db_manager.DBManager(self.session)
+        self._db_manager.create_database(self._test_db)
+        self._db_manager.create_schema(self._test_schema)
+        self._db_manager.cleanup_databases(expire_hours=6)
+        self.registry = registry.Registry(self.session)
+
+    def tearDown(self) -> None:
+        self._db_manager.drop_database(self._test_db)
+        super().tearDown()
+
+    def _log_strict_dtype_model(
+        self,
+        model: custom_model.CustomModel,
+        options: dict[str, Any],
+        name_suffix: str,
+    ) -> "registry.ModelVersion":
+        sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[
+                model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec(name="received_repeat_type", dtype=model_signature.DataType.STRING),
+                model_signature.FeatureSpec(name="received_ratio_type", dtype=model_signature.DataType.STRING),
+            ],
+            params=list(self._PARAMS),
+        )
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python!=1.12.0")
+        ]
+        # ``options`` is widened to ``dict[str, Any]`` once we merge in the caller's overrides,
+        # so the overloaded ``log_model`` signature can't narrow it to a specific TypedDict.
+        # The runtime contract is unchanged — every key here is a valid model save option.
+        return self.registry.log_model(  # type: ignore[call-overload]
+            model=model,
+            model_name=f"model_dtype_cast_{name_suffix}_{self._run_id}",
+            version_name=f"v_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            signatures={"predict": sig},
+            options={"embed_local_ml_library": True, **options},
+        )
+
+    def _assert_cast_applied(
+        self,
+        result: pd.DataFrame,
+        *,
+        input_df: pd.DataFrame,
+        repeat: int,
+        ratio: float,
+    ) -> None:
+        """The model raises if the cast was missed, so reaching this assertion proves the cast ran.
+
+        Also verifies the output value (``feature * ratio * repeat``) to guard against the cast
+        accidentally producing the wrong numeric value.
+        """
+        self.assertEqual(len(result), len(input_df))
+        # Sort by output to make assertions order-independent (partitioned models reorder rows).
+        result_sorted = result.sort_values("output").reset_index(drop=True)
+        for row in result_sorted.itertuples(index=False):
+            self.assertEqual(row.received_repeat_type, "int64")
+            self.assertEqual(row.received_ratio_type, "float64")
+        expected = np.sort(input_df["feature"].to_numpy() * float(ratio) * int(repeat))
+        np.testing.assert_allclose(result_sorted["output"].astype(float).to_numpy(), expected, rtol=1e-5)
+
+    def test_dtype_cast_in_infer_function_template(self) -> None:
+        """``infer_function.py_template`` must cast scalar params to declared dtypes."""
+        model = DemoModelWithStrictDtypeCheckInference(custom_model.ModelContext())
+        mv = self._log_strict_dtype_model(model, options={}, name_suffix="fn")
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        # Explicit Python int / float must arrive as np.int64 / np.float64 inside the UDF
+        # even though Snowflake's Arrow transport can narrow scalar literals to smaller widths.
+        result = mv.run(input_df, function_name="predict", params={"repeat": 3, "ratio": 0.5})
+        self._assert_cast_applied(result, input_df=input_df, repeat=3, ratio=0.5)
+
+    def test_dtype_cast_in_infer_table_function_template(self) -> None:
+        """``infer_table_function.py_template`` must cast scalar params to declared dtypes."""
+        model = DemoModelWithStrictDtypeCheckInference(custom_model.ModelContext())
+        mv = self._log_strict_dtype_model(model, options={"function_type": "TABLE_FUNCTION"}, name_suffix="tf")
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        result = mv.run(input_df, function_name="predict", params={"repeat": 3, "ratio": 0.5})
+        self._assert_cast_applied(result, input_df=input_df, repeat=3, ratio=0.5)
+
+    def test_dtype_cast_in_infer_partitioned_template(self) -> None:
+        """``infer_partitioned.py_template`` must cast scalar params to declared dtypes."""
+        model = DemoModelWithStrictDtypeCheckPartitioned(custom_model.ModelContext())
+        mv = self._log_strict_dtype_model(
+            model,
+            options={"method_options": {"predict": {"function_type": "TABLE_FUNCTION"}}},
+            name_suffix="part",
+        )
+        input_df = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+        result = mv.run(input_df, function_name="predict", params={"repeat": 3, "ratio": 0.5})
+        self._assert_cast_applied(result, input_df=input_df, repeat=3, ratio=0.5)
 
 
 if __name__ == "__main__":

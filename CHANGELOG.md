@@ -1,6 +1,19 @@
 # Release History
 
-## 1.40.0
+## 1.41.0
+
+### New Features
+
+* Registry: Extended `ParamSpec` support to MLflow PyFunc, LightGBM, XGBoost, and CatBoost models.
+  Parameters declared in the model signature can now be passed at inference time.
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.40.0 (2026-05-19)
 
 ### New Features
 

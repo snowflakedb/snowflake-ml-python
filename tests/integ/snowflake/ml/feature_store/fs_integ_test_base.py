@@ -20,8 +20,8 @@ SPEC_OFT_E2E_DUMMY_DB_PREFIX = "SNOWML_TEST_SPEC_OFT_E2E_DUMMY_DB_"
 
 # Pre-rename prefixes still lingering in long-running accounts. Cleanup-only.
 _LEGACY_SPEC_OFT_E2E_DB_PREFIXES: tuple[str, ...] = (
-    "SNOWML_SPEC_OFT_E2E_DB_",
-    "SNOWML_SPEC_OFT_E2E_DUMMY_DB_",
+    "SNOWML_SPEC_OFT_E2E_DB",
+    "SNOWML_SPEC_OFT_E2E_DUMMY_DB",
 )
 
 

@@ -5,6 +5,7 @@ import registry_model_test_base
 from absl.testing import absltest
 
 from snowflake.ml.model import custom_model, type_hints
+from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 
 
 class _PipOnlyRequestsModel(custom_model.CustomModel):
@@ -17,11 +18,12 @@ class _PipOnlyRequestsModel(custom_model.CustomModel):
         return pd.DataFrame({"output": input["value"] * 2})
 
 
-class TestRegistryPipOnlyWarehouseArtifactInjectionInteg(registry_model_test_base.RegistryModelTestBase):
+class TestRegistryPipOnlyWarehouseArtifactInjectionInteg(
+    pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
+    registry_model_test_base.RegistryModelTestBase,
+):
     def test_pip_only_warehouse_inference_injected_artifact_repository_map(self) -> None:
         """Registry reconciler injects shared PyPI repo; user does not pass ``artifact_repository_map``."""
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
-
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         model = _PipOnlyRequestsModel(custom_model.ModelContext())
 

@@ -614,6 +614,43 @@ class LifetimeWindowTest(absltest.TestCase):
         self.assertTrue(stddev_spec.is_lifetime())
         self.assertTrue(var_spec.is_lifetime())
 
+    def test_approx_count_distinct_precision_default(self) -> None:
+        """Default precision is 8 and flows into AggregationSpec.params as hll_lg_k."""
+        feature = Feature.approx_count_distinct("user_id", "24h")
+        spec = feature.to_spec()
+        self.assertEqual(spec.params["hll_lg_k"], 8)
+
+    def test_approx_count_distinct_precision_custom(self) -> None:
+        """Custom precision value is accepted within valid range."""
+        for lg_k in (4, 12, 21):
+            spec = Feature.approx_count_distinct("user_id", "24h", precision=lg_k).to_spec()
+            self.assertEqual(spec.params["hll_lg_k"], lg_k)
+
+    def test_approx_count_distinct_precision_too_low(self) -> None:
+        """Precision below 4 is rejected."""
+        with self.assertRaisesRegex(ValueError, "precision.*must be an integer between 4 and 21"):
+            Feature.approx_count_distinct("user_id", "24h", precision=3).to_spec()
+
+    def test_approx_count_distinct_precision_too_high(self) -> None:
+        """Precision above 21 is rejected."""
+        with self.assertRaisesRegex(ValueError, "precision.*must be an integer between 4 and 21"):
+            Feature.approx_count_distinct("user_id", "24h", precision=22).to_spec()
+
+    def test_approx_count_distinct_precision_non_int(self) -> None:
+        """Precision must be an integer, not a float."""
+        with self.assertRaisesRegex(ValueError, "precision.*must be an integer between 4 and 21"):
+            Feature.approx_count_distinct("user_id", "24h", precision=8.5).to_spec()  # type: ignore[arg-type]
+
+    def test_approx_count_distinct_hll_lg_k_missing(self) -> None:
+        """Constructing AggregationSpec directly without hll_lg_k is rejected."""
+        with self.assertRaisesRegex(ValueError, "precision.*is required"):
+            AggregationSpec(
+                function=AggregationType.APPROX_COUNT_DISTINCT,
+                source_column="user_id",
+                window="24h",
+                output_column="UNIQUES",
+            )
+
     def test_lifetime_feature_approx_count_distinct_not_supported(self) -> None:
         """Test that lifetime APPROX_COUNT_DISTINCT is not supported."""
         feature = Feature.approx_count_distinct("user_id", "lifetime").alias("unique_users")

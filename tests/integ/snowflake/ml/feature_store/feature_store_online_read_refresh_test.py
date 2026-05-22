@@ -6,9 +6,9 @@ import warnings
 from unittest.mock import patch
 
 from absl.testing import absltest, parameterized
-from fs_integ_test_base import FeatureStoreIntegTestBase
 from packaging import version
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml._internal.exceptions import exceptions
 from snowflake.ml.feature_store import entity, feature_store, feature_view
 
@@ -537,7 +537,7 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         Asserts that the client-side latency overhead is < 5ms. In practice, it is <0.1ms.
 
         To create the most challenging scenario, we switch the session warehouse to the alternate warehouse
-        and set use_session_warehouse=True when callind read_feature_view().
+        and set use_session_warehouse=True when calling read_feature_view().
         """
         fv_name = "test_read_online"
 
@@ -574,9 +574,11 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self._session.use_warehouse(self._test_warehouse_name)
 
         avg_latency_overhead_ms = sum(latencies_ms) / len(latencies_ms)
-        assert (
-            avg_latency_overhead_ms < 5
-        ), f"avg client-side overhead of online feature view read API is too high: {avg_latency_overhead_ms} ms"
+        self.assertLess(
+            avg_latency_overhead_ms,
+            5,
+            f"avg client-side overhead of online feature view read API is too high: {avg_latency_overhead_ms} ms",
+        )
 
     def test_read_feature_view_use_session_warehouse(self) -> None:
         """Verify use_session_warehouse=True uses the session's warehouse, not the FeatureStore default.

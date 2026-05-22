@@ -211,10 +211,10 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
                 signature: model_signature.ModelSignature,
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
-                @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                @custom_model._internal_inference_api
+                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
 
-                    res = getattr(raw_model, target_method)(X)
+                    res = getattr(raw_model, target_method)(X, **method_kwargs)
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):
                         # In case of multi-output estimators, predict_proba(), decision_function(), etc., functions
@@ -240,7 +240,7 @@ class LGBMModelHandler(_base.BaseModelHandler[Union["lightgbm.Booster", "lightgb
 
                 return fn
 
-            type_method_dict: dict[str, Any] = {"_raw_model": raw_model}
+            type_method_dict: dict[str, Any] = {"_raw_model": raw_model, "_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

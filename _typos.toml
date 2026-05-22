@@ -9,6 +9,7 @@ NDFrame = "NDFrame"
 
 [default.extend-words]
 MAPE = "MAPE"
+WRONLY = "WRONLY"
 fpr = "fpr"
 fwe = "fwe"
 gir = "gir"

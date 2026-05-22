@@ -178,7 +178,7 @@ py_test(
         ":registry_model_deployment_test_base",
         "//snowflake/ml/model:custom_model",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
     ],
 )
 
@@ -275,6 +275,22 @@ py_test(
         "//snowflake/ml/_internal/utils:jwt_generator",
         "//snowflake/ml/model/models:huggingface_pipeline",
         "//snowflake/ml/utils:authentication",
+    ],
+)
+
+py_test(
+    name = "registry_ai_complete_test",
+    timeout = "eternal",
+    srcs = ["registry_ai_complete_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )
 

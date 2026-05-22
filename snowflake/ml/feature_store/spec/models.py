@@ -22,6 +22,7 @@ from snowflake.ml.feature_store.spec.enums import (
     TableType,
 )
 from snowflake.snowpark.types import (
+    BinaryType,
     BooleanType,
     DataType,
     DecimalType,
@@ -41,6 +42,7 @@ _SUPPORTED_TYPES: set[type] = {
     DoubleType,
     DecimalType,
     BooleanType,
+    BinaryType,
     TimestampType,
 }
 

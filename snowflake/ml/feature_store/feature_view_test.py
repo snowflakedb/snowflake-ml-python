@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from unittest.mock import MagicMock
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from snowflake.ml.feature_store.feature_store import FeatureStore
+    from snowflake.ml.feature_store.request_source import RequestSource
     from snowflake.ml.feature_store.stream_config import StreamConfig
 
 from absl.testing import absltest, parameterized
@@ -20,10 +23,13 @@ from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
+    FeatureViewStatus,
+    FeatureViewVersion,
     OnlineConfig,
     OnlineStoreType,
     StorageConfig,
     StorageFormat,
+    _FeatureViewMetadata,
 )
 from snowflake.ml.feature_store.spec.enums import (
     FeatureAggregationMethod,
@@ -212,7 +218,10 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
                 for s in fv.aggregation_specs
                 if s.output_column.endswith("_KEYS_24H") or s.output_column.endswith("_KEYS_7D")
             ],
-            [AggregationType._SECONDARY_KEY_ARRAY, AggregationType._SECONDARY_KEY_ARRAY],
+            [
+                AggregationType._SECONDARY_KEY_ARRAY,
+                AggregationType._SECONDARY_KEY_ARRAY,
+            ],
         )
 
     def test_secondary_key_cannot_be_an_entity_join_key(self) -> None:
@@ -355,7 +364,10 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
         # A value from a different (window, offset) group pulls in its own keys
         # column; the other group's keys column is NOT included.
         offset_group = fv.slice(["PREV_DAY_SPEND"])
-        self.assertEqual([str(c) for c in offset_group.names], ["AD_ID_KEYS_24H_OFFSET_1D", "PREV_DAY_SPEND"])
+        self.assertEqual(
+            [str(c) for c in offset_group.names],
+            ["AD_ID_KEYS_24H_OFFSET_1D", "PREV_DAY_SPEND"],
+        )
 
         # Mixing groups: missing keys are prepended in first-encounter order
         # (the order their corresponding values appear in the user's input);
@@ -363,7 +375,12 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
         mixed = fv.slice(["PREV_DAY_SPEND", "IMPRESSIONS_24H"])
         self.assertEqual(
             [str(c) for c in mixed.names],
-            ["AD_ID_KEYS_24H_OFFSET_1D", "AD_ID_KEYS_24H", "PREV_DAY_SPEND", "IMPRESSIONS_24H"],
+            [
+                "AD_ID_KEYS_24H_OFFSET_1D",
+                "AD_ID_KEYS_24H",
+                "PREV_DAY_SPEND",
+                "IMPRESSIONS_24H",
+            ],
         )
 
         # When the user explicitly names the keys column, slice() does not
@@ -1096,6 +1113,7 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         )
         mock_fs._default_warehouse = None
         mock_fs._telemetry_stmp = {}
+        mock_fs._online_service_access = None
 
         # _get_fully_qualified_name: replicate real behaviour
         def _get_fqn(name: object) -> str:
@@ -1126,14 +1144,17 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
                 qn = query.replace("\n", " ")
                 loc = f"{SqlIdentifier(database)}.{SqlIdentifier(schema)}"
                 if f"SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')" in qn:
-                    mock_result.collect.return_value = [Row(status_json)]
+                    mock_result.collect_nowait.return_value.query_id = "test-qid"
+                    mock_result.collect_nowait.return_value.result.return_value = [Row(status_json)]
                 else:
-                    mock_result.collect.return_value = []
+                    mock_result.collect_nowait.return_value.query_id = "test-qid"
+                    mock_result.collect_nowait.return_value.result.return_value = []
                 return mock_result
 
             mock_fs._session.sql.side_effect = sql_side_effect
         else:
-            mock_fs._session.sql.return_value.collect.return_value = []
+            mock_fs._session.sql.return_value.collect_nowait.return_value.query_id = "test-qid"
+            mock_fs._session.sql.return_value.collect_nowait.return_value.result.return_value = []
 
         return mock_fs
 
@@ -1152,6 +1173,9 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         column_types: Optional[list[DataType]] = None,
         timestamp_col: Optional[str] = None,
         store_type: OnlineStoreType = OnlineStoreType.HYBRID_TABLE,
+        feature_granularity: Optional[str] = None,
+        aggregation_secondary_keys: Optional[list[str]] = None,
+        features: Optional[list[Feature]] = None,
     ) -> FeatureView:
         """Create a non-tiled FeatureView with mocked DataFrame."""
         if column_types is None:
@@ -1170,6 +1194,9 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
             timestamp_col=timestamp_col,
             refresh_freq="1h",
             online_config=OnlineConfig(enable=True, target_lag="30s", store_type=store_type),
+            feature_granularity=feature_granularity,
+            aggregation_secondary_keys=aggregation_secondary_keys,
+            features=features,
         )
 
     # ------------------------------------------------------------------ #
@@ -1286,6 +1313,65 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         end = query.index("$$", start)
         parsed = json.loads(query[start:end])
         self.assertEqual(parsed["metadata"]["version"], "v42")
+
+    # ------------------------------------------------------------------ #
+    # Secondary-key aggregations
+    # ------------------------------------------------------------------ #
+
+    def test_postgres_pk_includes_aggregation_secondary_keys(self) -> None:
+        """POSTGRES path: SKs are appended to the DDL PK and to the spec's ``ordered_entity_column_names``."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"],
+            column_types=[StringType(), TimestampType(TimestampTimeZone.NTZ), DoubleType(), StringType()],
+            timestamp_col="EVENT_TS",
+            store_type=OnlineStoreType.POSTGRES,
+            feature_granularity="1h",
+            aggregation_secondary_keys=["ad_id"],
+            features=[Feature.sum("AMOUNT", "24h").alias("AMOUNT_SUM_24H")],
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        # Tiled FVs introspect the materialized DT schema during OFT creation.
+        fs._session.table.return_value.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TS", TimestampType(TimestampTimeZone.NTZ)),
+                StructField("AMOUNT_SUM_24H", DoubleType()),
+                StructField("AD_ID", StringType()),
+            ]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        query = self._first_online_feature_table_sql(fs)
+        # DDL PK is widened with the resolved (canonical) SK after the entity key.
+        self.assertIn('PRIMARY KEY ("USER_ID", "AD_ID")', query)
+        # Spec JSON ``ordered_entity_column_names`` carries the same widening.
+        start = query.index("$$") + 2
+        end = query.index("$$", start)
+        parsed = json.loads(query[start:end])
+        self.assertEqual(parsed["spec"]["ordered_entity_column_names"], ["USER_ID", "AD_ID"])
+
+    def test_hybrid_pk_excludes_secondary_keys(self) -> None:
+        """HYBRID_TABLE path: no spec JSON is sent and the DDL PK is unchanged when SKs are set."""
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"],
+            column_types=[StringType(), TimestampType(TimestampTimeZone.NTZ), DoubleType(), StringType()],
+            timestamp_col="EVENT_TS",
+            store_type=OnlineStoreType.HYBRID_TABLE,
+            feature_granularity="1h",
+            aggregation_secondary_keys=["AD_ID"],
+            features=[Feature.sum("AMOUNT", "24h").alias("AMOUNT_SUM_24H")],
+        )
+        fs = self._make_mock_feature_store()
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        query = fs._session.sql.call_args_list[0][0][0]
+        self.assertIn('PRIMARY KEY ("USER_ID")', query)
+        self.assertNotIn("AD_ID", query)
+        self.assertNotIn("FROM SPECIFICATION", query)
 
 
 class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):
@@ -1771,7 +1857,8 @@ class FeatureAggregationMethodTest(parameterized.TestCase):
     def test_streaming_non_tiled_rejects_agg_method(self) -> None:
         """Non-tiled streaming FV with feature_aggregation_method raises ValueError."""
         with self.assertRaisesRegex(
-            ValueError, "feature_granularity and feature_aggregation_method require features to be set."
+            ValueError,
+            "feature_granularity and feature_aggregation_method require features to be set.",
         ):
             FeatureView(
                 name="test_fv",
@@ -1900,6 +1987,741 @@ class UnicodeColumnSqlGenerationTest(absltest.TestCase):
         cols = [SqlIdentifier('"色"'), SqlIdentifier('"高さ"'), SqlIdentifier('"重さ"')]
         result = ", ".join(c.identifier() for c in cols)
         self.assertEqual(result, '"色", "高さ", "重さ"')
+
+
+# ============================================================================
+# RealtimeFeatureView (`realtime_config=...`)
+# ============================================================================
+
+
+def _rtfv_compute_fn(req: pd.DataFrame, txn: pd.DataFrame) -> pd.DataFrame:
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "risk_score": req["amount"],
+            "risk_bucket": ["x"] * len(req),
+        }
+    )
+
+
+def _rtfv_compute_fn_no_req(txn: pd.DataFrame) -> pd.DataFrame:
+    import pandas as pd
+
+    return pd.DataFrame(
+        {
+            "risk_score": txn["avg_amount"],
+            "risk_bucket": ["x"] * len(txn),
+        }
+    )
+
+
+_RTFV_OUTPUT_SCHEMA = StructType(
+    [
+        StructField("risk_score", DoubleType()),
+        StructField("risk_bucket", StringType()),
+    ]
+)
+
+
+def _build_request_source() -> RequestSource:
+    from snowflake.ml.feature_store.request_source import RequestSource
+
+    return RequestSource(schema=StructType([StructField("amount", DoubleType())]))
+
+
+def _build_upstream_fv(name: str = "TXN_FV") -> FeatureView:
+    """Build a registered-looking FV for use as an RTFV source."""
+    from snowflake.ml.feature_store.feature_view import (
+        FeatureViewStatus,
+        FeatureViewVersion,
+    )
+
+    schema = StructType([StructField("USER_ID", StringType()), StructField("avg_amount", DoubleType())])
+    mock_df = MagicMock()
+    mock_df.columns = [f.name for f in schema.fields]
+    mock_df.schema = schema
+    mock_df.queries = {"queries": [f"SELECT * FROM {name}"]}
+    fv = FeatureView(
+        name=name,
+        entities=[Entity(name="USER", join_keys=["USER_ID"])],
+        feature_df=mock_df,
+        online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+    )
+    fv._version = FeatureViewVersion("v1")
+    fv._infer_schema_df = mock_df
+    fv._status = FeatureViewStatus.ACTIVE
+    return fv
+
+
+class RealtimeFeatureViewConstructorTest(absltest.TestCase):
+    """RTFV-specific paths in ``FeatureView.__init__``."""
+
+    def test_happy_path(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        fv = FeatureView(
+            name="MY_RTFV",
+            entities=[Entity(name="USER", join_keys=["USER_ID"])],
+            realtime_config=rtc,
+        )
+        self.assertTrue(fv.is_realtime_feature_view)
+        self.assertFalse(fv.is_streaming)
+        self.assertFalse(fv.is_tiled)
+        self.assertFalse(fv.is_rollup)
+        # _feature_desc seeded from realtime_config.output_schema.
+        self.assertEqual(
+            [n.identifier() for n in fv.feature_names],
+            ["RISK_SCORE", "RISK_BUCKET"],
+        )
+        # output_schema returns the user-declared schema.
+        # Snowpark upper-cases unquoted identifiers; compare case-insensitively.
+        self.assertEqual(
+            [f.name.upper() for f in fv.output_schema.fields],
+            ["RISK_SCORE", "RISK_BUCKET"],
+        )
+        self.assertIs(fv.realtime_config, rtc)
+        # Online defaults to enabled on POSTGRES.
+        self.assertTrue(fv.online)
+        assert fv.online_config is not None
+        self.assertEqual(fv.online_config.store_type, OnlineStoreType.POSTGRES)
+        # compute_fn_source round-trips through inspect.getsource.
+        self.assertIn("def _rtfv_compute_fn", fv.compute_fn_source)
+
+    def test_happy_path_no_request_source(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn_no_req,
+            sources=[_build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        fv = FeatureView(
+            name="MY_RTFV",
+            entities=[Entity(name="USER", join_keys=["USER_ID"])],
+            realtime_config=rtc,
+        )
+        self.assertTrue(fv.is_realtime_feature_view)
+        live_rtc = fv.realtime_config
+        assert live_rtc is not None
+        self.assertIsNone(live_rtc.request_source)
+        self.assertEqual(len(live_rtc.feature_view_sources), 1)
+
+    def test_rejects_realtime_with_feature_df(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            FeatureView(
+                name="MY_RTFV",
+                entities=[Entity(name="USER", join_keys=["USER_ID"])],
+                feature_df=MagicMock(),
+                realtime_config=rtc,
+            )
+
+    def test_rejects_realtime_with_stream_config(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+        from snowflake.ml.feature_store.stream_config import StreamConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+
+        def normalize(df: pd.DataFrame) -> pd.DataFrame:
+            return df
+
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            FeatureView(
+                name="MY_RTFV",
+                entities=[Entity(name="USER", join_keys=["USER_ID"])],
+                realtime_config=rtc,
+                stream_config=StreamConfig(
+                    stream_source="dummy",
+                    transformation_fn=normalize,
+                    backfill_df=MagicMock(),
+                ),
+            )
+
+    def test_rejects_realtime_with_timestamp_col(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        with self.assertRaisesRegex(ValueError, "timestamp_col"):
+            FeatureView(
+                name="MY_RTFV",
+                entities=[Entity(name="USER", join_keys=["USER_ID"])],
+                realtime_config=rtc,
+                timestamp_col="ts",
+            )
+
+    def test_rejects_realtime_with_refresh_freq(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        with self.assertRaisesRegex(ValueError, "refresh_freq"):
+            FeatureView(
+                name="MY_RTFV",
+                entities=[Entity(name="USER", join_keys=["USER_ID"])],
+                realtime_config=rtc,
+                refresh_freq="1h",
+            )
+
+    def test_rejects_realtime_with_online_disabled(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        with self.assertRaisesRegex(ValueError, "online to be enabled"):
+            FeatureView(
+                name="MY_RTFV",
+                entities=[Entity(name="USER", join_keys=["USER_ID"])],
+                realtime_config=rtc,
+                online_config=OnlineConfig(enable=False),
+            )
+
+
+class RealtimeFeatureViewKindDispatchTest(absltest.TestCase):
+    """``FeatureViewSpecBuilder._kind_of_fv`` returns RealtimeFeatureView for RTFVs."""
+
+    def test_is_realtime_takes_precedence(self) -> None:
+        from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+        from snowflake.ml.feature_store.spec.builder import FeatureViewSpecBuilder
+
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_request_source(), _build_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        rtfv = FeatureView(
+            name="MY_RTFV",
+            entities=[Entity(name="USER", join_keys=["USER_ID"])],
+            realtime_config=rtc,
+        )
+        self.assertEqual(
+            FeatureViewSpecBuilder._kind_of_fv(rtfv),
+            FeatureViewKind.RealtimeFeatureView,
+        )
+
+
+class FeatureViewMetadataTest(absltest.TestCase):
+    """Unit tests for _FeatureViewMetadata serialization."""
+
+    def test_from_json_defaults_append_only_false(self) -> None:
+        """Old serialized metadata without ``is_append_only`` defaults to false."""
+        old_json = json.dumps(
+            {
+                "entities": ["E1"],
+                "timestamp_col": "TS",
+                "is_tiled": False,
+                "is_iceberg": False,
+                "is_streaming": False,
+            }
+        )
+        metadata = _FeatureViewMetadata.from_json(old_json)
+        self.assertFalse(metadata.is_append_only)
+
+    def test_from_json_append_only_true(self) -> None:
+        full_json = json.dumps(
+            {
+                "entities": ["E1"],
+                "timestamp_col": "TS",
+                "is_tiled": False,
+                "is_iceberg": False,
+                "is_streaming": False,
+                "is_append_only": True,
+            }
+        )
+        metadata = _FeatureViewMetadata.from_json(full_json)
+        self.assertTrue(metadata.is_append_only)
+
+    def test_roundtrip(self) -> None:
+        metadata = _FeatureViewMetadata(
+            entities=["E1", "E2"],
+            timestamp_col="TS",
+            is_append_only=True,
+        )
+        json_out = metadata.to_json()
+        restored = _FeatureViewMetadata.from_json(json_out)
+        self.assertEqual(metadata, restored)
+        self.assertIn("is_append_only", json_out)
+
+
+class FeatureViewAppendOnlyTest(absltest.TestCase):
+    """Unit tests for FeatureView with append_only and backup_source."""
+
+    def _make_mock_df(self) -> MagicMock:
+        mock_df = MagicMock()
+        mock_df.columns = ["GUEST_ID", "SNAPSHOT_TS", "N_RSRVS_30_DAY"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+        return mock_df
+
+    def test_append_only_property_true(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+        )
+        self.assertTrue(fv.append_only)
+        self.assertIsNone(fv.backup_source)
+
+    def test_append_only_property_false_by_default(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        self.assertFalse(fv.append_only)
+        self.assertIsNone(fv.backup_source)
+
+    def test_append_only_requires_timestamp_col(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        with self.assertRaises(Exception) as cm:
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                feature_df=self._make_mock_df(),
+                refresh_freq="0 0 * * * UTC",
+                refresh_mode="FULL",
+                append_only=True,
+            )
+        self.assertIn("timestamp_col", str(cm.exception))
+
+    def test_append_only_requires_refresh_freq(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        with self.assertRaises(Exception) as cm:
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                feature_df=self._make_mock_df(),
+                timestamp_col="SNAPSHOT_TS",
+                refresh_mode="FULL",
+                append_only=True,
+            )
+        self.assertIn("refresh_freq", str(cm.exception))
+
+    def test_backup_source_requires_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        with self.assertRaises(Exception) as cm:
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                feature_df=self._make_mock_df(),
+                timestamp_col="SNAPSHOT_TS",
+                refresh_freq="1 day",
+                backup_source="DB.SCH.HISTORY",
+            )
+        self.assertIn("backup_source is not valid if append_only=False", str(cm.exception))
+
+    def test_backup_source_with_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        self.assertTrue(fv.append_only)
+        self.assertEqual(fv.backup_source, "DB.SCH.HISTORY")
+
+    def test_metadata_includes_is_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+        )
+        metadata = fv._metadata()
+        self.assertTrue(metadata.is_append_only)
+
+    def test_metadata_default_is_append_only_false(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        metadata = fv._metadata()
+        self.assertFalse(metadata.is_append_only)
+
+    def test_snapshot_table_name(self) -> None:
+        name = SqlIdentifier("MY_FV")
+        version = FeatureViewVersion("V1")
+        snapshot_name = FeatureView._get_snapshot_table_name(name, version)
+        self.assertEqual(snapshot_name.resolved(), "MY_FV$V1$SNAPSHOTS")
+
+    def test_snapshot_table_name_single_arg(self) -> None:
+        physical_name = SqlIdentifier('"MY_FV$V1"')
+        snapshot_name = FeatureView._get_snapshot_table_name(physical_name)
+        self.assertEqual(snapshot_name.resolved(), "MY_FV$V1$SNAPSHOTS")
+
+    def test_fully_qualified_snapshot_table_name_not_registered(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+        )
+        with self.assertRaises(RuntimeError):
+            fv.fully_qualified_snapshot_table_name()
+
+    def test_fully_qualified_snapshot_table_name_when_not_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView._construct_feature_view(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            desc="",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="1 day",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="AUTO",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+        )
+        with self.assertRaises(RuntimeError):
+            fv.fully_qualified_snapshot_table_name()
+
+    def test_to_dict_includes_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        fv_dict = fv._to_dict()
+        self.assertTrue(fv_dict["_append_only"])
+        self.assertEqual(fv_dict["_backup_source"], "DB.SCH.HISTORY")
+
+    def test_to_dict_default_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        fv_dict = fv._to_dict()
+        self.assertFalse(fv_dict["_append_only"])
+        self.assertIsNone(fv_dict["_backup_source"])
+
+    def test_is_batch_view_true_for_batch(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        self.assertTrue(fv.is_batch_feature_view)
+
+    def test_is_batch_view_false_for_streaming(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        fv._stream_config = MagicMock()
+        self.assertFalse(fv.is_batch_feature_view)
+
+    def test_construct_feature_view_preserves_append_only(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView._construct_feature_view(
+            name="SNAP_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            desc="snapshot fv",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="0 0 * * * UTC",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_SCHEDULE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        self.assertTrue(fv.append_only)
+        self.assertEqual(fv.backup_source, "DB.SCH.HISTORY")
+
+    def test_fully_qualified_snapshot_table_name_success(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView._construct_feature_view(
+            name="SNAP_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            desc="",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="0 0 * * * UTC",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_SCHEDULE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            append_only=True,
+        )
+        fqn = fv.fully_qualified_snapshot_table_name()
+        self.assertEqual(fqn, "DB.SCH.SNAP_FV$V1$SNAPSHOTS")
+
+    def test_constructor_rejects_append_only_with_auto_refresh_mode(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        with self.assertRaises(Exception) as cm:
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                feature_df=self._make_mock_df(),
+                timestamp_col="SNAPSHOT_TS",
+                refresh_freq="0 0 * * * UTC",
+                refresh_mode="AUTO",
+                append_only=True,
+            )
+        self.assertIn("refresh_mode", str(cm.exception))
+
+    def test_constructor_rejects_append_only_with_none_refresh_mode(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        with self.assertRaises(Exception) as cm:
+            FeatureView(
+                name="test_fv",
+                entities=[entity],
+                feature_df=self._make_mock_df(),
+                timestamp_col="SNAPSHOT_TS",
+                refresh_freq="0 0 * * * UTC",
+                append_only=True,
+            )
+        self.assertIn("refresh_mode", str(cm.exception))
+
+    def test_constructor_accepts_lowercase_full_refresh_mode(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="full",
+            append_only=True,
+        )
+        self.assertTrue(fv.append_only)
+
+    def test_non_append_only_fv_constructs_normally(self) -> None:
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        self.assertFalse(fv.append_only)
+        self.assertIsNone(fv.backup_source)
+
+    def test_from_json_without_append_only_keys(self) -> None:
+        old_json = {
+            "name": "test_fv",
+            "entities": [],
+            "feature_descs": {},
+            "query": "SELECT 1",
+            "version": "V1",
+            "status": "ACTIVE",
+            "feature_view_type": "MANAGED",
+        }
+        self.assertFalse(old_json.get("_append_only", False))
+        self.assertIsNone(old_json.get("_backup_source"))
+
+    def test_to_json_from_json_roundtrip_append_only(self) -> None:
+        """Serialize an append-only FV via to_json and deserialize via from_json."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView._construct_feature_view(
+            name="SNAP_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            desc="roundtrip test",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="0 0 * * * UTC",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_SCHEDULE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        json_str = fv.to_json()
+        self.assertIn("_append_only", json_str)
+        self.assertIn("_backup_source", json_str)
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._make_mock_df()
+        restored = FeatureView.from_json(json_str, session=mock_session)
+        self.assertTrue(restored.append_only)
+        self.assertEqual(restored.backup_source, "DB.SCH.HISTORY")
+
+    def test_snapshot_table_name_case_sensitive(self) -> None:
+        """Verify _get_snapshot_table_name handles case-sensitive identifiers."""
+        name = SqlIdentifier('"My_FV"')
+        version = FeatureViewVersion("v2")
+        snapshot_name = FeatureView._get_snapshot_table_name(name, version)
+        self.assertIn("SNAPSHOTS", snapshot_name.resolved())
+        self.assertIn("My_FV", snapshot_name.resolved())
+
+    def test_snapshot_table_name_with_str_name(self) -> None:
+        """Verify _get_snapshot_table_name wraps plain str as case-sensitive SqlIdentifier."""
+        snapshot_name = FeatureView._get_snapshot_table_name("MY_FV", "v1")
+        self.assertIn("SNAPSHOTS", snapshot_name.resolved())
+        self.assertIn("MY_FV", snapshot_name.resolved())
+
+    def test_copy_returns_distinct_object_with_same_attributes(self) -> None:
+        """Verify copy() produces a distinct object with identical attributes."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="0 0 * * * UTC",
+            refresh_mode="FULL",
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        fv_copy = fv.copy()
+        self.assertIsNot(fv, fv_copy)
+        self.assertTrue(fv_copy.append_only)
+        self.assertEqual(fv_copy.backup_source, "DB.SCH.HISTORY")
+        self.assertEqual(fv_copy.name, fv.name)
+        self.assertEqual(fv_copy.timestamp_col, fv.timestamp_col)
+
+    def test_is_realtime_feature_view_returns_false(self) -> None:
+        """Verify ``is_realtime_feature_view`` is False for a standard batch feature view."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        self.assertFalse(fv.is_realtime_feature_view)
+
+    def test_from_json_backward_compat_without_append_only_keys(self) -> None:
+        """Deserializing old-format JSON (without _append_only/_backup_source) defaults correctly."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView._construct_feature_view(
+            name="OLD_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            desc="old fv",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="1 day",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+        )
+        json_str = fv.to_json()
+        json_dict = json.loads(json_str)
+        json_dict.pop("_append_only", None)
+        json_dict.pop("_backup_source", None)
+        stripped_json = json.dumps(json_dict)
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._make_mock_df()
+        restored = FeatureView.from_json(stripped_json, session=mock_session)
+        self.assertFalse(restored.append_only)
+        self.assertIsNone(restored.backup_source)
 
 
 if __name__ == "__main__":

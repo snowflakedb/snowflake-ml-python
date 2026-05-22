@@ -352,6 +352,7 @@ py_test(
     srcs = [
         "feature_store_batch_online_read_bundled.py",
         "feature_store_feature_group_bundled.py",
+        "feature_store_realtime_bundled.py",
         "feature_store_spec_oft_bundle_test.py",
         "feature_store_stream_ingest_bundled.py",
         "feature_store_streaming_fv_bundled.py",
@@ -360,7 +361,6 @@ py_test(
     shard_count = 4,
     tags = [
         "feature:feature_store",
-        "short_regress",
     ],
     deps = [
         ":common_utils",

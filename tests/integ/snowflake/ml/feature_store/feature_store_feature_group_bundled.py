@@ -24,6 +24,9 @@ Reuses ``StreamingFeatureViewIntegTestBase`` for the class-scoped Feature Store,
 ``USER_ID`` entity, and Online Service. The bundle's ``setUpModule`` requires
 ``SNOWFLAKE_PAT`` to provision the Postgres-backed OFT runtime, e.g.
 ``bazel test ... --test_env=SNOWFLAKE_PAT=$(tr -d '\\n' < ~/mypat)``.
+FG-with-RTFV ``read_feature_group`` round-trips use the same gate: if
+``SNOWFLAKE_PAT`` is set, CI must target an account where that path is
+supported (no separate opt-out env).
 """
 
 from __future__ import annotations
@@ -47,8 +50,46 @@ from snowflake.ml.feature_store.feature_view import (
     OnlineConfig,
     OnlineStoreType,
 )
+from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+from snowflake.ml.feature_store.request_source import RequestSource
+from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
+
+_HAS_SNOWFLAKE_PAT = bool(os.environ.get("SNOWFLAKE_PAT", "").strip())
+
+
+def _rtfv_weighted_balance(request_df: pd.DataFrame, balance_df: pd.DataFrame) -> pd.DataFrame:
+    """RTFV ``compute_fn`` for the FG mixed-source round-trip.
+
+    Operates on features only with positional row alignment (no merge on
+    entity keys). Mirrors the reference fn in
+    ``feature_store_realtime_bundled.py``; reproduced here because py_test
+    targets cannot share srcs across files.
+
+    Args:
+        request_df: Request payload with ``WEIGHT`` (RequestSource fields only).
+        balance_df: Upstream BFV rows with ``BALANCE``, row-aligned with ``request_df``.
+
+    Returns:
+        DataFrame with ``WEIGHTED_BALANCE = BALANCE * WEIGHT``, row-aligned.
+    """
+    weight = request_df["WEIGHT"].astype(float).reset_index(drop=True)
+    balance = balance_df["BALANCE"].fillna(0.0).reset_index(drop=True)
+    return pd.DataFrame({"WEIGHTED_BALANCE": balance * weight})
+
+
+def _rtfv_doubled_balance(balance_df: pd.DataFrame) -> pd.DataFrame:
+    """RTFV ``compute_fn`` with no RequestSource: doubles the upstream ``BALANCE``.
+
+    Args:
+        balance_df: Upstream BFV rows with ``BALANCE``.
+
+    Returns:
+        DataFrame with ``DOUBLED_BALANCE = BALANCE * 2``, row-aligned.
+    """
+    balance = balance_df["BALANCE"].fillna(0.0).reset_index(drop=True)
+    return pd.DataFrame({"DOUBLED_BALANCE": balance * 2.0})
 
 
 def _normalize_column_name(name: str) -> str:
@@ -406,6 +447,342 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         finally:
             self.fs.delete_feature_group(fg_name, fg_version)
 
+    def _register_rtfv_with_upstream(self, *, suffix: str, upstream: FeatureView) -> tuple[str, FeatureView]:
+        """Register an RTFV that consumes ``upstream`` and computes ``WEIGHTED_BALANCE``.
+
+        Args:
+            suffix: Short label embedded in the RTFV name.
+            upstream: Already-registered Postgres BFV providing ``BALANCE``.
+
+        Returns:
+            ``(rtfv_name, registered_rtfv)`` for the freshly registered RTFV.
+        """
+        rtfv_name = f"FG_INTEG_RTFV_{suffix}_{uuid.uuid4().hex[:8].upper()}"
+        rtfv = FeatureView(
+            name=rtfv_name,
+            entities=[self.user_entity],
+            realtime_config=RealtimeConfig(
+                compute_fn=_rtfv_weighted_balance,
+                # WEIGHT is the per-request scalar; USER_ID is prepended server-side
+                # from the entity row, so declaring it here would be rejected by
+                # ``validate_rtfv_entity_contract``.
+                sources=[RequestSource(schema=StructType([StructField("WEIGHT", DoubleType())])), upstream],
+                output_schema=StructType([StructField("WEIGHTED_BALANCE", DoubleType())]),
+            ),
+        )
+        registered = self.fs.register_feature_view(rtfv, "v1")
+        return rtfv_name, registered
+
+    def _register_no_rs_rtfv_with_upstream(self, *, suffix: str, upstream: FeatureView) -> tuple[str, FeatureView]:
+        """Register an RTFV with no ``RequestSource`` that doubles the upstream ``BALANCE``.
+
+        Args:
+            suffix: Short label embedded in the RTFV name.
+            upstream: Already-registered Postgres BFV providing ``BALANCE``.
+
+        Returns:
+            ``(rtfv_name, registered_rtfv)`` for the freshly registered RTFV.
+        """
+        rtfv_name = f"FG_INTEG_NRSRT_{suffix}_{uuid.uuid4().hex[:8].upper()}"
+        rtfv = FeatureView(
+            name=rtfv_name,
+            entities=[self.user_entity],
+            realtime_config=RealtimeConfig(
+                compute_fn=_rtfv_doubled_balance,
+                sources=[upstream],
+                output_schema=StructType([StructField("DOUBLED_BALANCE", DoubleType())]),
+            ),
+        )
+        registered = self.fs.register_feature_view(rtfv, "v1")
+        return rtfv_name, registered
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
+    )
+    def test_register_and_read_mixed_fg_round_trip(self) -> None:
+        """FG over one BFV + one RTFV: read returns BFV column and RTFV-computed column on the same row.
+
+        Verifies the FG-with-RTFV-upstream end-to-end: register both
+        sources, register the FG, read with a per-row ``request_context``,
+        and assert both the BFV-materialized ``BALANCE`` (1000.0) and the
+        RTFV-computed ``WEIGHTED_BALANCE`` (= ``BALANCE * WEIGHT`` =
+        2500.0) ride along on the same row keyed by ``USER_ID``.
+        """
+        bfv_name, _src, user_id = self._register_postgres_fv(suffix="MFR")
+        bfv = self.fs.get_feature_view(bfv_name, "v1")
+        rtfv_name, _ = self._register_rtfv_with_upstream(suffix="MFR", upstream=bfv)
+        rtfv = self.fs.get_feature_view(rtfv_name, "v1")
+
+        fg_name = f"FG_INTEG_MIXED_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        # ``auto_prefix=False`` keeps the output set predictable for assertions;
+        # BFV emits BALANCE/AMOUNT and the RTFV emits WEIGHTED_BALANCE, so there
+        # is no collision to disambiguate.
+        fg = FeatureGroup(name=fg_name, features=[bfv, rtfv], auto_prefix=False)
+
+        try:
+            registered = self.fs.register_feature_group(fg, fg_version)
+            self.assertIn("BALANCE", {_normalize_column_name(c) for c in registered.output_columns})
+            self.assertIn("WEIGHTED_BALANCE", {_normalize_column_name(c) for c in registered.output_columns})
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+
+            # Log the FG spec the server is materializing so a NaN/missing-column
+            # response can be cross-referenced against the client-side intent.
+            fg_spec = registered._to_spec(
+                database=self.fs._config.database.resolved(),
+                schema=self.fs._config.schema.resolved(),
+                version=fg_version,
+            )
+            logger.info(
+                "FG spec for %s/%s: ordered_entity_columns=%s output_columns=%s sources=%s",
+                fg_name,
+                fg_version,
+                list(fg_spec.spec.ordered_entity_column_names),
+                list(registered.output_columns),
+                [(s.name, getattr(s, "version", None)) for s in fg_spec.spec.sources],
+            )
+
+            # Poll until WEIGHTED_BALANCE materializes as a finite value. A freshly
+            # registered FG-with-RTFV can transiently return rows whose RTFV-computed
+            # columns are NaN: the FG read can emit one row per entity key as soon
+            # as the BFV's OFT side is populated, but the RTFV's compute_fn invocation
+            # against its upstream BFV can still see a stale/empty replica during
+            # the same call. Wait for the RTFV-computed column itself to converge.
+            deadline = time.time() + 300.0
+            last_err: Optional[str] = None
+            pdf: Optional[pd.DataFrame] = None
+            request_context = pd.DataFrame({"WEIGHT": [2.5]})
+            attempt = 0
+            while time.time() < deadline:
+                attempt += 1
+                try:
+                    pdf = self.fs.read_feature_group(fg_live, keys=[[user_id]], request_context=request_context)
+                    # Log every attempt's full response shape + values so the
+                    # difference between "missing column" / "NaN value" /
+                    # "non-NaN" is obvious in the test log.
+                    if len(pdf) > 0:
+                        logger.info(
+                            "attempt=%d cols=%s dtypes=%s row0=%s",
+                            attempt,
+                            list(pdf.columns),
+                            {c: str(pdf[c].dtype) for c in pdf.columns},
+                            pdf.iloc[0].to_dict(),
+                        )
+                        weighted_col = next(
+                            (c for c in pdf.columns if _normalize_column_name(c) == "WEIGHTED_BALANCE"),
+                            None,
+                        )
+                        if weighted_col is not None and pd.notna(pdf.iloc[0][weighted_col]):
+                            break
+                    else:
+                        logger.info("attempt=%d empty response", attempt)
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    logger.info("attempt=%d read raised %s", attempt, last_err)
+                time.sleep(10)
+            else:
+                snapshot = (
+                    None
+                    if pdf is None
+                    else {
+                        "columns": list(pdf.columns),
+                        "dtypes": {c: str(pdf[c].dtype) for c in pdf.columns},
+                        "row0": None if len(pdf) == 0 else pdf.iloc[0].to_dict(),
+                    }
+                )
+                self.fail(
+                    f"read_feature_group({fg_name}/{fg_version}) did not materialize "
+                    f"WEIGHTED_BALANCE within 300s; attempts={attempt} last_err={last_err!r} "
+                    f"last_response={snapshot!r}"
+                )
+
+            assert pdf is not None  # narrowed by the loop
+            self.assertEqual(len(pdf), 1)
+            cols = {_normalize_column_name(c) for c in pdf.columns}
+            self.assertIn("USER_ID", cols)
+            self.assertIn("BALANCE", cols)
+            self.assertIn("WEIGHTED_BALANCE", cols)
+
+            balance_col = next(c for c in pdf.columns if _normalize_column_name(c) == "BALANCE")
+            weighted_col = next(c for c in pdf.columns if _normalize_column_name(c) == "WEIGHTED_BALANCE")
+            self.assertAlmostEqual(float(pdf.iloc[0][balance_col]), 1000.0, places=4)
+            self.assertAlmostEqual(float(pdf.iloc[0][weighted_col]), 2500.0, places=4)
+        finally:
+            # Ordered teardown: FG references both FVs, so drop FG first.
+            self.fs.delete_feature_group(fg_name, fg_version)
+            self.fs.delete_feature_view(rtfv_name, "v1")
+            self.fs.delete_feature_view(bfv_name, "v1")
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
+    )
+    def test_register_and_read_fg_with_no_request_source_rtfv_round_trip(self) -> None:
+        """FG over a no-RequestSource RTFV: read with ``request_context=None`` returns the doubled BFV column.
+
+        Mirrors the parent's no-RequestSource RTFV pattern at the FG layer.
+        Registers a Postgres BFV (``BALANCE``=1000.0), an RTFV without a
+        ``RequestSource`` that doubles ``BALANCE``, then an FG over both
+        sources. Reads with ``request_context=None`` and asserts the
+        RTFV-computed ``DOUBLED_BALANCE`` (= 2000.0) and the upstream
+        ``BALANCE`` ride along on the same row keyed by ``USER_ID``.
+        """
+        bfv_name, _src, user_id = self._register_postgres_fv(suffix="NRS")
+        bfv = self.fs.get_feature_view(bfv_name, "v1")
+        rtfv_name, _ = self._register_no_rs_rtfv_with_upstream(suffix="NRS", upstream=bfv)
+        rtfv = self.fs.get_feature_view(rtfv_name, "v1")
+
+        fg_name = f"FG_INTEG_NRS_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        fg = FeatureGroup(name=fg_name, features=[bfv, rtfv], auto_prefix=False)
+
+        try:
+            registered = self.fs.register_feature_group(fg, fg_version)
+            persisted_cols = {_normalize_column_name(c) for c in registered.output_columns}
+            self.assertIn("BALANCE", persisted_cols)
+            self.assertIn("DOUBLED_BALANCE", persisted_cols)
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+
+            # Same OFT-replica race as the with-RequestSource sibling test:
+            # poll until the RTFV-computed column converges to a non-NaN value.
+            # Per-attempt logging mirrors test_register_and_read_mixed_fg_round_trip
+            # so a "no DOUBLED_BALANCE / always-NaN / always-empty" failure is
+            # diagnosable from the test log alone.
+            deadline = time.time() + 300.0
+            last_err: Optional[str] = None
+            pdf: Optional[pd.DataFrame] = None
+            attempt = 0
+            while time.time() < deadline:
+                attempt += 1
+                try:
+                    pdf = self.fs.read_feature_group(fg_live, keys=[[user_id]])
+                    if len(pdf) > 0:
+                        logger.info(
+                            "attempt=%d cols=%s dtypes=%s row0=%s",
+                            attempt,
+                            list(pdf.columns),
+                            {c: str(pdf[c].dtype) for c in pdf.columns},
+                            pdf.iloc[0].to_dict(),
+                        )
+                        doubled_col = next(
+                            (c for c in pdf.columns if _normalize_column_name(c) == "DOUBLED_BALANCE"),
+                            None,
+                        )
+                        if doubled_col is not None and pd.notna(pdf.iloc[0][doubled_col]):
+                            break
+                    else:
+                        logger.info("attempt=%d empty response", attempt)
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                    logger.info("attempt=%d read raised %s", attempt, last_err)
+                time.sleep(10)
+            else:
+                snapshot = (
+                    None
+                    if pdf is None
+                    else {
+                        "columns": list(pdf.columns),
+                        "dtypes": {c: str(pdf[c].dtype) for c in pdf.columns},
+                        "row0": None if len(pdf) == 0 else pdf.iloc[0].to_dict(),
+                    }
+                )
+                self.fail(
+                    f"read_feature_group({fg_name}/{fg_version}) did not materialize "
+                    f"DOUBLED_BALANCE within 300s; attempts={attempt} last_err={last_err!r} "
+                    f"last_response={snapshot!r}"
+                )
+
+            assert pdf is not None  # narrowed by the loop
+            self.assertEqual(len(pdf), 1)
+            balance_col = next(c for c in pdf.columns if _normalize_column_name(c) == "BALANCE")
+            doubled_col = next(c for c in pdf.columns if _normalize_column_name(c) == "DOUBLED_BALANCE")
+            self.assertAlmostEqual(float(pdf.iloc[0][balance_col]), 1000.0, places=4)
+            self.assertAlmostEqual(float(pdf.iloc[0][doubled_col]), 2000.0, places=4)
+        finally:
+            self.fs.delete_feature_group(fg_name, fg_version)
+            self.fs.delete_feature_view(rtfv_name, "v1")
+            self.fs.delete_feature_view(bfv_name, "v1")
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "FG+RTFV register-time tests require SNOWFLAKE_PAT for the bundled OFS setUp.",
+    )
+    def test_read_fg_missing_request_context_rejected(self) -> None:
+        """``read_feature_group`` on an FG with an RTFV source rejects ``request_context=None`` client-side.
+
+        No HTTP call is needed for the rejection; the failure asserts the
+        client-side guard fires before the Online Service is contacted, so
+        this test runs even when the server-side RTFV read phase is gated
+        off.
+        """
+        bfv_name, _src, user_id = self._register_postgres_fv(suffix="MR")
+        bfv = self.fs.get_feature_view(bfv_name, "v1")
+        rtfv_name, _ = self._register_rtfv_with_upstream(suffix="MR", upstream=bfv)
+        rtfv = self.fs.get_feature_view(rtfv_name, "v1")
+
+        fg_name = f"FG_INTEG_MR_{uuid.uuid4().hex[:8].upper()}"
+        fg = FeatureGroup(name=fg_name, features=[bfv, rtfv], auto_prefix=False)
+        try:
+            registered = self.fs.register_feature_group(fg, "v1")
+            with self.assertRaisesRegex(ValueError, "request_context.*is required"):
+                self.fs.read_feature_group(registered, keys=[[user_id]])
+        finally:
+            self.fs.delete_feature_group(fg_name, "v1")
+            self.fs.delete_feature_view(rtfv_name, "v1")
+            self.fs.delete_feature_view(bfv_name, "v1")
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
+    )
+    def test_read_fg_request_context_extras_dropped(self) -> None:
+        """Extra ``request_context`` columns emit a ``UserWarning`` and are dropped before the HTTP call."""
+        bfv_name, _src, user_id = self._register_postgres_fv(suffix="MX")
+        bfv = self.fs.get_feature_view(bfv_name, "v1")
+        rtfv_name, _ = self._register_rtfv_with_upstream(suffix="MX", upstream=bfv)
+        rtfv = self.fs.get_feature_view(rtfv_name, "v1")
+
+        fg_name = f"FG_INTEG_MX_{uuid.uuid4().hex[:8].upper()}"
+        fg = FeatureGroup(name=fg_name, features=[bfv, rtfv], auto_prefix=False)
+        try:
+            self.fs.register_feature_group(fg, "v1")
+            fg_live = self.fs.get_feature_group(fg_name, "v1")
+
+            request_context = pd.DataFrame({"WEIGHT": [2.5], "STRAY": ["x"]})
+
+            # Wait until the OFS catches up; assertWarns covers the call that
+            # eventually succeeds since the warning fires on every call.
+            deadline = time.time() + 300.0
+            last_err: Optional[str] = None
+            pdf: Optional[pd.DataFrame] = None
+            while time.time() < deadline:
+                try:
+                    with self.assertWarns(UserWarning) as warn_ctx:
+                        pdf = self.fs.read_feature_group(fg_live, keys=[[user_id]], request_context=request_context)
+                    if len(pdf) > 0:
+                        break
+                except AssertionError:
+                    raise
+                except Exception as e:
+                    last_err = f"{type(e).__name__}: {e}"
+                time.sleep(10)
+            else:
+                self.fail(f"read_feature_group({fg_name}/v1) returned no rows within 300s; " f"last_err={last_err!r}")
+
+            self.assertIn("STRAY", str(warn_ctx.warning))
+            assert pdf is not None
+            self.assertEqual(len(pdf), 1)
+            # Extras drop client-side, so the response only carries the FG outputs:
+            # USER_ID + BFV columns + WEIGHTED_BALANCE. STRAY must not leak into the response.
+            self.assertNotIn("STRAY", {_normalize_column_name(c) for c in pdf.columns})
+        finally:
+            self.fs.delete_feature_group(fg_name, "v1")
+            self.fs.delete_feature_view(rtfv_name, "v1")
+            self.fs.delete_feature_view(bfv_name, "v1")
+
     def test_generate_training_set_from_feature_group_with_pit(self) -> None:
         """``spine_timestamp_col`` is forwarded so PIT correctness still works on the FG path."""
         fv_name, src, _key = self._register_postgres_fv(suffix="P")
@@ -426,6 +803,59 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             ts.limit(1).collect()
         finally:
             self.fs.delete_feature_group(fg_name, "v1")
+
+    def test_generate_training_set_from_fg_with_rtfv(self) -> None:
+        """FG = [BFV, RTFV]: training set has BFV and RTFV-computed columns on the same row.
+
+        Exercises the FG -> RTFV-aware ``generate_training_set`` path
+        end-to-end against offline upstream tables (no Online Service).
+        """
+        bfv_name, _src, user_id = self._register_postgres_fv(suffix="DG")
+        bfv = self.fs.get_feature_view(bfv_name, "v1")
+
+        rtfv_name = f"RTFV_DG_FG_{uuid.uuid4().hex[:8].upper()}"
+        rtfv = FeatureView(
+            name=rtfv_name,
+            entities=[self.user_entity],
+            realtime_config=RealtimeConfig(
+                compute_fn=_rtfv_weighted_balance,
+                sources=[RequestSource(schema=StructType([StructField("WEIGHT", DoubleType())])), bfv],
+                output_schema=StructType([StructField("WEIGHTED_BALANCE", DoubleType())]),
+            ),
+        )
+        self.fs.register_feature_view(rtfv, "v1")
+
+        fg_name = f"FG_DG_RTFV_{uuid.uuid4().hex[:8].upper()}"
+        fg = FeatureGroup(name=fg_name, features=[bfv, self.fs.get_feature_view(rtfv_name, "v1")], auto_prefix=False)
+
+        try:
+            self.fs.register_feature_group(fg, "v1")
+            fg_live = self.fs.get_feature_group(fg_name, "v1")
+
+            spine = self._session.create_dataframe(
+                [(user_id, 2.5)],
+                schema=StructType(
+                    [
+                        StructField("USER_ID", StringType()),
+                        StructField("WEIGHT", DoubleType()),
+                    ]
+                ),
+            )
+            result = self.fs.generate_training_set(spine, feature_group=fg_live).to_pandas()
+
+            cols = {_normalize_column_name(c) for c in result.columns}
+            self.assertIn("BALANCE", cols)
+            self.assertIn("WEIGHTED_BALANCE", cols)
+            self.assertEqual(len(result), 1)
+            balance_col = next(c for c in result.columns if _normalize_column_name(c) == "BALANCE")
+            weighted_col = next(c for c in result.columns if _normalize_column_name(c) == "WEIGHTED_BALANCE")
+            self.assertAlmostEqual(float(result.iloc[0][balance_col]), 1000.0)
+            self.assertAlmostEqual(float(result.iloc[0][weighted_col]), 1000.0 * 2.5)
+        finally:
+            try:
+                self.fs.delete_feature_group(fg_name, "v1")
+            finally:
+                self.fs.delete_feature_view(rtfv_name, "v1")
 
 
 if __name__ == "__main__":

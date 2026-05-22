@@ -9,7 +9,9 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import os
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from snowflake.ml._internal.exceptions import (
@@ -38,14 +40,51 @@ _ONLINE_SERVICE_NOT_READY_USER_MESSAGE = (
 )
 
 
+class OnlineServiceAccess(Enum):
+    """URL kind to use for Online Service HTTP traffic.
+
+    Attributes:
+        PUBLIC: Public REST API URL.
+        PRIVATELINK: PrivateLink REST API URL.
+        INTERNAL: SPCS-internal REST API URL.
+    """
+
+    PUBLIC = "public"
+    PRIVATELINK = "privatelink"
+    INTERNAL = "internal"
+
+
 @dataclass(frozen=True)
 class OnlineServiceEndpoint:
+    """One Online Service REST API endpoint and the URLs it can be reached on.
+
+    Attributes:
+        name: ``"ingest"`` or ``"query"``.
+        url: Public REST API URL. Always set; used by default.
+        privatelink_url: PrivateLink REST API URL, set only on accounts
+            with PrivateLink configured. Preferred over ``url`` when present.
+        internal_url: SPCS-internal REST API URL. Used when
+            ``SNOWFLAKE_RUNNING_INSIDE_SPCS`` is truthy; otherwise ``url``.
+    """
+
     name: str
     url: str
+    privatelink_url: Optional[str] = None
+    internal_url: Optional[str] = None
 
 
 @dataclass(frozen=True)
 class OnlineServiceStatus:
+    """Snapshot returned by ``get_online_service_status``.
+
+    Attributes:
+        status: ``"PENDING"``, ``"RUNNING"``, ``"NOT_FOUND"``, or ``"ERROR"``.
+        message: Detail for ``status``, when provided.
+        endpoints: Ingest/query endpoints; empty until ``"RUNNING"``.
+        created_at: Server creation timestamp.
+        updated_at: Server last-update timestamp.
+    """
+
     status: str
     message: Optional[str] = None
     endpoints: tuple[OnlineServiceEndpoint, ...] = field(default_factory=tuple)
@@ -66,9 +105,10 @@ def online_service_not_ready_message() -> str:
 def _parse_status_payload(data: dict[str, Any]) -> OnlineServiceStatus:
     """Parse Online Service status JSON.
 
-    Only ``status``, ``message``, ``endpoints`` (each item: ``name``, ``url``),
-    ``created_at``, and ``updated_at`` are read. Any other top-level or endpoint
-    keys are ignored (Snowflake may return a superset on some accounts).
+    Only ``status``, ``message``, ``endpoints`` (each item: ``name``, ``url``,
+    ``privatelink_url``, ``internal_url``), ``created_at``, and ``updated_at``
+    are read. Any other top-level or endpoint keys are ignored (Snowflake may
+    return a superset on some accounts).
 
     Args:
         data: Parsed JSON object from the system function.
@@ -85,7 +125,16 @@ def _parse_status_payload(data: dict[str, Any]) -> OnlineServiceStatus:
             n = item.get("name")
             u = item.get("url")
             if isinstance(n, str) and isinstance(u, str):
-                endpoints.append(OnlineServiceEndpoint(name=n, url=u))
+                pl = item.get("privatelink_url")
+                iu = item.get("internal_url")
+                endpoints.append(
+                    OnlineServiceEndpoint(
+                        name=n,
+                        url=u,
+                        privatelink_url=pl if isinstance(pl, str) else None,
+                        internal_url=iu if isinstance(iu, str) else None,
+                    )
+                )
     return OnlineServiceStatus(
         status=str(data.get("status", "")),
         message=data.get("message") if isinstance(data.get("message"), str) else None,
@@ -124,9 +173,11 @@ def _call_system_function(
     *,
     operation: str,
     statement_params: Optional[dict[str, Any]] = None,
-) -> dict[str, Any]:
-    """Execute a SYSTEM$ SQL function and return its parsed JSON dict."""
-    raw = _first_cell(session.sql(sql).collect(statement_params=statement_params))
+) -> tuple[dict[str, Any], Optional[str]]:
+    """Execute a SYSTEM$ SQL function and return its parsed JSON dict plus the query_id."""
+    job = session.sql(sql).collect_nowait(statement_params=statement_params)
+    query_id = getattr(job, "query_id", None)
+    raw = _first_cell(job.result())
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -139,7 +190,7 @@ def _call_system_function(
             error_code=error_codes.INTERNAL_SNOWML_ERROR,
             original_exception=RuntimeError(f"Unexpected {operation} payload type: {type(data)}"),
         )
-    return data
+    return data, query_id
 
 
 def fetch_online_service_status(
@@ -150,7 +201,7 @@ def fetch_online_service_status(
     statement_params: Optional[dict[str, Any]] = None,
 ) -> OnlineServiceStatus:
     loc = _escaped_feature_store_locator(database, schema)
-    data = _call_system_function(
+    data, _ = _call_system_function(
         session,
         f"SELECT SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')",
         operation="status",
@@ -200,7 +251,7 @@ def create_online_service(
     )
     properties_escaped = snowpark_utils.escape_single_quotes(payload)  # type: ignore[no-untyped-call]
     loc = _escaped_feature_store_locator(database, schema)
-    data = _call_system_function(
+    data, query_id = _call_system_function(
         session,
         f"SELECT SYSTEM$CREATE_FEATURE_STORE_ONLINE_SERVICE('{loc}', '{properties_escaped}')",
         operation="create",
@@ -208,9 +259,12 @@ def create_online_service(
     )
     result = _parse_mutation_payload(data)
     if result.status != "SUCCESS":
+        message = result.message or "Online Service creation failed."
+        if query_id:
+            message = f"{message} [query_id: {query_id}]"
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,
-            original_exception=RuntimeError(result.message or "Online Service creation failed."),
+            original_exception=RuntimeError(message),
         )
     return OnlineServiceResult(
         status=result.status,
@@ -226,7 +280,7 @@ def drop_online_service(
     statement_params: Optional[dict[str, Any]] = None,
 ) -> OnlineServiceResult:
     loc = _escaped_feature_store_locator(database, schema)
-    data = _call_system_function(
+    data, query_id = _call_system_function(
         session,
         f"SELECT SYSTEM$DROP_FEATURE_STORE_ONLINE_SERVICE('{loc}')",
         operation="drop",
@@ -234,9 +288,12 @@ def drop_online_service(
     )
     result = _parse_mutation_payload(data)
     if result.status != "SUCCESS":
+        message = result.message or "Online Service drop failed."
+        if query_id:
+            message = f"{message} [query_id: {query_id}]"
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.INVALID_ARGUMENT,
-            original_exception=RuntimeError(result.message or "Online Service drop failed."),
+            original_exception=RuntimeError(message),
         )
     return OnlineServiceResult(
         status=result.status,
@@ -244,23 +301,148 @@ def drop_online_service(
     )
 
 
-def endpoint_url(status: OnlineServiceStatus, name: str) -> Optional[str]:
-    for ep in status.endpoints:
-        if ep.name == name:
-            return ep.url
-    return None
+_SPCS_ENV_VAR = "SNOWFLAKE_RUNNING_INSIDE_SPCS"
+_SPCS_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+def _running_inside_spcs() -> bool:
+    return os.environ.get(_SPCS_ENV_VAR, "").strip().lower() in _SPCS_TRUTHY
+
+
+def endpoint_url(
+    status: OnlineServiceStatus,
+    name: str,
+    *,
+    access: Optional[OnlineServiceAccess] = None,
+) -> Optional[str]:
+    """Pick the URL to call for the named endpoint.
+
+    Auto-routes: SPCS-internal when running inside SPCS, then PrivateLink
+    if advertised, otherwise public. ``access`` overrides this.
+
+    Args:
+        status: Online Service status snapshot.
+        name: Endpoint name (``"ingest"`` or ``"query"``).
+        access: Force a specific URL kind; raises if the endpoint doesn't carry it.
+
+    Returns:
+        The URL to call for ``name``, or ``None`` if no such endpoint exists.
+
+    Raises:
+        SnowflakeMLException: ``access`` was set but the endpoint
+            doesn't carry that URL kind.
+    """
+    ep = next((e for e in status.endpoints if e.name == name), None)
+    if ep is None:
+        return None
+    if access is not None:
+        chosen = {
+            OnlineServiceAccess.PUBLIC: ep.url,
+            OnlineServiceAccess.PRIVATELINK: ep.privatelink_url,
+            OnlineServiceAccess.INTERNAL: ep.internal_url,
+        }[access]
+        if not chosen:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"online service: {access.value!r} URL is not available for endpoint {name!r}."
+                ),
+            )
+        return chosen
+    if _running_inside_spcs():
+        if ep.internal_url:
+            return ep.internal_url
+        logger.warning(
+            "Online Service endpoint %r has no internal_url; using auto-routed URL despite %s=true",
+            name,
+            _SPCS_ENV_VAR,
+        )
+    if ep.privatelink_url:
+        return ep.privatelink_url
+    return ep.url
 
 
 def _json_serialize_value(value: Any) -> Any:
-    """JSON-serialize a single field value for Online Service request bodies."""
-    if value is None or isinstance(value, (bool, int, float, str)):
+    """JSON-serialize a single field value for Online Service request bodies.
+
+    Handles common Python and pandas/numpy scalar types that surface when
+    callers forward a ``pd.DataFrame.to_dict(orient='records')`` payload:
+
+    - ``None``, ``pd.NA``, ``pd.NaT``, and ``float('nan')`` -> ``None``.
+    - bool/int/float/str -> identity.
+    - numpy scalar (``np.int64``/``np.float64``/``np.bool_``/...) -> Python scalar via ``.item()``.
+    - pandas ``Timestamp`` and Python ``datetime`` / ``date`` -> ISO 8601 string.
+    - list/dict -> identity (assumed already serializable).
+    - ``bytes`` -> ``TypeError`` (Online Service does not accept binary values).
+    - Anything else -> ``str(value)`` fallback.
+
+    Missing-value detection (``pd.NA``, ``pd.NaT``, ``NaN``) runs before the
+    ``datetime`` branch because ``pd.NaT`` is itself a ``datetime`` instance;
+    catching it as a datetime would otherwise yield the literal string
+    ``'NaT'`` over the wire.
+
+    Args:
+        value: A single field value to serialize.
+
+    Returns:
+        The serialized value, or ``None`` for missing-value sentinels.
+
+    Raises:
+        TypeError: If ``value`` is ``bytes``; binary values are not accepted by
+            the Online Service.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
         return value
-    if isinstance(value, datetime.datetime):
-        return value.isoformat()
-    if isinstance(value, (list, dict)):
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        # NaN -> None. NB: NaN is the only float for which ``v != v`` holds.
+        if value != value:
+            return None
+        return value
+    if isinstance(value, str):
         return value
     if isinstance(value, bytes):
         raise TypeError(f"bytes values are not supported in Online Service requests: {value!r}")
+    if isinstance(value, (list, dict)):
+        return value
+
+    # pandas / numpy types are imported lazily so this helper stays usable in
+    # callers that don't depend on pandas (e.g. stream ingest with native dicts).
+    try:
+        import pandas as pd
+    except ImportError:
+        if isinstance(value, datetime.datetime):
+            return value.isoformat()
+        if isinstance(value, datetime.date):
+            return value.isoformat()
+        return str(value)
+
+    # Missing-value sentinels first. ``pd.isna`` is the canonical detector and
+    # tolerates pd.NA, pd.NaT, np.nan, and pd.Timestamp("NaT"); guard against
+    # array-likes that make it return a non-scalar.
+    try:
+        is_na = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        is_na = False
+    if is_na:
+        return None
+
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+
+    # numpy scalars expose ``.item()`` to unwrap to a Python primitive.
+    if hasattr(value, "item") and hasattr(value, "dtype"):
+        try:
+            return value.item()
+        except (ValueError, TypeError):
+            pass
     return str(value)
 
 
@@ -1094,6 +1276,7 @@ def read_postgres_online_features(
     *,
     join_key_field_types: dict[str, Any],
     object_type: Literal["feature_view", "feature_group"] = "feature_view",
+    request_context: Optional[list[dict[str, Any]]] = None,
     timeout_sec: float = 120.0,
     http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None,
 ) -> tuple[list[dict[str, Any]], Any]:
@@ -1103,6 +1286,11 @@ def read_postgres_online_features(
     returned rows/schema are filtered to that subset (case-insensitive, in the requested order). When
     ``None``, all columns from ``metadata.features`` are returned in response order. Join-key columns
     are taken from ``join_key_field_types`` (server metadata does not include them).
+
+    For RealtimeFeatureViews, callers pass ``request_context`` as a per-row list of dicts whose keys
+    are the column names declared on the RTFV's ``RequestSource.schema``. The dicts are forwarded
+    verbatim under each ``request_rows[i].request_context`` field; positional alignment between
+    ``keys[i]`` and ``request_context[i]`` is preserved across the batch boundary.
 
     Args:
         session: Snowpark session (reserved for future use). Auth requires ``SNOWFLAKE_PAT``; see
@@ -1123,6 +1311,10 @@ def read_postgres_online_features(
         join_key_field_types: Snowpark types for join keys (from feature view ``output_schema``).
         object_type: ``"feature_view"`` (default) or ``"feature_group"``. Sent as the ``object_type``
             field on the Query API request body so the server resolves the right OFT.
+        request_context: Optional per-row request-context dictionaries. When set, the list length
+            must equal ``len(keys)`` and ``object_type`` must be in
+            ``("feature_view", "feature_group")``. Each dict is forwarded verbatim under
+            ``request_rows[i].request_context``.
         timeout_sec: Per-request timeout.
         http_client: Optional pooled client; when ``None``, each call opens a fresh connection.
 
@@ -1154,6 +1346,25 @@ def read_postgres_online_features(
                 "FeatureGroups always return their predetermined output column set."
             ),
         )
+    if request_context is not None:
+        # Explicit allow-list so future object_type values opt in deliberately.
+        if object_type not in ("feature_view", "feature_group"):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "request_context is only supported for object_type in "
+                    "('feature_view', 'feature_group'); "
+                    f"got object_type={object_type!r}."
+                ),
+            )
+        if len(request_context) != len(keys):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"request_context length {len(request_context)} does not match keys length {len(keys)}; "
+                    "each entity row must carry exactly one request_context dict."
+                ),
+            )
     for row in keys:
         if len(row) != len(join_key_names):
             raise snowml_exceptions.SnowflakeMLException(
@@ -1183,9 +1394,19 @@ def read_postgres_online_features(
     try:
         for start in range(0, len(keys), _MAX_QUERY_REQUEST_ROWS):
             batch = keys[start : start + _MAX_QUERY_REQUEST_ROWS]
-            request_rows = [
-                {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
-            ]
+            if request_context is not None:
+                ctx_batch = request_context[start : start + _MAX_QUERY_REQUEST_ROWS]
+                request_rows = [
+                    {
+                        "entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)},
+                        "request_context": {k: _json_serialize_value(v) for k, v in ctx.items()},
+                    }
+                    for row, ctx in zip(batch, ctx_batch)
+                ]
+            else:
+                request_rows = [
+                    {"entity": {jk: _json_serialize_value(kv) for jk, kv in zip(join_key_names, row)}} for row in batch
+                ]
             body: dict[str, Any] = {
                 "name": str(feature_view_name),
                 "version": str(feature_view_version),

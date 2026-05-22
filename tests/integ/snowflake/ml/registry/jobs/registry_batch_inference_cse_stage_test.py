@@ -20,9 +20,6 @@ class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base
     """Test batch inference with CSE (SNOWFLAKE_FULL) encrypted stage."""
 
     def setUp(self) -> None:
-        # TODO: this is temporary
-        if not self._has_image_override():
-            self.skipTest("CSE stage test requires image override to be set for now.")
         super().setUp()
 
     @classmethod

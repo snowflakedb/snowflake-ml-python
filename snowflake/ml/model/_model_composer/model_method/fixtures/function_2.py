@@ -64,10 +64,15 @@ dtype_map = {feature.name: feature.as_dtype() for feature in features}
 # Load inference parameters from method signature (if any)
 param_cols = []
 param_defaults = {}
+param_dtype_map = {}
 if hasattr(meta.signatures[TARGET_METHOD], "params") and meta.signatures[TARGET_METHOD].params:
     for param_spec in meta.signatures[TARGET_METHOD].params:
         param_cols.append(param_spec.name)
         param_defaults[param_spec.name] = param_spec.default_value
+        if param_spec.shape is None:
+            np_type = param_spec.dtype._numpy_type
+            if callable(np_type):
+                param_dtype_map[param_spec.name] = np_type
 
 
 # Actual function
@@ -85,6 +90,8 @@ def infer(df: pd.DataFrame) -> dict:
         val = df[col].iloc[0]
         if _is_null_param_value(val):
             method_params[col] = param_defaults[col]
+        elif col in param_dtype_map:
+            method_params[col] = param_dtype_map[col](val)
         else:
             method_params[col] = val
 
