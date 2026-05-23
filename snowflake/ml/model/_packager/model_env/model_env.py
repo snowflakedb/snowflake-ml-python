@@ -8,9 +8,10 @@ from typing import DefaultDict, Optional
 from packaging import requirements, version
 
 from snowflake.ml import version as snowml_version
-from snowflake.ml._internal import env as snowml_env, env_utils
+from snowflake.ml._internal import env as snowml_env, env_utils, platform_capabilities
 from snowflake.ml.model import type_hints as model_types
 from snowflake.ml.model._packager.model_meta import model_meta_schema
+from snowflake.snowpark import exceptions as snowpark_exceptions
 
 # requirement: Full version requirement where name is conda package name.
 # pypi_name: The name of dependency in Pypi.
@@ -24,9 +25,22 @@ _DEFAULT_PIP_REQUIREMENTS_FILENAME = "requirements.txt"
 # Make sure they are aligned with default CUDA version in inference server.
 DEFAULT_CUDA_VERSION = "12.4"
 
-# Feature flag for pip-only packaging. When enabled, models without conda dependencies
-# will skip generating conda.yml and use pip-based Dockerfile template for SPCS deployment.
-_ENABLE_PIP_ONLY_PACKAGING = False
+
+def is_pip_only_packaging_enabled() -> bool:
+    """Return whether pip-only packaging is enabled for the current account.
+
+    Delegates to
+    :meth:`~snowflake.ml._internal.platform_capabilities.PlatformCapabilities.is_pip_only_packaging_enabled`.
+    Returns False when there is no active Snowpark session (e.g. offline packaging or unit tests without mocks).
+
+    Returns:
+        True if pip-only packaging is enabled; otherwise False.
+    """
+    try:
+        return platform_capabilities.PlatformCapabilities.get_instance().is_pip_only_packaging_enabled()
+    except (AssertionError, StopIteration, snowpark_exceptions.SnowparkSessionException):
+        # No active Snowpark session (e.g. offline packaging or unit tests without mocks).
+        return False
 
 
 def resolve_prefer_pip_for_automatic_dependencies(
@@ -37,10 +51,9 @@ def resolve_prefer_pip_for_automatic_dependencies(
 ) -> bool:
     """Return whether automatic packaging deps should go on pip (vs conda).
 
-    True for SPCS-only ``target_platforms``, or when ``_ENABLE_PIP_ONLY_PACKAGING``
-    is set (client import of ``enable_pip_only_packaging``), the user gave no conda
-    dependencies, and :func:`~snowflake.ml._internal.env_utils.is_local_conda_environment`
-    is false.
+    True for SPCS-only ``target_platforms``, or when
+    :func:`is_pip_only_packaging_enabled` is true, the user gave no conda dependencies,
+    and :func:`~snowflake.ml._internal.env_utils.is_local_conda_environment` is false.
 
     Args:
         target_platforms: Deployment targets for the model, or ``None`` for defaults.
@@ -54,7 +67,9 @@ def resolve_prefer_pip_for_automatic_dependencies(
         return True
     if force_conda_defaults:
         return False
-    return bool(_ENABLE_PIP_ONLY_PACKAGING and not conda_dependencies and not env_utils.is_local_conda_environment())
+    return bool(
+        is_pip_only_packaging_enabled() and not conda_dependencies and not env_utils.is_local_conda_environment()
+    )
 
 
 class ModelEnv:
@@ -283,7 +298,7 @@ class ModelEnv:
     def _is_pip_only_path(self) -> bool:
         """Check if this model will use the pip-only packaging path."""
         has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())
-        return self.prefer_pip_for_automatic_dependencies and _ENABLE_PIP_ONLY_PACKAGING and not has_conda_deps
+        return self.prefer_pip_for_automatic_dependencies and is_pip_only_packaging_enabled() and not has_conda_deps
 
     def _substitute_conda_gpu_packages(self) -> None:
         """Replace conda packages with their GPU variants (xgboost→py-xgboost-gpu, tensorflow→tensorflow-gpu)."""
@@ -465,7 +480,7 @@ class ModelEnv:
     ) -> model_meta_schema.ModelEnvDict:
         cuda_version = self.cuda_version if is_gpu else None
         has_conda_deps = any(len(deps) > 0 for deps in self._conda_dependencies.values())
-        write_conda = has_conda_deps or not _ENABLE_PIP_ONLY_PACKAGING
+        write_conda = has_conda_deps or not is_pip_only_packaging_enabled()
 
         if write_conda:
             env_utils.save_conda_env_file(

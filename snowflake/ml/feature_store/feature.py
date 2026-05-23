@@ -327,16 +327,20 @@ class Feature:
         return cls(AggregationType.FIRST_DISTINCT_N, column, window, offset, n=n)
 
     @classmethod
-    def approx_count_distinct(cls, column: str, window: str, offset: str = "0") -> Feature:
+    def approx_count_distinct(cls, column: str, window: str, offset: str = "0", *, precision: int = 8) -> Feature:
         """Create an APPROX_COUNT_DISTINCT aggregation feature.
 
-        Estimates the number of distinct values using HyperLogLog algorithm.
-        This is approximate but highly efficient for large datasets.
+        Estimates the number of distinct values using the Apache Datasketches
+        HyperLogLog algorithm. This is approximate but highly efficient for
+        large datasets.
 
         Args:
             column: The column to count distinct values.
             window: The lookback window.
             offset: Offset to shift window into past. Default is "0" (no offset).
+            precision: Log-base-2 of the number of buckets in the HLL sketch.
+                Controls the trade-off between accuracy and memory. Valid range
+                is 4 to 21. Default is 8.
 
         Returns:
             A Feature configured for APPROX_COUNT_DISTINCT aggregation.
@@ -344,8 +348,9 @@ class Feature:
         Example::
 
             >>> unique_users = Feature.approx_count_distinct("user_id", "24h")
+            >>> precise_uniques = Feature.approx_count_distinct("user_id", "24h", precision=12)
         """
-        return cls(AggregationType.APPROX_COUNT_DISTINCT, column, window, offset)
+        return cls(AggregationType.APPROX_COUNT_DISTINCT, column, window, offset, hll_lg_k=precision)
 
     @classmethod
     def approx_percentile(cls, column: str, window: str, *, percentile: float = 0.5, offset: str = "0") -> Feature:

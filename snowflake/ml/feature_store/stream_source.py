@@ -88,6 +88,40 @@ def _schema_from_dict(fields_data: list[dict[str, Any]]) -> StructType:
     return StructType(fields)
 
 
+def validate_schema_field_types(schema: StructType, *, context: str) -> None:
+    """Validate every field has a streaming-FV-supported type and timezone.
+
+    Used by both ``StreamSource`` (declared schema) and streaming-FV
+    registration (``backfill_df.schema``); both feed the same UDTF call site
+    that only handles a fixed type list with bare ``TIMESTAMP_NTZ``.
+
+    Args:
+        schema: Schema to validate.
+        context: Identifier of the schema's role for error messages
+            (e.g. ``"StreamSource schema"``, ``"backfill_df schema"``).
+
+    Raises:
+        ValueError: If any field has an unsupported type, or a TimestampType
+            field is not TIMESTAMP_NTZ.
+    """
+    for f in schema.fields:
+        type_name = type(f.datatype).__name__
+        if type_name not in _TYPE_NAME_TO_CLASS:
+            raise ValueError(
+                f"{context}: Unsupported type '{type_name}' for field '{f.name}'. "
+                f"Supported types: {list(_TYPE_NAME_TO_CLASS.keys())}"
+            )
+        if isinstance(f.datatype, TimestampType) and f.datatype.tz not in (
+            TimestampTimeZone.NTZ,
+            TimestampTimeZone.DEFAULT,
+        ):
+            raise ValueError(
+                f"{context}: Unsupported timezone '{f.datatype.tz.name}' for field '{f.name}'. "
+                f"Only TIMESTAMP_NTZ is supported. All timestamps are stored as UTC. "
+                f"Use TimestampType() or TimestampType(TimestampTimeZone.NTZ)."
+            )
+
+
 class StreamSource:
     """
     A streaming data source for streaming feature views.
@@ -146,24 +180,7 @@ class StreamSource:
         if not schema.fields:
             raise ValueError("StreamSource schema must have at least one field.")
 
-        # Validate all field types are supported
-        for f in schema.fields:
-            type_name = type(f.datatype).__name__
-            if type_name not in _TYPE_NAME_TO_CLASS:
-                raise ValueError(
-                    f"Unsupported type '{type_name}' for field '{f.name}'. "
-                    f"Supported types: {list(_TYPE_NAME_TO_CLASS.keys())}"
-                )
-            # Only TIMESTAMP_NTZ is supported (DEFAULT is accepted and treated as NTZ).
-            if isinstance(f.datatype, TimestampType) and f.datatype.tz not in (
-                TimestampTimeZone.NTZ,
-                TimestampTimeZone.DEFAULT,
-            ):
-                raise ValueError(
-                    f"Unsupported timezone '{f.datatype.tz.name}' for field '{f.name}'. "
-                    f"Only TIMESTAMP_NTZ is supported. All timestamps are stored as UTC. "
-                    f"Use TimestampType() or TimestampType(TimestampTimeZone.NTZ)."
-                )
+        validate_schema_field_types(schema, context="StreamSource schema")
 
     def _to_dict(self) -> dict[str, Any]:
         """Convert to a JSON-serializable dictionary for backend storage."""

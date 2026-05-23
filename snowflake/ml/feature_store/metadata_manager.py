@@ -12,7 +12,7 @@ Currently used for:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -46,6 +46,12 @@ class MetadataType(str, Enum):
     STREAM_SOURCE_CONFIG = "STREAM_SOURCE_CONFIG"
     STREAM_CONFIG = "STREAM_CONFIG"
     FEATURE_GROUP_CONFIG = "FEATURE_GROUP_CONFIG"
+    # Persisted configuration for realtime feature views (RTFV). Holds
+    # everything ``get_feature_view`` needs to faithfully reconstruct the
+    # original :class:`RealtimeConfig`: compute_fn source + name, source FV
+    # references (as ``FvSourceRef`` rows), request source schema, output
+    # schema, and the captured output_columns list.
+    REALTIME_CONFIG = "REALTIME_CONFIG"
 
 
 @dataclass
@@ -162,8 +168,27 @@ class StreamingMetadata:
 
 
 @dataclass
-class FeatureGroupSourceRef:
-    """Persisted reference to one source FV inside a :class:`FeatureGroup`."""
+class FvSourceRef:
+    """One source FV reference for any consumer that lists source FVs.
+
+    Originally named ``FeatureGroupSourceRef`` and used only by
+    :class:`FeatureGroup`; the realtime feature view (RTFV) authoring path
+    reuses the same shape for its persisted ``sources`` list. The shape is
+    deliberately consumer-agnostic — only ``(fv_name, fv_version)`` plus the
+    optional slice/alias projection — so the same JSON shape round-trips
+    through every consumer's metadata column.
+
+    Captures everything :meth:`FeatureStore.get_feature_group` and
+    :meth:`FeatureStore.get_feature_view` (for RTFVs) need to reconstruct
+    the original feature item:
+
+    - ``fv_name`` / ``fv_version``: identity of the upstream FeatureView.
+    - ``slice_columns``: ``None`` for a full FeatureView, or the list of
+      selected feature names (in slice order) for a FeatureViewSlice.
+    - ``alias``: ``None`` if no :meth:`with_name` was applied; otherwise
+      the alias string (``""`` is a valid alias meaning "no prefix"). RTFV
+      sources never carry an alias; the field is preserved for FG.
+    """
 
     fv_name: str
     fv_version: str
@@ -180,13 +205,95 @@ class FeatureGroupSourceRef:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> FeatureGroupSourceRef:
+    def from_dict(cls, data: dict[str, Any]) -> FvSourceRef:
         """Build from a dict produced by :meth:`to_dict`."""
         return cls(
             fv_name=data["fv_name"],
             fv_version=data["fv_version"],
             slice_columns=list(data["slice_columns"]) if "slice_columns" in data else None,
             alias=data.get("alias"),
+        )
+
+
+# Backward-compatibility alias. Internal name was ``FeatureGroupSourceRef``
+# before RTFV reuse generalized it; existing callers (FG path, tests) keep
+# working with no rename ripple.
+FeatureGroupSourceRef = FvSourceRef
+
+
+@dataclass
+class RealtimeConfigMetadata:
+    """Persisted configuration for a realtime feature view (RTFV).
+
+    Holds everything ``FeatureStore.get_feature_view`` needs to reconstruct
+    an equivalent :class:`RealtimeConfig` without re-parsing the OFT spec
+    JSON. Keyed by ``(FEATURE_VIEW, name, version)`` in the metadata table,
+    same shape as :class:`FeatureGroupMetadata`.
+
+    Attributes:
+        name: Resolved (case-canonical) RTFV name.
+        version: RTFV version (case-preserved).
+        desc: User-supplied description.
+        compute_fn_name: ``__name__`` of the ``compute_fn`` callable.
+        compute_fn_source: Plain-text source of the ``compute_fn``.
+        sources: Upstream FV references in source order (excluding the
+            optional :class:`RequestSource`, which is persisted separately
+            via ``request_schema_json``).
+        request_schema_json: JSON-encoded :class:`StructType` for the
+            :class:`RequestSource`. Stored as JSON rather than a structured
+            list so the round trip preserves Snowpark type metadata exactly.
+            ``None`` when the RTFV was registered without a RequestSource.
+        output_schema_json: JSON-encoded :class:`StructType` for the
+            realtime output schema.
+        output_columns: Resolved output column names in source-emission
+            order. Captured at registration time so listing / read APIs
+            don't have to re-derive them.
+        entity_names: Resolved (case-canonical) names of the RTFV's
+            declared entities, in declaration order and de-duplicated.
+            Captured at registration time so ``list_feature_views`` can
+            render the RTFV row without re-fetching each upstream FV.
+    """
+
+    name: str
+    version: str
+    desc: str
+    compute_fn_name: str
+    compute_fn_source: str
+    sources: list[FvSourceRef]
+    request_schema_json: Optional[str]
+    output_schema_json: str
+    output_columns: list[str]
+    entity_names: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-friendly dict."""
+        return {
+            "name": self.name,
+            "version": self.version,
+            "desc": self.desc,
+            "compute_fn_name": self.compute_fn_name,
+            "compute_fn_source": self.compute_fn_source,
+            "sources": [s.to_dict() for s in self.sources],
+            "request_schema_json": self.request_schema_json,
+            "output_schema_json": self.output_schema_json,
+            "output_columns": list(self.output_columns),
+            "entity_names": list(self.entity_names),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RealtimeConfigMetadata:
+        """Build from a dict produced by :meth:`to_dict`."""
+        return cls(
+            name=data["name"],
+            version=data["version"],
+            desc=data.get("desc", ""),
+            compute_fn_name=data["compute_fn_name"],
+            compute_fn_source=data["compute_fn_source"],
+            sources=[FvSourceRef.from_dict(s) for s in data.get("sources", [])],
+            request_schema_json=data.get("request_schema_json"),
+            output_schema_json=data["output_schema_json"],
+            output_columns=list(data.get("output_columns") or []),
+            entity_names=list(data.get("entity_names") or []),
         )
 
 
@@ -683,6 +790,106 @@ class FeatureStoreMetadataManager:
             AND OBJECT_NAME = '{normalized_name}'
             AND VERSION = '{version}'
             AND METADATA_TYPE = '{MetadataType.FEATURE_GROUP_CONFIG.value}'
+            """
+        ).collect(statement_params=self._telemetry_stmp)
+
+    # =========================================================================
+    # Realtime Feature View Configuration
+    # =========================================================================
+
+    def save_realtime_config(self, metadata: RealtimeConfigMetadata) -> None:
+        """Persist a :class:`RealtimeConfigMetadata` row for a registered RTFV.
+
+        Keyed by ``(FEATURE_VIEW, name, version)`` — RTFV metadata coexists
+        alongside other FV metadata types (specs/descs/rollup/stream) under
+        the same primary key.
+
+        Args:
+            metadata: The metadata to upsert.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=metadata.name,
+            version=metadata.version,
+            metadata_type=MetadataType.REALTIME_CONFIG,
+            metadata=metadata.to_dict(),
+        )
+
+    def get_realtime_config(self, name: str, version: str) -> Optional[RealtimeConfigMetadata]:
+        """Read :class:`RealtimeConfigMetadata` for an RTFV ``(name, version)``.
+
+        Args:
+            name: RTFV name (resolved identifier, no quoting).
+            version: RTFV version (case-preserved string).
+
+        Returns:
+            The metadata, or ``None`` if no row exists.
+        """
+        data = self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=name,
+            version=version,
+            metadata_type=MetadataType.REALTIME_CONFIG,
+        )
+        if data is None:
+            return None
+        return RealtimeConfigMetadata.from_dict(data)
+
+    def list_realtime_config_metadata(self) -> list[RealtimeConfigMetadata]:
+        """Return every persisted :class:`RealtimeConfigMetadata` row.
+
+        Used by :meth:`FeatureStore.list_feature_views` to enumerate RTFV
+        rows without per-row metadata fetches. The OFT backing the RTFV is
+        listed separately so transient OFT drops surface as ``owner=None``
+        in the returned listing (same shape as FG).
+
+        Returns:
+            All RTFV metadata rows in unspecified order; empty list when
+            the metadata table doesn't exist or holds no RTFV rows.
+        """
+        if not self._check_table_exists():
+            return []
+
+        result = self._session.sql(
+            f"""
+            SELECT METADATA
+            FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
+            AND METADATA_TYPE = '{MetadataType.REALTIME_CONFIG.value}'
+            """
+        ).collect(statement_params=self._telemetry_stmp)
+
+        out: list[RealtimeConfigMetadata] = []
+        for row in result:
+            metadata_value = row["METADATA"]
+            if isinstance(metadata_value, str):
+                data = json.loads(metadata_value)
+            else:
+                data = dict(metadata_value)
+            out.append(RealtimeConfigMetadata.from_dict(data))
+        return out
+
+    def delete_realtime_config(self, name: str, version: str) -> None:
+        """Delete the :class:`RealtimeConfigMetadata` row for an RTFV ``(name, version)``.
+
+        No-op when the metadata table is missing or the row isn't there.
+
+        Args:
+            name: RTFV name (resolved identifier, no quoting).
+            version: RTFV version (case-preserved string).
+        """
+        if not self._check_table_exists():
+            return
+
+        normalized_name = name.strip('"')
+        self._session.sql(
+            f"""
+            DELETE FROM {self._table_path}
+            WHERE OBJECT_TYPE = '{MetadataObjectType.FEATURE_VIEW.value}'
+            AND OBJECT_NAME = '{normalized_name}'
+            AND VERSION = '{version}'
+            AND METADATA_TYPE = '{MetadataType.REALTIME_CONFIG.value}'
             """
         ).collect(statement_params=self._telemetry_stmp)
 

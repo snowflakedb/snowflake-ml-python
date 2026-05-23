@@ -458,6 +458,83 @@ class TestRegistryLightGBMModelInteg(registry_model_test_base.RegistryModelTestB
             },
         )
 
+    def test_lightgbm_classifier_with_params_forwarding(self) -> None:
+        """Params declared in the signature reach LGBMClassifier.predict / predict_proba at runtime."""
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, _ = model_selection.train_test_split(cal_X, cal_y)
+
+        classifier = lightgbm.LGBMClassifier(n_jobs=1, n_estimators=20)
+        classifier.fit(cal_X_train, cal_y_train)
+
+        y_pred = classifier.predict(cal_X_test)
+        y_pred_proba = classifier.predict_proba(cal_X_test)
+        y_pred_one_iter = classifier.predict(cal_X_test, num_iteration=1)
+        y_pred_proba_one_iter = classifier.predict_proba(cal_X_test, num_iteration=1)
+
+        param_spec = model_signature.ParamSpec(
+            name="num_iteration", dtype=model_signature.DataType.INT64, default_value=0
+        )
+        signatures = {
+            "predict": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(cal_X_test, y_pred).inputs,
+                outputs=model_signature.infer_signature(cal_X_test, y_pred).outputs,
+                params=[param_spec],
+            ),
+            "predict_proba": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(cal_X_test, y_pred_proba).inputs,
+                outputs=model_signature.infer_signature(cal_X_test, y_pred_proba).outputs,
+                params=[param_spec],
+            ),
+        }
+
+        self._test_registry_model(
+            model=classifier,
+            sample_input_data=cal_X_test,
+            signatures=signatures,
+            prediction_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(y_pred, columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+                "predict_proba": (
+                    cal_X_test,
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(y_pred_proba, columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            params_assert_fns={
+                "predict": (
+                    cal_X_test,
+                    {"num_iteration": 1},
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(y_pred_one_iter, columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+                "predict_proba": (
+                    cal_X_test,
+                    {"num_iteration": 1},
+                    lambda res: pd.testing.assert_frame_equal(
+                        res,
+                        pd.DataFrame(y_pred_proba_one_iter, columns=res.columns),
+                        check_dtype=False,
+                    ),
+                ),
+            },
+            options={"enable_explainability": False},
+        )
+
     def test_lightgbm_model_with_categorical_dtype_columns(
         self,
     ) -> None:

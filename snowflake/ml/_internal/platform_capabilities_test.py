@@ -230,6 +230,56 @@ class PlatformCapabilitiesTest(parameterized.TestCase):
         pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
         self.assertTrue(pc.is_set_module_functions_volatility_from_manifest())
 
+    def test_enabled_pip_only_packaging_bool(self) -> None:
+        """Test is_pip_only_packaging_enabled method."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: True,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_pip_only_packaging_enabled())
+
+    def test_default_pip_only_packaging_when_capability_absent(self) -> None:
+        """Test is_pip_only_packaging_enabled defaults to true when capability is absent."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame([snowpark.Row(FEATURES="{ }")]),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertTrue(pc.is_pip_only_packaging_enabled())
+
+    def test_disabled_pip_only_packaging_explicit_false(self) -> None:
+        """Test is_pip_only_packaging_enabled is false when capability is explicitly disabled."""
+        self._add_session_mock_sql(
+            query="SELECT SYSTEM$ML_PLATFORM_CAPABILITIES() AS FEATURES;",
+            result=mock_data_frame.MockDataFrame(
+                [
+                    snowpark.Row(
+                        FEATURES=json.dumps(
+                            {
+                                platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False,
+                            }
+                        )
+                    )
+                ]
+            ),
+        )
+
+        pc = platform_capabilities.PlatformCapabilities(session=cast(snowpark_session.Session, self._session))
+        self.assertFalse(pc.is_pip_only_packaging_enabled())
+
     @parameterized.product(live_commit=[True, False])  # type: ignore[misc]
     def test_mocking(self, live_commit: bool) -> None:
         """Test mocking of platform capabilities."""

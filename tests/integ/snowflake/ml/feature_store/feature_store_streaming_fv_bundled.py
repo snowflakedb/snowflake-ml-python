@@ -39,6 +39,7 @@ from feature_store_streaming_fv_integ_base import (
     StreamingFeatureViewIntegTestBase,
     all_types_identity_transform,
     identity_transform,
+    identity_transform_with_sk,
     passthrough_plus_new_column_transform,
 )
 
@@ -1053,6 +1054,82 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, timeout=240.0, desc="streaming e2e"
+        )
+
+    # =========================================================================
+    # E2E: Streaming tiled FV + secondary key — backfill -> online read.
+    # Backfill is the only path through GS dedup for streaming FVs, so this
+    # is the SFV-side counterpart to the batch SK online-read test.
+    # =========================================================================
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_streaming_tiled_fv_spec_oft_secondary_key_online_read_by_key(self) -> None:
+        """Streaming tiled FV with SKs: backfill rows sharing entity+ts but differing on AD_ID survive GS dedup."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_SK_{s}"
+        fv_name = f"STREAM_TILED_SK_FV_{s}"
+        batch_key = f"U_STREAM_SK_{s}"
+
+        fs = self._create_feature_store()
+        self._make_stream_source_with_sk(fs, stream)
+        backfill_table = self._create_sk_backfill_table(fs, s, batch_key=batch_key)
+        backfill_df = self._session.table(backfill_table)
+
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform_with_sk,
+            backfill_df=backfill_df,
+        )
+
+        features = [
+            Feature.sum("AMOUNT", "3d").alias("AMOUNT_SUM_3D"),
+            Feature.count("AMOUNT", "3d").alias("TXN_COUNT_3D"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            aggregation_secondary_keys=["AD_ID"],
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.is_streaming)
+        self.assertTrue(registered.is_tiled)
+        self.assertTrue(registered.online)
+        self.assertEqual(registered.aggregation_secondary_keys, ["AD_ID"])
+
+        physical_name = FeatureView._get_physical_name(registered.name, registered.version)
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        self._wait_udf_and_backfill(
+            fq_udf,
+            feature_store=fs,
+            streaming_fv_metadata_name=str(registered.name),
+            streaming_fv_version=str(registered.version),
+        )
+
+        def _validate(pdf):
+            self.assertIn("AD_ID_KEYS_3D", pdf.columns)
+            self.assertIn("AMOUNT_SUM_3D", pdf.columns)
+            self.assertIn("TXN_COUNT_3D", pdf.columns)
+            row = pdf.iloc[0]
+            # Keys are ARRAY_AGG(AD_ID) WITHIN GROUP (ORDER BY AD_ID) — alphabetical;
+            # value arrays must be co-ordered with the key array.
+            self.assertEqual(list(row["AD_ID_KEYS_3D"]), ["ad_a", "ad_b", "ad_c"])
+            self.assertEqual(list(row["AMOUNT_SUM_3D"]), [30.0, 50.0, 70.0])
+            self.assertEqual(list(row["TXN_COUNT_3D"]), [2, 1, 1])
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, timeout=240.0, desc="streaming tiled sk"
         )
 
     # =========================================================================

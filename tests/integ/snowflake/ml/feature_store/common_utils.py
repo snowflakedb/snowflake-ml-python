@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Callable, Optional
 from unittest.mock import Mock
 from uuid import uuid4
@@ -5,9 +6,12 @@ from uuid import uuid4
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.feature_view import FeatureView
 from snowflake.ml.utils.connection_params import SnowflakeLoginOptions
 from snowflake.snowpark import Session
+
+logger = logging.getLogger(__name__)
 
 # Database used for feature store integration test
 FS_INTEG_TEST_DB = "SNOWML_FEATURE_STORE_TEST_DB"
@@ -104,3 +108,23 @@ def get_test_warehouse_name(session: Session) -> str:
         raise RuntimeError("No warehouse is configured in the current session.")
     # Sanitize any accidental surrounding quotes to avoid generating SQL like """WH"""
     return session_warehouse.strip('"')
+
+
+def execute_snapshot_refresh(
+    fs: Any,
+    feature_view_name: SqlIdentifier,
+    fully_qualified_name: str,
+) -> None:
+    """Execute a manual snapshot refresh using the production Task body.
+
+    Runs ``_build_snapshot_task_body`` via ``EXECUTE IMMEDIATE`` so the test
+    exercises the exact same SQL scripting block that the scheduled Task uses.
+
+    Args:
+        fs: The ``FeatureStore`` instance whose session and telemetry params
+            should be used to run the refresh.
+        feature_view_name: Physical (versioned) DT name of the feature view.
+        fully_qualified_name: Fully-qualified ``DB.SCHEMA.NAME`` of the DT.
+    """
+    task_body = fs._build_snapshot_task_body(feature_view_name, fully_qualified_name)
+    fs._session.sql(f"EXECUTE IMMEDIATE $${task_body}$$").collect(statement_params=fs._telemetry_stmp)

@@ -1,6 +1,61 @@
 # Release History
 
-## 1.40.0
+## 1.41.0
+
+### New Features
+
+* Registry: Extended `ParamSpec` support to MLflow PyFunc, LightGBM, XGBoost, and CatBoost models.
+  Parameters declared in the model signature can now be passed at inference time.
+* Registry: LLM models deployed with the OpenAI chat signatures now support structured outputs
+  through an optional `response_format` param matching the OpenAI Chat Completions API
+  (`{"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}`), letting callers
+  constrain model output to a JSON Schema.
+
+```python
+from pydantic import BaseModel
+import pandas as pd
+
+class CityCountry(BaseModel):
+    city: str
+    country: str
+
+response_format = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "city_country",
+        "schema": CityCountry.model_json_schema(),
+    },
+}
+
+x_df = pd.DataFrame.from_records(
+    [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is the capital of France?"},
+                    ],
+                },
+            ],
+        }
+    ]
+)
+
+mv.run(
+    X=x_df,
+    params={"response_format": response_format},
+    service_name=...,
+)
+```
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.40.0 (2026-05-19)
 
 ### New Features
 
@@ -12,6 +67,14 @@
   `read_feature_view(store_type=ONLINE)` to fail with "Online store is not enabled".
 
 ### Behavior Changes
+
+* Registry: `log_model(..., options=...)` now rejects unknown top-level keys and unknown keys inside each
+  `method_options` entry (for example misspellings or options that belong to a different model framework).
+  Previously those keys were ignored. Validation is based on the public save-option TypedDicts and runs
+  before dependency reconciliation.
+
+* Registry: `use_gpu` is declared on the CatBoost, XGBoost, PyTorch, and TorchScript save-option
+  TypedDicts to match the save paths that already read this flag.
 
 ### Deprecations
 

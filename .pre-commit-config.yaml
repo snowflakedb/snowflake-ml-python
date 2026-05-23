@@ -53,6 +53,10 @@ repos:
           )$
       - id: check-yaml
       - id: debug-statements
+        exclude: >
+          (?x)^(
+              snowflake/ml/feature_store/realtime_config_test\.py|
+          )$
       - id: check-ast
       - id: check-json
         exclude: (?x)^(\.vscode\-bootstrap/.*\.json)$

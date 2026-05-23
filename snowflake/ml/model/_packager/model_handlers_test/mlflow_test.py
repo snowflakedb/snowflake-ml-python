@@ -2,6 +2,7 @@ import os
 import tempfile
 import uuid
 import warnings
+from unittest import mock
 
 import mlflow
 import numpy as np
@@ -17,6 +18,7 @@ from snowflake.ml.model import (
     type_hints as model_types,
 )
 from snowflake.ml.model._packager import model_packager
+from snowflake.ml.model._packager.model_handlers import mlflow as mlflow_handler
 
 
 class MLFlowHandlerTest(absltest.TestCase):
@@ -602,6 +604,340 @@ class MLFlowHandlerTest(absltest.TestCase):
                 )
             handler_warnings = [w for w in caught if "artifact_repository_map" in str(w.message)]
             self.assertEmpty(handler_warnings)
+
+
+class MLFlowHandlerParamsTest(absltest.TestCase):
+    """Test cases for MLFlow handler support for model signature params."""
+
+    INPUT_DF = pd.DataFrame({"feature": [1.0, 2.0, 3.0]})
+
+    def _package_and_load(
+        self,
+        tmpdir: str,
+        python_model: mlflow.pyfunc.PythonModel,
+        mlflow_sig: mlflow.models.ModelSignature,
+        snowml_sig: model_signature.ModelSignature,
+    ) -> model_packager.ModelPackager:
+        """Save the PythonModel via MLflow, then via ModelPackager, and load as custom model."""
+        save_path = os.path.join(tmpdir, "saved_model")
+        mlflow.pyfunc.save_model(path=save_path, python_model=python_model, signature=mlflow_sig)
+
+        mlflow_pyfunc_model = mlflow.pyfunc.load_model(save_path)
+
+        pkg_path = os.path.join(tmpdir, "packaged")
+        model_packager.ModelPackager(pkg_path).save(
+            name="model",
+            model=mlflow_pyfunc_model,
+            signatures={"predict": snowml_sig},
+            options={
+                "model_uri": save_path,
+                "ignore_mlflow_dependencies": True,
+                "relax_version": False,
+            },
+        )
+
+        pk = model_packager.ModelPackager(pkg_path)
+        pk.load(as_custom_model=True)
+        assert pk.model is not None
+        assert pk.meta is not None
+        return pk
+
+    def test_mlflow_python_model_with_param_forwarding(self) -> None:
+        """A single scalar param declared in the ModelSignature is forwarded into MLflow's params= dict."""
+
+        class ScalingModel(mlflow.pyfunc.PythonModel):
+            def predict(self, context, model_input, params=None):  # type: ignore[no-untyped-def]
+                scale = (params or {}).get("scale", 1.0)
+                return model_input * scale
+
+        mlflow_sig = mlflow.models.ModelSignature(
+            inputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            outputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            params=mlflow.types.ParamSchema([mlflow.types.ParamSpec("scale", mlflow.types.DataType.double, 1.0)]),
+        )
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pk = self._package_and_load(tmpdir, ScalingModel(), mlflow_sig, snowml_sig)
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            # Without kwargs — uses the MLflow ParamSchema default (scale=1.0).
+            res_default = predict_method(self.INPUT_DF)
+            np.testing.assert_allclose(res_default["feature"].to_numpy(), self.INPUT_DF["feature"].to_numpy())
+
+            # With kwargs — value is wrapped into MLflow's ``params`` dict and reaches the PythonModel.
+            res_scaled = predict_method(self.INPUT_DF, scale=2.0)
+            np.testing.assert_allclose(
+                res_scaled["feature"].to_numpy(),
+                self.INPUT_DF["feature"].to_numpy() * 2.0,
+            )
+
+    def test_mlflow_python_model_with_mixed_scalar_param_types(self) -> None:
+        """Multiple scalar params of different MLflow dtypes (double, long, boolean, string) all reach the model."""
+
+        class EchoParamsModel(mlflow.pyfunc.PythonModel):
+            def predict(self, context, model_input, params=None):  # type: ignore[no-untyped-def]
+                params = params or {}
+                offset = params["offset"] if params.get("invert", False) is False else -params["offset"]
+                value = model_input["feature"] * params["scale"] + offset
+                label = f"{params['prefix']}:{int(params['repeat'])}"
+                return pd.DataFrame({"value": value, "label": [label] * len(value)})
+
+        mlflow_sig = mlflow.models.ModelSignature(
+            inputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            outputs=mlflow.types.Schema(
+                [
+                    mlflow.types.ColSpec(mlflow.types.DataType.double, "value"),
+                    mlflow.types.ColSpec(mlflow.types.DataType.string, "label"),
+                ]
+            ),
+            params=mlflow.types.ParamSchema(
+                [
+                    mlflow.types.ParamSpec("scale", mlflow.types.DataType.double, 1.0),
+                    mlflow.types.ParamSpec("offset", mlflow.types.DataType.double, 0.0),
+                    mlflow.types.ParamSpec("repeat", mlflow.types.DataType.long, 1),
+                    mlflow.types.ParamSpec("invert", mlflow.types.DataType.boolean, False),
+                    mlflow.types.ParamSpec("prefix", mlflow.types.DataType.string, "row"),
+                ]
+            ),
+        )
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[
+                model_signature.FeatureSpec(name="value", dtype=model_signature.DataType.DOUBLE),
+                model_signature.FeatureSpec(name="label", dtype=model_signature.DataType.STRING),
+            ],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+                model_signature.ParamSpec(name="offset", dtype=model_signature.DataType.DOUBLE, default_value=0.0),
+                model_signature.ParamSpec(name="repeat", dtype=model_signature.DataType.INT64, default_value=1),
+                model_signature.ParamSpec(name="invert", dtype=model_signature.DataType.BOOL, default_value=False),
+                model_signature.ParamSpec(name="prefix", dtype=model_signature.DataType.STRING, default_value="row"),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pk = self._package_and_load(tmpdir, EchoParamsModel(), mlflow_sig, snowml_sig)
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            # Defaults: scale=1.0, offset=0.0, invert=False, repeat=1, prefix="row".
+            res_default = predict_method(self.INPUT_DF)
+            np.testing.assert_allclose(res_default["value"].to_numpy(), self.INPUT_DF["feature"].to_numpy())
+            self.assertListEqual(res_default["label"].tolist(), ["row:1"] * len(self.INPUT_DF))
+
+            # All param types forwarded together; ``invert=True`` flips offset sign.
+            res_custom = predict_method(
+                self.INPUT_DF,
+                scale=2.0,
+                offset=0.5,
+                repeat=3,
+                invert=True,
+                prefix="custom",
+            )
+            np.testing.assert_allclose(
+                res_custom["value"].to_numpy(),
+                self.INPUT_DF["feature"].to_numpy() * 2.0 - 0.5,
+            )
+            self.assertListEqual(res_custom["label"].tolist(), ["custom:3"] * len(self.INPUT_DF))
+
+    def test_mlflow_python_model_with_array_shaped_param(self) -> None:
+        """A list-shaped param (variable-length array of doubles) is forwarded as a list."""
+
+        class WeightedSumModel(mlflow.pyfunc.PythonModel):
+            def predict(self, context, model_input, params=None):  # type: ignore[no-untyped-def]
+                weights = (params or {}).get("weights", [1.0])
+                weight_sum = float(sum(weights))
+                feature = model_input["feature"].to_numpy()
+                return pd.DataFrame({"feature": feature * weight_sum})
+
+        mlflow_sig = mlflow.models.ModelSignature(
+            inputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            outputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            params=mlflow.types.ParamSchema(
+                [mlflow.types.ParamSpec("weights", mlflow.types.DataType.double, [1.0], (-1,))]
+            ),
+        )
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            params=[
+                model_signature.ParamSpec(
+                    name="weights",
+                    dtype=model_signature.DataType.DOUBLE,
+                    default_value=[1.0],
+                    shape=(-1,),
+                ),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pk = self._package_and_load(tmpdir, WeightedSumModel(), mlflow_sig, snowml_sig)
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            # Default weights=[1.0] → sum=1.0 → output equals input.
+            res_default = predict_method(self.INPUT_DF)
+            np.testing.assert_allclose(res_default["feature"].to_numpy(), self.INPUT_DF["feature"].to_numpy())
+
+            # Override with a longer list of weights; sum=6.0 reaches the model.
+            res_custom = predict_method(self.INPUT_DF, weights=[1.0, 2.0, 3.0])
+            np.testing.assert_allclose(
+                res_custom["feature"].to_numpy(),
+                self.INPUT_DF["feature"].to_numpy() * 6.0,
+            )
+
+    def test_mlflow_python_model_with_none_default_param(self) -> None:
+        """A snowml ParamSpec with default_value=None round-trips through save/load and forwards values when passed."""
+
+        class OptionalThresholdModel(mlflow.pyfunc.PythonModel):
+            def predict(self, context, model_input, params=None):  # type: ignore[no-untyped-def]
+                threshold = (params or {}).get("threshold", 0.0)
+                feature = model_input["feature"].to_numpy()
+                return pd.DataFrame({"feature": feature + float(threshold)})
+
+        # MLflow ParamSchema needs a concrete default for type inference; snowml allows None
+        # to indicate "no semantic default".
+        mlflow_sig = mlflow.models.ModelSignature(
+            inputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            outputs=mlflow.types.Schema([mlflow.types.ColSpec(mlflow.types.DataType.double, "feature")]),
+            params=mlflow.types.ParamSchema([mlflow.types.ParamSpec("threshold", mlflow.types.DataType.double, 0.0)]),
+        )
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            params=[
+                model_signature.ParamSpec(name="threshold", dtype=model_signature.DataType.DOUBLE, default_value=None),
+            ],
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pk = self._package_and_load(tmpdir, OptionalThresholdModel(), mlflow_sig, snowml_sig)
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            assert pk.meta is not None
+            loaded_sig = pk.meta.signatures["predict"]
+            self.assertEqual(len(loaded_sig.params), 1)
+            param = loaded_sig.params[0]
+            assert isinstance(param, model_signature.ParamSpec)
+            self.assertEqual(param.name, "threshold")
+            self.assertIsNone(param.default_value)
+
+            # Omitting the kwarg falls back to MLflow's concrete default (0.0).
+            res_default = predict_method(self.INPUT_DF)
+            np.testing.assert_allclose(res_default["feature"].to_numpy(), self.INPUT_DF["feature"].to_numpy())
+
+            # Explicit value reaches the model.
+            res_custom = predict_method(self.INPUT_DF, threshold=10.0)
+            np.testing.assert_allclose(
+                res_custom["feature"].to_numpy(),
+                self.INPUT_DF["feature"].to_numpy() + 10.0,
+            )
+
+    def test_handler_forwards_dict_kwarg_through_params(self) -> None:
+        """Wrapper-level test: a dict-typed kwarg is bundled verbatim into MLflow's ``params`` dict.
+
+        This bypasses MLflow's runtime signature enforcement (which in MLflow 2.x cannot represent
+        ``Object``/dict params) and directly verifies the contract of our handler change: any
+        ``**method_kwargs`` reach ``raw_model.predict(X, params=...)`` unchanged, regardless of
+        each value's Python type. Once the conda env moves to MLflow 3.x, an end-to-end variant
+        with a real ``ParamSchema([ParamSpec("config", Object([...]), ...)])`` can replace this.
+        """
+        raw_model_mock = mock.MagicMock(spec=mlflow.pyfunc.PyFuncModel)
+        raw_model_mock.predict.return_value = pd.DataFrame({"feature": [10.0, 20.0, 30.0]})
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            params=[
+                model_signature.ParamGroupSpec(
+                    name="config",
+                    specs=[
+                        model_signature.ParamSpec(
+                            name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0
+                        ),
+                        model_signature.ParamSpec(
+                            name="label", dtype=model_signature.DataType.STRING, default_value="default"
+                        ),
+                    ],
+                    default_value={"scale": 1.0, "label": "default"},
+                ),
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+            ],
+        )
+
+        model_meta_mock = mock.MagicMock()
+        model_meta_mock.signatures = {"predict": snowml_sig}
+
+        custom = mlflow_handler.MLFlowHandler.convert_as_custom_model(raw_model_mock, model_meta_mock)
+        predict_method = getattr(custom, "predict", None)
+        assert callable(predict_method)
+
+        # No kwargs → wrapper preserves the legacy ``raw_model.predict(X)`` call shape (no ``params=``).
+        predict_method(self.INPUT_DF)
+        no_kwargs_call = raw_model_mock.predict.call_args_list[-1]
+        self.assertNotIn("params", no_kwargs_call.kwargs)
+        pd.testing.assert_frame_equal(no_kwargs_call.args[0], self.INPUT_DF)
+
+        # Mixed kwargs (dict + scalar) → both reach ``params=`` unchanged, preserving types.
+        config_value = {"scale": 3.0, "label": "custom"}
+        predict_method(self.INPUT_DF, config=config_value, temperature=2.0)
+        mixed_call = raw_model_mock.predict.call_args_list[-1]
+        pd.testing.assert_frame_equal(mixed_call.args[0], self.INPUT_DF)
+        self.assertEqual(mixed_call.kwargs["params"], {"config": config_value, "temperature": 2.0})
+        # The dict value must be the exact object the caller passed, not a coerced copy.
+        self.assertIs(mixed_call.kwargs["params"]["config"], config_value)
+
+    def test_handler_drops_none_valued_kwargs_before_forwarding(self) -> None:
+        """Wrapper-level test: None-valued kwargs are filtered before ``raw_model.predict``.
+
+        snowml ``ParamSpec(default_value=None)`` produces ``method_kwargs[name] = None`` when
+        the caller omits the param. Filtering routes that into MLflow's "key absent -> schema
+        default" path; MLflow has no runtime semantic for None in a typed ``ParamSchema``.
+        """
+        raw_model_mock = mock.MagicMock(spec=mlflow.pyfunc.PyFuncModel)
+        raw_model_mock.predict.return_value = pd.DataFrame({"feature": [10.0, 20.0, 30.0]})
+
+        snowml_sig = model_signature.ModelSignature(
+            inputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            outputs=[model_signature.FeatureSpec(name="feature", dtype=model_signature.DataType.DOUBLE)],
+            params=[
+                model_signature.ParamSpec(name="scale", dtype=model_signature.DataType.DOUBLE, default_value=1.0),
+                model_signature.ParamSpec(name="threshold", dtype=model_signature.DataType.DOUBLE, default_value=None),
+            ],
+        )
+
+        model_meta_mock = mock.MagicMock()
+        model_meta_mock.signatures = {"predict": snowml_sig}
+
+        custom = mlflow_handler.MLFlowHandler.convert_as_custom_model(raw_model_mock, model_meta_mock)
+        predict_method = getattr(custom, "predict", None)
+        assert callable(predict_method)
+
+        # Mixed concrete + ``None``: only the concrete value reaches MLflow.
+        predict_method(self.INPUT_DF, scale=2.0, threshold=None)
+        mixed_call = raw_model_mock.predict.call_args_list[-1]
+        self.assertEqual(mixed_call.kwargs["params"], {"scale": 2.0})
+        self.assertNotIn("threshold", mixed_call.kwargs["params"])
+
+        # All-``None``: wrapper falls back to the legacy ``raw_model.predict(X)`` call shape so
+        # MLflow's ``ParamSchema`` defaults apply uniformly (no empty ``params={}`` is forwarded).
+        predict_method(self.INPUT_DF, scale=None, threshold=None)
+        all_none_call = raw_model_mock.predict.call_args_list[-1]
+        self.assertNotIn("params", all_none_call.kwargs)
+        pd.testing.assert_frame_equal(all_none_call.args[0], self.INPUT_DF)
 
 
 if __name__ == "__main__":

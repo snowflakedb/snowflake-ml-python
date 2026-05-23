@@ -815,7 +815,7 @@ class ModelEnvTest(absltest.TestCase):
         Modern pip packages (XGBoost >= 2.0, TensorFlow >= 2.x) include GPU support,
         No need for substitutions on the pip path.
         """
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             # XGBoost pip-only: should NOT substitute to py-xgboost-gpu
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["xgboost>=2.0.0"]
@@ -855,7 +855,7 @@ class ModelEnvTest(absltest.TestCase):
         # Should substitute to py-xgboost-gpu in conda_dependencies
         self.assertListEqual(env.conda_dependencies, ["py-xgboost-gpu>=1.0.0"])
 
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", False):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=False):
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["xgboost>=1.0.0"]
             env.cuda_version = "11.7"
@@ -866,7 +866,7 @@ class ModelEnvTest(absltest.TestCase):
 
     def test_save_as_dict_gpu_pytorch_has_extra_index_url(self) -> None:
         """Test that packaged GPU PyTorch model has correct extra index URL in requirements.txt."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
             env.cuda_version = "12.4"
@@ -890,7 +890,7 @@ class ModelEnvTest(absltest.TestCase):
 
     def test_save_as_dict_cpu_pytorch_no_extra_index_url(self) -> None:
         """Test that packaged CPU PyTorch model does NOT have extra index URL."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             env = model_env.ModelEnv(prefer_pip_for_automatic_dependencies=True)
             env.pip_requirements = ["torch==2.5.0", "numpy>=1.0"]
             env.cuda_version = "12.4"  # Has cuda_version but is_gpu=False
@@ -1474,10 +1474,7 @@ class ModelEnvTest(absltest.TestCase):
             env = model_env.ModelEnv()
             env.pip_requirements = ["requests>=2.28.0", "pandas>=1.0.0"]
 
-            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
-            try:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = True
-
+            with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
                 result = env.save_as_dict(pathlib.Path(tmpdir))
 
                 self.assertIn("pip", result)
@@ -1489,9 +1486,6 @@ class ModelEnvTest(absltest.TestCase):
                 conda_file = pathlib.Path(tmpdir) / env.conda_env_rel_path
                 self.assertFalse(conda_file.exists())
 
-            finally:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
-
     def test_pip_only_packaging_with_conda_deps_still_creates_conda_yml(self) -> None:
         """Test that conda.yml is created when there are conda deps, with pip-only flag."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1499,11 +1493,7 @@ class ModelEnvTest(absltest.TestCase):
             env.pip_requirements = ["requests>=2.28.0"]
             env.conda_dependencies = ["numpy>=1.20.0"]  # Has conda deps
 
-            # Enable pip-only packaging
-            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
-            try:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = True
-
+            with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
                 result = env.save_as_dict(pathlib.Path(tmpdir))
 
                 # BOTH conda and pip
@@ -1514,9 +1504,6 @@ class ModelEnvTest(absltest.TestCase):
                 pip_file = pathlib.Path(tmpdir) / env.pip_requirements_rel_path
                 self.assertTrue(conda_file.exists())
                 self.assertTrue(pip_file.exists())
-
-            finally:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
 
     def test_pip_only_packaging_disabled_always_creates_conda_yml(self) -> None:
         """Test that conda.yml is always created when pip-only packaging is disabled."""
@@ -1524,10 +1511,7 @@ class ModelEnvTest(absltest.TestCase):
             env = model_env.ModelEnv()
             env.pip_requirements = ["requests>=2.28.0"]
 
-            original_flag = model_env._ENABLE_PIP_ONLY_PACKAGING
-            try:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = False
-
+            with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=False):
                 result = env.save_as_dict(pathlib.Path(tmpdir))
 
                 # BOTH conda and pip
@@ -1538,9 +1522,6 @@ class ModelEnvTest(absltest.TestCase):
                 pip_file = pathlib.Path(tmpdir) / env.pip_requirements_rel_path
                 self.assertTrue(conda_file.exists())
                 self.assertTrue(pip_file.exists())
-
-            finally:
-                model_env._ENABLE_PIP_ONLY_PACKAGING = original_flag
 
     def test_load_from_dict_pip_only(self) -> None:
         """Test loading from dict with only pip path (no conda)."""

@@ -7,8 +7,8 @@ from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import Feature, RollupConfig
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -581,7 +581,7 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
     # =========================================================================
 
     def test_rollup_approx_count_distinct_aggregation(self) -> None:
-        """Test APPROX_COUNT_DISTINCT is correctly rolled up via HLL_COMBINE."""
+        """Test APPROX_COUNT_DISTINCT is correctly rolled up via DATASKETCHES_HLL_COMBINE."""
         fs = self._create_feature_store()
 
         visitor_entity = self._create_visitor_entity()

@@ -2,15 +2,16 @@
 
 This module provides:
 - ``StreamConfig``: User-facing dataclass for defining streaming feature view configuration.
-- ``_validate_imports``: AST-based validation of transformation function imports.
 - ``_infer_structtype_from_pandas``: Pandas dtype to Snowpark StructType inference.
 - ``_snowpark_type_to_sql``: Snowpark DataType to SQL DDL string conversion (shared utility).
-- ``ALLOWED_MODULES``: Set of modules permitted in transformation functions.
+
+The transformation function is validated via the shared
+:mod:`snowflake.ml.feature_store._compute_fn_validation` module so the SFV
+and RTFV registration paths enforce the same policy.
 """
 
 from __future__ import annotations
 
-import ast
 import datetime
 import inspect
 import textwrap
@@ -19,6 +20,10 @@ from typing import Any, Callable, Optional, Union
 
 import pandas as pd
 
+from snowflake.ml.feature_store._compute_fn_validation import (
+    validate_compute_fn_callable,
+    validate_compute_fn_source,
+)
 from snowflake.snowpark.types import (
     BooleanType,
     DataType,
@@ -29,62 +34,6 @@ from snowflake.snowpark.types import (
     StructType,
     TimestampType,
 )
-
-ALLOWED_MODULES: set[str] = {"numpy", "pandas", "re", "copy"}
-
-_DANGEROUS_BUILTINS = frozenset({"__import__", "eval", "exec", "compile"})
-
-
-def _validate_imports(source: str, allowed: set[str]) -> None:
-    """Best-effort validation that imports in source code are from the allowed set.
-
-    Uses AST parsing to walk the source code and check every ``import`` and
-    ``from ... import`` statement.  Only the top-level package name is checked
-    (e.g., ``import numpy.linalg`` checks ``numpy``).
-
-    Also detects dynamic import/execution mechanisms: ``__import__``,
-    ``importlib``, ``eval``, ``exec``, and ``compile``.
-
-    Note: This is a heuristic check based on static analysis. It cannot catch
-    all possible import mechanisms (e.g., ``getattr(builtins, '__import__')``
-    or obfuscated code). It is intended as a guardrail, not a security sandbox.
-
-    Args:
-        source: Plain-text Python source code.
-        allowed: Set of permitted top-level module names.
-
-    Raises:
-        ValueError: If a disallowed import or dangerous builtin call is found.
-    """
-    tree = ast.parse(textwrap.dedent(source))
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                module = alias.name.split(".")[0]
-                if module not in allowed:
-                    raise ValueError(
-                        f"Import '{alias.name}' is not allowed in transformation_fn. "
-                        f"Allowed modules: {sorted(allowed)}"
-                    )
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                module = node.module.split(".")[0]
-                if module not in allowed:
-                    raise ValueError(
-                        f"Import from '{node.module}' is not allowed in transformation_fn. "
-                        f"Allowed modules: {sorted(allowed)}"
-                    )
-        elif isinstance(node, ast.Call):
-            func_name = None
-            if isinstance(node.func, ast.Name):
-                func_name = node.func.id
-            elif isinstance(node.func, ast.Attribute):
-                func_name = node.func.attr
-            if func_name in _DANGEROUS_BUILTINS:
-                raise ValueError(
-                    f"Use of '{func_name}()' is not allowed in transformation_fn. "
-                    f"Dynamic code execution and imports are forbidden."
-                )
 
 
 def _infer_structtype_from_pandas(pdf: pd.DataFrame) -> StructType:
@@ -170,10 +119,13 @@ class StreamConfig:
     """Configuration for streaming feature views.
 
     A ``StreamConfig`` bundles a registered ``StreamSource`` (or its name), a
-    transformation function, and backfill data into a single configuration.  The
-    function is validated at construction time: its source code must be extractable
-    via ``inspect.getsource`` and may only import from the allowed set
-    (``numpy``, ``pandas``, ``re``, ``copy``).
+    transformation function, and backfill data into a single configuration. The
+    function is validated at construction time against the shared
+    :mod:`snowflake.ml.feature_store._compute_fn_validation` policy: its source
+    must be extractable via ``inspect.getsource``, must contain a single
+    top-level named ``def`` (no nested ``def`` / lambda), may only import from
+    the allowed set (``numpy``, ``pandas``, ``re``, ``copy``), and may only
+    reference free names that live in the runtime namespace.
 
     Args:
         stream_source: A ``StreamSource`` object or the string name of a
@@ -242,7 +194,7 @@ class StreamConfig:
 
         # 3. Source code must be extractable via inspect
         try:
-            source = inspect.getsource(fn)
+            source = textwrap.dedent(inspect.getsource(fn))
         except (OSError, TypeError) as e:
             raise ValueError(
                 "Cannot extract source code from transformation_fn. "
@@ -251,8 +203,9 @@ class StreamConfig:
                 f"are not supported: {e}"
             ) from e
 
-        # 4. Validate imports against allowed modules
-        _validate_imports(source, ALLOWED_MODULES)
+        # 4. Shared compute_fn policy: imports + AST + closure-vars layers.
+        validate_compute_fn_source(source, kind="streaming feature view")
+        validate_compute_fn_callable(fn, kind="streaming feature view")
 
         # 5. backfill_df must be provided
         if self.backfill_df is None:

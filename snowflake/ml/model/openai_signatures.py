@@ -1,5 +1,45 @@
 from snowflake.ml.model._signatures import core
 
+# OpenAI/vLLM structured outputs response_format:
+# https://github.com/openai/openai-python/blob/ef00216846515033e4cf73ab3227e91386d958ba/src/openai/types/shared/response_format_json_schema.py#L45
+# {type: "json_schema", json_schema: {name, description?, schema: <JSON Schema dict>, strict?}}
+# The inner `schema` is arbitrary JSON, modeled as DataType.OBJECT (Snowpark MapType<String, Variant>).
+_RESPONSE_FORMAT_FEATURE_SPEC = core.FeatureGroupSpec(
+    name="response_format",
+    specs=[
+        core.FeatureSpec(name="type", dtype=core.DataType.STRING),
+        core.FeatureGroupSpec(
+            name="json_schema",
+            specs=[
+                core.FeatureSpec(name="name", dtype=core.DataType.STRING),
+                core.FeatureSpec(name="description", dtype=core.DataType.STRING),
+                core.FeatureSpec(name="schema", dtype=core.DataType.OBJECT),
+                core.FeatureSpec(name="strict", dtype=core.DataType.BOOL),
+            ],
+        ),
+    ],
+)
+
+# ParamGroupSpec mirror of _RESPONSE_FORMAT_FEATURE_SPEC for the ParamSpec-based signatures.
+_RESPONSE_FORMAT_PARAM_SPEC = core.ParamGroupSpec(
+    name="response_format",
+    default_value=None,
+    specs=[
+        core.ParamSpec(name="type", dtype=core.DataType.STRING, default_value="json_schema"),
+        core.ParamGroupSpec(
+            name="json_schema",
+            default_value=None,
+            specs=[
+                core.ParamSpec(name="name", dtype=core.DataType.STRING, default_value=""),
+                core.ParamSpec(name="description", dtype=core.DataType.STRING, default_value=None),
+                core.ParamSpec(name="schema", dtype=core.DataType.OBJECT, default_value=None),
+                core.ParamSpec(name="strict", dtype=core.DataType.BOOL, default_value=None),
+            ],
+        ),
+    ],
+)
+
+
 _OPENAI_CHAT_SIGNATURE_SPEC = core.ModelSignature(
     inputs=[
         core.FeatureGroupSpec(
@@ -54,6 +94,7 @@ _OPENAI_CHAT_SIGNATURE_SPEC = core.ModelSignature(
         core.FeatureSpec(name="top_p", dtype=core.DataType.DOUBLE),
         core.FeatureSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE),
         core.FeatureSpec(name="presence_penalty", dtype=core.DataType.DOUBLE),
+        _RESPONSE_FORMAT_FEATURE_SPEC,
     ],
     outputs=[
         core.FeatureSpec(name="id", dtype=core.DataType.STRING),
@@ -175,6 +216,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC = core.ModelSignature(
         core.ParamSpec(name="top_p", dtype=core.DataType.DOUBLE, default_value=1.0),
         core.ParamSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         core.ParamSpec(name="presence_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
+        _RESPONSE_FORMAT_PARAM_SPEC,
     ],
 )
 
@@ -198,6 +240,7 @@ _OPENAI_CHAT_SIGNATURE_SPEC_WITH_CONTENT_FORMAT_STRING = core.ModelSignature(
         core.FeatureSpec(name="top_p", dtype=core.DataType.DOUBLE),
         core.FeatureSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE),
         core.FeatureSpec(name="presence_penalty", dtype=core.DataType.DOUBLE),
+        _RESPONSE_FORMAT_FEATURE_SPEC,
     ],
     outputs=[
         core.FeatureSpec(name="id", dtype=core.DataType.STRING),
@@ -285,6 +328,7 @@ _OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC_WITH_CONTENT_FORMAT_STRING = core.ModelS
         core.ParamSpec(name="top_p", dtype=core.DataType.DOUBLE, default_value=1.0),
         core.ParamSpec(name="frequency_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
         core.ParamSpec(name="presence_penalty", dtype=core.DataType.DOUBLE, default_value=0.0),
+        _RESPONSE_FORMAT_PARAM_SPEC,
     ],
 )
 

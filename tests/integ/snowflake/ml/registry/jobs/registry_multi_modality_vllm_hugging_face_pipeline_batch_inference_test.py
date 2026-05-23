@@ -59,9 +59,12 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
     def test_audio_with_vllm(self) -> None:
         # from transformers import pipeline
 
-        # TODO: update the task to "audio-to-text"
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-Audio-7B-Instruct", task="text-generation", trust_remote_code=True
+            model="Qwen/Qwen2-Audio-7B-Instruct",
+            task="audio-text-to-text",
+            trust_remote_code=True,
+            compute_pool_for_log=None,
         )
 
         (
@@ -144,13 +147,12 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm(self) -> None:
-        if not self._has_image_override():
-            self.skipTest(
-                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
-                "so the ray_orchestrator image carries that fix."
-            )
-        # TODO: change to correct task type
-        model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation")
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
+        model = huggingface.TransformersPipeline(
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
+        )
 
         (
             job_name,
@@ -237,13 +239,12 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm_multi_replica(self) -> None:
-        if not self._has_image_override():
-            self.skipTest(
-                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
-                "so the ray_orchestrator image carries that fix."
-            )
-        # TODO: change to correct task type
-        model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation")
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
+        model = huggingface.TransformersPipeline(
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
+        )
 
         (
             job_name,
@@ -339,9 +340,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_mljob_get_logs_on_vllm(self) -> None:
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B",
+            compute_pool_for_log=None,
         )
 
         (

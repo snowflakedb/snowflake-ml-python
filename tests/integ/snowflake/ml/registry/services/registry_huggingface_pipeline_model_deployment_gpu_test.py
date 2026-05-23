@@ -7,10 +7,10 @@ from typing import Any, Optional
 import pandas as pd
 import pytest
 from absl.testing import absltest, parameterized
+from pydantic import BaseModel
 
 from snowflake.ml.model import openai_signatures
 from snowflake.ml.model._packager.model_env import model_env
-from snowflake.ml.model._signatures import core as signature_core
 from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface, huggingface_pipeline
 from tests.integ.snowflake.ml.registry.services import (
@@ -371,60 +371,17 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
         REST flat, wide, split, and records are exercised via ``RestInferencePayloadFormat``.
 
         Requires the updated proxy image that handles response_format.
-        Skipped when image override is not set.
         """
-        if not self._has_image_override():
-            self.skipTest("Skipping structured output test — image override not set")
 
-        # Build a params-based signature with response_format appended
-        params_with_response_format = list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.params) + [
-            signature_core.ParamGroupSpec(
-                name="response_format",
-                default_value=None,
-                specs=[
-                    signature_core.ParamSpec(
-                        name="type", dtype=signature_core.DataType.STRING, default_value="json_schema"
-                    ),
-                    signature_core.ParamGroupSpec(
-                        name="json_schema",
-                        default_value=None,
-                        specs=[
-                            signature_core.ParamSpec(
-                                name="name", dtype=signature_core.DataType.STRING, default_value=""
-                            ),
-                            signature_core.ParamSpec(
-                                name="description", dtype=signature_core.DataType.STRING, default_value=None
-                            ),
-                            signature_core.ParamSpec(
-                                name="schema", dtype=signature_core.DataType.OBJECT, default_value=None
-                            ),
-                            signature_core.ParamSpec(
-                                name="strict", dtype=signature_core.DataType.BOOL, default_value=None
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ]
-
-        signature_with_rf = signature_core.ModelSignature(
-            inputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.inputs),
-            outputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.outputs),
-            params=params_with_response_format,
-        )
+        class CityCountry(BaseModel):
+            city: str
+            country: str
 
         response_format = {
             "type": "json_schema",
             "json_schema": {
-                "name": "capital-city",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string"},
-                        "country": {"type": "string"},
-                    },
-                    "required": ["city", "country"],
-                },
+                "name": "city_country",
+                "schema": CityCountry.model_json_schema(),
             },
         }
 
@@ -459,7 +416,7 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
 
         self._test_registry_model_deployment(
             model=huggingface.TransformersPipeline(
-                task="text-generation",
+                task="image-text-to-text",
                 model="google/gemma-4-E2B-it",
                 compute_pool_for_log=None,
             ),
@@ -470,7 +427,6 @@ class TestRegistryHuggingFacePipelineDeploymentGPUModelInteg(
                 ),
             },
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
-            signatures={"__call__": signature_with_rf},
             service_compute_pool=self._TEST_GPU_COMPUTE_POOL,
             params={"response_format": response_format},
             rest_inference_formats=(

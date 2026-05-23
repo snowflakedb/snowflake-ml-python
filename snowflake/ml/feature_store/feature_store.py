@@ -12,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Iterable,
     Literal,
     NamedTuple,
     Optional,
@@ -22,7 +23,6 @@ from typing import (
 )
 
 import packaging.version as pkg_version
-from pytimeparse.timeparse import timeparse
 from typing_extensions import Concatenate, ParamSpec
 
 import snowflake.ml.feature_store.feature_view as fv_mod
@@ -45,8 +45,11 @@ from snowflake.ml._internal.utils.sql_identifier import (
 from snowflake.ml.dataset.dataset_metadata import FeatureStoreMetadata
 from snowflake.ml.feature_store import (
     feature_group as fg_mod,
+    feature_view_append_only_validation,
+    feature_view_refresh_freq,
     online_service,
     online_service_http_client,
+    realtime_dataset as rtfv_dataset,
 )
 from snowflake.ml.feature_store.entity import _ENTITY_NAME_LENGTH_LIMIT, Entity
 from snowflake.ml.feature_store.feature_group import FeatureGroup
@@ -54,6 +57,7 @@ from snowflake.ml.feature_store.feature_view import (
     _FEATURE_OBJ_TYPE,
     _FEATURE_VIEW_NAME_DELIMITER,
     _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS,
+    _ONLINE_TABLE_SUFFIX,
     FeatureView,
     FeatureViewSlice,
     FeatureViewStatus,
@@ -69,6 +73,10 @@ from snowflake.ml.feature_store.metadata_manager import (
     FeatureStoreMetadataManager,
     MetadataObjectType,
     MetadataType,
+    RealtimeConfigMetadata,
+)
+from snowflake.ml.feature_store.spec import (
+    table_schema_evolution as fs_table_schema_evolution,
 )
 from snowflake.ml.feature_store.spec.builder import (
     BatchSource,
@@ -99,6 +107,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     ArrayType,
+    DataType,
     StringType,
     StructField,
     StructType,
@@ -201,6 +210,35 @@ def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
 _ENTITY_TAG_PREFIX = "SNOWML_FEATURE_STORE_ENTITY_"
 _FEATURE_STORE_OBJECT_TAG = "SNOWML_FEATURE_STORE_OBJECT"
 _FEATURE_VIEW_METADATA_TAG = "SNOWML_FEATURE_VIEW_METADATA"
+_SNAPSHOT_STATUS_TABLE = "SNOWML_SNAPSHOT_STATUS"
+# Sentinel value to distinguish "caller didn't pass refresh_freq" from "caller explicitly
+# passed refresh_freq=None".  This is needed because None is a valid value for refresh_freq
+# (it means "remove the schedule"), so we cannot use None as the default to detect whether the
+# caller provided the argument.  Using a unique object() instance lets update_feature_view
+# skip refresh_freq handling entirely when the caller omits it, while still accepting None
+# as an intentional value — preserving backward compatibility with callers that never set it.
+_UNSET: Any = object()
+
+
+def _sql_string_literal(value: str) -> str:
+    """Quote a string for safe inclusion as a Snowflake DDL string literal.
+
+    Doubles embedded single quotes (the Snowflake convention for escaping
+    inside single-quoted literals) and wraps the result in single quotes so
+    callers cannot forget the surrounding quotes. Use this everywhere a
+    user-controlled string is interpolated into a single-quoted SQL literal
+    such as ``COMMENT = ...`` or ``ALLOWED_VALUES ...`` — Snowflake DDL does
+    not accept ``?`` bind parameters in those positions, so quote-doubling
+    is the only safe option.
+
+    Args:
+        value: Raw string to escape.
+
+    Returns:
+        ``'<value with `'` doubled>'`` — already quoted, ready to drop into
+        SQL with no surrounding quotes at the call site.
+    """
+    return "'" + value.replace("'", "''") + "'"
 
 
 @dataclass(frozen=True)
@@ -235,8 +273,11 @@ class _FeatureStoreObjTypes(Enum):
     TRAINING_DATA = "TRAINING_DATA"
     ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
     UDF_TRANSFORMED_TABLE = "UDF_TRANSFORMED_TABLE"
+    SNAPSHOT_TABLE = "SNAPSHOT_TABLE"
     INTERNAL_METADATA_TABLE = "INTERNAL_METADATA_TABLE"
     FEATURE_GROUP = "FEATURE_GROUP"
+    # Online feature table backing a RealtimeFeatureView (OFT-only, no DT/View).
+    REALTIME_FEATURE_VIEW = "REALTIME_FEATURE_VIEW"
 
     @classmethod
     def parse(cls, val: str) -> _FeatureStoreObjTypes:
@@ -244,6 +285,20 @@ class _FeatureStoreObjTypes(Enum):
             return cls(val)
         except ValueError:
             return cls.UNKNOWN
+
+
+class _MaterializedResourceKind(Enum):
+    """High-level kinds of resources materialized by feature_view registration / update.
+
+    Distinct from `_FeatureStoreObjTypes` (which labels persisted Snowflake object tags):
+    these are the in-memory categories used by the materialization flow to label
+    compensating-action stacks and to make rollback ordering explicit.
+    """
+
+    OFFLINE_FEATURE_VIEW = "OFFLINE_FEATURE_VIEW"  # Dynamic Table or VIEW
+    ONLINE_FEATURE_TABLE = "ONLINE_FEATURE_TABLE"
+    REFRESH_TASK = "REFRESH_TASK"
+    SNAPSHOT_SCHEMA_EVOLUTION = "SNAPSHOT_SCHEMA_EVOLUTION"
 
 
 _PROJECT = "FeatureStore"
@@ -267,6 +322,7 @@ _DT_INITIALIZE_PATTERN = re.compile(
 )
 
 # _LIST_FEATURE_VIEW_SCHEMA acts as a metadata blueprint for columns in the DataFrame.
+# ``kind`` is the per-row discriminator: BATCH / STREAMING / REALTIME.
 _LIST_FEATURE_VIEW_SCHEMA = StructType(
     [
         StructField("name", StringType()),
@@ -285,8 +341,15 @@ _LIST_FEATURE_VIEW_SCHEMA = StructType(
         StructField("online_config", StringType()),
         StructField("storage_config", StringType()),
         StructField("stream_config", StringType()),
+        StructField("kind", StringType()),
     ]
 )
+
+
+# Per-row kind discriminator emitted by ``list_feature_views``.
+_FV_KIND_BATCH = "BATCH"
+_FV_KIND_STREAMING = "STREAMING"
+_FV_KIND_REALTIME = "REALTIME"
 
 
 # Default storage config JSON strings for list_feature_views output
@@ -396,9 +459,38 @@ def dispatch_decorator(
     return decorator
 
 
+def _read_feature_view_is_realtime(*args: Any, **kwargs: Any) -> bool:
+    """True iff the call is an RTFV read.
+
+    Drives the warehouse-switch and telemetry-skip predicates, so order matters:
+    when a ``FeatureView`` argument is present we use its ``is_realtime_feature_view`` flag
+    directly (a non-RTFV with ``request_context`` must not skip telemetry). The
+    string-form ``read_feature_view("name", "v1", ...)`` falls back to the
+    ``request_context``-presence heuristic, since there is no FV object to
+    inspect without a metadata round-trip.
+
+    Args:
+        *args: Positional arguments to ``read_feature_view``; ``args[1]`` (if present)
+            is the ``feature_view`` parameter.
+        **kwargs: Keyword arguments to ``read_feature_view``; ``feature_view`` and
+            ``request_context`` are consulted.
+
+    Returns:
+        True if this call should be dispatched to the RealtimeFeatureView read path.
+    """
+    feature_view = kwargs.get("feature_view") if "feature_view" in kwargs else (args[1] if len(args) > 1 else None)
+    if isinstance(feature_view, FeatureView):
+        return feature_view.is_realtime_feature_view
+    return kwargs.get("request_context") is not None
+
+
 def _predicate_read_feature_view_skip_wh_switch(*args: Any, **kwargs: Any) -> bool:
-    """Skip warehouse switch when opted-in or targeting a Postgres online read (uses HTTP, not a warehouse)."""
+    """Skip warehouse switch when opted-in or targeting an HTTP-only path (Postgres online / RTFV)."""
     if bool(kwargs.get("use_session_warehouse", False)):
+        return True
+    # RTFVs ignore store_type and always use the Query API; skip regardless of the
+    # store_type kwarg so the public OFFLINE default doesn't incur warehouse churn.
+    if _read_feature_view_is_realtime(*args, **kwargs):
         return True
     if _get_store_type(kwargs.get("store_type", fv_mod.StoreType.OFFLINE)) != fv_mod.StoreType.ONLINE:
         return False
@@ -411,6 +503,10 @@ def _predicate_read_feature_view_skip_wh_switch(*args: Any, **kwargs: Any) -> bo
 
 
 def _predicate_read_feature_view_skip_telemetry(*args: Any, **kwargs: Any) -> bool:
+    # RTFV reads are HTTP-only and latency-sensitive; skip the SQL telemetry wrapper
+    # the same way the ONLINE path does, regardless of the caller's store_type.
+    if _read_feature_view_is_realtime(*args, **kwargs):
+        return True
     return _get_store_type(kwargs.get("store_type", fv_mod.StoreType.OFFLINE)) == fv_mod.StoreType.ONLINE
 
 
@@ -444,6 +540,7 @@ class FeatureStore:
         *,
         creation_mode: CreationMode = CreationMode.FAIL_IF_NOT_EXIST,
         default_iceberg_external_volume: Optional[str] = None,
+        online_service_access: Optional[online_service.OnlineServiceAccess] = None,
     ) -> None:
         """
         Creates a FeatureStore instance.
@@ -458,6 +555,9 @@ class FeatureStore:
                 resources include schema and tags. Note database must already exist in either mode.
             default_iceberg_external_volume: Default external volume for Iceberg-backed Feature Views. If set,
                 Feature Views using StorageFormat.ICEBERG can omit external_volume in their StorageConfig.
+            online_service_access: Override the URL the Online Service is reached on. Defaults to
+                auto-routing: PrivateLink when the account advertises it, otherwise public; SPCS-internal
+                when running inside SPCS.
 
         Raises:
             SnowflakeMLException: [ValueError] default_warehouse does not exist.
@@ -497,6 +597,17 @@ class FeatureStore:
 
         self._telemetry_stmp = telemetry.get_function_usage_statement_params(_PROJECT)
         self._session: Session = session
+        if online_service_access is not None and not isinstance(
+            online_service_access, online_service.OnlineServiceAccess
+        ):
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=TypeError(
+                    "online_service_access must be an OnlineServiceAccess member or None, "
+                    f"got {type(online_service_access).__name__}."
+                ),
+            )
+        self._online_service_access = online_service_access
         self._config = _FeatureStoreConfig(
             database=database,
             schema=name,
@@ -542,6 +653,7 @@ class FeatureStore:
                         statement_params=self._telemetry_stmp
                     )
                 # Metadata table for aggregation configs is created lazily by metadata manager
+                # Snapshot status table is created lazily by _ensure_snapshot_status_table_exists
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
@@ -551,7 +663,9 @@ class FeatureStore:
         self._online_http_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
         logger.info(f"Successfully connected to feature store: {self._config.full_schema_path}.")
 
-    def _get_or_create_online_http_client(self) -> online_service_http_client.OnlineServiceHttpClient:
+    def _get_or_create_online_http_client(
+        self,
+    ) -> online_service_http_client.OnlineServiceHttpClient:
         """Return the FeatureStore-scoped HTTP client, creating it on first use."""
         if self._online_http_client is None:
             self._online_http_client = online_service_http_client.OnlineServiceHttpClient()
@@ -643,8 +757,8 @@ class FeatureStore:
         try:
             self._session.sql(
                 f"""CREATE TAG IF NOT EXISTS {full_tag_name}
-                    ALLOWED_VALUES '{join_keys_str}'
-                    COMMENT = '{entity.desc}'
+                    ALLOWED_VALUES {_sql_string_literal(join_keys_str)}
+                    COMMENT = {_sql_string_literal(entity.desc)}
                 """
             ).collect(statement_params=self._telemetry_stmp)
         except Exception as e:
@@ -708,7 +822,7 @@ class FeatureStore:
 
         try:
             full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
-            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = '{new_desc}'").collect(
+            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = {_sql_string_literal(new_desc)}").collect(
                 statement_params=self._telemetry_stmp
             )
         except Exception as e:
@@ -796,6 +910,16 @@ class FeatureStore:
                 ),
             )
 
+        # Defense-in-depth: re-run the full snapshot config validation for append_only FVs.
+        # FeatureView.__init__ already runs this, but the FV object may have been
+        # mutated after construction (e.g. attributes patched directly on a draft
+        # before registration), so re-check before any Snowflake-side mutation.
+        if feature_view.append_only:
+            feature_view_append_only_validation.validate_snapshot_config_for_register(
+                feature_view,
+                overwrite=overwrite,
+            )
+
         if feature_view.status != FeatureViewStatus.DRAFT:
             try:
                 return self._get_feature_view_if_exists(feature_view.name, str(version))
@@ -815,6 +939,20 @@ class FeatureStore:
                     original_exception=ValueError(f"Entity {e.name} has not been registered."),
                 )
 
+        # RTFVs are OFT-only (no DT/View, no preamble/postamble).
+        if feature_view.is_realtime_feature_view:
+            logger.warning("RealtimeFeatureView is in private preview since 1.38.0. Do not use in production.")
+            from snowflake.ml.feature_store.realtime_registration import (
+                register_realtime_feature_view,
+            )
+
+            return register_realtime_feature_view(
+                feature_store=self,
+                feature_view=feature_view,
+                version=version,
+                overwrite=overwrite,
+            )
+
         feature_view_name = FeatureView._get_physical_name(feature_view.name, version)
         if not overwrite:
             try:
@@ -822,7 +960,7 @@ class FeatureStore:
             except Exception:
                 pass
 
-        created_resources = []
+        created_resources: list[tuple[_FeatureStoreObjTypes, str]] = []
         streaming_preamble = None
         streaming_ref_count_incremented = False
         try:
@@ -836,17 +974,7 @@ class FeatureStore:
 
             self._resolve_storage_config(feature_view, fully_qualified_name)
 
-            tagging_clause = [
-                f"{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{obj_info.to_json()}'",
-                f"{self._get_fully_qualified_name(_FEATURE_VIEW_METADATA_TAG)} = '"
-                f"{feature_view._metadata().to_json()}'",
-            ]
-            for e in feature_view.entities:
-                join_keys = [f"{key.resolved()}" for key in e.join_keys]
-                tagging_clause.append(
-                    f"{self._get_fully_qualified_name(self._get_entity_name(e.name))} = '{','.join(join_keys)}'"
-                )
-            tagging_clause_str = ",\n".join(tagging_clause)
+            tagging_clause_str = self._build_tagging_clause(feature_view, obj_info)
 
             if feature_view.online and feature_view.online_config is not None:
                 if feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
@@ -859,11 +987,6 @@ class FeatureStore:
                         self._config.schema,
                         statement_params=self._telemetry_stmp,
                     )
-
-            def create_col_desc(col: StructField) -> str:
-                desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)  # type: ignore[union-attr]
-                desc = "" if desc is None else f"COMMENT '{desc}'"
-                return f"{col.name} {desc}"
 
             # Streaming preamble: create udf_transformed table, then complete FV initialization
             if feature_view.is_streaming:
@@ -882,9 +1005,17 @@ class FeatureStore:
                     get_stream_source_fn=self.get_stream_source,
                     get_fully_qualified_name_fn=self._get_fully_qualified_name,
                 )
-                created_resources.append((_FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE, streaming_preamble.fq_udf_table))
                 created_resources.append(
-                    (_FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE, streaming_preamble.fq_backfill_table)
+                    (
+                        _FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE,
+                        streaming_preamble.fq_udf_table,
+                    )
+                )
+                created_resources.append(
+                    (
+                        _FeatureStoreObjTypes.UDF_TRANSFORMED_TABLE,
+                        streaming_preamble.fq_backfill_table,
+                    )
                 )
 
                 # Complete FeatureView initialization with the transformed schema.
@@ -896,55 +1027,23 @@ class FeatureStore:
 
             # For tiled feature views, skip column definitions since the tiling query
             # produces different columns (TILE_START, partial aggregates)
-            if feature_view.is_tiled:
-                column_descs = ""
-            else:
-                column_descs = (
-                    ", ".join([f"{create_col_desc(col)}" for col in feature_view.output_schema.fields])
-                    if feature_view.feature_descs is not None
-                    else ""
-                )
+            column_descs = "" if feature_view.is_tiled else self._build_column_descs(feature_view)
 
-            # Step 1: Create offline feature view (Dynamic Table or View)
-            if feature_view.is_rollup:
-                created_resources.extend(
-                    self._create_rollup_feature_view(
-                        feature_view=feature_view,
-                        feature_view_name=feature_view_name,
-                        fully_qualified_name=fully_qualified_name,
-                        tagging_clause_str=tagging_clause_str,
-                        overwrite=overwrite,
-                    )
-                )
-            else:
-                created_resources.extend(
-                    self._create_offline_feature_view(
-                        feature_view=feature_view,
-                        feature_view_name=feature_view_name,
-                        fully_qualified_name=fully_qualified_name,
-                        column_descs=column_descs,
-                        tagging_clause_str=tagging_clause_str,
-                        block=block,
-                        overwrite=overwrite,
-                    )
-                )
-
-            # Step 2: Create online feature table if requested
-            # (for streaming FVs, the existing POSTGRES path builds the streaming spec internally)
-            if feature_view.online:
-                online_table_name = self._create_online_feature_table(
-                    feature_view, feature_view_name, version=str(version), overwrite=overwrite
-                )
-                created_resources.append(
-                    (_FeatureStoreObjTypes.ONLINE_FEATURE_TABLE, self._get_fully_qualified_name(online_table_name))
-                )
-            elif overwrite:
-                # Delete dangling online feature table when overwriting online-enabled FV with online-disabled FV
-                online_table_name = FeatureView._get_online_table_name(feature_view_name)
-                fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
-                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
+            # Steps 1-2: offline DT/View + OFT. Routed through the shared materialization
+            # entry point so any future resource added to the registration flow is
+            # automatically picked up by update_feature_view's recreate path too.
+            self._materialize_feature_view_resources(
+                mode="register",
+                feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                version=str(version),
+                column_descs=column_descs,
+                tagging_clause_str=tagging_clause_str,
+                block=block,
+                overwrite=overwrite,
+                created_resources=created_resources,
+            )
 
             # Step 3: Save aggregation metadata for tiled feature views (atomically)
             if feature_view.is_tiled:
@@ -1045,10 +1144,11 @@ class FeatureStore:
         name: str,
         version: str,
         *,
-        refresh_freq: Optional[str] = None,
+        refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
+        updated_feature_df: Optional[DataFrame] = None,
     ) -> FeatureView:
         ...
 
@@ -1058,10 +1158,11 @@ class FeatureStore:
         name: FeatureView,
         version: Optional[str] = None,
         *,
-        refresh_freq: Optional[str] = None,
+        refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
+        updated_feature_df: Optional[DataFrame] = None,
     ) -> FeatureView:
         ...
 
@@ -1071,10 +1172,11 @@ class FeatureStore:
         name: Union[FeatureView, str],
         version: Optional[str] = None,
         *,
-        refresh_freq: Optional[str] = None,
+        refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
+        updated_feature_df: Optional[DataFrame] = None,
     ) -> FeatureView:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
@@ -1090,6 +1192,10 @@ class FeatureStore:
                 If provided with enable=False, drops online feature table if present.
                 If None (default), no change to online status.
                 During update, only explicitly set fields in the OnlineConfig will be updated.
+            updated_feature_df: Optional replacement Snowpark ``DataFrame`` for the feature view
+                definition. When set, the returned :class:`~snowflake.ml.feature_store.feature_view.FeatureView`
+                is reinitialized from this dataframe (same session as the ``FeatureStore``). Not supported for
+                streaming or rollup feature views.
 
         Returns:
             Updated FeatureView.
@@ -1133,8 +1239,19 @@ class FeatureStore:
             ... )
             >>> print(online_fv.online)
             True
+            >>> # Evolve the schema of an append_only feature view. Schema evolution is
+            >>> # extend-only: existing columns must keep their original positions, so any
+            >>> # new column must be appended at the end of the SELECT.
+            >>> updated_fv = fs.update_feature_view(
+            ...     name='foo',
+            ...     version='v1',
+            ...     updated_feature_df=session.sql('SELECT id, name, ts, age FROM source'),
+            ... )
+            >>> 'AGE' in [f.name for f in updated_fv.feature_df.schema.fields]
+            True
 
         Raises:
+            SnowflakeMLException: [ValueError] If updated_feature_df is provided for a non-append_only FV.
             SnowflakeMLException: [RuntimeError] If FeatureView is not managed and refresh_freq is defined.
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
@@ -1145,10 +1262,24 @@ class FeatureStore:
 
         # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
+        # None when _UNSET (user didn't pass refresh_freq); the existing
+        # _refresh_freq is preserved below via the conditional assignment.
+        actual_refresh_freq: Optional[str] = refresh_freq if refresh_freq is not _UNSET else None
         new_desc = desc if desc is not None else feature_view.desc
 
+        if refresh_freq is not _UNSET:
+            # Validate the prospective refresh_freq against the snapshot-config contract
+            # without mutating the registered FV. Shallow copy is sufficient: the update
+            # variant only reads ``_append_only`` and ``refresh_freq``. The structural
+            # invariants (is_batch_view, feature_df, timestamp_col, entities, refresh_mode)
+            # cannot change for an already-registered FV, so they don't need to be
+            # re-checked here — the register-time gate is the source of truth for those.
+            validation_fv = feature_view.copy()
+            validation_fv._refresh_freq = refresh_freq
+            feature_view_append_only_validation.validate_snapshot_config_for_update(validation_fv)
+
         # Validate static feature view constraints
-        if feature_view.status == FeatureViewStatus.STATIC and (refresh_freq or warehouse):
+        if feature_view.status == FeatureViewStatus.STATIC and (actual_refresh_freq or warehouse):
             full_name = f"{feature_view.name}/{feature_view.version}"
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -1157,11 +1288,88 @@ class FeatureStore:
                 ),
             )
 
+        if updated_feature_df is not None:
+            if not feature_view.append_only:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "updated_feature_df is only supported for append_only feature views. "
+                        "Delete and re-register the feature view to change its query."
+                    ),
+                )
+            if updated_feature_df.session is not self._session:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        "updated_feature_df must be built using the FeatureStore's Snowpark session."
+                    ),
+                )
+
+            if feature_view._version is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                    original_exception=RuntimeError(
+                        "feature store: feature view has no version after retrieval; this is a bug."
+                    ),
+                )
+            feature_view_name = FeatureView._get_physical_name(feature_view.name, feature_view._version)
+            fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
+
+            new_schema = fs_table_schema_evolution.schema_upper_name_map(updated_feature_df.schema)
+
+            # Build a desired-state copy and apply the new state to it, leaving the registered
+            # `feature_view` untouched.  Mutating `feature_view` here would corrupt the caller's
+            # FV instance and would also break `_plan_feature_view_update_operations` for any
+            # follow-up call that diffs registered-vs-target state.
+            new_feature_view = feature_view.copy()
+            cluster_by_kw = None
+            if feature_view.cluster_by:
+                cluster_by_kw = [c.resolved() for c in feature_view.cluster_by]
+            new_feature_view._initialize_from_feature_df(updated_feature_df, cluster_by=cluster_by_kw)
+            if feature_view._feature_desc is not None and new_feature_view._feature_desc is not None:
+                # Preserve descriptions for unchanged feature columns. Extend-only schema
+                # evolution may append new columns, which intentionally start with empty
+                # comments until the caller sets them explicitly.
+                for feature_name in new_feature_view._feature_desc:
+                    if feature_name in feature_view._feature_desc:
+                        new_feature_view._feature_desc[feature_name] = feature_view._feature_desc[feature_name]
+
+            new_feature_view.desc = new_desc
+            if warehouse is not None:
+                new_feature_view.warehouse = warehouse
+            if actual_refresh_freq is not None:
+                new_feature_view._refresh_freq = actual_refresh_freq
+            if online_config is not None:
+                new_feature_view._online_config = online_config  # no public setter; mirrors __init__
+
+            new_feature_view._validate()
+            # update_feature_view cannot mutate the structural invariants that
+            # validate_snapshot_config_for_register checks (entities, timestamp_col,
+            # refresh_mode, etc.); they were enforced once at registration. Only the
+            # cron refresh_freq can change here, so the narrower update gate suffices.
+            feature_view_append_only_validation.validate_snapshot_config_for_update(new_feature_view)
+
+            self._materialize_feature_view_resources(
+                mode="update",
+                feature_view=new_feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                version=str(feature_view.version),
+                old_feature_view=feature_view,
+                new_schema=new_schema,
+            )
+
+            # The CREATE OR REPLACE recreate above already applied refresh_freq / warehouse /
+            # desc / online_config; calling _plan_feature_view_update_operations on this path
+            # would emit redundant ALTERs whose rollback SQL would no longer reflect the
+            # registered state.  Return the canonical FV directly.
+            return self.get_feature_view(name=feature_view.name, version=str(feature_view.version))
+
         # Step 2: Plan all operations
         rollback_operations: list[Any] = []
         try:
             operations, rollback_operations = self._plan_feature_view_update_operations(
-                feature_view, refresh_freq, warehouse, new_desc, online_config
+                feature_view, actual_refresh_freq, warehouse, new_desc, online_config
             )
 
             # Step 3: Execute atomically
@@ -1183,6 +1391,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: Literal[False],
     ) -> DataFrame:
         ...
@@ -1197,6 +1406,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: Literal[True],
     ) -> pd.DataFrame:
         ...
@@ -1211,6 +1421,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: None = None,
     ) -> Union[DataFrame, pd.DataFrame]:
         ...
@@ -1224,6 +1435,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: Literal[False],
     ) -> DataFrame:
         ...
@@ -1237,6 +1449,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: Literal[True],
     ) -> pd.DataFrame:
         ...
@@ -1250,6 +1463,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: None = None,
     ) -> Union[DataFrame, pd.DataFrame]:
         ...
@@ -1267,6 +1481,7 @@ class FeatureStore:
         feature_names: Optional[list[str]] = None,
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
         use_session_warehouse: bool = False,
+        request_context: Optional[pd.DataFrame] = None,
         as_pandas: Optional[bool] = None,
     ) -> Union[DataFrame, pd.DataFrame]:
         """
@@ -1289,8 +1504,16 @@ class FeatureStore:
                 only that subset (and join keys). Offline and hybrid online SQL paths use the same list
                 in the SELECT clause.
             store_type: Store to read from - StoreType.ONLINE or StoreType.OFFLINE (default).
+                Ignored for RealtimeFeatureViews, which always compute values at request time
+                via the online Query API regardless of this setting.
             use_session_warehouse: If True, use the session's current warehouse instead of the feature
                 store's configured warehouse. No-op for Postgres-backed online reads.
+            request_context: Per-row request context for ``RealtimeFeatureView`` reads. A
+                ``pandas.DataFrame`` whose columns are a superset of the RTFV's
+                ``RequestSource.schema`` field names and whose row count equals
+                ``len(keys)``. Single-row reads pass a 1-row frame. Required for RTFVs that
+                were registered with a ``RequestSource``; must be omitted for RTFVs without
+                one and is rejected for all non-RealtimeFeatureView kinds.
             as_pandas: Return type. ``None`` (default) returns ``pandas.DataFrame`` for Postgres-backed
                 online reads and Snowpark ``DataFrame`` everywhere else. ``True`` forces
                 ``pandas.DataFrame`` (rejected for ``store_type=StoreType.OFFLINE``). ``False`` forces
@@ -1306,6 +1529,10 @@ class FeatureStore:
             SnowflakeMLException: [ValueError] Online store is not enabled for this feature view.
             SnowflakeMLException: [ValueError] Invalid store type.
             SnowflakeMLException: [ValueError] ``as_pandas=True`` with ``store_type=StoreType.OFFLINE``.
+            SnowflakeMLException: [ValueError] ``request_context`` provided for a non-RealtimeFeatureView.
+            SnowflakeMLException: [ValueError] ``request_context`` is missing, is not a
+                ``pandas.DataFrame``, is missing required columns, or whose row count does
+                not match ``len(keys)`` for an RTFV read.
 
         Example::
 
@@ -1360,6 +1587,32 @@ class FeatureStore:
             )
 
         store_type = _get_store_type(store_type)
+
+        # RealtimeFeatureView reads run a dedicated branch BEFORE the
+        # general online/offline dispatch. RTFVs have no offline backing
+        # and no SQL-backed online path -- they always route through the
+        # Postgres Online Service Query API and require a per-row
+        # request_context payload. The ``store_type`` kwarg is ignored
+        # here (mirrors ``read_feature_group``, which has no store_type
+        # at all) so callers don't have to override the public default.
+        if feature_view.is_realtime_feature_view:
+            return self._read_realtime_feature_view(
+                feature_view,
+                keys=keys,
+                feature_names=feature_names,
+                request_context=request_context,
+                as_pandas=as_pandas,
+            )
+
+        if request_context is not None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    "request_context is only supported for RealtimeFeatureView reads. "
+                    f"Feature view {feature_view.name}/{feature_view.version} is not realtime; "
+                    "remove the request_context kwarg."
+                ),
+            )
 
         # Resolve the as_pandas default. Postgres online reads default to pandas because
         # the Online Service Query API already returns row-oriented JSON; the historical
@@ -1442,6 +1695,18 @@ class FeatureStore:
             for row, _ in fv_rows:
                 self._extract_feature_view_info(row, output_values, iceberg_config_cache)
 
+            from snowflake.ml.feature_store.realtime_registration import (
+                append_realtime_listing_rows,
+            )
+
+            append_realtime_listing_rows(
+                feature_store=self,
+                feature_view_name_prefix=feature_view_name,
+                output_values=output_values,
+                fv_kind_realtime=_FV_KIND_REALTIME,
+                default_storage_config_json=_DEFAULT_STORAGE_CONFIG_JSON,
+            )
+
             return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
     @dispatch_decorator()
@@ -1487,14 +1752,25 @@ class FeatureStore:
 
         fv_name = FeatureView._get_physical_name(name, version)
         results = self._get_fv_backend_representations(fv_name)
-        if len(results) != 1:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.NOT_FOUND,
-                original_exception=ValueError(f"Failed to find FeatureView {name}/{version}: {results}"),
+        if len(results) == 1:
+            return self._compose_feature_view(
+                results[0][0],
+                results[0][1],
+                self.list_entities().collect(statement_params=self._telemetry_stmp),
             )
+        if len(results) == 0:
+            # RTFVs are OFT-only; the metadata table is the source of truth.
+            rtfv_meta = self._metadata_manager.get_realtime_config(name.resolved(), str(version))
+            if rtfv_meta is not None:
+                from snowflake.ml.feature_store.realtime_registration import (
+                    compose_rtfv_from_metadata,
+                )
 
-        return self._compose_feature_view(
-            results[0][0], results[0][1], self.list_entities().collect(statement_params=self._telemetry_stmp)
+                return compose_rtfv_from_metadata(self, rtfv_meta)
+
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.NOT_FOUND,
+            original_exception=ValueError(f"Failed to find FeatureView {name}/{version}: {results}"),
         )
 
     @dispatch_decorator()
@@ -1557,7 +1833,11 @@ class FeatureStore:
 
     @overload
     def refresh_feature_view(
-        self, feature_view: str, version: str, *, store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE
+        self,
+        feature_view: str,
+        version: str,
+        *,
+        store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.OFFLINE,
     ) -> None:
         ...
 
@@ -1621,6 +1901,16 @@ class FeatureStore:
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
 
         store_type = _get_store_type(store_type)
+
+        if feature_view.append_only:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"Feature view {feature_view.name}/{feature_view.version} has append_only enabled. "
+                    "Manual refresh is not supported for append-only feature views because "
+                    "refreshes are managed by the scheduled snapshot task."
+                ),
+            )
 
         if store_type == fv_mod.StoreType.ONLINE:
             # Refresh online feature table only
@@ -2112,6 +2402,15 @@ class FeatureStore:
                 original_exception=ValueError(f"FeatureView {feature_view.name} has not been registered."),
             )
 
+        # RTFVs are OFT-only — no DT/View teardown.
+        if feature_view.is_realtime_feature_view:
+            from snowflake.ml.feature_store.realtime_registration import (
+                delete_realtime_feature_view,
+            )
+
+            delete_realtime_feature_view(feature_store=self, feature_view=feature_view)
+            return
+
         fully_qualified_name = feature_view.fully_qualified_name()
         if feature_view.status == FeatureViewStatus.STATIC:
             self._session.sql(f"DROP VIEW IF EXISTS {fully_qualified_name}").collect(
@@ -2122,11 +2421,18 @@ class FeatureStore:
             self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
                 statement_params=self._telemetry_stmp
             )
-            # CRON-based FVs have a companion Task with the same name. Drop it
-            # unconditionally — IF EXISTS makes this a no-op for duration-based FVs.
-            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
+
+        # Drop companion task first (if any), then snapshot artifacts for this FV.
+        # This mirrors the overwrite cleanup ordering and guarantees we don’t
+        # leave a running CRON task targeting a deleted snapshot table.
+        fv_physical_name = FeatureView._get_physical_name(feature_view.name, feature_view.version)
+        self._cleanup_stale_feature_view_resources(
+            feature_view=feature_view,
+            feature_view_name=fv_physical_name,
+            fully_qualified_name=fully_qualified_name,
+            new_has_task=False,
+            drop_snapshot_table=True,
+        )
 
         # Delete online feature table if it exists
         if feature_view.online:
@@ -2248,6 +2554,7 @@ class FeatureStore:
         *,
         keys: list[list[Any]],
         store_type: Union[fv_mod.StoreType, str] = fv_mod.StoreType.ONLINE,
+        request_context: Optional[pd.DataFrame] = None,
     ) -> pd.DataFrame:
         """Read feature values from a registered :class:`FeatureGroup` for a batch of entity rows.
 
@@ -2267,6 +2574,15 @@ class FeatureStore:
             store_type: Defaults to :attr:`StoreType.ONLINE` (the only path
                 supported today). :attr:`StoreType.OFFLINE` raises until
                 offline FG reads land.
+            request_context: Required when the FG has at least one
+                :class:`RealtimeFeatureView` source that declares a
+                :class:`RequestSource`; rejected otherwise.
+                A ``pandas.DataFrame`` whose columns are a superset of the
+                union of every contributing RTFV source's
+                ``RequestSource.schema`` field names (case-insensitive);
+                extras are dropped with a :class:`UserWarning`. Row count
+                must equal ``len(keys)``; row ``i`` is the per-call
+                context for the entity row ``keys[i]``.
 
         Returns:
             ``pandas.DataFrame`` with the join-key columns followed by the
@@ -2274,11 +2590,20 @@ class FeatureStore:
 
         Raises:
             SnowflakeMLException: ``[ValueError]`` if *keys* is empty, the
-                version is missing/disagrees, the FG is unregistered, or the
-                Online Service is not yet RUNNING. ``[NotImplementedError]``
-                if *store_type* is anything other than :attr:`StoreType.ONLINE`.  # noqa: DAR402
+                version is missing/disagrees, the FG is unregistered, the
+                Online Service is not yet RUNNING, or *request_context* is
+                missing / extraneous / shape-invalid.
+                ``[NotImplementedError]`` if *store_type* is anything other
+                than :attr:`StoreType.ONLINE`.  # noqa: DAR402
         """
-        return fg_mod.read_feature_group(self, feature_group, version, keys=keys, store_type=store_type)
+        return fg_mod.read_feature_group(
+            self,
+            feature_group,
+            version,
+            keys=keys,
+            store_type=store_type,
+            request_context=request_context,
+        )
 
     @dispatch_decorator()
     def list_entities(self) -> DataFrame:
@@ -2588,7 +2913,7 @@ class FeatureStore:
             self._config.schema,
             statement_params=stmp,
         )
-        ingest_url = online_service.endpoint_url(st, "ingest")
+        ingest_url = online_service.endpoint_url(st, "ingest", access=self._online_service_access)
         if not ingest_url:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
@@ -2885,6 +3210,19 @@ class FeatureStore:
         ``include_feature_view_timestamp_col``) are predetermined by the FG and
         must not be set explicitly.
 
+        Realtime feature views: when ``features`` (or the resolved ``feature_group``)
+        contains one or more realtime feature views, the spine DataFrame must carry
+        a column for every field declared on each realtime feature view's
+        ``RequestSource.schema``. Those columns supply the per-row request context
+        the realtime ``compute_fn`` would receive at inference time. Each realtime
+        feature view's ``compute_fn`` is evaluated against its upstream feature
+        view rows joined from the offline backing -- no online service is called.
+        ``FeatureViewSlice`` of a realtime feature view is supported and behaves
+        as a column projection over ``compute_fn``'s declared output. Spine columns
+        that are not declared on a realtime feature view's request source are
+        ignored without warning (the spine legitimately carries labels, timestamps,
+        and other non-feature columns).
+
         Result is materialized to a Snowflake Table if ``save_as`` is specified.
 
         Args:
@@ -2967,15 +3305,44 @@ class FeatureStore:
         if spine_label_cols is not None:
             spine_label_cols = to_sql_identifiers(spine_label_cols)  # type: ignore[assignment]
 
-        result_df, join_keys = self._join_features(
-            spine_df,
-            features,
-            spine_timestamp_col,
-            include_feature_view_timestamp_col,
-            auto_prefix,
-            join_method,
-            is_training=True,
-        )
+        direct_refs, rtfv_refs = rtfv_dataset.partition_features(features)
+
+        if rtfv_refs:
+            rtfv_dataset.validate_rtfv_dataset_inputs(features, list(spine_df.columns))
+            augmented_spine = rtfv_dataset.attach_synthetic_row_id(spine_df)
+
+            if direct_refs:
+                user_visible_df, _join_keys = self._join_features(
+                    augmented_spine,
+                    direct_refs,
+                    spine_timestamp_col,
+                    include_feature_view_timestamp_col,
+                    auto_prefix,
+                    join_method,
+                    is_training=True,
+                )
+            else:
+                user_visible_df = augmented_spine
+
+            result_df = rtfv_dataset.apply_rtfvs(
+                self,
+                user_visible_df,
+                rtfv_refs_in_order=rtfv_refs,
+                original_features=features,
+                augmented_spine=augmented_spine,
+                spine_timestamp_col=str(spine_timestamp_col) if spine_timestamp_col is not None else None,
+                auto_prefix=auto_prefix,
+            )
+        else:
+            result_df, join_keys = self._join_features(
+                spine_df,
+                features,
+                spine_timestamp_col,
+                include_feature_view_timestamp_col,
+                auto_prefix,
+                join_method,
+                is_training=True,
+            )
 
         if exclude_columns is not None:
             result_df = self._exclude_columns(result_df, exclude_columns)
@@ -3177,7 +3544,8 @@ class FeatureStore:
             # Cache the result to a temporary table before creating the dataset
             # to ensure single query evaluation:
             has_tiled_fv = any(fg_mod.unwrap_fv(fv).is_tiled for fv in features)
-            if has_tiled_fv:
+            has_rtfv = any(fg_mod.unwrap_fv(fv).is_realtime_feature_view for fv in features)
+            if has_tiled_fv or has_rtfv:
                 result_df = result_df.cache_result()
 
             # TODO: Add feature store tag once Dataset (version) supports tags
@@ -3186,7 +3554,7 @@ class FeatureStore:
                 name,
                 version,
                 input_dataframe=result_df,
-                exclude_cols=[spine_timestamp_col] if spine_timestamp_col is not None else [],
+                exclude_cols=([spine_timestamp_col] if spine_timestamp_col is not None else []),
                 label_cols=spine_label_cols,
                 properties=fs_meta,
                 comment=desc,
@@ -3317,6 +3685,10 @@ class FeatureStore:
                     self._session.sql(f"DROP TABLE IF EXISTS {resource_name}").collect(
                         statement_params=self._telemetry_stmp
                     )
+                elif resource_type == _FeatureStoreObjTypes.SNAPSHOT_TABLE:
+                    self._session.sql(f"DROP TABLE IF EXISTS {resource_name}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
                 logger.info(f"Rollback: Successfully dropped {resource_type.value} {resource_name}")
             except Exception as rollback_error:
                 # Log but don't fail the rollback process
@@ -3343,7 +3715,7 @@ class FeatureStore:
             name=base_fv.name.identifier(),
             entities=base_fv.entities,
             feature_df=base_fv.feature_df,
-            timestamp_col=base_fv.timestamp_col.identifier() if base_fv.timestamp_col is not None else None,
+            timestamp_col=(base_fv.timestamp_col.identifier() if base_fv.timestamp_col is not None else None),
             desc=base_fv.desc,
             version=str(base_fv.version),
             status=base_fv.status,
@@ -3351,7 +3723,7 @@ class FeatureStore:
             refresh_freq=base_fv.refresh_freq,
             database=base_fv.database.identifier(),
             schema=base_fv.schema.identifier(),
-            warehouse=base_fv.warehouse.identifier() if base_fv.warehouse is not None else None,
+            warehouse=(base_fv.warehouse.identifier() if base_fv.warehouse is not None else None),
             refresh_mode=base_fv.refresh_mode,
             refresh_mode_reason=base_fv.refresh_mode_reason,
             initialize=base_fv.initialize,
@@ -3408,7 +3780,7 @@ class FeatureStore:
         fqn = feature_view.fully_qualified_name()
 
         if feature_view.status == FeatureViewStatus.STATIC:
-            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = '{desc}'")], []
+            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = {_sql_string_literal(desc)}")], []
 
         # Managed (Dynamic-Table-backed) FVs always have a refresh_freq — the
         # only refresh_freq=None case is an external (View-backed) FV, which
@@ -3417,9 +3789,9 @@ class FeatureStore:
         new_warehouse = SqlIdentifier(warehouse) if warehouse else feature_view.warehouse
         old_warehouse = feature_view.warehouse
         effective_freq: str = refresh_freq if refresh_freq is not None else feature_view.refresh_freq
-        new_is_cron = effective_freq != "DOWNSTREAM" and timeparse(effective_freq) is None
+        new_is_cron = feature_view_refresh_freq._is_cron_refresh_freq(effective_freq)
         old_freq: str = feature_view.refresh_freq
-        old_is_cron = old_freq != "DOWNSTREAM" and timeparse(old_freq) is None
+        old_is_cron = feature_view_refresh_freq._is_cron_refresh_freq(old_freq)
 
         new_target_lag = "DOWNSTREAM" if new_is_cron else effective_freq
         old_target_lag = "DOWNSTREAM" if old_is_cron else old_freq
@@ -3427,7 +3799,8 @@ class FeatureStore:
         def alter_dt(op_type: str, *, target_lag: str, wh: Optional[SqlIdentifier], comment: str) -> tuple[str, str]:
             return (
                 op_type,
-                f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'" f" WAREHOUSE = {wh} COMMENT = '{comment}'",
+                f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'"
+                f" WAREHOUSE = {wh} COMMENT = {_sql_string_literal(comment)}",
             )
 
         def create_task_ops(op_type: str, *, cron_expr: str, wh: Optional[SqlIdentifier]) -> list[tuple[str, str]]:
@@ -3444,7 +3817,10 @@ class FeatureStore:
                     f"SCHEDULE = 'USING CRON {cron_expr}' "
                     f"AS ALTER DYNAMIC TABLE {fqn} REFRESH",
                 ),
-                (op_type, f"ALTER TASK {fqn} SET TAG {tag_path}='{task_obj_info.to_json()}'"),
+                (
+                    op_type,
+                    f"ALTER TASK {fqn} SET TAG {tag_path}='{task_obj_info.to_json()}'",
+                ),
                 (op_type, f"ALTER TASK {fqn} RESUME"),
             ]
 
@@ -3460,7 +3836,12 @@ class FeatureStore:
             ]
 
         operations: list[tuple[str, str]] = [
-            alter_dt("OFFLINE_UPDATE", target_lag=new_target_lag, wh=new_warehouse, comment=desc)
+            alter_dt(
+                "OFFLINE_UPDATE",
+                target_lag=new_target_lag,
+                wh=new_warehouse,
+                comment=desc,
+            )
         ]
         if old_is_cron and new_is_cron:
             operations.extend(alter_task_schedule_ops("OFFLINE_UPDATE", cron_expr=effective_freq))
@@ -3554,7 +3935,7 @@ class FeatureStore:
         )
         final_config = fv_mod.OnlineConfig(
             enable=True,
-            target_lag=online_config.target_lag if online_config.target_lag is not None else default_target_lag,
+            target_lag=(online_config.target_lag if online_config.target_lag is not None else default_target_lag),
         )
 
         temp_fv = self._create_updated_feature_view(feature_view, final_config)
@@ -3572,7 +3953,10 @@ class FeatureStore:
 
         operations: list[tuple[str, Union[str, FeatureView]]] = [("DELETE_ONLINE", table_name)]
         rollback_ops: list[tuple[str, Union[str, FeatureView]]] = [
-            ("CREATE_ONLINE", self._create_updated_feature_view(feature_view, feature_view.online_config))
+            (
+                "CREATE_ONLINE",
+                self._create_updated_feature_view(feature_view, feature_view.online_config),
+            )
         ]
 
         # Create disabled config to properly represent the new state
@@ -3611,7 +3995,7 @@ class FeatureStore:
         warehouse: Optional[str],
         desc: str,
         online_config: Optional[fv_mod.OnlineConfig],
-    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]]]:
+    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
         """Plan all update operations and their rollbacks."""
         operations: list[tuple[str, Union[str, FeatureView]]] = []
         rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
@@ -3632,7 +4016,7 @@ class FeatureStore:
 
     def _plan_feature_view_status_operations(
         self, feature_view: FeatureView, operation: str
-    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]]]:
+    ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
         """Plan atomic operations for suspend/resume operations.
 
         Args:
@@ -3642,7 +4026,10 @@ class FeatureStore:
         Returns:
             Tuple of (operations, rollback_operations)
         """
-        assert operation in ["SUSPEND", "RESUME"], f"Operation {operation} not supported"
+        assert operation in [
+            "SUSPEND",
+            "RESUME",
+        ], f"Operation {operation} not supported"
 
         operations: list[tuple[str, Union[str, FeatureView]]] = []
         rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
@@ -3765,8 +4152,464 @@ class FeatureStore:
                     statement_params=self._telemetry_stmp
                 )
 
+    def _materialize_feature_view_resources(
+        self,
+        *,
+        mode: Literal["register", "update"],
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        version: str,
+        # register-only kwargs
+        column_descs: str = "",
+        tagging_clause_str: str = "",
+        block: bool = True,
+        overwrite: bool = False,
+        created_resources: Optional[list[tuple[_FeatureStoreObjTypes, str]]] = None,
+        # update-only kwargs
+        old_feature_view: Optional[FeatureView] = None,
+        new_schema: Optional[dict[str, DataType]] = None,
+    ) -> None:
+        """Single named entry point for materializing a feature view's offline + online resources.
+
+        Both ``register_feature_view`` and the ``updated_feature_df`` path of
+        ``update_feature_view`` route through this method, giving the two flows a single
+        discoverable pivot. The dispatcher itself does not enforce parity — each ``mode``
+        still owns its own helper (``_materialize_register_path`` for register,
+        ``_recreate_append_only_feature_view_atomically`` for update) — so when adding a
+        new materialization resource (e.g. a new metadata table) the wiring must be added
+        to *both* helpers. Centralizing the dispatch here at least makes the second
+        helper easy to find from the first.
+
+        ``mode="register"`` performs fresh creation. The caller owns top-level rollback
+        via ``created_resources`` (any partial creations are unwound by
+        ``_rollback_created_resources``).
+
+        ``mode="update"`` performs an atomic-ish recreate of the offline DT, refresh
+        task, and OFT (and extends the snapshot schema first). Rollback is handled
+        internally via compensating actions; this mode requires ``old_feature_view`` and
+        ``new_schema``.
+
+        Args:
+            mode: ``"register"`` for fresh creation, ``"update"`` for append_only recreate.
+            feature_view: The desired-state FeatureView to materialize. For ``"update"``,
+                this is the new (target) FV; the prior FV must be passed as
+                ``old_feature_view``.
+            feature_view_name: Versioned physical name of the FV (e.g. ``MY_FV$V1``).
+            fully_qualified_name: Fully qualified name of the offline DT.
+            version: Version string for the FV (used by online table creation).
+            column_descs: ``"register"``-only. Column-comment clause for DT/View DDL.
+            tagging_clause_str: ``"register"``-only. Tag-set clause for the offline object.
+            block: ``"register"``-only. Whether DT creation should block on first refresh.
+            overwrite: ``"register"``-only. Whether to ``CREATE OR REPLACE``.
+            created_resources: ``"register"``-only. Mutable list the helpers append to so
+                the caller's outer try/except can roll back partial state.
+            old_feature_view: ``"update"``-only. The currently registered FV (state to
+                restore on rollback).
+            new_schema: ``"update"``-only. Target column types in canonical order, used to
+                derive extend-only snapshot DDL.
+
+        Raises:
+            ValueError: If required kwargs for the chosen ``mode`` are missing.
+        """
+        if mode == "register":
+            if created_resources is None:
+                raise ValueError("created_resources is required when mode='register'")
+            self._materialize_register_path(
+                feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                version=version,
+                column_descs=column_descs,
+                tagging_clause_str=tagging_clause_str,
+                block=block,
+                overwrite=overwrite,
+                created_resources=created_resources,
+            )
+        else:
+            if old_feature_view is None or new_schema is None:
+                raise ValueError("old_feature_view and new_schema are required when mode='update'")
+            self._recreate_append_only_feature_view_atomically(
+                old_feature_view=old_feature_view,
+                new_feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                version=version,
+                new_schema=new_schema,
+            )
+
+    def _materialize_register_path(
+        self,
+        *,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        version: str,
+        column_descs: str,
+        tagging_clause_str: str,
+        block: bool,
+        overwrite: bool,
+        created_resources: list[tuple[_FeatureStoreObjTypes, str]],
+    ) -> None:
+        """Create the offline DT/View and the online feature table for a fresh registration.
+
+        Body is the Step 1 + Step 2 of ``register_feature_view``, lifted into a method so
+        ``_materialize_feature_view_resources`` is the single dispatch point shared with
+        the update path. Both helpers append to ``created_resources`` so partial progress
+        is rolled back by ``_rollback_created_resources`` if anything raises mid-way.
+
+        Args:
+            feature_view: The FeatureView being registered.
+            feature_view_name: Versioned physical name (e.g. ``MY_FV$V1``).
+            fully_qualified_name: Fully qualified name of the offline object (DT/View).
+            version: Version string for the FV (used by online table creation).
+            column_descs: Pre-rendered ``COMMENT`` clauses for the offline DT columns.
+            tagging_clause_str: Pre-rendered ``WITH TAG (...)`` clause for the offline object.
+            block: When True, the DT creation waits for the initial refresh to complete.
+            overwrite: When True, the offline object is created with ``OR REPLACE`` and
+                any dangling online feature table from the prior registration is dropped.
+            created_resources: Append-only audit trail of resources created during this
+                registration; consumed by ``_rollback_created_resources`` on failure.
+        """
+        # Step 1: Create offline feature view (Dynamic Table or View).
+        if feature_view.is_rollup:
+            self._create_rollup_feature_view(
+                feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                tagging_clause_str=tagging_clause_str,
+                overwrite=overwrite,
+                created_resources=created_resources,
+            )
+        else:
+            self._create_offline_feature_view(
+                feature_view=feature_view,
+                feature_view_name=feature_view_name,
+                fully_qualified_name=fully_qualified_name,
+                column_descs=column_descs,
+                tagging_clause_str=tagging_clause_str,
+                block=block,
+                overwrite=overwrite,
+                created_resources=created_resources,
+            )
+
+        # Step 2: Create online feature table if requested
+        # (for streaming FVs, the existing POSTGRES path builds the streaming spec internally)
+        if feature_view.online:
+            online_table_name = self._create_online_feature_table(
+                feature_view, feature_view_name, version=version, overwrite=overwrite
+            )
+            created_resources.append(
+                (
+                    _FeatureStoreObjTypes.ONLINE_FEATURE_TABLE,
+                    self._get_fully_qualified_name(online_table_name),
+                )
+            )
+        elif overwrite:
+            # Delete dangling online feature table when overwriting online-enabled FV with online-disabled FV
+            online_table_name = FeatureView._get_online_table_name(feature_view_name)
+            fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
+            self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+
+    def _recreate_append_only_feature_view_atomically(
+        self,
+        *,
+        old_feature_view: FeatureView,
+        new_feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        version: str,
+        new_schema: dict[str, DataType],
+    ) -> None:
+        """Recreate the offline DT, online table, and refresh task for an append_only FV update.
+
+        The four mutations executed by ``update_feature_view(updated_feature_df=...)`` —
+        snapshot ``ALTER TABLE ADD COLUMN``, DT ``CREATE OR REPLACE``, task ``CREATE OR
+        REPLACE``, and online feature table ``CREATE OR REPLACE`` — are not transactional
+        in Snowflake. Without compensating actions, a failure midway leaves the feature
+        view in an inconsistent steady state (e.g. snapshot has new columns but the task
+        body still ``INSERT``s the old column list, so the new columns never get
+        populated).
+
+        This helper sequences the mutations and pairs each one with a compensating action.
+        For helpers that can partially succeed before raising (for example ``CREATE OR
+        REPLACE`` succeeds and a follow-up validation or ``RESUME`` fails), the
+        compensating action is registered before the forward call so the failure handler
+        can still restore the prior state.
+
+        OFT is sequenced last to match the initial-create path
+        (``_materialize_register_path``); cross-service work (POSTGRES online service
+        health, spec validation, managed-cluster bootstrap) sits at the end of the
+        forward DAG so failures earlier in the chain don't leave partial external state.
+
+        Compensating actions are best-effort: if one fails the failure is logged but does
+        not mask the original forward error, which is wrapped and re-raised.
+
+        Args:
+            old_feature_view: The currently registered FeatureView. Used as the source of
+                truth for compensating actions (its query / refresh_freq / warehouse / desc
+                describe the state we restore on rollback).
+            new_feature_view: The desired-state FeatureView built from
+                ``updated_feature_df``. Used for the forward CREATE OR REPLACE statements.
+            feature_view_name: Versioned physical name of the FV (e.g. ``MY_FV$V1``).
+            fully_qualified_name: Fully qualified name of the offline DT.
+            version: Version string for the FV (used by online table creation).
+            new_schema: Target column types in canonical order, used to derive the
+                extend-only snapshot DDL.
+
+        Raises:
+            SnowflakeMLException: [INVALID_ARGUMENT] if the schema change is not
+                extend-only (drop/reorder/type change).
+            SnowflakeMLException: [INTERNAL_SNOWPARK_ERROR] if any forward step fails;
+                the original error is chained as ``__cause__``.
+        """
+        snapshot_table_fqn = new_feature_view.fully_qualified_snapshot_table_name()
+        snapshot_cols = fs_table_schema_evolution.schema_upper_name_map(self._session.table(snapshot_table_fqn).schema)
+        forward_schema_cmds, rollback_schema_cmds = self._compute_extend_only_schema_evolution_cmds(
+            snapshot_table_fqn, snapshot_cols, new_schema
+        )
+
+        obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, snowml_version.VERSION)
+
+        # append_only FVs cannot be tiled (rejected at append-only registration validation), so the
+        # tiled-FV "" branch in _build_column_descs's callers is unreachable here.
+        new_column_descs = self._build_column_descs(new_feature_view)
+        new_tagging_clause = self._build_tagging_clause(new_feature_view, obj_info)
+        new_refresh_freq = new_feature_view.refresh_freq
+        new_schedule_task = feature_view_refresh_freq._is_cron_refresh_freq(new_refresh_freq)
+        new_warehouse = (
+            new_feature_view.warehouse if new_feature_view.warehouse is not None else self._default_warehouse
+        )
+
+        old_column_descs = self._build_column_descs(old_feature_view)
+        old_tagging_clause = self._build_tagging_clause(old_feature_view, obj_info)
+        old_refresh_freq = old_feature_view.refresh_freq
+        old_schedule_task = feature_view_refresh_freq._is_cron_refresh_freq(old_refresh_freq)
+        old_warehouse = (
+            old_feature_view.warehouse if old_feature_view.warehouse is not None else self._default_warehouse
+        )
+
+        fully_qualified_online_name = self._get_fully_qualified_name(
+            FeatureView._get_online_table_name(feature_view_name)
+        )
+
+        # Return type is Any because compensating callbacks dispatch through helpers with
+        # heterogeneous return values (None, str, list[Row]); the values are unused.
+        compensating_actions: list[tuple[_MaterializedResourceKind, Callable[[], Any]]] = []
+
+        def _run_sql_list(cmds: list[str]) -> None:
+            for cmd in cmds:
+                self._session.sql(cmd).collect(statement_params=self._telemetry_stmp)
+
+        try:
+            # Step 1: extend the snapshot schema. Partial-DDL failures (cmd[k] succeeds,
+            # cmd[k+1] fails) are recovered inline by the helper so we never push a
+            # half-applied compensating action onto the outer list.
+            self._execute_extend_only_schema_evolution_cmds(forward_schema_cmds, rollback_schema_cmds)
+            compensating_actions.append(
+                (
+                    _MaterializedResourceKind.SNAPSHOT_SCHEMA_EVOLUTION,
+                    lambda: _run_sql_list(rollback_schema_cmds),
+                )
+            )
+
+            # Step 2: recreate the DT with the new query/schema.
+            compensating_actions.append(
+                (
+                    _MaterializedResourceKind.OFFLINE_FEATURE_VIEW,
+                    lambda: self._create_dynamic_table(
+                        feature_view_name,
+                        old_feature_view,
+                        fully_qualified_name,
+                        old_column_descs,
+                        old_tagging_clause,
+                        old_schedule_task,
+                        old_warehouse,
+                        block=True,
+                        override=True,
+                    ),
+                )
+            )
+            self._create_dynamic_table(
+                feature_view_name,
+                new_feature_view,
+                fully_qualified_name,
+                new_column_descs,
+                new_tagging_clause,
+                new_schedule_task,
+                new_warehouse,
+                block=True,
+                override=True,
+            )
+
+            # Step 3: refresh task. The task body itself is schema-agnostic (``INSERT INTO
+            # snap SELECT * FROM dt``), so this recreate is not driven by column-list
+            # changes; it exists to pick up updates to ``refresh_freq`` / ``warehouse``
+            # and to bridge transitions between cron-scheduled and duration-scheduled FVs
+            # (the latter has no companion task).
+            #
+            # ``schedule_task`` is True iff refresh_freq is a cron expression (not a
+            # duration and not "DOWNSTREAM"). Forward / compensating-action pairing:
+            #   new_cron | old_cron | forward                 | compensating
+            #   ---------+----------+-------------------------+----------------------------
+            #   True     | True     | create-or-replace task  | recreate task from old FV
+            #   True     | False    | create task             | drop task
+            #   False    | True     | drop task               | recreate task from old FV
+            #   False    | False    | (nothing)               | (nothing)
+            if new_schedule_task:
+                if old_schedule_task:
+                    compensating_actions.append(
+                        (
+                            _MaterializedResourceKind.REFRESH_TASK,
+                            lambda: self._create_scheduled_refresh_task(
+                                " OR REPLACE",
+                                old_feature_view,
+                                fully_qualified_name,
+                                old_warehouse,
+                                feature_view_name=feature_view_name,
+                            ),
+                        )
+                    )
+                else:
+                    compensating_actions.append(
+                        (
+                            _MaterializedResourceKind.REFRESH_TASK,
+                            lambda: self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                                statement_params=self._telemetry_stmp
+                            ),
+                        )
+                    )
+                self._create_scheduled_refresh_task(
+                    " OR REPLACE",
+                    new_feature_view,
+                    fully_qualified_name,
+                    new_warehouse,
+                    feature_view_name=feature_view_name,
+                )
+            elif old_schedule_task:
+                # New FV is duration-based; drop the orphaned task left over from the
+                # prior cron schedule. Compensating action restores it from the prior FV.
+                compensating_actions.append(
+                    (
+                        _MaterializedResourceKind.REFRESH_TASK,
+                        lambda: self._create_scheduled_refresh_task(
+                            " OR REPLACE",
+                            old_feature_view,
+                            fully_qualified_name,
+                            old_warehouse,
+                            feature_view_name=feature_view_name,
+                        ),
+                    )
+                )
+                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+
+            # Step 4: online feature table. Mirrors register_feature_view's gating —
+            # only create when the new FV is online; if the prior FV was online and the
+            # new one isn't, drop the dangling table. OFT is sequenced last to mirror
+            # the initial-create path; its forward call (POSTGRES service health, spec
+            # validation, managed-cluster provisioning) can partially succeed before
+            # raising, so the compensating action is registered before the forward call
+            # so a partial-success failure still triggers rollback.
+            #
+            # Forward / compensating-action pairing:
+            #   new.online | old.online | forward                | compensating
+            #   -----------+------------+------------------------+----------------------
+            #   True       | True       | create-or-replace OFT  | recreate from old FV
+            #   True       | False      | create OFT             | drop OFT
+            #   False      | True       | drop OFT               | recreate from old FV
+            #   False      | False      | (nothing)              | (nothing)
+            if new_feature_view.online:
+                if old_feature_view.online:
+                    compensating_actions.append(
+                        (
+                            _MaterializedResourceKind.ONLINE_FEATURE_TABLE,
+                            lambda: self._create_online_feature_table(
+                                old_feature_view,
+                                feature_view_name,
+                                version=version,
+                                overwrite=True,
+                            ),
+                        )
+                    )
+                else:
+                    compensating_actions.append(
+                        (
+                            _MaterializedResourceKind.ONLINE_FEATURE_TABLE,
+                            lambda: self._session.sql(
+                                f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}"
+                            ).collect(statement_params=self._telemetry_stmp),
+                        )
+                    )
+                self._create_online_feature_table(new_feature_view, feature_view_name, version=version, overwrite=True)
+            elif old_feature_view.online:
+                compensating_actions.append(
+                    (
+                        _MaterializedResourceKind.ONLINE_FEATURE_TABLE,
+                        lambda: self._create_online_feature_table(
+                            old_feature_view,
+                            feature_view_name,
+                            version=version,
+                            overwrite=True,
+                        ),
+                    )
+                )
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fully_qualified_online_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+        except Exception as forward_error:
+            logger.warning(
+                "update_feature_view recreate failed for %s/%s: %s; running compensating actions",
+                old_feature_view.name,
+                old_feature_view.version,
+                forward_error,
+            )
+            # Roll back in dependency order, not reverse-append. The running pipeline
+            # (DT, then OFT, then refresh task) is restored first so a partially-recovered
+            # FV is queryable as soon as possible; the snapshot ALTER DROP COLUMN cleanup
+            # runs last because nothing else depends on it. Within the pipeline tier:
+            # ONLINE_FEATURE_TABLE rollback in HYBRID_TABLE mode runs ``CREATE ... FROM
+            # <source>``, which inherits its column shape from the current source DT, so
+            # OFFLINE_FEATURE_VIEW (DT) must be restored *before* the OFT rollback
+            # inherits from it. REFRESH_TASK is column-agnostic (its body uses
+            # ``SELECT *``) and depends on neither, so it slots in after OFT. The
+            # ordering also covers partial-failure cases: DT, task, and OFT register
+            # their compensating actions *before* the forward call, so they appear here
+            # even when the forward step never completed.
+            for rollback_step in (
+                _MaterializedResourceKind.OFFLINE_FEATURE_VIEW,
+                _MaterializedResourceKind.ONLINE_FEATURE_TABLE,
+                _MaterializedResourceKind.REFRESH_TASK,
+                _MaterializedResourceKind.SNAPSHOT_SCHEMA_EVOLUTION,
+            ):
+                for step_kind, action in compensating_actions:
+                    if step_kind != rollback_step:
+                        continue
+                    try:
+                        action()
+                        logger.info("Rollback step '%s' succeeded", step_kind.value)
+                    except Exception as rollback_error:
+                        logger.exception(
+                            "Rollback step '%s' failed: %s",
+                            step_kind.value,
+                            rollback_error,
+                        )
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
+                original_exception=RuntimeError(
+                    f"update_feature_view {old_feature_view.name}/{old_feature_view.version} failed: "
+                    f"{forward_error}"
+                ),
+            ) from forward_error
+
     def _read_from_offline_store(
-        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+        self,
+        feature_view: FeatureView,
+        keys: Optional[list[list[str]]],
+        feature_names: Optional[list[str]],
     ) -> DataFrame:
         """Read feature values from the offline store (main feature view table).
 
@@ -3795,7 +4638,10 @@ class FeatureStore:
         return self._session.sql(query)
 
     def _read_tiled_fv_at_current_time(
-        self, feature_view: FeatureView, keys: Optional[list[list[str]]], feature_names: Optional[list[str]]
+        self,
+        feature_view: FeatureView,
+        keys: Optional[list[list[str]]],
+        feature_names: Optional[list[str]],
     ) -> DataFrame:
         """Read tiled feature view by computing aggregated features at current time.
 
@@ -3881,22 +4727,68 @@ class FeatureStore:
         full_query = f"WITH {', '.join(cte_parts)} {final_select}"
         return self._session.sql(full_query)
 
+    def _oft_full_schema(self, feature_view: FeatureView) -> StructType:
+        """Schema of the OFT object (PK columns + feature columns).
+
+        BFV/SFV ``output_schema`` already includes both. RealtimeFeatureView
+        ``output_schema`` is ``realtime_config.output_schema`` -- feature
+        columns only -- so the join-key fields are synthesized from upstream
+        source FVs. If the RTFV author also re-declared a join key in
+        ``output_schema``, the upstream-derived field wins (it carries the
+        upstream's authoritative datatype) and the duplicate is dropped.
+
+        Args:
+            feature_view: The feature view whose OFT-level schema is needed.
+
+        Returns:
+            ``StructType`` containing both join-key fields and feature fields.
+
+        Raises:
+            SnowflakeMLException: ``[RuntimeError]`` with
+                :data:`error_codes.INTERNAL_PYTHON_ERROR` when an RTFV is
+                missing its realtime configuration (registry corruption).
+        """
+        if not feature_view.is_realtime_feature_view:
+            return feature_view.output_schema
+        from snowflake.ml.feature_store.realtime_registration import (
+            resolve_realtime_join_key_fields,
+        )
+
+        pk_fields = resolve_realtime_join_key_fields(feature_view)
+        if feature_view.realtime_config is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                original_exception=RuntimeError(
+                    f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                    "realtime configuration is missing. Re-register the feature view."
+                ),
+            )
+        pk_canonical = {SqlIdentifier(f.name).resolved() for f in pk_fields}
+        feature_fields = [
+            f
+            for f in feature_view.realtime_config.output_schema.fields
+            if SqlIdentifier(f.name).resolved() not in pk_canonical
+        ]
+        return StructType([*pk_fields, *feature_fields])
+
     def _postgres_online_read_struct_type(
         self, feature_view: FeatureView, feature_names: Optional[list[str]]
     ) -> StructType:
         join_names = [k.resolved() for e in feature_view.entities for k in e.join_keys]
+        full_schema = self._oft_full_schema(feature_view)
         if feature_names:
             wanted = set(join_names) | set(feature_names)
-            fields = [f for f in feature_view.output_schema.fields if f.name in wanted]
+            fields = [f for f in full_schema.fields if f.name in wanted]
         else:
-            fields = list(feature_view.output_schema.fields)
+            fields = list(full_schema.fields)
         return StructType(fields)
 
     def _empty_dataframe_for_postgres_online_read(
         self, feature_view: FeatureView, feature_names: Optional[list[str]]
     ) -> DataFrame:
         return self._session.create_dataframe(
-            [], schema=self._postgres_online_read_struct_type(feature_view, feature_names)
+            [],
+            schema=self._postgres_online_read_struct_type(feature_view, feature_names),
         )
 
     def _read_postgres_online_via_query_api(
@@ -3906,6 +4798,7 @@ class FeatureStore:
         feature_names: Optional[list[str]],
         *,
         as_pandas: bool = False,
+        request_context: Optional[list[dict[str, Any]]] = None,
     ) -> Union[DataFrame, pd.DataFrame]:
         query_url = getattr(feature_view, "_postgres_online_query_url", None)
         if not query_url:
@@ -3931,11 +4824,15 @@ class FeatureStore:
                     "Online read requires a registered feature view with a version for Postgres-backed online tables."
                 ),
             )
-        self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
+        # RTFV reads reject feature_names upfront in read_feature_view, so the
+        # select-clause validator is only invoked for BFV/SFV.
+        if not feature_view.is_realtime_feature_view:
+            self._build_select_clause_and_validate(feature_view, feature_names, include_join_keys=True)
 
         join_names = [k.resolved() for e in feature_view.entities for k in e.join_keys]
         join_set = set(join_names)
-        join_key_field_types = {f.name: f.datatype for f in feature_view.output_schema.fields if f.name in join_set}
+        full_schema = self._oft_full_schema(feature_view)
+        join_key_field_types = {f.name: f.datatype for f in full_schema.fields if f.name in join_set}
 
         rows, schema = online_service.read_postgres_online_features(
             session=self._session,
@@ -3946,6 +4843,7 @@ class FeatureStore:
             keys=keys,
             feature_names=feature_names,
             join_key_field_types=join_key_field_types,
+            request_context=request_context,
             http_client=self._get_or_create_online_http_client(),
         )
         if as_pandas:
@@ -3955,6 +4853,152 @@ class FeatureStore:
         coerced = [online_service._coerce_row_values_for_snowpark_local_schema(r, schema) for r in rows]
         return self._session.create_dataframe(coerced, schema=schema)
 
+    def _read_realtime_feature_view(
+        self,
+        feature_view: FeatureView,
+        *,
+        keys: Optional[list[list[str]]],
+        feature_names: Optional[list[str]],
+        request_context: Optional[Any],
+        as_pandas: Optional[bool],
+    ) -> Union[DataFrame, pd.DataFrame]:
+        """Dispatch ``read_feature_view`` for a RealtimeFeatureView.
+
+        Runs the RTFV-specific validation order (online backing, keys,
+        request_context type/shape/length) before converting the
+        ``pd.DataFrame`` request_context to the per-row ``list[dict]`` shape
+        the Online Service expects, and delegates to the shared Postgres-online
+        read implementation. The ``store_type`` kwarg from the public API is
+        ignored: RealtimeFeatureViews have no offline backing and always
+        compute values at request time via the online path.
+
+        Args:
+            feature_view: A registered RealtimeFeatureView.
+            keys: Per-row join key tuples. Must be non-empty.
+            feature_names: Rejected for RTFV reads (server returns the full
+                ``compute_fn`` output set). Pass ``None``.
+            request_context: ``pandas.DataFrame`` whose columns are a superset
+                of the RTFV's ``RequestSource.schema`` field names and whose
+                row count equals ``len(keys)``. Pass ``None`` when the RTFV
+                was registered without a ``RequestSource``.
+            as_pandas: If ``None``, defaults to ``True`` for RTFV reads
+                (consistent with FG and Postgres-online behavior).
+
+        Returns:
+            ``pandas.DataFrame`` (default) or Snowpark ``DataFrame`` containing
+            join keys plus the RTFV's compute_fn output columns.
+
+        Raises:
+            SnowflakeMLException: ``[ValueError]`` for any RTFV-specific
+                validation failure listed in :meth:`read_feature_view`.
+        """
+        # pandas is imported lazily to avoid a hard runtime dependency in
+        # callers that don't touch the read path; the rest of the FS module
+        # gates pandas under TYPE_CHECKING.
+        import pandas as pandas_mod
+
+        rt_cfg = feature_view.realtime_config
+        if rt_cfg is None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INTERNAL_PYTHON_ERROR,
+                original_exception=RuntimeError(
+                    f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                    "realtime configuration is missing. Re-register the feature view."
+                ),
+            )
+
+        online_config = feature_view.online_config
+        if online_config is None or online_config.store_type != OnlineStoreType.POSTGRES:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                    "online store must be POSTGRES (the only supported backing). "
+                    f"Found store_type={online_config.store_type if online_config else None!r}."
+                ),
+            )
+
+        if feature_names is not None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                    "feature_names filtering is not supported; the Online Service returns "
+                    "the full compute_fn output set. Drop columns client-side via "
+                    "pandas .drop() if you need a subset."
+                ),
+            )
+
+        if keys is None or len(keys) == 0:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                    "`keys` must be a non-empty list of join-key tuples; RealtimeFeatureView "
+                    "reads do not support unbounded scans."
+                ),
+            )
+
+        request_source = rt_cfg.request_source
+        request_context_records: Optional[list[dict[str, Any]]] = None
+
+        if request_source is None:
+            if request_context is not None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                        "this RealtimeFeatureView was registered without a RequestSource; "
+                        "`request_context` must be omitted."
+                    ),
+                )
+        else:
+            request_columns = [f.name for f in request_source.schema.fields]
+            # Match request_context column names against the RequestSource schema using
+            # Snowflake identifier normalization rules: unquoted "amount" and the
+            # Snowpark-normalized "AMOUNT" refer to the same column. We canonicalize
+            # both sides to the resolved form and rename pandas columns to the canonical
+            # name before serializing so the server payload keys match the RequestSource
+            # field names verbatim.
+            canonical_required = {SqlIdentifier(c).resolved(): c for c in request_columns}
+
+            if request_context is None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"realtime feature view {feature_view.name}/{feature_view.version}: "
+                        "`request_context` is required for realtime reads. Pass a pandas DataFrame "
+                        f"with columns {request_columns} and one row per entry in `keys`, e.g. "
+                        "pd.DataFrame({" + ", ".join(f"{c!r}: [...]" for c in request_columns) + "})."
+                    ),
+                )
+
+            # Shared with the FG-with-RTFV read path so the two paths
+            # cannot disagree on shape, casing, or length.
+            from snowflake.ml.feature_store.realtime_registration import (
+                canonicalize_request_context,
+            )
+
+            request_context_records = canonicalize_request_context(
+                request_context=request_context,
+                required=canonical_required,
+                keys=keys,
+                error_prefix=f"realtime feature view {feature_view.name}/{feature_view.version}",
+                pandas_mod=pandas_mod,
+            )
+
+        # RTFV reads default to pandas (consistent with FG and the Postgres-online fast path).
+        if as_pandas is None:
+            as_pandas = True
+
+        return self._read_postgres_online_via_query_api(
+            feature_view,
+            keys,
+            feature_names=None,
+            as_pandas=as_pandas,
+            request_context=request_context_records,
+        )
+
     def _read_from_online_store(
         self,
         feature_view: FeatureView,
@@ -3962,6 +5006,7 @@ class FeatureStore:
         feature_names: Optional[list[str]],
         *,
         as_pandas: bool = False,
+        request_context: Optional[list[dict[str, Any]]] = None,
     ) -> Union[DataFrame, pd.DataFrame]:
         """Read feature values from the online store with optional key filtering.
 
@@ -3973,6 +5018,10 @@ class FeatureStore:
             keys: Optional list of key value lists to filter by.
             feature_names: Optional list of feature names to return.
             as_pandas: If True, return a ``pandas.DataFrame`` instead of a Snowpark ``DataFrame``.
+            request_context: Per-row request context, forwarded to Postgres-online reads.
+                Always ``None`` here -- this method is only reached for non-RTFV feature views,
+                which the public ``read_feature_view`` API has already rejected request_context
+                for.
 
         Returns:
             Snowpark DataFrame (or pandas DataFrame when ``as_pandas`` is True) containing the
@@ -3990,7 +5039,13 @@ class FeatureStore:
             )
 
         if feature_view.online_config is not None and feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
-            return self._read_postgres_online_via_query_api(feature_view, keys, feature_names, as_pandas=as_pandas)
+            return self._read_postgres_online_via_query_api(
+                feature_view,
+                keys,
+                feature_names,
+                as_pandas=as_pandas,
+                request_context=request_context,
+            )
 
         fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
 
@@ -4042,7 +5097,8 @@ class FeatureStore:
 
         for fv_row in all_fvs_rows:
             fv = self.get_feature_view(
-                SqlIdentifier(fv_row["NAME"], case_sensitive=True).identifier(), fv_row["VERSION"]
+                SqlIdentifier(fv_row["NAME"], case_sensitive=True).identifier(),
+                fv_row["VERSION"],
             )
             self.delete_feature_view(fv)
 
@@ -4050,6 +5106,34 @@ class FeatureStore:
             self.delete_entity(SqlIdentifier(entity_row["NAME"], case_sensitive=True).identifier())
 
         logger.info(f"Feature store {self._config.full_schema_path} has been cleared.")
+
+    def _build_tagging_clause(
+        self,
+        feature_view: FeatureView,
+        obj_info: _FeatureStoreObjInfo,
+    ) -> str:
+        """Build the SET TAG clause for a feature view's DT/view."""
+        parts = [
+            f"{self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)} = '{obj_info.to_json()}'",
+            f"{self._get_fully_qualified_name(_FEATURE_VIEW_METADATA_TAG)} = '"
+            f"{feature_view._metadata().to_json()}'",
+        ]
+        for e in feature_view.entities:
+            join_keys = [f"{key.resolved()}" for key in e.join_keys]
+            parts.append(f"{self._get_fully_qualified_name(self._get_entity_name(e.name))} = '{','.join(join_keys)}'")
+        return ",\n".join(parts)
+
+    @staticmethod
+    def _build_column_descs(feature_view: FeatureView) -> str:
+        """Build the column COMMENT clause for a feature view's DT/view."""
+        if feature_view.feature_descs is None:
+            return ""
+        descs: list[str] = []
+        for col in feature_view.output_schema.fields:
+            col_desc = feature_view.feature_descs.get(SqlIdentifier(col.name), None)
+            comment = "" if col_desc is None else f"COMMENT '{col_desc}'"
+            descs.append(f"{col.name} {comment}")
+        return ", ".join(descs)
 
     def _get_feature_view_if_exists(self, name: str, version: str) -> FeatureView:
         existing_fv = self.get_feature_view(name, version)
@@ -4098,23 +5182,6 @@ class FeatureStore:
                 warehouse,
             )
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
-
-            # Create scheduled task after DT creation
-            if schedule_task:
-                task_override_clause = " OR REPLACE" if override else ""
-                self._create_scheduled_refresh_task(
-                    task_override_clause,
-                    feature_view,
-                    fully_qualified_name,
-                    warehouse,
-                )
-            elif override:
-                # Clean up any existing task when overwriting with a non-CRON feature view.
-                # This handles the following scenarios:
-                # Duration DT → DOWNSTREAM DT: old task is orphaned
-                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                    statement_params=self._telemetry_stmp
-                )
         except Exception as e:
             # Check for type conflict: VIEW exists but we want to create a DYNAMIC TABLE
             if (
@@ -4123,7 +5190,6 @@ class FeatureStore:
                 and e.error_code == error_codes.SQL_COMPILATION_ERROR
                 and self._get_existing_feature_view_object_type(feature_view_name) == "VIEW"
             ):
-                # Use shadow swap to replace VIEW with DYNAMIC TABLE
                 logger.info(
                     f"Existing VIEW detected, performing shadow swap to DYNAMIC TABLE for {fully_qualified_name}"
                 )
@@ -4136,14 +5202,6 @@ class FeatureStore:
                     warehouse,
                     block,
                 )
-                # Create scheduled task after shadow swap (shadow swap only happens with override=True)
-                if schedule_task:
-                    self._create_scheduled_refresh_task(
-                        " OR REPLACE",
-                        feature_view,
-                        fully_qualified_name,
-                        warehouse,
-                    )
             else:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
@@ -4181,7 +5239,7 @@ class FeatureStore:
             assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
             query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -4195,7 +5253,7 @@ class FeatureStore:
         else:
             query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -4220,17 +5278,443 @@ class FeatureStore:
         """
         return query
 
+    def _ensure_snapshot_status_table_exists(self) -> None:
+        """Lazily create the snapshot status table if it does not already exist."""
+        status_table_fqn = self._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {status_table_fqn} (
+                FV_FQN VARCHAR NOT NULL,
+                SNAPSHOT_START_TIME TIMESTAMP_NTZ NOT NULL,
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )"""
+        ).collect(statement_params=self._telemetry_stmp)
+
+    def _drop_orphaned_snapshot_table(self, feature_view_name: SqlIdentifier) -> None:
+        """Drop the snapshot table and snapshot status row for a feature view.
+
+        Used by ``register_feature_view(overwrite=True)`` to remove any snapshot
+        table left over from a previous append_only registration of the same
+        name/version.  The new registration is guaranteed non-append_only on the
+        overwrite path (the append_only + overwrite combination is rejected
+        upfront), so the prior snapshot state is unconditionally stale.
+
+        Args:
+            feature_view_name: The versioned physical name of the feature view, for
+                example ``MY_FV$V1``.
+
+        Raises:
+            SnowparkSQLException: If deleting snapshot status rows fails for a reason
+                other than the status table not existing (SQL error code 2003).
+        """
+        snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
+        snapshot_fqn = self._get_fully_qualified_name(snapshot_table_name)
+        self._session.sql(f"DROP TABLE IF EXISTS {snapshot_fqn}").collect(statement_params=self._telemetry_stmp)
+
+        status_table_fqn = self._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
+        fully_qualified_name_lit = snowpark_utils.escape_single_quotes(  # type: ignore[no-untyped-call]
+            fully_qualified_name
+        )
+        try:
+            self._session.sql(f"DELETE FROM {status_table_fqn} WHERE FV_FQN = '{fully_qualified_name_lit}'").collect(
+                statement_params=self._telemetry_stmp
+            )
+        except SnowparkSQLException as e:
+            # The status table is created lazily by ``_ensure_snapshot_status_table_exists``
+            # only on append_only registration paths. If no append_only FV was ever registered
+            # in this schema, the table won't exist and the DELETE is a vacuous no-op.
+            # Re-raise anything other than "object does not exist" (2003).
+            if e.sql_error_code != 2003:
+                raise
+
+    def _cleanup_stale_feature_view_resources(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        fully_qualified_name: str,
+        *,
+        new_has_task: bool,
+        drop_snapshot_table: Optional[bool] = None,
+    ) -> None:
+        """Drop stale feature-view resources during overwrite/delete operations.
+
+        Called after the new offline object (View or Dynamic Table) has been
+        successfully created on the ``register_feature_view(overwrite=True)``
+        path.  Cleans up two classes of orphan from the prior registration:
+
+        - **Stale Task.** Only dropped when the new FV does *not* itself have a
+          Task (``new_has_task=False``).  Views never have one, and
+          duration-based Dynamic Tables use the DT's internal scheduler.
+          CRON-based DTs and ``append_only`` FVs do have a companion Task —
+          but that case is handled by ``_create_scheduled_refresh_task`` with
+          ``OR REPLACE``, which owns the Task lifecycle and takes precedence
+          here.  ``IF EXISTS`` makes the drop a no-op when no prior Task exists.
+
+        - **Stale snapshot table.** By default, dropped when the new FV is not
+        ``append_only`` on overwrite paths because ``append_only=True`` + ``overwrite=True``
+        is rejected upfront by ``register_feature_view``.  Delete flows pass
+        ``drop_snapshot_table=True`` explicitly.
+          ``IF EXISTS`` makes the drop a no-op when no prior snapshot exists.
+        If ``drop_snapshot_table`` is ``None``, it defaults to
+        ``not feature_view.append_only``.
+
+        Args:
+            feature_view: The newly registered feature view.
+            feature_view_name: Versioned physical name (e.g. ``MY_FV$V1``).
+            fully_qualified_name: Fully qualified name of the offline object
+                (Dynamic Table or View) — also the Task name when one exists.
+            new_has_task: True iff the registration is creating a Task for
+                the new FV (CRON-based DT or ``append_only``).  When True,
+                Task cleanup is skipped because the create-or-replace path
+                already owns the Task lifecycle.
+            drop_snapshot_table: Whether to drop the prior snapshot table.
+                When ``None``, defaults to ``not feature_view.append_only``;
+                delete flows pass ``True`` explicitly.
+        """
+        if not new_has_task:
+            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                statement_params=self._telemetry_stmp
+            )
+        if drop_snapshot_table is None:
+            drop_snapshot_table = not feature_view.append_only
+        if drop_snapshot_table:
+            self._drop_orphaned_snapshot_table(feature_view_name)
+
+    def _create_snapshot_table(
+        self,
+        feature_view: FeatureView,
+        feature_view_name: SqlIdentifier,
+        dt_fqn: str,
+        *,
+        backfill_table: Optional[str] = None,
+    ) -> str:
+        """Create the snapshot accumulation table for an append-only feature view.
+
+        Without ``backfill_table``: creates an empty table mirroring the DT
+        schema via ``CREATE TABLE ... LIKE`` and applies clustering from
+        ``feature_view.cluster_by``.
+
+        With ``backfill_table``: zero-copy clones the backfill table, then
+        reconciles schema via the extend-only helper — every DT column missing
+        from the clone becomes ``ADD COLUMN``; the timestamp column and all
+        entity join keys must already be present in the backfill (otherwise
+        the helper rejects the call); and any backfill column not present in
+        the DT, or any reorder/type change, is rejected. Clustering is then
+        applied.
+
+        The snapshot table is brand new at this point, so any failure after
+        the initial ``CREATE TABLE`` (failed schema reconciliation, failed
+        ``CLUSTER BY``, failed ``SET TAG``, …) is compensated by dropping the
+        snapshot table — leaving a half-built table behind would block retries
+        and confuse subsequent registration attempts. The ``ADD COLUMN``
+        rollback that the extend-only helper would otherwise perform is
+        deliberately suppressed (``rollback_cmds=[]``) because the outer
+        ``DROP TABLE`` subsumes it.
+
+        Args:
+            feature_view: The feature view definition.
+            feature_view_name: The versioned physical name (e.g. ``SNAP_FV$V1``).
+            dt_fqn: Fully qualified name of the DT.
+            backfill_table: Fully-qualified name of a historical snapshot table
+                to clone.  When ``None``, creates an empty snapshot table.
+
+        Returns:
+            The fully qualified name of the created snapshot table.
+
+        Raises:
+            Exception: Re-raises any exception after best-effort cleanup of the
+                half-built snapshot table (``DROP TABLE IF EXISTS``).
+        """
+        self._ensure_snapshot_status_table_exists()
+        snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
+        snapshot_fqn = self._get_fully_qualified_name(snapshot_table_name)
+        snapshot_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.SNAPSHOT_TABLE, snowml_version.VERSION)
+
+        if backfill_table is None:
+            self._session.sql(f"CREATE TABLE {snapshot_fqn} LIKE {dt_fqn}").collect(
+                statement_params=self._telemetry_stmp
+            )
+        else:
+            self._session.sql(f"CREATE TABLE {snapshot_fqn} CLONE {backfill_table}").collect(
+                statement_params=self._telemetry_stmp
+            )
+
+        try:
+            if backfill_table is not None:
+                # After CLONE, the snapshot mirrors the backfill schema. Reconcile to the DT
+                # schema: each extra DT column becomes an ADD COLUMN; any backfill column
+                # not present in the DT (or any reorder/type change) is rejected by the
+                # extend-only helper. ``required_old_columns`` additionally fails with a
+                # domain-friendly message when the user-supplied backfill is missing the
+                # timestamp or any entity join key, which would otherwise either trigger a
+                # confusing position-mismatch error (when those columns are at the front of
+                # the DT, the common case) or silently land NULL key values for backfilled
+                # rows (rare DT orderings where features come first).
+                backfill_schema = fs_table_schema_evolution.schema_upper_name_map(
+                    self._session.table(snapshot_fqn).schema
+                )
+                dt_schema = fs_table_schema_evolution.schema_upper_name_map(self._session.table(dt_fqn).schema)
+                required_columns: list[str] = []
+                if feature_view.timestamp_col:
+                    required_columns.append(feature_view.timestamp_col.resolved())
+                for entity in feature_view.entities:
+                    for key in entity.join_keys:
+                        required_columns.append(key.resolved())
+                forward_cmds, _ = self._compute_extend_only_schema_evolution_cmds(
+                    snapshot_fqn,
+                    backfill_schema,
+                    dt_schema,
+                    required_old_columns=required_columns,
+                )
+                # rollback_cmds=[] — the outer except drops the entire snapshot table, so
+                # per-column rollback would be wasted work.
+                self._execute_extend_only_schema_evolution_cmds(forward_cmds, [])
+
+            self._apply_snapshot_clustering(feature_view, snapshot_fqn)
+
+            self._session.sql(
+                f"""ALTER TABLE {snapshot_fqn}
+                    SET TAG {self._get_fully_qualified_name(_FEATURE_STORE_OBJECT_TAG)}='{snapshot_obj_info.to_json()}'
+                """
+            ).collect(statement_params=self._telemetry_stmp)
+        except Exception:
+            try:
+                self._session.sql(f"DROP TABLE IF EXISTS {snapshot_fqn}").collect(statement_params=self._telemetry_stmp)
+            except Exception:
+                logger.exception("Failed to drop half-built snapshot table %s", snapshot_fqn)
+            raise
+
+        return snapshot_fqn
+
+    def _apply_snapshot_clustering(self, feature_view: FeatureView, snapshot_fqn: str) -> None:
+        """Apply clustering to the snapshot table, matching the DT's cluster_by.
+
+        Args:
+            feature_view: The feature view whose cluster_by to apply.
+            snapshot_fqn: Fully qualified name of the snapshot table.
+        """
+        if feature_view.cluster_by:
+            cluster_expr = ", ".join(str(col) for col in feature_view.cluster_by)
+            self._session.sql(f"ALTER TABLE {snapshot_fqn} CLUSTER BY ({cluster_expr})").collect(
+                statement_params=self._telemetry_stmp
+            )
+
+    def _compute_extend_only_schema_evolution_cmds(
+        self,
+        table_fqn: str,
+        old_schema: dict[str, DataType],
+        new_schema: dict[str, DataType],
+        *,
+        required_old_columns: Optional[Iterable[str]] = None,
+    ) -> tuple[list[str], list[str]]:
+        """Compute the forward + rollback DDL to evolve ``table_fqn`` extend-only.
+
+        Pure planning (no SQL is issued). Use together with
+        :meth:`_execute_extend_only_schema_evolution_cmds` to run the forward DDL,
+        and pass the rollback commands to a caller that needs to register a
+        compensating action (e.g. :meth:`_recreate_append_only_feature_view_atomically`).
+
+        Args:
+            table_fqn: Fully qualified name of the table to evolve.
+            old_schema: Existing column types in canonical order.
+            new_schema: Target column types in canonical order.
+            required_old_columns: Optional column names that must already be
+                present in ``old_schema``. Use when ``old_schema`` describes
+                user-supplied data (e.g. an offline backfill table) so the
+                caller sees a domain-friendly missing-columns error before the
+                structural prefix check fires.
+
+        Returns:
+            ``(forward_cmds, rollback_cmds)``. Both lists are empty when ``new_schema``
+            equals ``old_schema``.
+
+        Raises:
+            SnowflakeMLException: If ``required_old_columns`` are absent from
+                ``old_schema``, or if ``new_schema`` would drop, reorder, or
+                change types of columns in ``old_schema``.
+        """
+        try:
+            return fs_table_schema_evolution.get_table_schema_evolution_extend_only_commands(
+                table_fqn,
+                old_schema,
+                new_schema,
+                required_old_columns=required_old_columns,
+            )
+        except ValueError as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=e,
+            )
+
+    def _execute_extend_only_schema_evolution_cmds(
+        self,
+        forward_cmds: list[str],
+        rollback_cmds: list[str],
+    ) -> None:
+        """Run ``forward_cmds`` sequentially; on failure, run ``rollback_cmds`` inline and re-raise.
+
+        Inline rollback handles the partial-DDL case (cmd[k] succeeds, cmd[k+1] fails)
+        so callers never see a half-applied schema. Each rollback step is best-effort:
+        failures are logged but do not mask the original forward error.
+
+        Args:
+            forward_cmds: DDL to apply in order.
+            rollback_cmds: DDL that undoes ``forward_cmds`` (typically the rollback list
+                returned by :meth:`_compute_extend_only_schema_evolution_cmds`).
+
+        Raises:
+            Exception: Re-raised after best-effort rollback when one of the forward
+                DDL statements fails partway through.
+        """
+        try:
+            for cmd in forward_cmds:
+                self._session.sql(cmd).collect(statement_params=self._telemetry_stmp)
+        except Exception:
+            for rollback_cmd in rollback_cmds:
+                try:
+                    self._session.sql(rollback_cmd).collect(statement_params=self._telemetry_stmp)
+                except Exception:
+                    logger.exception("Failed to roll back schema-evolution DDL: %s", rollback_cmd)
+            raise
+
+    def _build_snapshot_task_body(self, feature_view_name: SqlIdentifier, fully_qualified_name: str) -> str:
+        """Build a Task SQL body that refreshes the DT and snapshots it.
+
+        Uses a ``_SNAPSHOT_STATUS`` table to coordinate crash recovery.
+        Idempotency is guaranteed by the transactional pairing of the
+        snapshot INSERT and status row DELETE.
+
+        On each Task execution:
+
+        Branch 1 — status row exists (crash recovery):
+          A previous run inserted the status row but the snapshot
+          transaction did not commit. Check
+          ``DYNAMIC_TABLE_REFRESH_HISTORY`` for a ``SUCCEEDED``
+          refresh whose ``REFRESH_END_TIME`` is at or after
+          ``SNAPSHOT_START_TIME``. If found, skip the next
+          ``ALTER REFRESH`` and go straight to the common snapshot
+          transaction — the DT already has the data the prior run
+          was about to snapshot.
+
+          Only ``SUCCEEDED`` refreshes are matched. In-progress
+          (``RUNNING``) and ``FAILED`` refreshes are not detected
+          here; the task falls through to branch 2 and issues a
+          fresh ``ALTER REFRESH``. ``ALTER DYNAMIC TABLE … REFRESH``
+          tolerates an in-flight refresh (queues or no-ops), so the
+          extra call is harmless.
+
+        Branch 2 — no status row, or branch 1 fell through:
+          1. ``MERGE`` a status row keyed by ``FV_FQN`` with
+             ``CURRENT_TIMESTAMP()`` as the start time. ``MATCHED``
+             updates the existing row; ``NOT MATCHED`` inserts a
+             new one.
+          2. ``ALTER DYNAMIC TABLE … REFRESH``.
+          3. Fall through to the common snapshot transaction.
+
+        Common transaction (both branches):
+          ``BEGIN TRANSACTION`` → INSERT DT rows into the snapshot table →
+          DELETE the status row → ``COMMIT``.  If the transaction rolls
+          back, the status row persists and the next run retries via
+          Branch 1.
+
+        Args:
+            feature_view_name: The versioned physical name (e.g. ``SNAP_FV$V1``).
+            fully_qualified_name: Fully qualified name of the DT.
+
+        Returns:
+            A Snowflake SQL scripting block (DECLARE ... BEGIN ... END).
+        """
+        snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
+        snapshot_fqn = self._get_fully_qualified_name(snapshot_table_name)
+        status_table_fqn = self._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+
+        # Defensively escape every value that gets baked into a SQL string literal in the
+        # task body.  In practice these are derived from SqlIdentifiers and the configured
+        # database/schema, none of which can carry a single quote today, but the task body
+        # is persisted server-side and outlives the registration call — a future change to
+        # the identifier-quoting rules or the FQN composition shouldn't be able to
+        # silently break (or worse, inject SQL into) an already-deployed task.
+        fv_fqn_lit = snowpark_utils.escape_single_quotes(fully_qualified_name)  # type: ignore[no-untyped-call]
+        dt_name_lit = snowpark_utils.escape_single_quotes(feature_view_name.resolved())  # type: ignore[no-untyped-call]
+        schema_lit = snowpark_utils.escape_single_quotes(  # type: ignore[no-untyped-call]
+            self._config.schema.resolved()
+        )
+
+        history_after_query = f"""SELECT STATE
+        FROM TABLE({self._config.database}.INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY(
+            RESULT_LIMIT => 100
+        ))
+        WHERE NAME = '{dt_name_lit}'
+        AND SCHEMA_NAME = '{schema_lit}'
+        AND STATE IN ('SUCCEEDED')
+        AND REFRESH_END_TIME >= :snapshot_start_time
+        ORDER BY REFRESH_END_TIME DESC
+        LIMIT 1"""
+
+        # Use ``SELECT *`` so the persisted task body is schema-agnostic — schema-extension
+        # updates do not need to rebuild it to capture new columns. The snapshot table is
+        # created via ``CREATE TABLE ... CLONE`` from the DT and kept in lock-step with the
+        # DT via extend-only ALTER ADD COLUMN, so in steady state ``snapshot.cols`` equals
+        # ``dt.cols`` (same names, same order) and the positional ``SELECT *`` is correct.
+        # During the brief window of an ``update_feature_view`` where the snapshot has been
+        # extended but the DT has not yet been recreated, an in-flight task fire would see
+        # ``snapshot.cols > dt.cols`` and fail with a column-count mismatch; the status-row
+        # crash-recovery branch above retries on the next fire after the DT recreate
+        # completes (one cycle of data is delayed; no data is lost).
+        snapshot_insert = f"""INSERT INTO {snapshot_fqn}
+            SELECT * FROM {fully_qualified_name}"""
+
+        return f"""DECLARE
+    snapshot_start_time TIMESTAMP_NTZ;
+    refresh_state VARCHAR;
+BEGIN
+    -- Check status table for a pending snapshot (crash recovery)
+    SELECT SNAPSHOT_START_TIME INTO :snapshot_start_time
+        FROM {status_table_fqn}
+        WHERE FV_FQN = '{fv_fqn_lit}'
+        LIMIT 1;
+    LET skip_dynamic_table_refresh BOOLEAN := false;
+    IF (snapshot_start_time IS NOT NULL) THEN
+        -- Branch 1: Status row exists — previous run did not complete.
+        -- Check if a DT refresh already happened after snapshot_start_time.
+        SELECT STATE INTO :refresh_state FROM ({history_after_query});
+
+        IF (refresh_state IS NOT NULL) THEN
+            skip_dynamic_table_refresh := true;
+        END IF;
+    END IF;
+
+    IF (:skip_dynamic_table_refresh = false) THEN
+        -- Branch 2: Fresh run — record start time and refresh DT.
+        MERGE INTO {status_table_fqn} AS tgt
+            USING (SELECT '{fv_fqn_lit}' AS FV_FQN, CURRENT_TIMESTAMP() AS SNAPSHOT_START_TIME) AS src
+            ON tgt.FV_FQN = src.FV_FQN
+            WHEN MATCHED THEN UPDATE SET tgt.SNAPSHOT_START_TIME = src.SNAPSHOT_START_TIME
+            WHEN NOT MATCHED THEN INSERT (FV_FQN, SNAPSHOT_START_TIME) VALUES (src.FV_FQN, src.SNAPSHOT_START_TIME);
+
+        ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH;
+    END IF;
+
+    -- Common: Atomic snapshot INSERT + status cleanup
+    BEGIN TRANSACTION;
+        {snapshot_insert};
+        DELETE FROM {status_table_fqn} WHERE FV_FQN = '{fv_fqn_lit}';
+    COMMIT;
+END;"""
+
     def _create_scheduled_refresh_task(
         self,
         override_clause: str,
         feature_view: FeatureView,
         fully_qualified_name: str,
         warehouse: SqlIdentifier,
+        *,
+        feature_view_name: Optional[SqlIdentifier] = None,
     ) -> None:
         """Create a Snowflake Task to refresh a Dynamic Table on a CRON schedule.
 
-        This function creates a scheduled task that executes ALTER DYNAMIC TABLE ... REFRESH
-        to trigger periodic refreshes based on a CRON expression.
+        For snapshot-enabled (append_only) feature views, the task also appends the
+        current DT contents to the snapshot table.
 
         Note:
             Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
@@ -4242,19 +5726,34 @@ class FeatureStore:
             feature_view: The FeatureView containing refresh configuration.
             fully_qualified_name: Fully qualified name for the task (same as the DT).
             warehouse: Warehouse to use for task execution.
+            feature_view_name: The versioned physical name (required for append_only FVs).
 
         Raises:
-            Exception: Re-raises any exception after cleanup (dropping DT and task).
+            SnowflakeMLException: [INTERNAL_SNOWML_ERROR] when ``feature_view.append_only``
+                is True but ``feature_view_name`` is not provided.
+            Exception: Re-raises any exception after best-effort cleanup. Cleanup is gated
+                on ``override_clause`` — see the inline comment in the except block.
         """
         task_obj_info = _FeatureStoreObjInfo(_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, snowml_version.VERSION)
         try:
-            # ALTER DYNAMIC TABLE works for both regular Dynamic Tables and Dynamic Iceberg Tables.
-            # The ICEBERG keyword is only used in CREATE, not in ALTER/SHOW/DROP.
+            if feature_view.append_only:
+                if feature_view_name is None:
+                    raise snowml_exceptions.SnowflakeMLException(
+                        error_code=error_codes.INTERNAL_SNOWML_ERROR,
+                        original_exception=RuntimeError(
+                            "Feature Store: append-only feature views require the versioned physical name "
+                            "to build the refresh task."
+                        ),
+                    )
+                task_body = self._build_snapshot_task_body(feature_view_name, fully_qualified_name)
+            else:
+                task_body = f"ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH"
+
             self._session.sql(
                 f"""CREATE{override_clause} TASK {fully_qualified_name}
                     WAREHOUSE = {warehouse}
                     SCHEDULE = 'USING CRON {feature_view.refresh_freq}'
-                    AS ALTER DYNAMIC TABLE {fully_qualified_name} REFRESH
+                    AS {task_body}
                 """
             ).collect(statement_params=self._telemetry_stmp)
             self._session.sql(
@@ -4267,12 +5766,32 @@ class FeatureStore:
                 statement_params=self._telemetry_stmp
             )
         except Exception:
-            self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
-            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
+            # Internal cleanup runs only on the fresh-create path (override_clause empty).
+            #
+            # On the OR REPLACE path, the caller is authoritative for rollback:
+            #   - register_feature_view(overwrite=True) deliberately does not roll back
+            #     created_resources (see register_feature_view's except block); leaving
+            #     the just-replaced DT in place lets the user retry register without
+            #     losing the prior FV's downstream consumers' object identity.
+            #   - update_feature_view(updated_feature_df=...) drives recreate via
+            #     _recreate_append_only_feature_view_atomically, which registers
+            #     compensating actions for each forward step. Dropping the DT here
+            #     would defeat those compensating actions (e.g. an online-table
+            #     rollback that recreates ``ONLINE FEATURE TABLE FROM <dt>`` would
+            #     fail because we just dropped the DT).
+            is_fresh_create = not override_clause.strip()  # "" → True, " OR REPLACE" → False
+            if is_fresh_create:
+                self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+                if feature_view.append_only and feature_view_name is not None:
+                    snap_name = FeatureView._get_snapshot_table_name(feature_view_name)
+                    self._session.sql(f"DROP TABLE IF EXISTS {self._get_fully_qualified_name(snap_name)}").collect(
+                        statement_params=self._telemetry_stmp
+                    )
             raise
 
     def _create_rollup_feature_view(
@@ -4282,11 +5801,16 @@ class FeatureStore:
         fully_qualified_name: str,
         tagging_clause_str: str,
         overwrite: bool,
-    ) -> list[tuple[_FeatureStoreObjTypes, str]]:
+        created_resources: list[tuple[_FeatureStoreObjTypes, str]],
+    ) -> None:
         """Create a rollup feature view Dynamic Table.
 
         Rollup feature views aggregate tiles from a parent tiled FV to a coarser
         entity level using a mapping table.
+
+        Resources are appended to ``created_resources`` as they are successfully
+        created so the caller can roll them back even if this method raises
+        partway through (e.g. DT succeeds, then Task creation fails).
 
         Args:
             feature_view: The rollup feature view definition.
@@ -4294,15 +5818,12 @@ class FeatureStore:
             fully_qualified_name: Fully qualified name for the created DT.
             tagging_clause_str: Tagging clause for the CREATE statement.
             overwrite: Whether to replace existing objects.
-
-        Returns:
-            A list of tuples of created object types and their names for rollback.
+            created_resources: Mutable list that this method appends successfully
+                created resources to (in creation order) for caller-side rollback.
 
         Raises:
             SnowflakeMLException: If rollup_config is invalid or DT creation fails.
         """
-        created: list[tuple[_FeatureStoreObjTypes, str]] = []
-
         rollup_config = feature_view.rollup_config
         if rollup_config is None:
             raise snowml_exceptions.SnowflakeMLException(
@@ -4362,15 +5883,14 @@ class FeatureStore:
         refresh_freq = feature_view.refresh_freq or "DOWNSTREAM"
         overwrite_clause = " OR REPLACE" if overwrite else ""
 
-        # Detect if refresh_freq is a cron expression (not a duration like '5m' or '1h')
-        # If it's a cron, we need to set TARGET_LAG = 'DOWNSTREAM' and create a Task
-        schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
+        # If refresh_freq is a cron, we need to set TARGET_LAG = 'DOWNSTREAM' and create a Task.
+        schedule_task = feature_view_refresh_freq._is_cron_refresh_freq(refresh_freq)
         target_lag = "DOWNSTREAM" if schedule_task else refresh_freq
 
         try:
             query = f"""CREATE{overwrite_clause} DYNAMIC TABLE {fully_qualified_name}
                 TARGET_LAG = '{target_lag}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause_str}
                 )
@@ -4386,7 +5906,7 @@ class FeatureStore:
                 AS {rollup_sql}
             """
             self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-            created.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
+            created_resources.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
 
             # Create scheduled task after DT creation for cron-based refresh
             if schedule_task:
@@ -4397,7 +5917,12 @@ class FeatureStore:
                     fully_qualified_name,
                     warehouse,
                 )
-                created.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
+                created_resources.append(
+                    (
+                        _FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK,
+                        fully_qualified_name,
+                    )
+                )
             elif overwrite:
                 # Clean up any existing task when overwriting with a non-CRON feature view.
                 # This handles the case: CRON rollup DT → duration/DOWNSTREAM rollup DT
@@ -4411,8 +5936,6 @@ class FeatureStore:
                 original_exception=RuntimeError(f"Create rollup dynamic table [\n{query}\n] failed: {e}."),
             ) from e
 
-        return created
-
     def _create_offline_feature_view(
         self,
         feature_view: FeatureView,
@@ -4422,11 +5945,15 @@ class FeatureStore:
         tagging_clause_str: str,
         block: bool,
         overwrite: bool,
-    ) -> list[tuple[_FeatureStoreObjTypes, str]]:
+        created_resources: list[tuple[_FeatureStoreObjTypes, str]],
+    ) -> None:
         """Create the offline representation for a feature view.
 
         Depending on `refresh_freq`, this creates either a Dynamic Table (managed feature view)
-        or a View (external feature view). Returns a list of created resources for rollback.
+        or a View (external feature view). Resources are appended to ``created_resources`` as
+        they are successfully created so the caller can roll them back even if this method
+        raises partway through (e.g. DT created, then snapshot-table reconciliation fails for
+        an ``append_only`` FV).
 
         Args:
             feature_view: The feature view definition to materialize.
@@ -4436,15 +5963,12 @@ class FeatureStore:
             tagging_clause_str: Tagging clause used in the CREATE statement.
             block: Whether to block until the initial refresh completes when applicable.
             overwrite: Whether to replace existing objects if they already exist.
-
-        Returns:
-            A list of tuples of the created object types and their fully qualified names,
-            used for potential rollback.
+            created_resources: Mutable list that this method appends successfully created
+                resources to (in creation order) for caller-side rollback.
 
         Raises:
             SnowflakeMLException: [RuntimeError] If creating the view or dynamic table fails.
         """
-        created: list[tuple[_FeatureStoreObjTypes, str]] = []
         refresh_freq = feature_view.refresh_freq
 
         # External feature view via View (no refresh schedule)
@@ -4459,7 +5983,7 @@ class FeatureStore:
             )
             try:
                 self._session.sql(query).collect(statement_params=self._telemetry_stmp)
-                created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
+                created_resources.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
             except Exception as e:
                 # Only check for type conflict when SQL_COMPILATION_ERROR is thrown
                 if (
@@ -4480,19 +6004,27 @@ class FeatureStore:
                         tagging_clause_str,
                         block,
                     )
-                    created.append((_FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW, fully_qualified_name))
+                    created_resources.append(
+                        (
+                            _FeatureStoreObjTypes.EXTERNAL_FEATURE_VIEW,
+                            fully_qualified_name,
+                        )
+                    )
                 else:
                     raise snowml_exceptions.SnowflakeMLException(
                         error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
                         original_exception=RuntimeError(f"Create view {fully_qualified_name} failed: {e}"),
                     ) from e
             if overwrite:
-                # Clean up any existing task from a previous CRON-based DT registration.
-                # This handles the case: CRON DT → View
-                self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                    statement_params=self._telemetry_stmp
+                # Views never have a companion Task, so always clean up any
+                # task left over from a prior CRON-based DT registration.
+                self._cleanup_stale_feature_view_resources(
+                    feature_view,
+                    feature_view_name,
+                    fully_qualified_name,
+                    new_has_task=False,
                 )
-            return created
+            return
         # Managed feature view via Dynamic Table (and optional Task)
         #
         # Refresh behavior based on refresh_freq input type:
@@ -4506,7 +6038,8 @@ class FeatureStore:
         #
         # Note: Dynamic Iceberg tables are managed with ALTER DYNAMIC TABLE (no ICEBERG keyword),
         # so CRON-based refresh works the same way as regular dynamic tables.
-        schedule_task = refresh_freq != "DOWNSTREAM" and timeparse(refresh_freq) is None
+        schedule_task = feature_view_refresh_freq._is_cron_refresh_freq(refresh_freq)
+        warehouse = feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse
         self._create_dynamic_table(
             feature_view_name,
             feature_view,
@@ -4514,17 +6047,56 @@ class FeatureStore:
             column_descs,
             tagging_clause_str,
             schedule_task,
-            feature_view.warehouse if feature_view.warehouse is not None else self._default_warehouse,
+            warehouse,
             block,
             overwrite,
         )
-        created.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
+        created_resources.append((_FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, fully_qualified_name))
+
+        if feature_view.append_only:
+            # Pre-register the snapshot table for rollback before invoking
+            # _create_snapshot_table — that method runs CREATE TABLE … CLONE
+            # first and may then raise during schema reconciliation, leaving a
+            # partially-created table that the caller must clean up.  The FQN
+            # is fully determined by feature_view_name, so we can append it
+            # ahead of time; rollback uses DROP TABLE IF EXISTS so it's a no-op
+            # if the table was never actually created.
+            snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
+            snapshot_fqn = self._get_fully_qualified_name(snapshot_table_name)
+            created_resources.append((_FeatureStoreObjTypes.SNAPSHOT_TABLE, snapshot_fqn))
+            self._create_snapshot_table(
+                feature_view,
+                feature_view_name,
+                fully_qualified_name,
+                backfill_table=feature_view.backup_source,
+            )
+
         if schedule_task:
-            created.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
-        return created
+            task_override_clause = " OR REPLACE" if overwrite else ""
+            self._create_scheduled_refresh_task(
+                task_override_clause,
+                feature_view,
+                fully_qualified_name,
+                warehouse,
+                feature_view_name=(feature_view_name if feature_view.append_only else None),
+            )
+            created_resources.append((_FeatureStoreObjTypes.FEATURE_VIEW_REFRESH_TASK, fully_qualified_name))
+
+        if overwrite:
+            self._cleanup_stale_feature_view_resources(
+                feature_view,
+                feature_view_name,
+                fully_qualified_name,
+                new_has_task=schedule_task,
+            )
 
     def _shadow_replace(
-        self, old_obj_fqn: str, old_obj_type: str, new_obj_fqn: str, new_obj_type: str, fully_qualified_name: str
+        self,
+        old_obj_fqn: str,
+        old_obj_type: str,
+        new_obj_fqn: str,
+        new_obj_type: str,
+        fully_qualified_name: str,
     ) -> None:
         try:
             # Swap: drop old <object type>, rename new <object type> to target
@@ -4610,7 +6182,13 @@ class FeatureStore:
 
         try:
             self._session.sql(query).collect(block=block, statement_params=self._telemetry_stmp)
-            self._shadow_replace(temp_table_fqn, "DYNAMIC TABLE", temp_view_fqn, "VIEW", fully_qualified_name)
+            self._shadow_replace(
+                temp_table_fqn,
+                "DYNAMIC TABLE",
+                temp_view_fqn,
+                "VIEW",
+                fully_qualified_name,
+            )
 
             logger.info(f"Successfully replaced DYNAMIC TABLE with VIEW for {fully_qualified_name}")
         except Exception as e:
@@ -4689,7 +6267,7 @@ class FeatureStore:
         tagging_clause_str: str,
     ) -> str:
         return f"""CREATE{overwrite_clause} VIEW {view_name} ({column_descs})
-            COMMENT = '{feature_view.desc}'
+            COMMENT = {_sql_string_literal(feature_view.desc)}
             TAG (
                 {tagging_clause_str}
             )
@@ -4862,11 +6440,21 @@ class FeatureStore:
 
                 if include_feature_view_timestamp_col:
                     f_ts_col_alias = identifier.concat_names(
-                        [feature_view.name, "_", str(feature_view.version), "_", feature_timestamp_col]
+                        [
+                            feature_view.name,
+                            "_",
+                            str(feature_view.version),
+                            "_",
+                            feature_timestamp_col,
+                        ]
                     )
                     f_ts_col_str = f"FEATURE.{feature_timestamp_col} AS {f_ts_col_alias},"
                 else:
                     f_ts_col_str = ""
+                if feature_view.append_only:
+                    asof_table_name = feature_view.fully_qualified_snapshot_table_name()
+                else:
+                    asof_table_name = feature_view.fully_qualified_name()
                 ctes.append(
                     f"""{cte_name} AS (
     SELECT
@@ -4879,7 +6467,7 @@ class FeatureStore:
     ) SPINE_DEDUP
     ASOF JOIN (
         SELECT {join_keys_str}, {feature_timestamp_col}, {feature_columns[i]}
-        FROM {feature_view.fully_qualified_name()}
+        FROM {asof_table_name}
     ) FEATURE
     MATCH_CONDITION (SPINE_DEDUP.{quoted_spine_ts} >= FEATURE.{quoted_fv_ts})
     ON {" AND ".join(join_conditions_dedup)}
@@ -4927,7 +6515,13 @@ class FeatureStore:
                 and not feature_view.is_tiled
             ):
                 f_ts_col_alias = identifier.concat_names(
-                    [feature_view.name, "_", str(feature_view.version), "_", feature_view.timestamp_col]
+                    [
+                        feature_view.name,
+                        "_",
+                        str(feature_view.version),
+                        "_",
+                        feature_view.timestamp_col,
+                    ]
                 )
                 select_cols.append(f"{cte_name}.{f_ts_col_alias} AS {f_ts_col_alias}")
                 col_names.append(f_ts_col_alias)
@@ -5047,7 +6641,13 @@ FROM SPINE{all_joins}
 
             if batch_idx == 0:
                 batch_joins = "".join(
-                    _make_fv_join_clause("SPINE", fi.cte_name, fi.join_keys, fi.has_ts, spine_timestamp_col)
+                    _make_fv_join_clause(
+                        "SPINE",
+                        fi.cte_name,
+                        fi.join_keys,
+                        fi.has_ts,
+                        spine_timestamp_col,
+                    )
                     for fi in chunk
                 )
                 cte_body = f"SELECT SPINE.*, {', '.join(batch_select)} FROM SPINE{batch_joins}"
@@ -5058,7 +6658,13 @@ FROM SPINE{all_joins}
                     dedup_cols.append(spine_timestamp_col.identifier())
 
                 batch_joins = "".join(
-                    _make_fv_join_clause(dedup_alias, fi.cte_name, fi.join_keys, fi.has_ts, spine_timestamp_col)
+                    _make_fv_join_clause(
+                        dedup_alias,
+                        fi.cte_name,
+                        fi.join_keys,
+                        fi.has_ts,
+                        spine_timestamp_col,
+                    )
                     for fi in chunk
                 )
 
@@ -5118,12 +6724,18 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         if join_method not in ["sequential", "cte"]:
             raise ValueError(f"Invalid join_method '{join_method}'. Must be 'sequential' or 'cte'.")
 
-        # Check if any feature view is tiled - tiled FVs require CTE method and timestamp column
+        # Detect tiled and append_only feature views in a single pass; both inform downstream
+        # validation of join_method and spine_timestamp_col requirements. Short-circuit once
+        # both flags are populated — neither downstream check needs more than one example.
         has_tiled_fv = False
+        first_append_only_fv: Optional[FeatureView] = None
         for feature in features:
             fv = fg_mod.unwrap_fv(feature)
             if fv.is_tiled:
                 has_tiled_fv = True
+            if fv.append_only and first_append_only_fv is None:
+                first_append_only_fv = fv
+            if has_tiled_fv and first_append_only_fv is not None:
                 break
 
         if has_tiled_fv and join_method != "cte":
@@ -5132,17 +6744,32 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 "Please set join_method='cte' when using feature views with tile-based aggregations."
             )
 
-        if has_tiled_fv and spine_timestamp_col is None:
-            raise ValueError(
-                "Tiled feature views require a spine_timestamp_col for point-in-time joins. "
-                "Please provide spine_timestamp_col when using feature views with tile-based aggregations."
-            )
+        if spine_timestamp_col is None:
+            if has_tiled_fv:
+                raise ValueError(
+                    "Tiled feature views require a spine_timestamp_col for point-in-time joins. "
+                    "Please provide spine_timestamp_col when using feature views with tile-based aggregations."
+                )
+            if first_append_only_fv is not None:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT,
+                    original_exception=ValueError(
+                        f"FeatureView {first_append_only_fv.name} is append_only and requires "
+                        "spine_timestamp_col for point-in-time lookups against its snapshot table. "
+                        "Without a timestamp column, only the latest feature values would be returned, "
+                        "bypassing snapshot history."
+                    ),
+                )
 
         feature_views: list[FeatureView] = []
         # Extract column selections for each feature view
         feature_columns: list[str] = []
         for feature in features:
             fv = fg_mod.unwrap_fv(feature)
+            # Defense-in-depth: realtime FVs should be routed through apply_rtfvs.
+            assert (
+                not fv.is_realtime_feature_view
+            ), f"realtime feature view {fv.name} reached _join_features; should have been routed through apply_rtfvs"
             if fv.status == FeatureViewStatus.DRAFT:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.NOT_FOUND,
@@ -5201,10 +6828,18 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 join_table_name = feature.fully_qualified_name()
 
                 if spine_timestamp_col is not None and feature.timestamp_col is not None:
+                    if feature.append_only:
+                        join_table_name = feature.fully_qualified_snapshot_table_name()
                     if self._asof_join_enabled:
                         if include_feature_view_timestamp_col:
                             f_ts_col_alias = identifier.concat_names(
-                                [feature.name, "_", feature.version, "_", feature.timestamp_col]
+                                [
+                                    feature.name,
+                                    "_",
+                                    feature.version,
+                                    "_",
+                                    feature.timestamp_col,
+                                ]
                             )
                             f_ts_col_str = f"r_{layer}.{feature.timestamp_col} AS {f_ts_col_alias},"
                         else:
@@ -5275,7 +6910,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
 
         # TODO: construct result dataframe with datframe APIs once ASOF join is supported natively.
         # Below code manually construct result dataframe from private members of spine dataframe, which
-        # likely will cause unintentional issues. This setp is needed because spine_df might contains
+        # likely will cause unintentional issues. This step is needed because spine_df might contains
         # prerequisite queries and post actions that must be carried over to result dataframe.
         result_df = self._session.sql(query)
         result_df._plan.queries = spine_df._plan.queries[:-1] + result_df._plan.queries
@@ -5610,7 +7245,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return dynamic_table_results + view_results
 
     def _update_feature_view_status(
-        self, feature_view: FeatureView, operation: str, store_type: Optional[fv_mod.StoreType] = None
+        self,
+        feature_view: FeatureView,
+        operation: str,
+        store_type: Optional[fv_mod.StoreType] = None,
     ) -> FeatureView:
         assert operation in [
             "RESUME",
@@ -5645,7 +7283,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     ),
                 ) from e
 
-        elif store_type == fv_mod.StoreType.ONLINE and operation in ["SUSPEND", "RESUME", "REFRESH"]:
+        elif store_type == fv_mod.StoreType.ONLINE and operation in [
+            "SUSPEND",
+            "RESUME",
+            "REFRESH",
+        ]:
             if feature_view.online:
                 fully_qualified_online_name = feature_view.fully_qualified_online_table_name()
                 try:
@@ -5684,17 +7326,52 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         all_fvs = self._get_fv_backend_representations(object_name=None)
         fv_maps = {SqlIdentifier(r["name"], case_sensitive=True): r for r, _ in all_fvs}
 
-        if len(fv_maps.keys()) == 0:
-            return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
-
         filters = [lambda d: d["entityName"].startswith(feature_view_name.resolved())] if feature_view_name else None
         res = self._lookup_tagged_objects(self._get_entity_name(entity_name), filters)
 
         output_values: list[list[Any]] = []
         iceberg_config_cache: dict[str, StorageConfig] = {}
+        rtfv_oft_entity_names: set[str] = set()
         for r in res:
-            row = fv_maps[SqlIdentifier(r["entityName"], case_sensitive=True)]
-            self._extract_feature_view_info(row, output_values, iceberg_config_cache)
+            # Tagged entries cover both DT/View FVs and RTFV OFTs. DT/View
+            # entries match ``fv_maps``; RTFV OFTs are identified by the
+            # ``$ONLINE`` suffix.
+            key = SqlIdentifier(r["entityName"], case_sensitive=True)
+            if key in fv_maps:
+                self._extract_feature_view_info(fv_maps[key], output_values, iceberg_config_cache)
+            else:
+                resolved_oft_name = r["entityName"]
+                if resolved_oft_name.endswith(_ONLINE_TABLE_SUFFIX):
+                    rtfv_oft_entity_names.add(resolved_oft_name)
+
+        rtfv_meta_by_oft: dict[str, RealtimeConfigMetadata] = {}
+        if rtfv_oft_entity_names:
+            for meta in self._metadata_manager.list_realtime_config_metadata():
+                oft_phys = FeatureView._get_online_table_name(meta.name, meta.version).resolved()
+                if oft_phys in rtfv_oft_entity_names:
+                    rtfv_meta_by_oft[oft_phys] = meta
+
+        if rtfv_meta_by_oft:
+            from snowflake.ml.feature_store.realtime_registration import (
+                append_realtime_listing_row,
+            )
+
+            # Single SHOW sweep instead of one _find_object per RTFV.
+            oft_row_by_phys: dict[str, Row] = {
+                SqlIdentifier(r["name"], case_sensitive=True).resolved(): r
+                for r in self._find_object("ONLINE FEATURE TABLES", None)
+            }
+            for oft_phys, meta in rtfv_meta_by_oft.items():
+                if feature_view_name is not None and not meta.name.startswith(feature_view_name.resolved()):
+                    continue
+                append_realtime_listing_row(
+                    feature_store=self,
+                    rtfv_metadata=meta,
+                    oft_show_row=oft_row_by_phys.get(oft_phys),
+                    output_values=output_values,
+                    fv_kind_realtime=_FV_KIND_REALTIME,
+                    default_storage_config_json=_DEFAULT_STORAGE_CONFIG_JSON,
+                )
 
         return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
@@ -5788,6 +7465,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             stream_config_json = None
         values.append(stream_config_json)
 
+        # RTFV rows are emitted separately; this helper only sees DT/View FVs.
+        values.append(_FV_KIND_STREAMING if fv_metadata.is_streaming else _FV_KIND_BATCH)
+
         output_values.append(values)
 
     def _determine_online_config_from_oft(
@@ -5880,7 +7560,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             # are read-only.
             try:
                 res = self._lookup_tags(
-                    domain="table", obj_name=fv_name, filter_fns=[lambda d: d["tagName"] == _FEATURE_VIEW_METADATA_TAG]
+                    domain="table",
+                    obj_name=fv_name,
+                    filter_fns=[lambda d: d["tagName"] == _FEATURE_VIEW_METADATA_TAG],
                 )
                 fv_metadata = _FeatureViewMetadata.from_json(res[0]["tagValue"])
                 query = f"SELECT * FROM {self._get_fully_qualified_name(fv_name)}"
@@ -6003,6 +7685,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
                 is_streaming=fv_metadata.is_streaming,
+                append_only=fv_metadata.is_append_only,
             )
             self._hydrate_postgres_online_service(fv)
 
@@ -6091,7 +7774,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 stacklevel=4,
             )
             return None
-        query_url = online_service.endpoint_url(st, "query")
+        query_url = online_service.endpoint_url(st, "query", access=self._online_service_access)
         if st.status == "RUNNING" and query_url:
             # Temporary: SYSTEM$ may return host-only query URLs until server sends full https URLs.
             return query_url
@@ -6181,6 +7864,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)
         source_table_name = self._get_fully_qualified_name(feature_view_name)
 
+        # Build online config clauses
+        config = feature_view.online_config
+        if not config:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError("OnlineConfig is required to create online feature table"),
+            )
+
         # Extract join keys for PRIMARY KEY (preserve order and ensure unique)
         ordered_join_keys: list[str] = []
         seen_join_keys: set[str] = set()
@@ -6190,15 +7881,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 if resolved_key not in seen_join_keys:
                     seen_join_keys.add(resolved_key)
                     ordered_join_keys.append(resolved_key)
+        # GS dedupes ingest on the OFT primary key from spec; Quake strips
+        # the secondary key back out of the PK after we add it.
+        if config.store_type == OnlineStoreType.POSTGRES and feature_view.aggregation_secondary_keys:
+            for sk in feature_view.aggregation_secondary_keys:
+                if sk not in seen_join_keys:
+                    seen_join_keys.add(sk)
+                    ordered_join_keys.append(sk)
         primary_key_clause = fv_mod.build_oft_primary_key_clause(ordered_join_keys)
-
-        # Build online config clauses
-        config = feature_view.online_config
-        if not config:
-            raise snowml_exceptions.SnowflakeMLException(
-                error_code=error_codes.INVALID_ARGUMENT,
-                original_exception=ValueError("OnlineConfig is required to create online feature table"),
-            )
         target_lag_value = config.target_lag if config.target_lag is not None else fv_mod._BATCH_OFT_TARGET_LAG
         # StreamingFeatureView OFTs are spec-backed and require request-time freshness.
         if feature_view.is_streaming:
@@ -6349,6 +8039,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     seen_entity_cols.add(resolved)
                     entity_columns.append(resolved)
 
+        # GS dedupes on ``ordered_entity_column_names`` and ignores
+        # ``ordered_secondary_key_column_names``; Quake strips SKs back out
+        # before storing.
+        if feature_view.aggregation_secondary_keys:
+            for sk in feature_view.aggregation_secondary_keys:
+                if sk not in seen_entity_cols:
+                    entity_columns.append(sk)
+
         if feature_view.is_tiled:
             if offline_materialized_schema is None:
                 raise ValueError(
@@ -6385,8 +8083,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 entity_columns=entity_columns,
                 secondary_key_columns=feature_view.aggregation_secondary_keys,
                 timestamp_field=(feature_view.timestamp_col.resolved() if feature_view.timestamp_col else None),
-                granularity=feature_view.feature_granularity if feature_view.is_tiled else None,
-                agg_method=FeatureAggregationMethod.TILES if feature_view.is_tiled else None,
+                granularity=(feature_view.feature_granularity if feature_view.is_tiled else None),
+                agg_method=(FeatureAggregationMethod.TILES if feature_view.is_tiled else None),
                 target_lag=target_lag,
             )
         )
@@ -6530,7 +8228,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             )
 
     def _filter_results(
-        self, results: list[dict[str, str]], filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+        self,
+        results: list[dict[str, str]],
+        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
     ) -> list[dict[str, str]]:
         if filter_fns is None:
             return results
@@ -6542,7 +8242,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return filtered_results
 
     def _lookup_tags(
-        self, domain: str, obj_name: str, filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+        self,
+        domain: str,
+        obj_name: str,
+        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
     ) -> list[dict[str, str]]:
         """
         Lookup tag values for a given object, optionally apply filters on the results.
@@ -6581,7 +8284,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             ) from e
 
     def _lookup_tagged_objects(
-        self, tag_name: str, filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None
+        self,
+        tag_name: str,
+        filter_fns: Optional[list[Callable[[dict[str, str]], bool]]] = None,
     ) -> list[dict[str, str]]:
         """
         Lookup objects based on specified tag name, optionally apply filters on the results.
@@ -6674,7 +8379,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return []
 
     def _build_select_clause_and_validate(
-        self, feature_view: FeatureView, feature_names: Optional[list[str]], include_join_keys: bool = True
+        self,
+        feature_view: FeatureView,
+        feature_names: Optional[list[str]],
+        include_join_keys: bool = True,
     ) -> str:
         """Build SELECT clause for feature view queries and validate feature names.
 
@@ -6717,7 +8425,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             return "*"
 
     def _build_where_clause_for_keys(
-        self, feature_view: FeatureView, keys: Optional[list[list[Any]]], use_binds: bool = False
+        self,
+        feature_view: FeatureView,
+        keys: Optional[list[list[Any]]],
+        use_binds: bool = False,
     ) -> tuple[str, list[Any]]:
         """Build WHERE clause for key filtering.
 

@@ -121,7 +121,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
-        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
     ],
 )
 
@@ -135,7 +135,7 @@ py_test(
     deps = [
         ":registry_batch_inference_test_base",
         "//snowflake/ml/model/_packager/model_env",
-        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
     ],
 )
 

@@ -1,6 +1,8 @@
 """Feature view module for Snowflake ML Feature Store."""
+
 from __future__ import annotations
 
+import copy
 import json
 import re
 import warnings
@@ -19,7 +21,10 @@ from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
 )
-from snowflake.ml.feature_store import feature_store
+from snowflake.ml.feature_store import (
+    feature_store,
+    feature_view_append_only_validation,
+)
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
@@ -38,10 +43,11 @@ from snowflake.snowpark.types import (
 )
 
 if TYPE_CHECKING:
+    from snowflake.ml.feature_store.realtime_config import RealtimeConfig
     from snowflake.ml.feature_store.stream_config import StreamConfig
 
-_BATCH_OFT_TARGET_LAG = "10 seconds"  # default lag for batch FV OFTs when OnlineConfig.target_lag is unset.
-_NON_BATCH_OFT_TARGET_LAG = "0 seconds"  # default lag for non-batch OFTs (SFV, FG, and RTFV).
+_BATCH_OFT_TARGET_LAG = "10 seconds"
+_NON_BATCH_OFT_TARGET_LAG = "0 seconds"
 _DEFAULT_CONTINUOUS_FEATURE_GRANULARITY = "1m"
 _MIN_FEATURE_GRANULARITY_SECONDS = 60
 _FEATURE_VIEW_NAME_DELIMITER = "$"
@@ -49,6 +55,7 @@ _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS = ["FS_TIMESTAMP_COL_PLACEHOLDER_VAL", "N
 _TIMESTAMP_COL_PLACEHOLDER = "NULL"
 _FEATURE_OBJ_TYPE = "FEATURE_OBJ_TYPE"
 _ONLINE_TABLE_SUFFIX = "$ONLINE"
+_SNAPSHOT_TABLE_SUFFIX = "$SNAPSHOTS"
 _UDF_TRANSFORMED_TABLE_SUFFIX = "$UDF_TRANSFORMED"
 # Feature view version rule is aligned with dataset version rule in SQL.
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
@@ -350,6 +357,7 @@ class _FeatureViewMetadata:
     is_iceberg: bool = False  # Whether FV uses Iceberg storage format
     is_rollup: bool = False  # Whether FV is a rollup (entity aggregation) feature view
     is_streaming: bool = False  # Whether FV is a streaming feature view
+    is_append_only: bool = False  # Whether FV accumulates snapshots for PIT training
 
     def to_json(self) -> str:
         return json.dumps(asdict(self))
@@ -369,6 +377,8 @@ class _FeatureViewMetadata:
         # Backward compatibility: old FVs don't have is_streaming
         if "is_streaming" not in state_dict:
             state_dict["is_streaming"] = False
+        if "is_append_only" not in state_dict:
+            state_dict["is_append_only"] = False
         return cls(**state_dict)
 
 
@@ -593,6 +603,61 @@ def _resolve_tiled_config(
     return feature_granularity, specs, feature_aggregation_method or FeatureAggregationMethod.TILES
 
 
+def _raise_if_realtime_with_incompatible_fields(
+    realtime_config: Optional[RealtimeConfig],
+    *,
+    feature_df: Optional[DataFrame],
+    rollup_config: Optional[RollupConfig],
+    stream_config: Optional[StreamConfig],
+    timestamp_col: Optional[str],
+    refresh_freq: Optional[str],
+    feature_granularity: Optional[str],
+    features: Optional[list[Feature]],
+    cluster_by: Optional[list[str]],
+    aggregation_secondary_keys: Optional[list[str]],
+    feature_aggregation_method: Optional[FeatureAggregationMethod],
+) -> None:
+    """Reject ``realtime_config`` combined with batch/stream-only inputs.
+
+    Args:
+        realtime_config: When set, every other argument must be ``None``.
+        feature_df: Batch dataframe.
+        rollup_config: Rollup configuration.
+        stream_config: Streaming configuration.
+        timestamp_col: Timestamp column name.
+        refresh_freq: Refresh interval.
+        feature_granularity: Tile granularity.
+        features: Aggregation features.
+        cluster_by: Cluster-by columns.
+        aggregation_secondary_keys: Secondary aggregation keys.
+        feature_aggregation_method: Aggregation method.
+
+    Raises:
+        ValueError: If *realtime_config* is set and any other argument is not ``None``.
+    """
+    if realtime_config is None:
+        return
+    pairs = (
+        ("feature_df", feature_df),
+        ("rollup_config", rollup_config),
+        ("stream_config", stream_config),
+        ("timestamp_col", timestamp_col),
+        ("refresh_freq", refresh_freq),
+        ("feature_granularity", feature_granularity),
+        ("features", features),
+        ("cluster_by", cluster_by),
+        ("aggregation_secondary_keys", aggregation_secondary_keys),
+        ("feature_aggregation_method", feature_aggregation_method),
+    )
+    conflicting = sorted(name for name, value in pairs if value is not None)
+    if conflicting:
+        raise ValueError(
+            f"realtime_config is mutually exclusive with: {conflicting}. "
+            "Realtime feature views are request-time-computed and have no offline "
+            "backing, refresh cadence, timestamp, or aggregation surface."
+        )
+
+
 class FeatureView(lineage_node.LineageNode):
     """
     A FeatureView instance encapsulates a logical group of features.
@@ -609,7 +674,7 @@ class FeatureView(lineage_node.LineageNode):
         desc: str = "",
         warehouse: Optional[str] = None,
         initialize: str = "ON_CREATE",
-        refresh_mode: str = "AUTO",
+        refresh_mode: Optional[str] = "AUTO",
         cluster_by: Optional[list[str]] = None,
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
@@ -619,6 +684,9 @@ class FeatureView(lineage_node.LineageNode):
         rollup_config: Optional[RollupConfig] = None,
         storage_config: Optional[StorageConfig] = None,
         stream_config: Optional[StreamConfig] = None,
+        realtime_config: Optional[RealtimeConfig] = None,
+        append_only: bool = False,
+        backup_source: Optional[str] = None,
         **_kwargs: Any,
     ) -> None:
         """
@@ -691,6 +759,12 @@ class FeatureView(lineage_node.LineageNode):
                 level. When specified, this FeatureView will aggregate features from the source
                 FeatureView using the provided entity mapping. Cannot be used together with
                 ``feature_df``. See ``RollupConfig`` for details.
+            append_only: When True, each scheduled refresh appends the current Dynamic
+                Table contents to a persistent snapshot table, enabling point-in-time correct
+                training data generation. Requires ``timestamp_col`` and ``refresh_freq``.
+            backup_source: Fully-qualified name of a table containing historical
+                snapshots to clone into the snapshot table at registration time.
+                Requires ``append_only=True``.
             storage_config: Configuration for storage format using ``StorageConfig``.
                 Supports Snowflake native format (default) or Iceberg format.
                 When using Iceberg, specify ``external_volume`` and optionally ``base_location``.
@@ -698,6 +772,18 @@ class FeatureView(lineage_node.LineageNode):
                 When provided, ``feature_df`` serves as backfill data, and an online feature table
                 with a streaming spec is automatically created.  Requires ``timestamp_col`` and
                 ``feature_df``.  Online storage is always enabled with the ``POSTGRES`` store type.
+
+                .. note::
+                    This feature is currently in private preview.
+            realtime_config: Configuration for realtime feature views using
+                :class:`RealtimeConfig`. When provided, the feature view is request-time-computed
+                (no offline backing); ``compute_fn`` runs against per-row request data joined
+                against rows from upstream online-enabled Postgres feature views. Mutually
+                exclusive with ``feature_df`` / ``stream_config`` / ``rollup_config`` /
+                ``timestamp_col`` / ``refresh_freq`` / ``feature_granularity`` /
+                ``features`` / ``cluster_by`` / ``aggregation_secondary_keys`` /
+                ``feature_aggregation_method``. Online storage is always enabled with the
+                ``POSTGRES`` store type.
 
                 .. note::
                     This feature is currently in private preview.
@@ -759,15 +845,29 @@ class FeatureView(lineage_node.LineageNode):
 
         # noqa: DAR401
         """
-        # Validate mutual exclusion rules
         if rollup_config is not None and feature_df is not None:
             raise ValueError("Cannot specify both feature_df and rollup_config")
         if stream_config is not None and feature_df is not None:
             raise ValueError(
                 "Cannot specify both feature_df and stream_config. " "Use stream_config.backfill_df for backfill data."
             )
-        if rollup_config is None and feature_df is None and stream_config is None:
-            raise ValueError("Must specify either feature_df, rollup_config, or stream_config")
+        _raise_if_realtime_with_incompatible_fields(
+            realtime_config,
+            feature_df=feature_df,
+            rollup_config=rollup_config,
+            stream_config=stream_config,
+            timestamp_col=timestamp_col,
+            refresh_freq=refresh_freq,
+            feature_granularity=feature_granularity,
+            features=features,
+            cluster_by=cluster_by,
+            aggregation_secondary_keys=aggregation_secondary_keys,
+            feature_aggregation_method=feature_aggregation_method,
+        )
+        if realtime_config is not None and online_config is not None and online_config.enable is False:
+            raise ValueError("Realtime feature views require online to be enabled.")
+        if rollup_config is None and feature_df is None and stream_config is None and realtime_config is None:
+            raise ValueError("Must specify either feature_df, rollup_config, stream_config, or realtime_config")
         if rollup_config is not None:
             if feature_granularity is not None:
                 raise ValueError(
@@ -836,8 +936,6 @@ class FeatureView(lineage_node.LineageNode):
 
         # --- Branch: Streaming FV ---
         elif stream_config is not None:
-            # Defer feature_df initialization — completed during registration
-            # via _initialize_from_feature_df() after the udf_transformed table is created.
             if timestamp_col is None:
                 raise ValueError("Streaming feature views require timestamp_col to be specified.")
             self._timestamp_col = SqlIdentifier(timestamp_col)
@@ -853,7 +951,6 @@ class FeatureView(lineage_node.LineageNode):
                 aggregation_secondary_keys=self._aggregation_secondary_keys,
             )
 
-            # Warn if non-time-aggregated streaming FV has refresh_freq (a VIEW is more efficient)
             if self._aggregation_specs is None and refresh_freq is not None:
                 warnings.warn(
                     "Streaming feature views without time-aggregated features don't require refresh_freq. "
@@ -861,6 +958,18 @@ class FeatureView(lineage_node.LineageNode):
                     stacklevel=2,
                     category=UserWarning,
                 )
+
+        # --- Branch: Realtime FV ---
+        elif realtime_config is not None:
+            self._timestamp_col = None
+            self._feature_granularity = None
+            self._aggregation_specs = None
+            self._refresh_freq = None
+            self._cluster_by = []
+            self._feature_df = None
+            self._infer_schema_df = None
+            self._query = ""
+            self._feature_desc = OrderedDict((SqlIdentifier(f.name), "") for f in realtime_config.output_schema.fields)
 
         # --- Branch: Batch FV (standard) ---
         else:
@@ -926,6 +1035,25 @@ class FeatureView(lineage_node.LineageNode):
             if online_config is None:
                 self._online_config = OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES)
 
+        # Realtime feature view configuration. ``_is_realtime_marker`` is the
+        # reconstruction-time analog of ``_is_streaming_marker``: it survives
+        # the ``get_feature_view`` round trip because the persisted compute_fn
+        # source is rehydrated separately into ``_realtime_config``.
+        self._realtime_config = realtime_config
+        self._is_realtime_marker: bool = _kwargs.pop("_is_realtime_marker", False)
+        self._compute_fn_source: Optional[str] = None  # Populated from metadata for reconstructed FVs
+        if self._realtime_config is not None:
+            if online_config is None:
+                self._online_config = OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES)
+        # Rollup metadata for PIT-correct training (set during registration, loaded during reconstruction).
+        # Must be initialized before append-only snapshot registration validation, because is_rollup reads it.
+        self._rollup_metadata: Optional[RollupMetadata] = None
+
+        # Snapshot accumulation configuration
+        self._append_only: bool = append_only
+        self._backup_source: Optional[str] = backup_source
+        feature_view_append_only_validation.validate_snapshot_config_for_register(self)
+
         # For tiled FVs, re-initialize feature_descs with output column names
         if self.is_tiled and self._aggregation_specs:
             self._feature_desc = OrderedDict(
@@ -933,8 +1061,6 @@ class FeatureView(lineage_node.LineageNode):
             )
         self._storage_config: Optional[StorageConfig] = storage_config
 
-        # Rollup metadata for PIT-correct training (set during registration, loaded during reconstruction)
-        self._rollup_metadata: Optional[RollupMetadata] = None
         self._postgres_online_query_url: Optional[str] = None
 
         # Column aliasing for dataset generation (ephemeral, in-memory only)
@@ -944,8 +1070,8 @@ class FeatureView(lineage_node.LineageNode):
         if _kwargs:
             raise TypeError(f"FeatureView.__init__ got an unexpected keyword argument: '{next(iter(_kwargs.keys()))}'")
 
-        # Validate for batch FVs only (rollup and streaming have different requirements)
-        if rollup_config is None and stream_config is None:
+        # Validate for batch FVs only (rollup, streaming, and realtime have different requirements)
+        if rollup_config is None and stream_config is None and realtime_config is None:
             self._validate()
 
     def slice(self, names: list[str]) -> FeatureViewSlice:
@@ -1078,11 +1204,13 @@ class FeatureView(lineage_node.LineageNode):
             Similar to Tecton's with_name() method. This setting takes
             precedence over the auto_prefix parameter.
         """
-        import copy
-
         new_fv = copy.copy(self)
         new_fv._column_alias = name
         return new_fv
+
+    def copy(self) -> FeatureView:
+        """Return a shallow copy of this FeatureView."""
+        return copy.copy(self)
 
     @property
     def column_alias(self) -> Optional[str]:
@@ -1305,6 +1433,24 @@ class FeatureView(lineage_node.LineageNode):
         return self._stream_config is not None or self._is_streaming_marker
 
     @property
+    def is_real_time(self) -> bool:
+        """Check if this feature view is a real-time feature view.
+
+        Returns:
+            Always False for now. Reserved for future real-time feature view support.
+        """
+        return False
+
+    @property
+    def is_batch_feature_view(self) -> bool:
+        """Check if this feature view is a batch (non-streaming, non-real-time) feature view.
+
+        Returns:
+            True if this feature view is neither streaming nor real-time.
+        """
+        return not self.is_streaming and not self.is_real_time
+
+    @property
     def stream_config(self) -> Optional[StreamConfig]:
         """Get the stream configuration if this is a streaming feature view.
 
@@ -1314,6 +1460,43 @@ class FeatureView(lineage_node.LineageNode):
             since the transformation function is only needed at registration time.
         """
         return self._stream_config
+
+    @property
+    def is_realtime_feature_view(self) -> bool:
+        """Whether this feature view is a realtime feature view.
+
+        Returns:
+            True if ``realtime_config`` was provided or the FV was reconstructed
+            from a realtime backend object.
+        """
+        return self._realtime_config is not None or self._is_realtime_marker
+
+    @property
+    def realtime_config(self) -> Optional[RealtimeConfig]:
+        """The :class:`RealtimeConfig` for this realtime feature view, or ``None``.
+
+        For reconstructed FVs (via ``get_feature_view``), this is hydrated from
+        the persisted metadata so callers can re-execute ``compute_fn``.
+
+        Returns:
+            The associated :class:`RealtimeConfig`, or ``None`` for non-realtime FVs.
+        """
+        return self._realtime_config
+
+    @property
+    def compute_fn_source(self) -> Optional[str]:
+        """The plain-text source of ``compute_fn`` for realtime feature views.
+
+        For draft FVs (with ``realtime_config``), returns the source from the
+        config. For reconstructed FVs (via ``get_feature_view``), returns the
+        source from stored metadata. Returns ``None`` for non-realtime FVs.
+
+        Returns:
+            The captured source string, or ``None`` for non-realtime FVs.
+        """
+        if self._realtime_config is not None:
+            return self._realtime_config.get_function_source()
+        return self._compute_fn_source
 
     @property
     def transformation_fn_source(self) -> Optional[str]:
@@ -1402,6 +1585,44 @@ class FeatureView(lineage_node.LineageNode):
             When None, the feature view uses the default Snowflake-native storage (Dynamic Table).
         """
         return self._storage_config
+
+    @property
+    def append_only(self) -> bool:
+        """Whether this feature view retains history instead of overwriting.
+
+        When True, the Feature Store accumulates point-in-time snapshots
+        so that training-set generation can look up feature values as of
+        any historical timestamp.
+
+        Returns:
+            True if append_only was set to True at construction time.
+        """
+        return self._append_only
+
+    @property
+    def backup_source(self) -> Optional[str]:
+        """Fully-qualified name of the backfill table for snapshot accumulation.
+
+        Returns:
+            Table name string if set, None otherwise.
+        """
+        return self._backup_source
+
+    def fully_qualified_snapshot_table_name(self) -> str:
+        """Get the fully qualified name for the snapshot accumulation table.
+
+        Returns:
+            The fully qualified name for the snapshot table in Snowflake.
+
+        Raises:
+            RuntimeError: if the FeatureView is not registered or not append_only.
+        """
+        if self.version is None:
+            raise RuntimeError("FeatureView must be registered to have a snapshot table name.")
+        if not self.append_only:
+            raise RuntimeError(f"FeatureView {self.name} is not configured for snapshot accumulation.")
+        snapshot_table_name = self._get_snapshot_table_name(self.name, self.version)
+        return f"{self._database}.{self._schema}.{snapshot_table_name}"
 
     def fully_qualified_online_table_name(self) -> str:
         """Get the fully qualified name for the online feature table.
@@ -1576,6 +1797,10 @@ class FeatureView(lineage_node.LineageNode):
 
     @property
     def output_schema(self) -> StructType:
+        if self._realtime_config is not None:
+            # Realtime FVs have no inferred-schema DataFrame because they have
+            # no DT/View backing; the user-declared output schema IS the truth.
+            return self._realtime_config.output_schema
         assert self._infer_schema_df is not None
         try:
             return self._infer_schema_df.schema
@@ -1611,6 +1836,7 @@ class FeatureView(lineage_node.LineageNode):
             is_iceberg=is_iceberg,
             is_rollup=self.is_rollup,
             is_streaming=self.is_streaming,
+            is_append_only=self.append_only,
         )
 
     def _get_query(self) -> str:
@@ -2010,6 +2236,8 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             [spec.to_dict() for spec in self._aggregation_specs] if self._aggregation_specs is not None else None
         )
 
+        fv_dict["_append_only"] = self._append_only
+        fv_dict["_backup_source"] = self._backup_source
         # Remove non-serializable live objects
         fv_dict.pop("_rollup_config", None)
         # Serialize rollup metadata if present
@@ -2109,14 +2337,16 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             owner=json_dict["_owner"],
             infer_schema_df=session.sql(json_dict.get("_infer_schema_query", None)),
             session=session,
-            online_config=OnlineConfig.from_json(json_dict["_online_config"])
-            if json_dict.get("_online_config")
-            else None,
+            online_config=(
+                OnlineConfig.from_json(json_dict["_online_config"]) if json_dict.get("_online_config") else None
+            ),
             feature_granularity=json_dict.get("_feature_granularity"),
             aggregation_specs=aggregation_specs,
-            storage_config=StorageConfig.from_json(json_dict["_storage_config"])
-            if json_dict.get("_storage_config")
-            else None,
+            storage_config=(
+                StorageConfig.from_json(json_dict["_storage_config"]) if json_dict.get("_storage_config") else None
+            ),
+            append_only=json_dict.get("_append_only", False),
+            backup_source=json_dict.get("_backup_source"),
         )
 
         # Restore rollup metadata if present
@@ -2179,7 +2409,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
     def _construct_feature_view(
         name: str,
         entities: list[Entity],
-        feature_df: DataFrame,
+        feature_df: Optional[DataFrame],
         timestamp_col: Optional[str],
         desc: str,
         version: str,
@@ -2201,34 +2431,60 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         aggregation_specs: Optional[list[AggregationSpec]] = None,
         storage_config: Optional[StorageConfig] = None,
         is_streaming: bool = False,
+        append_only: bool = False,
+        backup_source: Optional[str] = None,
+        is_realtime: bool = False,
+        realtime_config: Optional[RealtimeConfig] = None,
     ) -> FeatureView:
-        # For reconstructed FVs, always go through the batch path in __init__
-        # (even for streaming FVs — they use _is_streaming_marker, not stream_config)
-        fv = FeatureView(
-            name=name,
-            entities=entities,
-            feature_df=feature_df,
-            timestamp_col=timestamp_col,
-            desc=desc,
-            refresh_freq=refresh_freq,
-            _infer_schema_df=infer_schema_df,
-            cluster_by=cluster_by,
-            online_config=online_config,
-            feature_granularity=feature_granularity,
-            _aggregation_specs=aggregation_specs,
-            storage_config=storage_config,
-            _is_streaming_marker=is_streaming,
-        )
+        if is_realtime:
+            # Realtime FVs have no feature_df, no DT/View, no schema inference.
+            # ``realtime_config`` may be ``None`` here only on transitional
+            # callers — production reconstruction always passes one.
+            fv = FeatureView(
+                name=name,
+                entities=entities,
+                desc=desc,
+                refresh_mode=refresh_mode,
+                online_config=online_config,
+                realtime_config=realtime_config,
+                _is_realtime_marker=True,
+                append_only=append_only,
+                backup_source=backup_source,
+            )
+        else:
+            # For reconstructed FVs, always go through the batch path in __init__
+            # (even for streaming FVs — they use _is_streaming_marker, not stream_config)
+            fv = FeatureView(
+                name=name,
+                entities=entities,
+                feature_df=feature_df,
+                timestamp_col=timestamp_col,
+                desc=desc,
+                refresh_freq=refresh_freq,
+                refresh_mode=refresh_mode,
+                _infer_schema_df=infer_schema_df,
+                cluster_by=cluster_by,
+                online_config=online_config,
+                feature_granularity=feature_granularity,
+                _aggregation_specs=aggregation_specs,
+                storage_config=storage_config,
+                _is_streaming_marker=is_streaming,
+                append_only=append_only,
+                backup_source=backup_source,
+            )
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
         fv._database = SqlIdentifier(database) if database is not None else None
         fv._schema = SqlIdentifier(schema) if schema is not None else None
         fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
-        fv._refresh_mode = refresh_mode
         fv._refresh_mode_reason = refresh_mode_reason
         fv._initialize = initialize
         fv._owner = owner
-        fv.attach_feature_desc(feature_descs)
+        # attach_feature_desc reads from ``self._feature_desc``; for RTFV that
+        # OrderedDict was seeded directly from realtime_config.output_schema
+        # in ``__init__``, so the keys present here will match.
+        if feature_descs:
+            fv.attach_feature_desc(feature_descs)
 
         lineage_node.LineageNode.__init__(
             fv, session=session, name=f"{fv.database}.{fv._schema}.{name}", domain="feature_view", version=version
@@ -2343,6 +2599,34 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
             udf_name = f"{physical_name}{_UDF_TRANSFORMED_TABLE_SUFFIX}"
             return SqlIdentifier(udf_name, case_sensitive=True)
+
+    @staticmethod
+    def _get_snapshot_table_name(
+        feature_view_name: Union[SqlIdentifier, str], version: Optional[Union[FeatureViewVersion, str]] = None
+    ) -> SqlIdentifier:
+        """Get the snapshot accumulation table name without qualification.
+
+        Args:
+            feature_view_name: Offline feature view name.
+            version: Feature view version.
+
+        Returns:
+            The snapshot table name as a ``SqlIdentifier``.
+        """
+        if version is None:
+            assert isinstance(feature_view_name, SqlIdentifier), "Single argument must be SqlIdentifier"
+            snapshot_name = f"{feature_view_name.resolved()}{_SNAPSHOT_TABLE_SUFFIX}"
+            return SqlIdentifier(snapshot_name, case_sensitive=True)
+        else:
+            fv_name = (
+                feature_view_name
+                if isinstance(feature_view_name, SqlIdentifier)
+                else SqlIdentifier(feature_view_name, case_sensitive=True)
+            )
+            fv_version = version if isinstance(version, FeatureViewVersion) else FeatureViewVersion(version)
+            physical_name = FeatureView._get_physical_name(fv_name, fv_version).resolved()
+            snapshot_name = f"{physical_name}{_SNAPSHOT_TABLE_SUFFIX}"
+            return SqlIdentifier(snapshot_name, case_sensitive=True)
 
 
 def get_feature_prefix(

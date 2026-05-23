@@ -238,20 +238,19 @@ class FeatureGroup:
     def output_columns(self) -> list[str]:
         """Resolved output column names in source order, with prefixes applied per item.
 
-        Never raises on collisions; duplicate detection lives in
-        :meth:`FeatureStore.register_feature_group`.
+        Drops any per-source feature name that resolves to one of the FG's
+        superset primary-key columns; otherwise an RTFV source whose
+        ``realtime_config.output_schema`` re-declares the join key (the
+        canonical ``compute_fn`` return shape) would double-emit the PK on
+        top of the OFT's PK columns.
+
+        Never raises on the remaining collisions; duplicate detection lives
+        in :meth:`FeatureStore.register_feature_group` via the spec builder.
 
         Returns:
             Output column names in source-emission order.
         """
-        cols: list[str] = []
-        for item in self._features:
-            prefix = get_feature_prefix(item, self._auto_prefix)
-            base_names = self._feature_column_names(item)
-            for n in base_names:
-                raw = f"{prefix}{n}" if prefix else n
-                cols.append(identifier.concat_names([raw]))
-        return cols
+        return _resolve_fg_output_columns(self)
 
     # -----------------------------------------------------------------------
     # Spec construction
@@ -304,7 +303,11 @@ class FeatureGroup:
 
         For a :class:`FeatureViewSlice`, preserves the caller-requested
         slice order. For a full :class:`FeatureView`, returns
-        ``feature_names`` in declaration order.
+        ``feature_names`` in declaration order. For an RTFV source whose
+        ``feature_names`` is empty (rehydrated RTFVs leave ``_feature_desc``
+        empty), falls back to the canonical ``realtime_config.output_schema``
+        minus the RTFV's own entity columns, so the source contributes its
+        computed feature columns rather than nothing.
 
         Args:
             item: Source FeatureView or FeatureViewSlice.
@@ -314,6 +317,9 @@ class FeatureGroup:
         """
         if isinstance(item, FeatureViewSlice):
             return [n.resolved() for n in item.names]
+        if item.realtime_config is not None:
+            entity_cols = set(item.ordered_entity_columns)
+            return [f.name for f in item.realtime_config.output_schema.fields if f.name not in entity_cols]
         return [n.resolved() for n in item.feature_names]
 
     def __repr__(self) -> str:
@@ -415,20 +421,30 @@ def validate_sources_online_postgres(
         )
 
 
-def reject_name_collision(feature_store: FeatureStore, fg_name: str, fg_version: str) -> None:
-    """Reject FG ``(fg_name, fg_version)`` if it collides with an existing FV or FG.
+def reject_name_collision(
+    feature_store: FeatureStore,
+    fg_name: str,
+    fg_version: str,
+    *,
+    consumer_label: str = "FeatureGroup",
+    oft_name: Optional[SqlIdentifier] = None,
+) -> None:
+    """Reject ``(name, version)`` if it collides with an existing FV or OFT.
 
     Cross-checks against:
 
-    - Existing OFTs at ``<fg_name>$<fg_version>$ONLINE`` (another FG with the
-      same name/version already registered).
-    - Registered FeatureViews whose resolved user-facing name equals the
-      candidate FG name (the FV/FG user-facing namespaces are shared).
+    - Registered FeatureViews whose user-facing name equals the candidate
+      (FV and FG / RTFV share the ``<name>$<version>$ONLINE`` OFT shape).
+    - Existing OFTs at the resolved OFT name.
 
     Args:
         feature_store: Calling FeatureStore (for backend lookups).
-        fg_name: The candidate FG name.
-        fg_version: The candidate FG version.
+        fg_name: The candidate name.
+        fg_version: The candidate version.
+        consumer_label: Human-readable caller label used in error messages
+            (e.g. ``"FeatureGroup"`` or ``"realtime feature view"``).
+        oft_name: Optional pre-resolved OFT identifier. Falls back to the
+            FG-style :func:`feature_group_oft_name` when omitted.
 
     Raises:
         SnowflakeMLException: ``[ValueError]`` if a collision is detected.
@@ -442,16 +458,16 @@ def reject_name_collision(feature_store: FeatureStore, fg_name: str, fg_version:
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.OBJECT_ALREADY_EXISTS,
                 original_exception=ValueError(
-                    f"Cannot register FeatureGroup {fg_name}: a FeatureView with the same name already exists."
+                    f"Cannot register {consumer_label} {fg_name}: a FeatureView with the same name already exists."
                 ),
             )
 
-    oft_name = feature_group_oft_name(fg_name, fg_version)
-    existing_oft = feature_store._find_object("ONLINE FEATURE TABLES", oft_name)
+    resolved_oft_name = oft_name if oft_name is not None else feature_group_oft_name(fg_name, fg_version)
+    existing_oft = feature_store._find_object("ONLINE FEATURE TABLES", resolved_oft_name)
     if existing_oft:
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.OBJECT_ALREADY_EXISTS,
-            original_exception=ValueError(f"FeatureGroup {fg_name}/{fg_version} already exists."),
+            original_exception=ValueError(f"{consumer_label} {fg_name}/{fg_version} already exists."),
         )
 
 
@@ -492,6 +508,33 @@ def build_source_refs(
     return refs
 
 
+def hydrate_source_refs(
+    feature_store: FeatureStore,
+    sources: list[FeatureGroupSourceRef],
+) -> list[Union[FeatureView, FeatureViewSlice]]:
+    """Inverse of :func:`build_source_refs`: re-fetch + re-project each source FV.
+
+    Args:
+        feature_store: Calling FeatureStore (used to fetch each source FV).
+        sources: Persistable source refs previously written by
+            :func:`build_source_refs`.
+
+    Returns:
+        Live FeatureView / FeatureViewSlice objects in the original order,
+        with slice / alias projection reapplied.
+    """
+    features: list[Union[FeatureView, FeatureViewSlice]] = []
+    for src in sources:
+        fv = feature_store.get_feature_view(src.fv_name, src.fv_version)
+        item: Union[FeatureView, FeatureViewSlice] = (
+            fv.slice(src.slice_columns) if src.slice_columns is not None else fv
+        )
+        if src.alias is not None:
+            item = item.with_name(src.alias)
+        features.append(item)
+    return features
+
+
 def compose_from_metadata(feature_store: FeatureStore, meta: FeatureGroupMetadata) -> FeatureGroup:
     """Reconstruct a :class:`FeatureGroup` from its persisted metadata.
 
@@ -503,15 +546,7 @@ def compose_from_metadata(feature_store: FeatureStore, meta: FeatureGroupMetadat
         A FeatureGroup equivalent to the one originally registered, with
         :attr:`FeatureGroup.version` populated from ``meta.version``.
     """
-    features: list[Union[FeatureView, FeatureViewSlice]] = []
-    for src in meta.sources:
-        fv = feature_store.get_feature_view(src.fv_name, src.fv_version)
-        item: Union[FeatureView, FeatureViewSlice] = (
-            fv.slice(src.slice_columns) if src.slice_columns is not None else fv
-        )
-        if src.alias is not None:
-            item = item.with_name(src.alias)
-        features.append(item)
+    features = hydrate_source_refs(feature_store, meta.sources)
     fg = FeatureGroup(
         name=meta.name,
         features=features,
@@ -636,6 +671,350 @@ def list_feature_groups(fs: FeatureStore) -> DataFrame:
     return fs._session.create_dataframe(output_values, schema=_LIST_FEATURE_GROUP_SCHEMA)
 
 
+def _fg_superset_pk(fg: FeatureGroup) -> list[str]:
+    """Ordered union of source FVs' join keys (canonicalized), in source order.
+
+    Mirrors the derivation the spec builder uses to compute the OFT's primary
+    key, so register-time / read-time / property logic stays in lock-step
+    with the materialized OFT.
+
+    Args:
+        fg: The FeatureGroup whose source FVs' join keys to union.
+
+    Returns:
+        Resolved join-key names in first-seen order across ``fg.features``.
+    """
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for source in fg.features:
+        for entity in unwrap_fv(source).entities:
+            for jk in entity.join_keys:
+                resolved = jk.resolved()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    ordered.append(resolved)
+    return ordered
+
+
+def _resolve_fg_output_columns(fg: FeatureGroup) -> list[str]:
+    """Centralized output-column derivation used by the property and ``_to_spec``.
+
+    Walks ``fg.features`` in declaration order, applies the same prefix
+    rules as :meth:`FeatureGroup.output_columns`, and drops any per-source
+    feature name that resolves to an FG superset PK column. The dedupe is
+    case-insensitive via :class:`SqlIdentifier` resolution.
+
+    Args:
+        fg: The FeatureGroup whose output columns to resolve.
+
+    Returns:
+        Output column names in source-emission order, with FG-PK columns
+        removed.
+    """
+    pk = {SqlIdentifier(k).resolved() for k in _fg_superset_pk(fg)}
+    cols: list[str] = []
+    for item in fg.features:
+        prefix = get_feature_prefix(item, fg.auto_prefix)
+        for name in FeatureGroup._feature_column_names(item):
+            if SqlIdentifier(name).resolved() in pk:
+                continue
+            raw = f"{prefix}{name}" if prefix else name
+            cols.append(identifier.concat_names([raw]))
+    return cols
+
+
+def _fg_join_key_field_types(fg: FeatureGroup, *, strict: bool = False) -> dict[str, Any]:
+    """Resolve ``{join_key -> Snowpark datatype}`` across every source FV.
+
+    Shared between register-time validation and the read-time response
+    schema so they cannot disagree. BFV/SFV sources contribute types
+    from their ``output_schema``; RTFVs delegate to
+    :func:`resolve_realtime_join_key_fields` because their own
+    ``output_schema`` is feature-only.
+
+    ``strict=True`` propagates resolver errors instead of skipping the
+    source — read-time wants this so registry drift on an RTFV upstream
+    surfaces clearly. Register-time leaves it ``False`` so other FG
+    validators can produce the user-facing error.
+
+    Args:
+        fg: The FeatureGroup being read or registered.
+        strict: See note above.
+
+    Returns:
+        Canonical join-key name to Snowpark datatype.
+
+    Raises:
+        SnowflakeMLException: ``[ValueError]`` when two sources disagree
+            on a shared join key's datatype (both sources named).
+    """
+    from snowflake.ml.feature_store.realtime_registration import (
+        resolve_realtime_join_key_fields,
+    )
+
+    pk = set(_fg_superset_pk(fg))
+    type_by_name: dict[str, Any] = {}
+    source_by_name: dict[str, str] = {}
+    conflicts: list[str] = []
+
+    for source in fg.features:
+        fv = unwrap_fv(source)
+        label = f"{fv.name.resolved()}@{fv.version}"
+        if fv.realtime_config is not None:
+            if strict:
+                # Read-time path: surface registry drift on an RTFV upstream
+                # (e.g. an upstream FV re-registered with a different
+                # join-key datatype) instead of silently dropping the join
+                # key from the response schema.
+                fields = resolve_realtime_join_key_fields(fv)
+            else:
+                # Register-time defense-in-depth: the RTFV's own
+                # register-time validation would have rejected an
+                # inconsistent upstream view, so skipping the source lets
+                # FG-level validators still surface a clean ValueError.
+                try:
+                    fields = resolve_realtime_join_key_fields(fv)
+                except snowml_exceptions.SnowflakeMLException:
+                    continue
+            iterator = ((f.name, f.datatype) for f in fields)
+        else:
+            iterator = ((f.name, f.datatype) for f in fv.output_schema.fields if f.name in pk)
+        for name, datatype in iterator:
+            previous = type_by_name.get(name)
+            if previous is None:
+                type_by_name[name] = datatype
+                source_by_name[name] = label
+            elif previous != datatype:
+                conflicts.append(
+                    f"join key {name!r}: source {source_by_name[name]} declares {previous}; "
+                    f"source {label} declares {datatype}"
+                )
+
+    if conflicts:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "feature group: source feature views disagree on the datatype of a shared join key. "
+                "All sources that include the column must declare the same Snowpark datatype. "
+                f"Conflicts: {sorted(set(conflicts))}."
+            ),
+        )
+
+    return type_by_name
+
+
+def _rtfv_sources(fg: FeatureGroup) -> list[FeatureView]:
+    """RTFV source FVs in declaration order, unwrapped (slices dropped).
+
+    Args:
+        fg: The FeatureGroup to scan.
+
+    Returns:
+        :class:`FeatureView` objects whose ``realtime_config`` is set,
+        in source order.
+    """
+    return [unwrap_fv(s) for s in fg.features if unwrap_fv(s).realtime_config is not None]
+
+
+def _fg_has_realtime_source(fg: FeatureGroup) -> bool:
+    """Whether *fg* has any RTFV source.
+
+    Args:
+        fg: The FeatureGroup to inspect.
+
+    Returns:
+        ``True`` iff any source FV has a ``realtime_config``.
+    """
+    return any(unwrap_fv(s).realtime_config is not None for s in fg.features)
+
+
+def _fg_has_request_source_rtfv(fg: FeatureGroup) -> bool:
+    """Whether any RTFV source declares a ``RequestSource``.
+
+    Drives read-time dispatch: when ``True``, the read requires a
+    ``request_context``; otherwise it must be omitted. RTFVs without a
+    ``RequestSource`` don't move this needle.
+
+    Args:
+        fg: The FeatureGroup to inspect.
+
+    Returns:
+        ``True`` iff at least one RTFV source has a ``request_source``.
+    """
+    for source in fg.features:
+        rtc = unwrap_fv(source).realtime_config
+        if rtc is not None and rtc.request_source is not None:
+            return True
+    return False
+
+
+def _resolve_fg_request_context(
+    fg: FeatureGroup,
+    *,
+    request_context: Optional[pd.DataFrame],
+    keys: list[list[Any]],
+    pandas_mod: Any,
+) -> Optional[list[dict[str, Any]]]:
+    """Validate ``request_context`` for the FG read and return the per-row payload.
+
+    Required iff at least one RTFV source declares a ``RequestSource``;
+    rejected otherwise. The shape/missing/extra/length checks are
+    delegated to :func:`canonicalize_request_context` so the FG and
+    single-RTFV paths cannot disagree.
+
+    Args:
+        fg: The FeatureGroup being read.
+        request_context: Caller-supplied DataFrame, or ``None``.
+        keys: Entity rows; used for length match.
+        pandas_mod: Imported ``pandas`` module.
+
+    Returns:
+        ``None`` when no payload is needed, otherwise the canonicalized
+        per-row payload as ``list[dict[canonical_name, value]]`` in
+        ``keys`` order.
+
+    Raises:
+        SnowflakeMLException: ``[ValueError]`` if ``request_context`` is
+            supplied when not needed, missing when needed, or fails the
+            shared shape/missing/extra/length validation.
+    """
+    requires_request_context = _fg_has_request_source_rtfv(fg)
+    required = _fg_required_request_columns(fg)
+
+    if not requires_request_context:
+        if request_context is not None:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=ValueError(
+                    f"feature group {fg.name}/{fg.version}: `request_context` is only "
+                    "supported when at least one RealtimeFeatureView source declares a "
+                    "RequestSource. Pass request_context=None for this FeatureGroup."
+                ),
+            )
+        return None
+
+    if request_context is None:
+        display_required = list(required.values())
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                f"feature group {fg.name}/{fg.version}: `request_context` is required when "
+                "any RealtimeFeatureView source declares a RequestSource. Pass a pandas "
+                f"DataFrame with columns {display_required} and one row per entry in `keys`."
+            ),
+        )
+
+    from snowflake.ml.feature_store.realtime_registration import (
+        canonicalize_request_context,
+    )
+
+    return canonicalize_request_context(
+        request_context=request_context,
+        required=required,
+        keys=keys,
+        error_prefix=f"feature group {fg.name}/{fg.version}",
+        pandas_mod=pandas_mod,
+    )
+
+
+def _fg_required_request_columns(fg: FeatureGroup) -> dict[str, str]:
+    """Ordered ``canonical_name -> display_name`` over every RTFV source's ``RequestSource``.
+
+    Walks RTFV sources in declaration order, then each source's declared
+    schema field order. Same canonical name across sources merges to the
+    first source's display; register-time validation already guarantees
+    datatype agreement. Order matters so missing-column errors,
+    extras-dropped warnings, and the projection are deterministic.
+
+    Args:
+        fg: The FeatureGroup being read.
+
+    Returns:
+        Canonical-to-display mapping. Empty when no RTFV declares a
+        ``RequestSource``.
+    """
+    required: dict[str, str] = {}
+    for fv in _rtfv_sources(fg):
+        rtc = fv.realtime_config
+        assert rtc is not None  # filtered by _rtfv_sources
+        if rtc.request_source is None:
+            continue
+        for field in rtc.request_source.schema.fields:
+            canonical = SqlIdentifier(field.name).resolved()
+            if canonical not in required:
+                required[canonical] = field.name
+    return required
+
+
+def validate_fg_request_context_contract(fg: FeatureGroup) -> None:
+    """Reject cross-RTFV ``RequestSource.schema`` datatype disagreements.
+
+    The shared ``request_context`` payload at read time is keyed by canonical
+    column name only, so two RTFV sources that declare the same canonical
+    column with conflicting Snowpark datatypes have no coherent client-side
+    representation. Same-name + same-datatype is the de-facto shared-column
+    case and passes. Matching is case-insensitive via
+    :class:`SqlIdentifier` resolution; the user-facing display name is
+    preserved from the first declaring source.
+
+    Delegates to :func:`realtime_dataset.validate_rtfvs_request_context_contract`
+    so the same logic runs at FG registration and at dataset-time validation
+    for the FV-list overload of ``generate_training_set``.
+
+    Args:
+        fg: The FeatureGroup whose RTFV sources' RequestSource schemas to
+            check.
+    """
+    # Lazy import: realtime_dataset imports this module for unwrap_fv.
+    from snowflake.ml.feature_store import realtime_dataset
+
+    realtime_dataset.validate_rtfvs_request_context_contract(_rtfv_sources(fg))
+
+
+def validate_fg_request_source_pk_overlap(fg: FeatureGroup) -> None:
+    """Reject any RTFV source whose ``RequestSource.schema`` overlaps the FG superset PK.
+
+    Mirrors :func:`validate_rtfv_entity_contract`'s RTFV-level check at the
+    FG level: a RequestSource column that collides with the FG's join keys
+    would produce a duplicate column in the server-side request dataframe.
+    The FG superset PK is wider than any single RTFV's own entity keys, so
+    this catch fires even if the per-RTFV check already passed.
+
+    Args:
+        fg: The FeatureGroup whose RTFV sources to validate.
+
+    Raises:
+        SnowflakeMLException: ``[ValueError]`` if any RTFV source declares
+            a RequestSource column that overlaps the FG's superset PK
+            (offending source FV and column names both reported).
+    """
+    canonical_pk = {SqlIdentifier(k).resolved() for k in _fg_superset_pk(fg)}
+    offenders: list[str] = []
+    for fv in _rtfv_sources(fg):
+        rtc = fv.realtime_config
+        assert rtc is not None  # filtered by _rtfv_sources
+        if rtc.request_source is None:
+            continue
+        overlapping = [
+            f.name for f in rtc.request_source.schema.fields if SqlIdentifier(f.name).resolved() in canonical_pk
+        ]
+        if overlapping:
+            offenders.append(
+                f"{fv.name.resolved()}@{fv.version} declares RequestSource columns {sorted(set(overlapping))}"
+            )
+    if offenders:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=ValueError(
+                "feature group: realtime feature view source(s) declare RequestSource columns that "
+                f"overlap the FeatureGroup's superset primary key {sorted(canonical_pk)}. Entity "
+                "join keys are supplied at read time via ``keys=[[...]]`` and prepended server-side "
+                "to the request payload; declaring them in RequestSource.schema produces a duplicate "
+                f"column in the compute_fn's input DataFrame. Offending source(s): {sorted(set(offenders))}."
+            ),
+        )
+
+
 def register_feature_group(fs: FeatureStore, feature_group: FeatureGroup, version: str) -> FeatureGroup:
     """Materialize a FeatureGroup as a Postgres-backed Online Feature Table.
 
@@ -707,6 +1086,14 @@ def register_feature_group(fs: FeatureStore, feature_group: FeatureGroup, versio
                 )
 
     reject_name_collision(fs, feature_group.name, validated_version)
+
+    # Cross-source consistency checks: surface conflicts as ValueErrors before
+    # any side effect. Order matters for the user-facing message: PK datatype
+    # disagreement is the broadest failure mode and runs first; per-RTFV
+    # checks follow.
+    _fg_join_key_field_types(feature_group)
+    validate_fg_request_source_pk_overlap(feature_group)
+    validate_fg_request_context_contract(feature_group)
 
     online_service.assert_online_service_running_with_query_endpoint(
         fs._session,
@@ -794,6 +1181,7 @@ def read_feature_group(
     *,
     keys: list[list[Any]],
     store_type: Union[fv_mod.StoreType, str],
+    request_context: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
     """Read FG values via the Online Service Query API. See :meth:`FeatureStore.read_feature_group`.
 
@@ -804,6 +1192,11 @@ def read_feature_group(
             and validated against the passed FG.
         keys: Non-empty list of entity rows aligned with the FG's join keys.
         store_type: Only :attr:`StoreType.ONLINE` is supported today.
+        request_context: Required when at least one RTFV source declares a
+            ``RequestSource``; rejected otherwise. Columns are the union of
+            every contributing RTFV's ``RequestSource.schema`` field names
+            (case-insensitive); extras are dropped with a
+            :class:`UserWarning`; row count must match ``len(keys)``.
 
     Returns:
         ``pandas.DataFrame`` with the join-key columns followed by the FG's
@@ -812,10 +1205,14 @@ def read_feature_group(
     Raises:
         SnowflakeMLException: ``[ValueError]`` for empty keys, missing /
             disagreeing version, unregistered FG, or pre-RUNNING Online
-            Service. ``[NotImplementedError]`` if *store_type* is not
-            :attr:`StoreType.ONLINE`.
+            Service; for ``request_context`` shape / contract violations;
+            for ``request_context`` missing on an FG whose RTFV source(s)
+            declare a ``RequestSource`` or supplied otherwise. ``[NotImplementedError]`` if
+            *store_type* is not :attr:`StoreType.ONLINE`.
     """
     # Lazy import: feature_store imports this module at top level.
+    import pandas as pandas_mod
+
     from snowflake.ml.feature_store.feature_store import _get_store_type
 
     if _get_store_type(store_type) != fv_mod.StoreType.ONLINE:
@@ -878,23 +1275,13 @@ def read_feature_group(
     # Ordered union of the source FVs' join keys — same derivation the spec
     # builder uses to compute the OFT's primary key, so the read request PK
     # and the materialized OFT PK stay in lock-step.
-    seen: set[str] = set()
-    join_names: list[str] = []
-    for source in fg.features:
-        for entity in unwrap_fv(source).entities:
-            for jk in entity.join_keys:
-                resolved = jk.resolved()
-                if resolved not in seen:
-                    seen.add(resolved)
-                    join_names.append(resolved)
-    # Each source FV contributes types only for the join keys it carries;
-    # broader sources fill in keys that narrower sources don't have.
-    join_key_field_types: dict[str, Any] = {}
-    for source in fg.features:
-        source_fv = unwrap_fv(source)
-        for f in source_fv.output_schema.fields:
-            if f.name in seen and f.name not in join_key_field_types:
-                join_key_field_types[f.name] = f.datatype
+    join_names = _fg_superset_pk(fg)
+    # ``strict=True`` so registry drift on an RTFV upstream raises with
+    # the offending source named rather than silently dropping a join
+    # key from the response schema.
+    join_key_field_types = _fg_join_key_field_types(fg, strict=True)
+
+    request_records = _resolve_fg_request_context(fg, request_context=request_context, keys=keys, pandas_mod=pandas_mod)
 
     rows, schema = online_service.read_postgres_online_features(
         session=fs._session,
@@ -907,6 +1294,7 @@ def read_feature_group(
         join_key_field_types=join_key_field_types,
         object_type="feature_group",
         http_client=fs._get_or_create_online_http_client(),
+        request_context=request_records,
     )
     return online_service.rows_to_pandas_for_postgres_online(rows, schema)
 
@@ -986,5 +1374,13 @@ def prepare_training_set_args(
     else:
         fg_name, fg_version = feature_group
         fg = fs.get_feature_group(fg_name, fg_version)
+
+    if _fg_has_realtime_source(fg):
+        logger.info(
+            "FeatureGroup %s/%s contains realtime feature view sources; training-set "
+            "generation will evaluate compute_fn(s) over the joined upstream rows.",
+            fg.name,
+            fg.version,
+        )
 
     return list(fg.features), fg.auto_prefix, "cte"

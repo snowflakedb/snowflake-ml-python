@@ -8,7 +8,7 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
-from snowflake.ml.model._packager import model_handler
+from snowflake.ml.model._packager import model_handler, model_save_options
 from snowflake.ml.model._packager.model_meta import model_meta
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,11 @@ class ModelPackager:
                 error_code=error_codes.INVALID_TYPE,
                 original_exception=TypeError(f"{type(model)} is not supported."),
             )
+        model_save_options.validate_model_save_option_keys(
+            handler_type=handler.HANDLER_TYPE,
+            options=options,
+            include_internal_option_keys=True,
+        )
         with model_meta.create_model_metadata(
             model_dir_path=self.local_dir_path,
             name=name,

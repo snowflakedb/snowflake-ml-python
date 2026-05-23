@@ -246,7 +246,7 @@
     - transformers
     - llm
 - name: sentence-transformers
-  dev_version: 5.2.0
+  dev_version: 5.3.0
   version_requirements: '>=2.7.0,<6'
   requirements_extra_tags:
     - transformers

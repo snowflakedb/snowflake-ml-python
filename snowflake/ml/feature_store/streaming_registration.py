@@ -41,7 +41,10 @@ from snowflake.ml.feature_store.stream_config import (
     _infer_structtype_from_pandas,
     _snowpark_type_to_sql,
 )
-from snowflake.ml.feature_store.stream_source import StreamSource
+from snowflake.ml.feature_store.stream_source import (
+    StreamSource,
+    validate_schema_field_types,
+)
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import StructType
 
@@ -358,6 +361,9 @@ def run_streaming_preamble(
         backfill_df = backfill_df.filter(
             F.col(feature_view.timestamp_col.resolved()) >= F.lit(stream_config.backfill_start_time)
         )
+    # Reject TZ/LTZ and unsupported types now so the failure surfaces at
+    # registration time, not as an "Invalid argument types" task failure.
+    validate_schema_field_types(backfill_df.schema, context="backfill_df schema")
     sample_pdf = backfill_df.limit(10).to_pandas()
     if sample_pdf.empty:
         raise ValueError(
@@ -535,6 +541,7 @@ def run_streaming_postamble(
         fq_udtf=fq_udtf,
         backfill_source_select=backfill_df.queries["queries"][-1],
         input_col_names=input_col_names,
+        input_col_types=input_col_types,
         output_col_names=output_col_names,
         timestamp_col=(feature_view.timestamp_col.resolved() if feature_view.timestamp_col is not None else None),
     )
@@ -630,9 +637,10 @@ def _render_backfill_udtf_sql(
 ) -> str:
     """Render a ``CREATE OR REPLACE FUNCTION`` for a permanent vectorized Python UDTF.
 
-    The handler runs the user's ``transformation_fn`` on the whole partition
-    as one pandas DataFrame. Combined with ``OVER (PARTITION BY 1)`` at the
-    call site, every row passes through the UDTF in a single partition.
+    The handler runs the user's ``transformation_fn`` per vectorized batch
+    via the ``process`` method. Snowflake decides batch sizing and
+    parallelizes execution across UDF servers; ``transformation_fn`` must
+    be row-wise (no cross-row state, rolling windows, ranks, or lags).
 
     Permanent (not TEMPORARY) because Snowflake disallows
     ``CREATE TEMPORARY FUNCTION`` from inside a stored procedure (even via
@@ -682,16 +690,12 @@ def _render_backfill_udtf_sql(
         f"{user_source_dedented}\n"
         "\n"
         "class _Handler:\n"
-        "    def end_partition(self, df):\n"
+        "    def process(self, df):\n"
         f"        result = {user_fn_name}(df)\n"
-        "        # Vectorized UDTFs require a column-oriented yield\n"
-        "        # (pandas DataFrame or tuple of Series); row-tuples break\n"
-        "        # Snowflake's count-of-elements check. Project onto the\n"
-        "        # declared output columns and yield in one shot.\n"
         f"        result = result[[{output_col_list_repr}]]\n"
-        "        yield result\n"
+        "        return result\n"
         "\n"
-        "_Handler.end_partition._sf_vectorized_input = pd.DataFrame\n"
+        "_Handler.process._sf_vectorized_input = pd.DataFrame\n"
     )
 
     return (
@@ -714,6 +718,7 @@ def _render_backfill_insert_all_sql(
     fq_udtf: str,
     backfill_source_select: str,
     input_col_names: list[str],
+    input_col_types: list[str],
     output_col_names: list[str],
     timestamp_col: Optional[str],
 ) -> str:
@@ -728,21 +733,26 @@ def _render_backfill_insert_all_sql(
                  [WHERE (:WINDOW_START IS NULL OR "<ts>" >= :WINDOW_START)
                     AND (:WINDOW_END   IS NULL OR "<ts>" <  :WINDOW_END)]
              ) AS s,
-             TABLE(<fq_udtf>(s."<i1>", s."<i2>", ...)
-                   OVER (PARTITION BY 1)) AS t
+             TABLE(<fq_udtf>(s."<i1>"::<t1>, s."<i2>"::<t2>, ...)) AS t
 
-    The window predicate is filtered *inside* the source subquery rather
-    than after the join. With ``OVER (PARTITION BY 1)`` the vectorized
-    UDTF sees the entire source as one partition, so an outer WHERE would
-    (a) feed out-of-window rows through ``transformation_fn`` (a
-    correctness bug for any fn with partition-wide context) and (b) waste
-    compute on rows that will be discarded.
+    Each UDTF argument is cast to its declared parameter type. Snowflake's
+    function resolver does not implicitly coerce precision-bearing types
+    (e.g. ``TIMESTAMP_NTZ(0)`` -> ``TIMESTAMP_NTZ(9)``) for vectorized UDTF
+    arguments, so without the cast a non-canonical-precision source column
+    fails at task run time with ``Invalid argument types``.
+
+    The window predicate is filtered *inside* the source subquery so
+    fewer rows pass through the UDTF; an outer WHERE would still be
+    correct here, but it would waste compute on rows the writer
+    discards.
 
     The WHERE clause is omitted when ``timestamp_col`` is None.
     ``:WINDOW_START`` / ``:WINDOW_END`` are bind refs to the proc's
     parameters; Snowflake Scripting requires the ``:NAME`` form for proc
     parameters used inside SELECT/INSERT. ``LATERAL`` is omitted because
-    Snowflake rejects it when combined with ``OVER (PARTITION BY ...)``.
+    the comma-join shape ``s, TABLE(udtf(s.col, ...))`` is the
+    documented call form for vectorized ``process`` UDTFs and provides
+    implicit lateral correlation.
 
     Args:
         fq_udf_table: Fully-qualified ``$UDF_TRANSFORMED`` table.
@@ -752,13 +762,20 @@ def _render_backfill_insert_all_sql(
             wrapped in ``SELECT * FROM (...)`` so the inner WHERE can be
             applied without parsing the user's query.
         input_col_names: Resolved input column identifiers.
+        input_col_types: Snowflake SQL types matching ``input_col_names``;
+            used to cast each UDTF arg to its declared parameter type.
         output_col_names: Resolved output column identifiers.
         timestamp_col: Resolved FV timestamp column, or ``None``.
 
     Returns:
         SQL string (no trailing semicolon).
+
+    Raises:
+        ValueError: If ``input_col_names`` and ``input_col_types`` differ in length.
     """
-    udtf_args = ", ".join(f's."{n}"' for n in input_col_names)
+    if len(input_col_names) != len(input_col_types):
+        raise ValueError("input_col_names and input_col_types must have the same length.")
+    udtf_args = ", ".join(f's."{n}"::{t}' for n, t in zip(input_col_names, input_col_types))
     select_projection = ", ".join(f't."{n}"' for n in output_col_names)
     if timestamp_col is not None:
         # Alias the inner SELECT so the timestamp reference stays
@@ -775,8 +792,7 @@ def _render_backfill_insert_all_sql(
         f"INSERT ALL INTO {fq_udf_table} INTO {fq_backfill_table}"
         f" SELECT {select_projection}"
         f" FROM ({filtered_source}) AS s,"
-        f" TABLE({fq_udtf}({udtf_args})"
-        f" OVER (PARTITION BY 1)) AS t"
+        f" TABLE({fq_udtf}({udtf_args})) AS t"
     )
 
 
@@ -1207,7 +1223,14 @@ def _build_streaming_feature_view_spec(
     if stream_config is None:
         raise ValueError(f"FeatureView '{feature_view.name}' does not have a stream_config.")
 
-    entity_columns = feature_view.ordered_entity_columns
+    entity_columns = list(feature_view.ordered_entity_columns)
+    # GS dedupes on ``ordered_entity_column_names`` during ``$BACKFILL`` and
+    # ignores ``ordered_secondary_key_column_names``; Quake strips SKs back
+    # out before storing.
+    if feature_view.aggregation_secondary_keys:
+        for sk in feature_view.aggregation_secondary_keys:
+            if sk not in entity_columns:
+                entity_columns.append(sk)
 
     # UDF_TRANSFORMED offline config (always present)
     udf_table_name = FeatureView._get_udf_transformed_table_name(feature_view_name)

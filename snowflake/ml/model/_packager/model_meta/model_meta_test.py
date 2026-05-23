@@ -460,7 +460,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
     def test_model_meta_dependencies_default_pip_path_without_local_conda(self) -> None:
         """Pip-only opt-in + no explicit conda deps + not in a conda env -> pip path for automatic deps."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     with model_meta.create_model_metadata(
@@ -480,7 +480,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
     def test_model_meta_dependencies_pip_only_with_local_conda_still_conda_defaults(self) -> None:
         """Pip-only opt-in does not move automatic deps to pip when packaging from a conda context."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     with model_meta.create_model_metadata(
@@ -499,7 +499,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
     def test_model_meta_dependencies_pip_only_with_local_conda_spcs_target_still_prefer_pip(self) -> None:
         """SPCS-only target_platforms forces prefer_pip even under local conda (and pip-only flag)."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     with model_meta.create_model_metadata(
@@ -523,7 +523,7 @@ class ModelMetaEnvTest(absltest.TestCase):
 
     def test_model_meta_dependencies_venv_without_pip_only_flag_still_conda_defaults(self) -> None:
         """Without pip-only opt-in, venv/plain Python still gets conda default deps (legacy behavior)."""
-        with mock.patch.object(model_env, "_ENABLE_PIP_ONLY_PACKAGING", False):
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=False):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
                 with tempfile.TemporaryDirectory() as tmpdir:
                     with model_meta.create_model_metadata(

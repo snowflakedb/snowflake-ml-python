@@ -7,6 +7,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import custom_model
 from snowflake.ml.model._packager.model_env import model_env
+from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
@@ -104,7 +105,10 @@ class PipOnlyPyTorchModel(custom_model.CustomModel):
         )
 
 
-class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestRegistryPipOnlyModelDeploymentInteg(
+    pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
+    registry_model_deployment_test_base.RegistryModelDeploymentTestBase,
+):
     """Integration tests for pip-only model deployment.
 
     Uses the same Kaniko builder override as ``RegistryModelDeploymentTestBase`` (``BUILDER_IMAGE_PATH``).
@@ -147,10 +151,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
         pip_only_model = PipOnlyModel(custom_model.ModelContext())
 
-        # Enable pip-only packaging via import
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
-
-        # Test deployment using the pip-only path
         self._test_registry_model_deployment(
             model=pip_only_model,
             sample_input_data=test_input,
@@ -182,8 +182,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
 
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         pip_only_model = PipOnlyModel(custom_model.ModelContext())
-
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
         self._test_registry_model_deployment(
             model=pip_only_model,
@@ -218,8 +216,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         if not self._has_image_override():
             self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
 
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
-
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         model = PipOnlyModel(custom_model.ModelContext())
         self._test_registry_model_deployment(
@@ -252,8 +248,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(registry_model_deployment_test_bas
         """
         if not self._has_image_override():
             self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
-
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
         test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
         model = PipOnlyPyTorchModel(custom_model.ModelContext())

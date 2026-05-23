@@ -198,6 +198,7 @@ class BaseModelSaveOption(TypedDict):
 class CatBoostModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    use_gpu: NotRequired[bool]
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
@@ -211,6 +212,7 @@ class SKLModelSaveOptions(BaseModelSaveOption):
 class XGBModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    use_gpu: NotRequired[bool]
 
 
 class LGBMModelSaveOptions(BaseModelSaveOption):
@@ -225,12 +227,14 @@ class PyTorchSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
     multiple_inputs: NotRequired[bool]
+    use_gpu: NotRequired[bool]
 
 
 class TorchScriptSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
     multiple_inputs: NotRequired[bool]
+    use_gpu: NotRequired[bool]
 
 
 class TensorflowSaveOptions(BaseModelSaveOption):

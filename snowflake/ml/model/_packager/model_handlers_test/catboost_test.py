@@ -1,6 +1,7 @@
 import os
 import tempfile
 import warnings
+from typing import Any
 from unittest import mock
 
 import catboost
@@ -228,6 +229,151 @@ class CatBoostHandlerTest(absltest.TestCase):
             np.testing.assert_allclose(
                 test_utils.convert2D_json_to_3D(explain_method(cal_X_test).to_numpy()), explanations
             )
+
+
+class CatBoostHandlerParamsTest(absltest.TestCase):
+    """Param forwarding for CatBoost. Covers shape-preserving documented kwargs only."""
+
+    @staticmethod
+    def _train_classifier(iterations: int = 10) -> tuple[catboost.CatBoostClassifier, pd.DataFrame, pd.DataFrame]:
+        cal_data = datasets.load_breast_cancer()
+        cal_X = pd.DataFrame(cal_data.data, columns=cal_data.feature_names)
+        cal_y = pd.Series(cal_data.target)
+        cal_X_train, cal_X_test, cal_y_train, _ = model_selection.train_test_split(cal_X, cal_y, random_state=0)
+        classifier = catboost.CatBoostClassifier(iterations=iterations, thread_count=1, verbose=False, random_seed=0)
+        classifier.fit(cal_X_train, cal_y_train)
+        return classifier, cal_X_train, cal_X_test
+
+    def test_catboost_documented_kwargs_forwarded(self) -> None:
+        """Shape-preserving kwargs flow to CatBoost.predict / predict_proba."""
+        classifier, _, cal_X_test = self._train_classifier()
+        y_pred = classifier.predict(cal_X_test)
+        y_pred_proba = classifier.predict_proba(cal_X_test)
+
+        # prediction_type only on predict; on predict_proba it would change shape.
+        common_params = [
+            model_signature.ParamSpec("ntree_start", model_signature.DataType.INT64, default_value=0),
+            model_signature.ParamSpec("ntree_end", model_signature.DataType.INT64, default_value=0),
+            model_signature.ParamSpec("thread_count", model_signature.DataType.INT64, default_value=-1),
+            model_signature.ParamSpec("verbose", model_signature.DataType.BOOL, default_value=False),
+            model_signature.ParamSpec("task_type", model_signature.DataType.STRING, default_value="CPU"),
+        ]
+        predict_params = common_params + [
+            model_signature.ParamSpec("prediction_type", model_signature.DataType.STRING, default_value="Class"),
+        ]
+        sigs = {
+            "predict": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(cal_X_test, y_pred).inputs,
+                outputs=model_signature.infer_signature(cal_X_test, y_pred).outputs,
+                params=predict_params,
+            ),
+            "predict_proba": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(cal_X_test, y_pred_proba).inputs,
+                outputs=model_signature.infer_signature(cal_X_test, y_pred_proba).outputs,
+                params=common_params,
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                signatures=sigs,
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            predict_method = getattr(pk.model, "predict", None)
+            predict_proba_method = getattr(pk.model, "predict_proba", None)
+            assert callable(predict_method)
+            assert callable(predict_proba_method)
+
+            # Default (no kwargs) matches direct calls on the raw model.
+            np.testing.assert_allclose(predict_method(cal_X_test).to_numpy(), np.expand_dims(y_pred, axis=1))
+            np.testing.assert_allclose(predict_proba_method(cal_X_test).to_numpy(), y_pred_proba)
+
+            # ntree_end and prediction_type are value-changing; the rest are config-only but must
+            # still be accepted without error.
+            predict_cases: list[tuple[str, Any]] = [
+                ("ntree_start", 0),
+                ("ntree_end", 3),
+                ("thread_count", 1),
+                ("verbose", False),
+                ("task_type", "CPU"),
+                ("prediction_type", "RawFormulaVal"),
+            ]
+            for kwarg_name, kwarg_value in predict_cases:
+                with self.subTest(method="predict", kwarg=kwarg_name):
+                    res = predict_method(cal_X_test, **{kwarg_name: kwarg_value})
+                    expected = np.asarray(classifier.predict(cal_X_test, **{kwarg_name: kwarg_value}))
+                    if expected.ndim == 1:
+                        expected = np.expand_dims(expected, axis=1)
+                    np.testing.assert_allclose(res.to_numpy(), expected)
+
+            for kwarg_name, kwarg_value in predict_cases:
+                # prediction_type isn't on predict_proba's signature (output is always probabilities).
+                if kwarg_name == "prediction_type":
+                    continue
+                with self.subTest(method="predict_proba", kwarg=kwarg_name):
+                    res = predict_proba_method(cal_X_test, **{kwarg_name: kwarg_value})
+                    expected = classifier.predict_proba(cal_X_test, **{kwarg_name: kwarg_value})
+                    np.testing.assert_allclose(res.to_numpy(), expected)
+
+            # Confirm ntree_end=3 actually changes the output.
+            res_default = predict_proba_method(cal_X_test)
+            res_few_trees = predict_proba_method(cal_X_test, ntree_end=3)
+            self.assertFalse(
+                np.allclose(res_default.to_numpy(), res_few_trees.to_numpy()),
+                "ntree_end=3 predict_proba should differ from the full-iteration default",
+            )
+
+    def test_catboost_handler_class_forwards_kwargs_unconditionally(self) -> None:
+        """Handler forwards kwargs without filtering by signature.params (handler-level only)."""
+        # mv.run rejects undeclared params client-side; this test covers the Python layer only.
+        classifier, _, cal_X_test = self._train_classifier()
+        y_pred = classifier.predict(cal_X_test)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sig = model_signature.infer_signature(cal_X_test, y_pred)
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                signatures={"predict": sig},
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            # Known kwarg, undeclared in signature — value change proves it reached CatBoost.
+            res = predict_method(cal_X_test, ntree_end=3)
+            expected = np.expand_dims(classifier.predict(cal_X_test, ntree_end=3), axis=1)
+            np.testing.assert_allclose(res.to_numpy(), expected)
+
+    def test_catboost_unknown_kwarg_raises(self) -> None:
+        """CatBoost rejects unknown kwargs."""
+        classifier, _, cal_X_test = self._train_classifier()
+        y_pred = classifier.predict(cal_X_test)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            sig = model_signature.infer_signature(cal_X_test, y_pred)
+            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=classifier,
+                signatures={"predict": sig},
+                options=model_types.CatBoostModelSaveOptions(enable_explainability=False),
+            )
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+
+            with self.assertRaises(TypeError):
+                predict_method(cal_X_test, totally_made_up_kwarg=42)
 
 
 if __name__ == "__main__":

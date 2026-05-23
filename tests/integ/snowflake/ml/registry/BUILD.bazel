@@ -16,3 +16,16 @@ py_library(
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],
 )
+
+py_library(
+    name = "pip_only_packaging_integ_util",
+    testonly = True,
+    srcs = ["pip_only_packaging_integ_util.py"],
+    visibility = [
+        "//ci/type_check/runner:__pkg__",
+        "//tests/integ/snowflake/ml/registry:__subpackages__",
+    ],
+    deps = [
+        "//snowflake/ml/_internal:platform_capabilities",
+    ],
+)

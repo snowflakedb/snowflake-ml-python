@@ -163,10 +163,7 @@ class ModelParameterReconciler:
 
         if self._pypi_shared_repository_accessible():
             base["pip"] = _PYPI_SHARED_REPOSITORY_FQN
-            logger.info(
-                "Using snowflake.snowpark.pypi_shared_repository for pip-only packaging so the model can run in "
-                "Snowflake Warehouse."
-            )
+            logger.info("Using snowflake.snowpark.pypi_shared_repository so the model can run in Snowflake Warehouse.")
             return (base, False)
 
         logger.info(
@@ -177,10 +174,32 @@ class ModelParameterReconciler:
 
     def _needs_implicit_pip_only_packaging(self) -> bool:
         """True when pip-only packaging is enabled and env routes automatic deps to pip (no user conda deps)."""
+        return self._will_use_pip_only_packaging(force_conda_defaults=False)
+
+    def _will_use_pip_only_packaging(self, *, force_conda_defaults: bool) -> bool:
+        """True when pip-only packaging applies and the model is not on a conda fallback path."""
         return bool(
-            model_env._ENABLE_PIP_ONLY_PACKAGING
+            not force_conda_defaults
             and not (self._conda_dependencies or [])
             and not env_utils.is_local_conda_environment()
+            and model_env.is_pip_only_packaging_enabled()
+        )
+
+    def _is_packaged_as_pip_model(
+        self,
+        *,
+        target_platforms: Optional[list[model_types.TargetPlatform]],
+        force_conda_defaults: bool,
+    ) -> bool:
+        """True when pip-only packaging is enabled and dependencies are packaged on the pip path."""
+        if not self._will_use_pip_only_packaging(force_conda_defaults=force_conda_defaults):
+            return False
+        if self._pip_requirements:
+            return True
+        return model_env.resolve_prefer_pip_for_automatic_dependencies(
+            target_platforms=target_platforms,
+            conda_dependencies=self._conda_dependencies,
+            force_conda_defaults=force_conda_defaults,
         )
 
     def _pypi_shared_repository_accessible(self) -> bool:
@@ -383,17 +402,19 @@ class ModelParameterReconciler:
     ) -> model_types.ModelSaveOption:
         """Reconcile relax_version setting based on pip requirements and target platforms."""
         target_platform_set = set(target_platforms) if target_platforms else set()
-        has_pip_requirements = bool(self._pip_requirements) or (
-            self._needs_implicit_pip_only_packaging() and not force_conda_defaults
+        packaged_as_pip_model = self._is_packaged_as_pip_model(
+            target_platforms=target_platforms,
+            force_conda_defaults=force_conda_defaults,
         )
+        has_explicit_pip_without_conda = bool(self._pip_requirements) and not (self._conda_dependencies or [])
         only_spcs = target_platform_set == set(target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY)
 
         if "relax_version" not in options:
-            if has_pip_requirements or only_spcs:
+            if packaged_as_pip_model or only_spcs or (has_explicit_pip_without_conda and not force_conda_defaults):
                 logger.info(
                     "Setting `relax_version=False` as this model will run in Snowpark Container Services "
                     "or in Warehouse with a specified artifact_repository_map where exact version "
-                    " specifications will be honored."
+                    "specifications will be honored."
                 )
                 relax_version = False
             else:
@@ -412,7 +433,9 @@ class ModelParameterReconciler:
 
         # Handle case where relax_version is already set
         relax_version = options["relax_version"]
-        if relax_version and (has_pip_requirements or only_spcs):
+        if relax_version and (
+            packaged_as_pip_model or only_spcs or (has_explicit_pip_without_conda and not force_conda_defaults)
+        ):
             raise exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=ValueError(

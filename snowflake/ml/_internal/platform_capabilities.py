@@ -19,6 +19,7 @@ LIVE_COMMIT_PARAMETER = "ENABLE_LIVE_VERSION_IN_SDK"
 INLINE_DEPLOYMENT_SPEC_PARAMETER = "ENABLE_INLINE_DEPLOYMENT_SPEC_FROM_CLIENT_VERSION"
 SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST = "SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST"
 ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS = "ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS"
+ENABLE_PIP_ONLY_PACKAGING = "ENABLE_PIP_ONLY_PACKAGING"
 
 
 class PlatformCapabilities:
@@ -81,6 +82,18 @@ class PlatformCapabilities:
 
     def is_model_method_signature_parameters_enabled(self) -> bool:
         return self._get_bool_feature(ENABLE_MODEL_METHOD_SIGNATURE_PARAMETERS, False)
+
+    def is_pip_only_packaging_enabled(self) -> bool:
+        """Whether pip-only model packaging is enabled for this account.
+
+        Defaults to enabled when ``ENABLE_PIP_ONLY_PACKAGING`` is absent from
+        ``SYSTEM$ML_PLATFORM_CAPABILITIES()`` (e.g. older servers). When the
+        capability is present, defaults to enabled unless explicitly set to false.
+
+        Returns:
+            True if pip-only packaging is enabled for this account; otherwise False.
+        """
+        return self._get_bool_feature(ENABLE_PIP_ONLY_PACKAGING, default_value=True)
 
     @staticmethod
     def _get_features(session: snowpark_session.Session) -> dict[str, Any]:

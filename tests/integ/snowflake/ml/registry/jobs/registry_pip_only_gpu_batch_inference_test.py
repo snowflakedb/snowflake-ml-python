@@ -9,6 +9,7 @@ from sklearn import datasets, model_selection
 from snowflake.ml.model import custom_model
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.batch import JobSpec, OutputSpec
+from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
@@ -38,7 +39,10 @@ class PipOnlyPyTorchModel(custom_model.CustomModel):
         return pd.DataFrame({"output": y.detach().cpu().numpy().ravel()})
 
 
-class TestRegistryPipOnlyGpuBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+class TestRegistryPipOnlyGpuBatchInferenceInteg(
+    pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
+    registry_batch_inference_test_base.RegistryBatchInferenceTestBase,
+):
     """Integration tests for pip-only GPU model batch inference."""
 
     _BATCH_IMAGE_OVERRIDE_MODE = "pip_only_batch"
@@ -52,8 +56,6 @@ class TestRegistryPipOnlyGpuBatchInferenceInteg(registry_batch_inference_test_ba
         """E2E test: pip-only GPU batch inference with PyTorch."""
         if not self._has_image_override():
             self.skipTest("Skipping pip-only GPU batch inference test: image override not enabled.")
-
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
         model = PipOnlyPyTorchModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
@@ -105,8 +107,6 @@ class TestRegistryPipOnlyGpuBatchInferenceInteg(registry_batch_inference_test_ba
         """
         if not self._has_image_override():
             self.skipTest("Skipping pip-only GPU batch inference test: image override not enabled.")
-
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data

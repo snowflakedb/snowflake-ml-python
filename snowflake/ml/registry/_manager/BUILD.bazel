@@ -42,6 +42,8 @@ py_library(
         "//snowflake/ml/model/_client/service:import_model_spec_schema",
         "//snowflake/ml/model/_client/service:model_deployment_spec_schema",
         "//snowflake/ml/model/_model_composer:model_composer",
+        "//snowflake/ml/model/_packager:model_handler",
+        "//snowflake/ml/model/_packager:model_save_options",
         "//snowflake/ml/model/models:huggingface",
     ],
 )

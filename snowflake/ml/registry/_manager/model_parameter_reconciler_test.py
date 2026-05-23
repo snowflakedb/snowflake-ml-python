@@ -89,7 +89,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
 
     def test_implicit_pip_only_packaging_injects_shared_pypi_repository_for_warehouse(self) -> None:
         """Implicit pip-only injects shared repo for Warehouse (flag on, no conda deps, not local conda)."""
-        with mock.patch.object(packager_model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+        with mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True):
             with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
                 reconciler = self._create_reconciler(
                     conda_dependencies=None,
@@ -113,7 +113,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 "_pypi_shared_repository_accessible",
                 return_value=False,
             ):
-                with mock.patch.object(packager_model_env, "_ENABLE_PIP_ONLY_PACKAGING", True):
+                with mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True):
                     with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
                         reconciler = self._create_reconciler(
                             conda_dependencies=None,
@@ -443,7 +443,8 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             assert result.options is not None
             self.assertFalse(result.options["embed_local_ml_library"])
 
-    def test_relax_version_logic(self) -> None:
+    @mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=False)
+    def test_relax_version_logic(self, _mock_pip_only_packaging: mock.Mock) -> None:
         """Test relax_version auto-setting and validation logic."""
 
         reconciler = self._create_reconciler(pip_requirements=["xgboost==1.2.3"])
@@ -454,7 +455,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             mock_info.assert_called_with(
                 "Setting `relax_version=False` as this model will run in Snowpark Container Services "
                 "or in Warehouse with a specified artifact_repository_map where exact version "
-                " specifications will be honored."
+                "specifications will be honored."
             )
 
         reconciler = self._create_reconciler(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
@@ -465,7 +466,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             mock_info.assert_called_with(
                 "Setting `relax_version=False` as this model will run in Snowpark Container Services "
                 "or in Warehouse with a specified artifact_repository_map where exact version "
-                " specifications will be honored."
+                "specifications will be honored."
             )
 
         reconciler = self._create_reconciler()
@@ -482,7 +483,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             mock_info.assert_called_with(
                 "Setting `relax_version=False` as this model will run in Snowpark Container Services "
                 "or in Warehouse with a specified artifact_repository_map where exact version "
-                " specifications will be honored."
+                "specifications will be honored."
             )
 
         reconciler = self._create_reconciler(options={"relax_version": False})
@@ -518,6 +519,61 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             "Snowflake Conda Channel dependencies",
             str(cm.exception),
         )
+
+        _mock_pip_only_packaging.return_value = True
+        with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+            reconciler = self._create_reconciler(
+                conda_dependencies=[],
+                target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                options={"relax_version": True},
+            )
+            with self.assertRaises(exceptions.SnowflakeMLException) as cm:
+                reconciler.reconcile()
+            self.assertEqual(cm.exception.error_code, error_codes.INVALID_ARGUMENT)
+            self.assertIn("pip requirements", str(cm.exception))
+
+    def test_relax_version_defaults_true_when_pip_only_enabled_but_local_conda(self) -> None:
+        """Capability on while packaging from a conda env keeps conda defaults (relax_version=True)."""
+        with mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=True):
+                reconciler = self._create_reconciler(
+                    conda_dependencies=[],
+                    target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                )
+                with self.assertWarnsRegex(UserWarning, "`relax_version` is not set and therefore defaulted to True"):
+                    result = reconciler.reconcile()
+                    assert result.options is not None
+                    self.assertTrue(result.options["relax_version"])
+
+    def test_relax_version_defaults_false_when_packaged_as_pip_model(self) -> None:
+        """Pip-only capability with pip packaging path pins versions (relax_version=False)."""
+        with mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                reconciler = self._create_reconciler(
+                    conda_dependencies=[],
+                    target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+                )
+                with mock.patch.object(model_parameter_reconciler.logger, "info") as mock_info:
+                    result = reconciler.reconcile()
+                    assert result.options is not None
+                    self.assertFalse(result.options["relax_version"])
+                    mock_info.assert_called_with(
+                        "Setting `relax_version=False` as this model will run in Snowpark Container Services "
+                        "or in Warehouse with a specified artifact_repository_map where exact version "
+                        "specifications will be honored."
+                    )
+
+    def test_relax_version_defaults_true_when_pip_only_enabled_but_user_conda_deps(self) -> None:
+        """User conda dependencies keep conda packaging even if pip-only capability is on."""
+        with mock.patch.object(packager_model_env, "is_pip_only_packaging_enabled", return_value=True):
+            reconciler = self._create_reconciler(
+                conda_dependencies=["numpy>=1.20.0"],
+                target_platforms=[model_types.TargetPlatform.WAREHOUSE],
+            )
+            with self.assertWarnsRegex(UserWarning, "`relax_version` is not set and therefore defaulted to True"):
+                result = reconciler.reconcile()
+                assert result.options is not None
+                self.assertTrue(result.options["relax_version"])
 
     @parameterized.parameters(  # type: ignore[misc]
         {"disable_explainability": True, "target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},
