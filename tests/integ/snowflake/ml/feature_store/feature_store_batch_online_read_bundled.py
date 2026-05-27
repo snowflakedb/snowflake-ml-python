@@ -441,6 +441,71 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
 
     # =========================================================================
+    # E2E: Batch tiled approx_count_distinct — registration -> online read
+    # =========================================================================
+
+    @unittest.skipUnless(
+        os.environ.get("SNOWFLAKE_PAT", "").strip(),
+        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
+    )
+    def test_batch_tiled_approx_count_distinct_online_read(self) -> None:
+        """Tiled batch FV with approx_count_distinct on a STRING column: online read returns HLL estimate."""
+        fs = self._create_feature_store()
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"BATCH_HLL_FV_{s}"
+        key_a = f"U_HLL_A_{s}"
+        key_b = f"U_HLL_B_{s}"
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BATCH_HLL_SRC_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                CATEGORY VARCHAR
+            )
+        """
+        ).collect()
+        yesterday = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name}
+            SELECT column1, column2, column3 FROM VALUES
+                ({key_a!r}, DATEADD('hour', 1, {yesterday}), 'electronics'),
+                ({key_a!r}, DATEADD('hour', 2, {yesterday}), 'books'),
+                ({key_a!r}, DATEADD('hour', 3, {yesterday}), 'electronics'),
+                ({key_b!r}, DATEADD('hour', 1, {yesterday}), 'toys')
+        """
+        ).collect()
+
+        features = [Feature.approx_count_distinct("CATEGORY", "2d").alias("UNIQUE_CATS_2D")]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self._session.table(table_name),
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered.is_tiled)
+        self.assertTrue(registered.online)
+
+        self._wait_offline_dt_rows(fs, fv_name, "v1")
+
+        def _validate(pdf):
+            self.assertIn("UNIQUE_CATS_2D", pdf.columns)
+            val = float(pdf.iloc[0]["UNIQUE_CATS_2D"])
+            self.assertAlmostEqual(val, 2.0, delta=0.1)
+
+        self._poll_online_read(
+            fs, fv_name, "v1", keys=[[key_a]], validate_fn=_validate, desc="batch tiled approx_count_distinct"
+        )
+
+    # =========================================================================
     # E2E: Batch tiled (timeseries) + secondary key — registration -> online read
     # =========================================================================
 

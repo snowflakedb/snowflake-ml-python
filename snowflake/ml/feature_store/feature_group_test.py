@@ -10,7 +10,7 @@ Covers:
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock
 
 from absl.testing import absltest, parameterized
@@ -20,10 +20,13 @@ from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_group import FeatureGroup, FeatureGroupVersion
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
+    FeatureViewStatus,
     FeatureViewVersion,
     OnlineConfig,
     OnlineStoreType,
 )
+from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+from snowflake.ml.feature_store.request_source import RequestSource
 from snowflake.ml.feature_store.spec.enums import FeatureViewKind, SourceType
 from snowflake.snowpark import DataFrame
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
@@ -68,6 +71,53 @@ def _make_registered_fv(
     fv._schema = SqlIdentifier("SCH")
     # Schema inference uses _infer_schema_df.schema; share the same mock.
     fv._infer_schema_df = mock_df
+    return fv
+
+
+def _rtfv_compute_fn(req: Any, upstream: Any) -> Any:
+    """Placeholder ``compute_fn`` for RTFV fixtures; tests never invoke it."""
+    return req
+
+
+def _make_registered_rtfv(
+    *,
+    name: str,
+    version: str,
+    output_fields: list[StructField],
+    request_fields: Optional[list[StructField]] = None,
+    upstream: Optional[FeatureView] = None,
+    join_keys: Optional[list[str]] = None,
+) -> FeatureView:
+    """Build a :class:`FeatureView` that looks like a registered RTFV.
+
+    The compute_fn is a placeholder; the FG-side helpers under test never
+    invoke it. ``output_fields`` are the canonical ``compute_fn`` return
+    shape; pass ``StructField('<jk>', ...)`` entries to exercise the PK
+    re-declaration case.
+    """
+    join_keys = join_keys or ["USER_ID"]
+    upstream = upstream or _make_registered_fv(
+        name=f"{name}_UPSTREAM",
+        version=version,
+        feature_columns=["UPSTREAM_F"],
+        join_keys=join_keys,
+    )
+    request = RequestSource(schema=StructType(request_fields or []))
+    rtc = RealtimeConfig(
+        compute_fn=_rtfv_compute_fn,
+        sources=[request, upstream],
+        output_schema=StructType(output_fields),
+    )
+    fv = FeatureView(
+        name=name,
+        entities=[Entity(name="USER", join_keys=join_keys)],
+        realtime_config=rtc,
+        online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+    )
+    fv._version = FeatureViewVersion(version)
+    fv._database = SqlIdentifier("DB")
+    fv._schema = SqlIdentifier("SCH")
+    fv._status = FeatureViewStatus.ACTIVE
     return fv
 
 
@@ -182,6 +232,106 @@ class FeatureGroupOutputColumnsTest(absltest.TestCase):
         fg = FeatureGroup(name="FG", features=[fv1, fv2], auto_prefix=False)
         self.assertEqual(fg.output_columns, ["F1", "F1"])
 
+    def test_rtfv_source_contributes_feature_columns_minus_pk(self) -> None:
+        """RTFV ``output_schema`` re-declaring the FG superset PK must not double-emit it."""
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            # Canonical compute_fn return shape: PK + computed feature.
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv], auto_prefix=False)
+        self.assertEqual(fg.output_columns, ["WEIGHTED_BALANCE"])
+
+    def test_rtfv_source_pk_dedupe_under_auto_prefix(self) -> None:
+        """Auto-prefix is applied to feature columns only; PK never gets prefixed in."""
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv], auto_prefix=True)
+        # Mixed-case ``v1`` forces SQL-quoting on the prefixed name.
+        self.assertEqual(fg.output_columns, ['"RT_FV_v1_WEIGHTED_BALANCE"'])
+
+    def test_rtfv_source_pk_dedupe_with_explicit_alias(self) -> None:
+        """``with_name`` overrides the auto prefix without changing the PK-dedupe contract."""
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv.with_name("rt")], auto_prefix=True)
+        # Mixed-case alias ``rt_`` triggers SQL-quoting.
+        self.assertEqual(fg.output_columns, ['"rt_WEIGHTED_BALANCE"'])
+
+    def test_mixed_bfv_and_rtfv_dedupe_against_superset_pk(self) -> None:
+        """FG superset PK is the union across sources; both sources drop any column matching it."""
+        bfv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"])
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fg = FeatureGroup(name="FG", features=[bfv, rtfv], auto_prefix=False)
+        self.assertEqual(fg.output_columns, ["BALANCE", "WEIGHTED_BALANCE"])
+
+    def test_rtfv_source_without_pk_in_output_schema_unchanged(self) -> None:
+        """If the RTFV's ``output_schema`` doesn't re-declare the PK, the property is unchanged."""
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[StructField("WEIGHTED_BALANCE", DoubleType())],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv], auto_prefix=False)
+        self.assertEqual(fg.output_columns, ["WEIGHTED_BALANCE"])
+
+
+class FeatureGroupComposeFromMetadataTest(absltest.TestCase):
+    """Rehydration: ``compose_from_metadata`` -> :attr:`FeatureGroup.output_columns` stays deduped."""
+
+    def test_rehydrated_fg_with_rtfv_source_drops_pk_in_output_columns(self) -> None:
+        from snowflake.ml.feature_store.feature_group import compose_from_metadata
+        from snowflake.ml.feature_store.metadata_manager import (
+            FeatureGroupMetadata,
+            FeatureGroupSourceRef,
+        )
+
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fake_fs = MagicMock()
+        # ``compose_from_metadata`` delegates to ``fs.get_feature_view`` to
+        # rehydrate each source ref into a live FV.
+        fake_fs.get_feature_view.return_value = rtfv
+
+        meta = FeatureGroupMetadata(
+            name="FG",
+            version="v1",
+            desc="rehydrate test",
+            auto_prefix=False,
+            sources=[FeatureGroupSourceRef(fv_name="RT_FV", fv_version="v1")],
+        )
+        rehydrated = compose_from_metadata(fake_fs, meta)
+        self.assertEqual(rehydrated.output_columns, ["WEIGHTED_BALANCE"])
+
 
 class FeatureGroupToSpecTest(absltest.TestCase):
     """``_to_spec`` produces a validated FeatureViewSpec."""
@@ -241,6 +391,24 @@ class FeatureGroupToSpecTest(absltest.TestCase):
         fv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["F1"])
         spec = FeatureGroup(name="FG", features=[fv])._to_spec(database="DB", schema="SCH", version="v1")
         self.assertTrue(all(s.source_type == SourceType.FEATURES for s in spec.spec.sources))
+
+    def test_rtfv_source_emits_computed_features_minus_pk(self) -> None:
+        """Spec features for an RTFV source come from ``realtime_config.output_schema`` minus the PK."""
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        spec = FeatureGroup(name="FG", features=[rtfv], auto_prefix=False)._to_spec(
+            database="DB", schema="SCH", version="v1"
+        )
+        outputs = [f.output_column.name for f in spec.spec.features]
+        self.assertEqual(outputs, ["WEIGHTED_BALANCE"])
+        # The OFT's PK comes from the derived entity columns, not the features list.
+        self.assertEqual(spec.spec.ordered_entity_column_names, ["USER_ID"])
 
 
 class FeatureGroupVersionTest(absltest.TestCase):

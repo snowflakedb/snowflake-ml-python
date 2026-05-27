@@ -38,6 +38,7 @@ from snowflake.ml.feature_store.spec.enums import (
 from snowflake.ml.feature_store.spec.models import FSColumn, Source
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.snowpark.types import (
+    BinaryType,
     BooleanType,
     DataType,
     DecimalType,
@@ -140,6 +141,8 @@ def _tiled_dt_schema_for_supported_pg_agg(agg_type: AggregationType) -> StructTy
             StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
             StructField("_PARTIAL_SUM_SQ_AMOUNT", DoubleType()),
         ]
+    elif agg_type == AggregationType.APPROX_COUNT_DISTINCT:
+        extra = [StructField("_PARTIAL_DS_HLL_AMOUNT", BinaryType())]
     else:
         raise ValueError(f"unsupported agg_type for PG tiled schema helper: {agg_type}")
     return StructType(keys + extra)
@@ -210,6 +213,7 @@ def _mock_feature_view(
     fv.name = name
     fv.version = version
     fv.is_streaming = is_streaming
+    fv.is_realtime_feature_view = False
     names = feature_names or ["SCORE", "RISK"]
     fv.feature_names = names
     fv.output_schema = StructType(
@@ -812,6 +816,9 @@ class FeatureViewConversionTest(absltest.TestCase):
                 StructField("RISK", DecimalType(10, 2)),
             ]
         )
+        # Pin the BFV/SFV branch; ``MagicMock(spec=FeatureView)`` otherwise
+        # returns a truthy child mock for the property.
+        fv.realtime_config = None
         return fv
 
     # -- _columns_from_feature_view ----------------------------------------
@@ -1460,8 +1467,9 @@ class FeatureResolutionTest(absltest.TestCase):
         self.assertEqual(features[0].output_column.precision, 10)
         self.assertEqual(features[0].output_column.scale, 2)
 
-    def test_last_n_preserves_source_type(self) -> None:
-        """LAST_N preserves source type (ArrayType not yet supported)."""
+    def test_last_n_output_is_array_of_source_type(self) -> None:
+        """LAST_N natively returns a list per (entity, window), serialized as
+        ArrayType with the source column's scalar as element_type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1490,7 +1498,8 @@ class FeatureResolutionTest(absltest.TestCase):
             )
         ]
         features = builder._resolve_features()
-        self.assertEqual(features[0].output_column.type, "StringType")
+        self.assertEqual(features[0].output_column.type, "ArrayType")
+        self.assertEqual(features[0].output_column.element_type, "StringType")
 
     def test_min_preserves_source_type(self) -> None:
         """MIN preserves the source column type including precision/scale."""
@@ -1648,6 +1657,7 @@ class FeatureResolutionTest(absltest.TestCase):
                 source_column="USER_ID",
                 window="24h",
                 output_column="USER_ID_APPROX_COUNT_DISTINCT_24H",
+                params={"hll_lg_k": 8},
             )
         ]
         features = builder._resolve_features()
@@ -1655,6 +1665,7 @@ class FeatureResolutionTest(absltest.TestCase):
         self.assertEqual(features[0].output_column.type, "DecimalType")
         self.assertEqual(features[0].output_column.precision, 18)
         self.assertEqual(features[0].output_column.scale, 0)
+        self.assertEqual(features[0].function_params, {"hll_lg_k": 8})
 
     def test_approx_percentile_output_type_is_float(self) -> None:
         """APPROX_PERCENTILE always produces DoubleType."""
@@ -1690,8 +1701,9 @@ class FeatureResolutionTest(absltest.TestCase):
         self.assertEqual(features[0].output_column.type, "DoubleType")
         self.assertIsNone(features[0].output_column.precision)
 
-    def test_first_n_preserves_source_type(self) -> None:
-        """FIRST_N preserves the source column type."""
+    def test_first_n_output_is_array_of_source_type(self) -> None:
+        """FIRST_N natively returns a list per (entity, window), serialized as
+        ArrayType with the source column's scalar as element_type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1720,7 +1732,8 @@ class FeatureResolutionTest(absltest.TestCase):
             )
         ]
         features = builder._resolve_features()
-        self.assertEqual(features[0].output_column.type, "StringType")
+        self.assertEqual(features[0].output_column.type, "ArrayType")
+        self.assertEqual(features[0].output_column.element_type, "StringType")
 
     # -- Lifetime aggregations: window_sec sentinel -1 → None ---------------
 
@@ -2267,13 +2280,14 @@ class BatchValidationTest(absltest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsupported aggregation.*Postgres"):
             builder.build()
 
-    def test_secondary_key_array_spec_is_not_treated_as_unsupported(self) -> None:
-        """Synthesized _SECONDARY_KEY_ARRAY specs are skipped by the PG validator."""
+    def test_secondary_key_array_spec_is_supported(self) -> None:
+        """Synthesized _SECONDARY_KEY_ARRAY specs are skipped by the PG validator
+        and serialize as ArrayType with the SK column's scalar as element_type.
+        """
         batch_schema = StructType(
             [
                 StructField("USER_ID", StringType()),
                 StructField("EVENT_TIME", TimestampType()),
-                StructField("AMOUNT", DoubleType()),
                 StructField("AD_ID", StringType()),
             ]
         )
@@ -2307,6 +2321,56 @@ class BatchValidationTest(absltest.TestCase):
                         window="24h",
                         output_column="AD_ID_KEYS_24H",
                     ),
+                ]
+            )
+        )
+        result = builder.build()
+        self.assertEqual(result.spec.ordered_secondary_key_column_names, ["AD_ID"])
+        self.assertEqual(len(result.spec.features), 1)
+        keys_feature = result.spec.features[0]
+        self.assertIsNone(keys_feature.function)
+        self.assertEqual(keys_feature.source_column.name, "AD_ID")
+        self.assertEqual(keys_feature.source_column.type, "StringType")
+        self.assertEqual(keys_feature.output_column.type, "ArrayType")
+        self.assertEqual(keys_feature.output_column.element_type, "StringType")
+
+    def test_secondary_key_fv_outputs_are_arrays(self) -> None:
+        """User-declared aggregations on an SK FV serialize as ArrayType<scalar>
+        so the server can build a valid array_agg(...) COALESCE; the scalar's
+        precision/scale propagate to the FSColumn fields alongside element_type.
+        """
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("AMOUNT", DecimalType(10, 2)),
+                StructField("AD_ID", StringType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.SUM),
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                secondary_key_columns=["AD_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
                     AggregationSpec(
                         function=AggregationType.SUM,
                         source_column="AMOUNT",
@@ -2317,21 +2381,103 @@ class BatchValidationTest(absltest.TestCase):
             )
         )
         result = builder.build()
-        self.assertEqual(result.spec.ordered_secondary_key_column_names, ["AD_ID"])
-        self.assertEqual(len(result.spec.features), 2)
-        by_output = {f.output_column.name: f for f in result.spec.features}
-
-        keys_feature = by_output["AD_ID_KEYS_24H"]
-        self.assertIsNone(keys_feature.function)
-        self.assertEqual(keys_feature.source_column.name, "AD_ID")
-        self.assertEqual(keys_feature.source_column.type, "StringType")
-        self.assertEqual(keys_feature.output_column.type, "ArrayType")
-        self.assertEqual(keys_feature.output_column.element_type, "StringType")
-
-        sum_feature = by_output["AMOUNT_SUM_24H"]
+        self.assertEqual(len(result.spec.features), 1)
+        sum_feature = result.spec.features[0]
         self.assertEqual(sum_feature.function, "sum")
-        self.assertEqual(sum_feature.output_column.type, "DoubleType")
-        self.assertIsNone(sum_feature.output_column.element_type)
+        self.assertEqual(sum_feature.output_column.type, "ArrayType")
+        self.assertEqual(sum_feature.output_column.element_type, "DecimalType")
+        self.assertEqual(sum_feature.output_column.precision, 10)
+        self.assertEqual(sum_feature.output_column.scale, 2)
+
+    def test_pg_approx_count_distinct_string_source_accepted(self) -> None:
+        """APPROX_COUNT_DISTINCT on a STRING column is accepted for PG online store."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("CATEGORY", StringType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.APPROX_COUNT_DISTINCT),
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.APPROX_COUNT_DISTINCT,
+                        source_column="CATEGORY",
+                        window="24h",
+                        output_column="UNIQUE_CATEGORIES_24H",
+                        params={"hll_lg_k": 8},
+                    )
+                ]
+            )
+        )
+        spec = builder.build()
+        self.assertIsNotNone(spec)
+
+    def test_pg_approx_count_distinct_non_string_source_rejected(self) -> None:
+        """APPROX_COUNT_DISTINCT on a numeric column is rejected for PG online store."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=_tiled_dt_schema_for_supported_pg_agg(AggregationType.APPROX_COUNT_DISTINCT),
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.APPROX_COUNT_DISTINCT,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="UNIQUE_AMOUNTS_24H",
+                        params={"hll_lg_k": 8},
+                    )
+                ]
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "Only STRING/TEXT source columns are allowed"):
+            builder.build()
 
 
 # ============================================================================
@@ -2383,7 +2529,7 @@ class RealtimeValidationTest(absltest.TestCase):
             builder.build()
 
     def test_requires_request_source(self) -> None:
-        """Only features, no request → rejected."""
+        """Only features, no request → succeeds (RequestSource is optional)."""
         builder = self._base_builder().set_udf(**_simple_udf_args())
         builder._sources = [
             Source(
@@ -2393,8 +2539,10 @@ class RealtimeValidationTest(absltest.TestCase):
                 source_version="v1",
             ),
         ]
-        with self.assertRaisesRegex(ValueError, "exactly 1 Request source"):
-            builder.build()
+        result = builder.build()
+        self.assertEqual(result.kind, FeatureViewKind.RealtimeFeatureView)
+        self.assertEqual(len(result.spec.sources), 1)
+        self.assertEqual(result.spec.sources[0].source_type, SourceType.FEATURES)
 
     def test_multiple_request_sources_rejected(self) -> None:
         """More than 1 request source → rejected."""
@@ -2417,7 +2565,7 @@ class RealtimeValidationTest(absltest.TestCase):
                 source_version="v1",
             ),
         ]
-        with self.assertRaisesRegex(ValueError, "exactly 1 Request source.*got 2"):
+        with self.assertRaisesRegex(ValueError, "at most 1 Request source.*got 2"):
             builder.build()
 
     def test_stream_source_rejected(self) -> None:

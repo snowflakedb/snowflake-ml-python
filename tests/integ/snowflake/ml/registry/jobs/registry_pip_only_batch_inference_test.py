@@ -8,6 +8,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml.model import custom_model
 from snowflake.ml.model.batch import JobSpec, OutputSpec
+from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 # Python versions supported by the base image's cached standalone tarballs (dockerfile_template_pip path).
@@ -66,7 +67,10 @@ class PipOnlyModel(custom_model.CustomModel):
         )
 
 
-class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+class TestRegistryPipOnlyBatchInferenceInteg(
+    pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
+    registry_batch_inference_test_base.RegistryBatchInferenceTestBase,
+):
     """Integration tests for batch inference with pip-only models.
 
     Set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, and
@@ -178,8 +182,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.
         if not self._has_image_override():
             self.skipTest("Skipping pip-only batch inference test: image override not enabled.")
 
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
-
         model = PipOnlyModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
 
@@ -225,8 +227,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(registry_batch_inference_test_base.
             )
         if not self._has_image_override():
             self.skipTest("Skipping pip-only batch inference test: image override not enabled.")
-
-        import snowflake.ml.model.parameters.enable_pip_only_packaging  # noqa: F401
 
         model = PipOnlyModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0]})

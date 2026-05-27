@@ -372,8 +372,8 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
                 signature: model_signature.ModelSignature,
                 target_method: str,
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
-                @custom_model.inference_api
-                def fn(self: custom_model.CustomModel, X: pd.DataFrame) -> pd.DataFrame:
+                @custom_model._internal_inference_api
+                def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
                     # Convert pd.StringDtype columns to object dtype for MLflow compatibility.
                     # MLflow's internal schema validation doesn't handle pd.StringDtype correctly
                     # and fails with "Can not safely convert string to <U0" errors.
@@ -381,7 +381,16 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
                         if isinstance(X[col].dtype, pd.StringDtype):
                             X[col] = X[col].astype(object)
 
-                    res = raw_model.predict(X)
+                    # Drop None-valued kwargs so snowml's "omit -> default" maps onto MLflow's
+                    # defined "key absent -> ParamSchema default" path. MLflow has no runtime
+                    # semantic for None in a typed ParamSchema; an explicit None is preserved by
+                    # the validator's short-circuit and reaches the wrapped model in a state its
+                    # declared dtype does not permit.
+                    forwarded = {k: v for k, v in method_kwargs.items() if v is not None}
+                    if forwarded:
+                        res = raw_model.predict(X, params=forwarded)
+                    else:
+                        res = raw_model.predict(X)
                     result_df = model_signature_utils.rename_pandas_df(
                         model_signature._convert_local_data_to_df(res), features=signature.outputs
                     )
@@ -389,7 +398,7 @@ class MLFlowHandler(_base.BaseModelHandler["mlflow.pyfunc.PyFuncModel"]):
 
                 return fn
 
-            type_method_dict = {}
+            type_method_dict: dict[str, Any] = {"_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
                 type_method_dict[target_method_name] = fn_factory(raw_model, sig, target_method_name)
 

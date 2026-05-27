@@ -19,8 +19,8 @@ import uuid
 from typing import Any, Callable, Optional
 
 import pandas as pd
-from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
 
+from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -76,6 +76,11 @@ def all_types_identity_transform(df: pd.DataFrame) -> pd.DataFrame:
     return df[["USER_ID", "EVENT_TIME", "SCORE", "RANK", "PRICE", "IS_ACTIVE"]]
 
 
+def identity_transform_with_sk(df: pd.DataFrame) -> pd.DataFrame:
+    """Identity transform that preserves a secondary-key column ``AD_ID`` alongside the value column."""
+    return df[["USER_ID", "EVENT_TIME", "AMOUNT", "AD_ID"]]
+
+
 def passthrough_plus_new_column_transform(df: pd.DataFrame) -> pd.DataFrame:
     """Pass through all input columns and add a derived ``IS_LARGE`` column.
 
@@ -114,7 +119,7 @@ def wait_online_service_running_with_query_endpoint(
     producer_role: str,
     consumer_role: str,
     recreate_budget: int = 2,
-    attempt_timeout_s: float = 900.0,
+    attempt_timeout_s: float = 1800.0,
     poll_interval_s: float = 30.0,
     reuse_if_running: bool = True,
     on_recreate: Optional[Callable[[], None]] = None,
@@ -577,6 +582,53 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
 
         return table_name
 
+    def _make_stream_source_with_sk(self, fs: FeatureStore, stream_name: str) -> None:
+        """Register a stream source with a secondary-key column ``AD_ID`` alongside ``AMOUNT``."""
+        fs.register_stream_source(
+            StreamSource(
+                name=stream_name,
+                schema=StructType(
+                    [
+                        StructField("USER_ID", StringType()),
+                        StructField("EVENT_TIME", TimestampType(TimestampTimeZone.NTZ)),
+                        StructField("AMOUNT", DoubleType()),
+                        StructField("AD_ID", StringType()),
+                    ]
+                ),
+                desc="Transaction events stream with secondary-key column",
+            )
+        )
+
+    def _create_sk_backfill_table(self, fs: FeatureStore, suffix: str, *, batch_key: str) -> str:
+        """Backfill table with rows sharing ``(USER_ID, EVENT_TIME)`` across different ``AD_ID`` values."""
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BACKFILL_SK_{suffix}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AMOUNT FLOAT,
+                AD_ID VARCHAR
+            )
+        """
+        ).collect()
+
+        yesterday_midnight = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        two_days_ago_midnight = "DATEADD('day', -2, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name}
+            SELECT column1, column2, column3, column4
+            FROM VALUES
+                ({batch_key!r}, DATEADD('hour', 1, {two_days_ago_midnight}), 10.0, 'ad_a'),
+                ({batch_key!r}, DATEADD('hour', 2, {two_days_ago_midnight}), 50.0, 'ad_b'),
+                ({batch_key!r}, DATEADD('hour', 1, {yesterday_midnight}), 20.0, 'ad_a'),
+                ({batch_key!r}, DATEADD('hour', 2, {yesterday_midnight}), 70.0, 'ad_c')
+        """
+        ).collect()
+
+        return table_name
+
     def _make_all_types_stream_source(self, fs: FeatureStore, stream_name: str) -> None:
         """Register a stream source with all 6 supported column types."""
         fs.register_stream_source(
@@ -697,8 +749,9 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         ``str(registered.name)``), and ``streaming_fv_version`` are passed,
         polls ``TASK_HISTORY`` for the root task; the root's terminal STATE
         is the authoritative signal (the finalizer drops itself before its
-        own row finishes recording). Then waits for the DT
-        (``$UDF_TRANSFORMED``) to be non-empty.
+        own row finishes recording). After ``SUCCEEDED``, polling for the DT
+        (``$UDF_TRANSFORMED``) to be non-empty uses a fresh ``timeout_s`` budget
+        so slow task history polling does not leave too little time for the DT.
 
         By default the ``$BACKFILL`` table is not checked because the OFT
         refresh may have already drained it. Set ``wait_backfill_dropped=True``
@@ -709,7 +762,11 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
 
         Args:
             fq_udf: Fully-qualified UDF-transformed dynamic table name.
-            timeout_s: Max seconds to wait for backfill completion and DT rows.
+            timeout_s: Max seconds to wait for the root backfill task to reach
+                ``SUCCEEDED`` (when task polling runs). After that, a new budget
+                of the same length applies for dynamic table rows and optional
+                ``wait_backfill_dropped`` polling so task wait cannot starve DT
+                checks.
             feature_store: Optional client for metadata + DB/schema resolution.
                 Required when ``wait_backfill_dropped=True``.
             streaming_fv_metadata_name: FV name (typically ``str(registered.name)``).
@@ -722,8 +779,8 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
 
         Raises:
             AssertionError: On missing metadata, failed task, empty DT after
-                ``timeout_s``, or (when ``wait_backfill_dropped=True``) the
-                backfill table still present after timeout.
+                the post-success wait budget, or (when ``wait_backfill_dropped=True``)
+                the backfill table still present after that budget.
         """
         deadline = time.time() + timeout_s
         meta_name_resolved: Optional[str] = None
@@ -768,6 +825,10 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                         time.sleep(2)
                         continue
                     if state == "SUCCEEDED":
+                        # Root task success does not imply the DT has refreshed yet;
+                        # give DT / OFT polling a full timeout budget instead of
+                        # sharing the single deadline with TASK_HISTORY polling.
+                        deadline = time.time() + timeout_s
                         break
                     if state in self._BACKFILL_FAILURE_STATES:
                         detail = f" {err_msg}" if err_msg else ""

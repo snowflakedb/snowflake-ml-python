@@ -23,6 +23,7 @@ py_library(
 py_library(
     name = "feature_store_lib",
     srcs = [
+        "_compute_fn_validation.py",
         "access_manager.py",
         "aggregation.py",
         "entity.py",
@@ -30,15 +31,22 @@ py_library(
         "feature_group.py",
         "feature_store.py",
         "feature_view.py",
+        "feature_view_append_only_validation.py",
+        "feature_view_refresh_freq.py",
         "interval_utils.py",
         "metadata_manager.py",
         "online_service.py",
         "online_service_http_client.py",
+        "realtime_config.py",
+        "realtime_dataset.py",
+        "realtime_dataset_udf.py",
+        "realtime_registration.py",
         "request_source.py",
         "spec/__init__.py",
         "spec/builder.py",
         "spec/enums.py",
         "spec/models.py",
+        "spec/table_schema_evolution.py",
         "stream_config.py",
         "stream_source.py",
         "streaming_registration.py",
@@ -216,6 +224,16 @@ py_test(
 )
 
 py_test(
+    name = "spec_table_schema_evolution_test",
+    srcs = ["spec/table_schema_evolution_test.py"],
+    main = "spec/table_schema_evolution_test.py",
+    tags = ["feature:feature_store"],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "spec_builder_test",
     srcs = ["spec/builder_test.py"],
     main = "spec/builder_test.py",
@@ -244,8 +262,92 @@ py_test(
 )
 
 py_test(
+    name = "realtime_config_test",
+    srcs = ["realtime_config_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "realtime_registration_test",
+    srcs = ["realtime_registration_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_realtime_test",
+    srcs = ["feature_store_realtime_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_realtime_dataset_test",
+    srcs = ["feature_store_realtime_dataset_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_realtime_feature_view_read_test",
+    srcs = ["feature_store_realtime_feature_view_read_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "feature_store_refresh_history_test",
     srcs = ["feature_store_refresh_history_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_snapshot_validation_test",
+    srcs = ["feature_store_snapshot_validation_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
+    name = "feature_store_backfill_test",
+    srcs = ["feature_store_backfill_test.py"],
     tags = [
         "feature:feature_store",
         "short_regress",

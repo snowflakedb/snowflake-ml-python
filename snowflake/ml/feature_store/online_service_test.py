@@ -25,6 +25,12 @@ def _locator_fragment(database: str = "DB", schema: str = "SC") -> str:
     return f"{SqlIdentifier(database)}.{SqlIdentifier(schema)}"
 
 
+def _stub_collect_nowait(m: MagicMock, rows: list[Row], query_id: str = "test-qid") -> None:
+    """Configure a session.sql mock so collect_nowait().result() yields the rows and exposes a query_id."""
+    m.collect_nowait.return_value.query_id = query_id
+    m.collect_nowait.return_value.result.return_value = rows
+
+
 def _make_response(
     body: bytes,
     *,
@@ -82,7 +88,7 @@ class OnlineServiceTest(absltest.TestCase):
             qn = query.replace("\n", " ")
             loc = _locator_fragment()
             self.assertIn(f"SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')", qn)
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -118,7 +124,7 @@ class OnlineServiceTest(absltest.TestCase):
             qn = query.replace("\n", " ")
             loc = _locator_fragment()
             self.assertIn(f"SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')", qn)
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -130,6 +136,243 @@ class OnlineServiceTest(absltest.TestCase):
         self.assertEqual(len(st.endpoints), 2)
         self.assertEqual(online_service.endpoint_url(st, "query"), "https://q.example")
         self.assertEqual(online_service.endpoint_url(st, "ingest"), "https://i")
+
+    def test_parse_status_payload_extracts_privatelink_and_internal_urls(self) -> None:
+        st = online_service._parse_status_payload(
+            {
+                "status": "RUNNING",
+                "endpoints": [
+                    {
+                        "name": "ingest",
+                        "url": "https://fs-ingest.example",
+                        "privatelink_url": "https://fs-ingest-pl.example",
+                        "internal_url": "http://svc.spcs:8080",
+                    },
+                    {
+                        "name": "query",
+                        "url": "https://fs-query.example",
+                    },
+                ],
+            }
+        )
+        by_name = {e.name: e for e in st.endpoints}
+        self.assertEqual(by_name["ingest"].privatelink_url, "https://fs-ingest-pl.example")
+        self.assertEqual(by_name["ingest"].internal_url, "http://svc.spcs:8080")
+        self.assertIsNone(by_name["query"].privatelink_url)
+        self.assertIsNone(by_name["query"].internal_url)
+
+    def test_parse_status_payload_coerces_non_string_url_fields_to_none(self) -> None:
+        st = online_service._parse_status_payload(
+            {
+                "status": "RUNNING",
+                "endpoints": [
+                    {
+                        "name": "ingest",
+                        "url": "https://fs-ingest.example",
+                        "privatelink_url": 42,
+                        "internal_url": {"unexpected": "shape"},
+                    },
+                ],
+            }
+        )
+        ep = st.endpoints[0]
+        self.assertEqual(ep.url, "https://fs-ingest.example")
+        self.assertIsNone(ep.privatelink_url)
+        self.assertIsNone(ep.internal_url)
+
+    def test_endpoint_url_returns_internal_when_running_inside_spcs(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="ingest",
+                    url="https://fs-ingest.example",
+                    internal_url="http://svc.spcs:8080",
+                ),
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": "true"}, clear=False):
+            self.assertEqual(online_service.endpoint_url(st, "ingest"), "http://svc.spcs:8080")
+            self.assertEqual(online_service.endpoint_url(st, "query"), "http://svc.spcs:8081")
+
+    def test_endpoint_url_falls_back_to_public_when_internal_missing(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="ingest",
+                    url="https://fs-ingest.example",
+                    internal_url="http://svc.spcs:8080",
+                ),
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                ),
+            ),
+        )
+        with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": "true"}, clear=False):
+            self.assertEqual(online_service.endpoint_url(st, "ingest"), "http://svc.spcs:8080")
+            self.assertEqual(online_service.endpoint_url(st, "query"), "https://fs-query.example")
+
+    def test_endpoint_url_ignores_internal_url_when_env_var_unset(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        env = {k: v for k, v in os.environ.items() if k != "SNOWFLAKE_RUNNING_INSIDE_SPCS"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(online_service.endpoint_url(st, "query"), "https://fs-query.example")
+
+    def test_endpoint_url_treats_falsy_env_values_as_public(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        for falsy in ("", "0", "false", "no", "False"):
+            with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": falsy}, clear=False):
+                self.assertEqual(
+                    online_service.endpoint_url(st, "query"),
+                    "https://fs-query.example",
+                    msg=f"falsy value {falsy!r} should not select internal_url",
+                )
+
+    def test_endpoint_url_unknown_name_returns_none(self) -> None:
+        st = online_service.OnlineServiceStatus(status="RUNNING", endpoints=())
+        self.assertIsNone(online_service.endpoint_url(st, "ingest"))
+
+    def test_endpoint_url_prefers_privatelink_when_advertised(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    privatelink_url="https://fs-query.privatelink.example",
+                ),
+            ),
+        )
+        env = {k: v for k, v in os.environ.items() if k != "SNOWFLAKE_RUNNING_INSIDE_SPCS"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                online_service.endpoint_url(st, "query"),
+                "https://fs-query.privatelink.example",
+            )
+
+    def test_endpoint_url_falls_back_to_public_when_privatelink_missing(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                ),
+            ),
+        )
+        env = {k: v for k, v in os.environ.items() if k != "SNOWFLAKE_RUNNING_INSIDE_SPCS"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(online_service.endpoint_url(st, "query"), "https://fs-query.example")
+
+    def test_endpoint_url_internal_takes_precedence_over_privatelink_inside_spcs(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    privatelink_url="https://fs-query.privatelink.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": "true"}, clear=False):
+            self.assertEqual(online_service.endpoint_url(st, "query"), "http://svc.spcs:8081")
+
+    def test_endpoint_url_access_public_forces_public_even_when_privatelink_set(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    privatelink_url="https://fs-query.privatelink.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": "true"}, clear=False):
+            self.assertEqual(
+                online_service.endpoint_url(st, "query", access=online_service.OnlineServiceAccess.PUBLIC),
+                "https://fs-query.example",
+            )
+
+    def test_endpoint_url_access_privatelink_forces_privatelink(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    privatelink_url="https://fs-query.privatelink.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        with patch.dict(os.environ, {"SNOWFLAKE_RUNNING_INSIDE_SPCS": "true"}, clear=False):
+            self.assertEqual(
+                online_service.endpoint_url(st, "query", access=online_service.OnlineServiceAccess.PRIVATELINK),
+                "https://fs-query.privatelink.example",
+            )
+
+    def test_endpoint_url_access_internal_forces_internal_outside_spcs(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                    internal_url="http://svc.spcs:8081",
+                ),
+            ),
+        )
+        env = {k: v for k, v in os.environ.items() if k != "SNOWFLAKE_RUNNING_INSIDE_SPCS"}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(
+                online_service.endpoint_url(st, "query", access=online_service.OnlineServiceAccess.INTERNAL),
+                "http://svc.spcs:8081",
+            )
+
+    def test_endpoint_url_access_raises_when_requested_url_missing(self) -> None:
+        st = online_service.OnlineServiceStatus(
+            status="RUNNING",
+            endpoints=(
+                online_service.OnlineServiceEndpoint(
+                    name="query",
+                    url="https://fs-query.example",
+                ),
+            ),
+        )
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.endpoint_url(st, "query", access=online_service.OnlineServiceAccess.PRIVATELINK)
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("'privatelink'", str(ctx.exception))
+        self.assertIn("'query'", str(ctx.exception))
 
     def test_read_postgres_online_features_requires_snowflake_pat(self) -> None:
         session = create_autospec(Session)
@@ -166,7 +409,7 @@ class OnlineServiceTest(absltest.TestCase):
             self.assertIn("SYSTEM$CREATE_FEATURE_STORE_ONLINE_SERVICE(", qn)
             self.assertIn(f"'{loc}'", qn)
             self.assertEqual(qn.count("', '"), 1)
-            m.collect.return_value = [Row(create_payload)]
+            _stub_collect_nowait(m, [Row(create_payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -184,7 +427,7 @@ class OnlineServiceTest(absltest.TestCase):
             qn = query.replace("\n", " ")
             loc = _locator_fragment()
             self.assertIn(f"SYSTEM$GET_FEATURE_STORE_ONLINE_SERVICE_STATUS('{loc}')", qn)
-            m.collect.return_value = [Row(json.dumps({"status": "ERROR", "message": "boom"}))]
+            _stub_collect_nowait(m, [Row(json.dumps({"status": "ERROR", "message": "boom"}))])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -737,6 +980,40 @@ class OnlineServiceTest(absltest.TestCase):
 
     # --- Online Service error path tests ---
 
+    def test_create_online_service_includes_query_id_on_failure(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "ERROR", "message": "(2110) Internal Error: Please contact support for help."})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)], query_id="01b2c3d4-create-failure")
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.create_online_service(
+                session, SqlIdentifier("DB"), SqlIdentifier("SC"), producer_role="p", consumer_role="c"
+            )
+        message = str(ctx.exception.original_exception)
+        self.assertIn("(2110) Internal Error", message)
+        self.assertIn("[query_id: 01b2c3d4-create-failure]", message)
+
+    def test_drop_online_service_includes_query_id_on_failure(self) -> None:
+        session = create_autospec(Session)
+        payload = json.dumps({"status": "ERROR", "message": "drop failed"})
+
+        def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
+            m = MagicMock()
+            _stub_collect_nowait(m, [Row(payload)], query_id="01b2c3d4-drop-failure")
+            return m
+
+        session.sql.side_effect = sql_side_effect
+        with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+            online_service.drop_online_service(session, SqlIdentifier("DB"), SqlIdentifier("SC"))
+        message = str(ctx.exception.original_exception)
+        self.assertIn("drop failed", message)
+        self.assertIn("[query_id: 01b2c3d4-drop-failure]", message)
+
     def test_create_online_service_rejects_empty_roles(self) -> None:
         session = create_autospec(Session)
         with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
@@ -751,7 +1028,7 @@ class OnlineServiceTest(absltest.TestCase):
 
         def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
             m = MagicMock()
-            m.collect.return_value = [Row("NOT-VALID-JSON")]
+            _stub_collect_nowait(m, [Row("NOT-VALID-JSON")])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -765,7 +1042,7 @@ class OnlineServiceTest(absltest.TestCase):
 
         def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
             m = MagicMock()
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -778,7 +1055,7 @@ class OnlineServiceTest(absltest.TestCase):
 
         def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
             m = MagicMock()
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -795,7 +1072,7 @@ class OnlineServiceTest(absltest.TestCase):
 
         def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
             m = MagicMock()
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -812,7 +1089,7 @@ class OnlineServiceTest(absltest.TestCase):
 
         def sql_side_effect(query: str, *a: object, **kw: object) -> MagicMock:
             m = MagicMock()
-            m.collect.return_value = [Row(payload)]
+            _stub_collect_nowait(m, [Row(payload)])
             return m
 
         session.sql.side_effect = sql_side_effect
@@ -877,6 +1154,207 @@ class OnlineServiceTest(absltest.TestCase):
         msg = str(ctx.exception.original_exception)
         self.assertIn("502", msg)
         self.assertIn("Bad Gateway", msg)
+
+    # ------------------------------------------------------------------
+    # request_context (RealtimeFeatureView) coverage.
+    # ------------------------------------------------------------------
+
+    def test_read_postgres_online_features_forwards_request_context_per_row(self) -> None:
+        """``request_context[i]`` is forwarded verbatim alongside ``entity`` for ``keys[i]``."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+
+        response_payload = {
+            "request_id": "r1",
+            "status": "success",
+            "results": [
+                {"features": [10.5]},
+                {"features": [20.0]},
+            ],
+            "metadata": {"features": [{"name": "risk_score"}]},
+        }
+
+        captured_bodies: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_bodies.append(json.loads(request.content.decode("utf-8")))
+            return _make_response(json.dumps(response_payload).encode("utf-8"))
+
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with _patch_online_http_client_with_transport(handler):
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "my_rtfv",
+                    "v1",
+                    ["USER_ID"],
+                    [["u1"], ["u2"]],
+                    None,
+                    join_key_field_types={"USER_ID": StringType()},
+                    request_context=[{"amount": 100.0}, {"amount": 250.0}],
+                )
+
+        self.assertEqual(len(captured_bodies), 1)
+        request_rows = captured_bodies[0]["request_rows"]
+        self.assertEqual(len(request_rows), 2)
+        self.assertEqual(request_rows[0]["entity"], {"USER_ID": "u1"})
+        self.assertEqual(request_rows[0]["request_context"], {"amount": 100.0})
+        self.assertEqual(request_rows[1]["entity"], {"USER_ID": "u2"})
+        self.assertEqual(request_rows[1]["request_context"], {"amount": 250.0})
+
+    def test_read_postgres_online_features_request_context_length_mismatch_rejected(self) -> None:
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "my_rtfv",
+                    "v1",
+                    ["USER_ID"],
+                    [["u1"], ["u2"]],
+                    None,
+                    join_key_field_types={"USER_ID": StringType()},
+                    request_context=[{"amount": 100.0}],
+                )
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        self.assertIn("request_context length", str(ctx.exception.original_exception))
+
+    def test_read_postgres_online_features_request_context_forwarded_for_feature_group(self) -> None:
+        """``object_type='feature_group'`` + ``request_context`` now reaches the server.
+
+        Mirrors :meth:`test_read_postgres_online_features_request_context_chunks_with_keys`'s
+        capture-handler pattern so the per-row payload shape is asserted end-to-end.
+        """
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+
+        captured_bodies: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            captured_bodies.append(body)
+            n = len(body["request_rows"])
+            payload = {
+                "request_id": "fg-rc-1",
+                "status": "success",
+                "results": [{"features": [float(i)]} for i in range(n)],
+                "metadata": {"features": [{"name": "weighted_balance"}]},
+            }
+            return _make_response(json.dumps(payload).encode("utf-8"))
+
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with _patch_online_http_client_with_transport(handler):
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "fg1",
+                    "v1",
+                    ["USER_ID"],
+                    [["u1"], ["u2"]],
+                    None,
+                    join_key_field_types={"USER_ID": StringType()},
+                    object_type="feature_group",
+                    request_context=[{"AMOUNT": 100.0}, {"AMOUNT": 17.5}],
+                )
+
+        self.assertEqual(len(captured_bodies), 1)
+        body = captured_bodies[0]
+        self.assertEqual(body["object_type"], "feature_group")
+        rows = body["request_rows"]
+        self.assertEqual(rows[0]["entity"], {"USER_ID": "u1"})
+        self.assertEqual(rows[0]["request_context"], {"AMOUNT": 100.0})
+        self.assertEqual(rows[1]["entity"], {"USER_ID": "u2"})
+        self.assertEqual(rows[1]["request_context"], {"AMOUNT": 17.5})
+
+    def test_read_postgres_online_features_request_context_rejected_for_unknown_object_type(self) -> None:
+        """Defensive allow-list: any object_type outside the explicit set still rejects ``request_context``."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "foo",
+                    "v1",
+                    ["USER_ID"],
+                    [["u1"]],
+                    None,
+                    join_key_field_types={"USER_ID": StringType()},
+                    # Hypothetical future kind; allow-list must keep rejecting it.
+                    object_type="training_set",  # type: ignore[arg-type]
+                    request_context=[{"amount": 100.0}],
+                )
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        msg = str(ctx.exception.original_exception)
+        self.assertIn("request_context", msg)
+        self.assertIn("training_set", msg)
+
+    def test_read_postgres_online_features_request_context_chunks_with_keys(self) -> None:
+        """When ``len(keys) > _MAX_QUERY_REQUEST_ROWS``, per-row alignment is preserved across batches."""
+        session = create_autospec(Session)
+        session.connection.rest.token = "tok"
+
+        captured_bodies: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content.decode("utf-8"))
+            captured_bodies.append(body)
+            n = len(body["request_rows"])
+            payload = {
+                "request_id": f"b{len(captured_bodies)}",
+                "status": "success",
+                "results": [{"features": [float(i)]} for i in range(n)],
+                "metadata": {"features": [{"name": "risk_score"}]},
+            }
+            return _make_response(json.dumps(payload).encode("utf-8"))
+
+        keys = [[f"u{i}"] for i in range(12)]
+        ctx = [{"amount": float(i)} for i in range(12)]
+
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
+            with _patch_online_http_client_with_transport(handler):
+                online_service.read_postgres_online_features(
+                    session,
+                    "https://q.example/",
+                    "my_rtfv",
+                    "v1",
+                    ["USER_ID"],
+                    keys,
+                    None,
+                    join_key_field_types={"USER_ID": StringType()},
+                    request_context=ctx,
+                )
+
+        self.assertEqual(len(captured_bodies), 2)
+        batches = [b["request_rows"] for b in captured_bodies]
+        self.assertEqual(len(batches[0]), 10)
+        self.assertEqual(len(batches[1]), 2)
+        # Per-row alignment: entity[i] and request_context[i] reference the same row.
+        flat = [row for batch in batches for row in batch]
+        for i, row in enumerate(flat):
+            self.assertEqual(row["entity"], {"USER_ID": f"u{i}"})
+            self.assertEqual(row["request_context"], {"amount": float(i)})
+
+    def test_json_serialize_value_handles_pandas_types(self) -> None:
+        """Pandas/numpy types that surface from ``DataFrame.to_dict`` must serialize cleanly."""
+        import numpy as np
+        import pandas as pd
+
+        self.assertIsNone(online_service._json_serialize_value(pd.NA))
+        self.assertIsNone(online_service._json_serialize_value(pd.NaT))
+        self.assertIsNone(online_service._json_serialize_value(float("nan")))
+
+        ts = pd.Timestamp("2024-06-01T12:00:00")
+        self.assertEqual(online_service._json_serialize_value(ts), ts.isoformat())
+
+        self.assertEqual(online_service._json_serialize_value(np.int64(7)), 7)
+        self.assertIsInstance(online_service._json_serialize_value(np.int64(7)), int)
+        self.assertEqual(online_service._json_serialize_value(np.float64(1.5)), 1.5)
+        self.assertIsInstance(online_service._json_serialize_value(np.float64(1.5)), float)
+        self.assertIs(online_service._json_serialize_value(np.bool_(True)), True)
 
 
 if __name__ == "__main__":

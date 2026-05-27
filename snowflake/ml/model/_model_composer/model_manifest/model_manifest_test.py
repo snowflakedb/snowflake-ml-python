@@ -103,13 +103,16 @@ _PACKAGING_REQUIREMENTS_TARGET_WITH_SNOWML_RELAXED = list(
     )
 )
 
+# Existing manifest fixtures include conda.yml; keep pip-only packaging off in every test.
+_MANIFEST_TEST_MOCK_FEATURES = {platform_capabilities.ENABLE_PIP_ONLY_PACKAGING: False}
+
 
 class ModelManifestTest(parameterized.TestCase):
     def test_model_manifest_1(self) -> None:
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -157,7 +160,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -212,7 +215,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -299,7 +302,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -345,7 +348,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -392,7 +395,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -434,7 +437,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -479,7 +482,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -510,7 +513,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -541,7 +544,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -667,7 +670,10 @@ class ModelManifestTest(parameterized.TestCase):
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
             platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+                {
+                    **_MANIFEST_TEST_MOCK_FEATURES,
+                    platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True,
+                }
             ),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -718,7 +724,10 @@ class ModelManifestTest(parameterized.TestCase):
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
             platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+                {
+                    **_MANIFEST_TEST_MOCK_FEATURES,
+                    platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True,
+                }
             ),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -755,7 +764,10 @@ class ModelManifestTest(parameterized.TestCase):
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
             platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+                {
+                    **_MANIFEST_TEST_MOCK_FEATURES,
+                    platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True,
+                }
             ),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -793,7 +805,10 @@ class ModelManifestTest(parameterized.TestCase):
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
             platform_capabilities.PlatformCapabilities.mock_features(
-                {platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True}
+                {
+                    **_MANIFEST_TEST_MOCK_FEATURES,
+                    platform_capabilities.SET_MODULE_FUNCTIONS_VOLATILITY_FROM_MANIFEST: True,
+                }
             ),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
@@ -839,7 +854,9 @@ class ModelManifestTest(parameterized.TestCase):
             with (
                 tempfile.TemporaryDirectory() as workspace,
                 tempfile.TemporaryDirectory() as tmpdir,
-                platform_capabilities.PlatformCapabilities.mock_features(mock_feature),
+                platform_capabilities.PlatformCapabilities.mock_features(
+                    {**_MANIFEST_TEST_MOCK_FEATURES, **mock_feature}
+                ),
             ):
                 mm = model_manifest.ModelManifest(pathlib.Path(workspace))
                 with model_meta.create_model_metadata(
@@ -899,7 +916,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -960,7 +977,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(
@@ -1029,7 +1046,7 @@ class ModelManifestTest(parameterized.TestCase):
         with (
             tempfile.TemporaryDirectory() as workspace,
             tempfile.TemporaryDirectory() as tmpdir,
-            platform_capabilities.PlatformCapabilities.mock_features(),
+            platform_capabilities.PlatformCapabilities.mock_features(_MANIFEST_TEST_MOCK_FEATURES),
         ):
             mm = model_manifest.ModelManifest(pathlib.Path(workspace))
             with model_meta.create_model_metadata(

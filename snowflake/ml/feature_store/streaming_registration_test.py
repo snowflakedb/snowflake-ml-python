@@ -936,6 +936,36 @@ class RunStreamingPreambleTest(absltest.TestCase):
                 get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
             )
 
+    def test_preamble_rejects_tz_timestamp_in_backfill_df(self) -> None:
+        """Backfill source with TIMESTAMP_TZ is rejected at registration time."""
+        from snowflake.snowpark.types import TimestampTimeZone
+
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType(TimestampTimeZone.TZ)),
+            ]
+        )
+        fv = self._make_streaming_fv(backfill_df)
+        session = MagicMock()
+        metadata_manager = MagicMock()
+
+        with self.assertRaisesRegex(ValueError, "Only TIMESTAMP_NTZ is supported"):
+            run_streaming_preamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=SqlIdentifier("TEST_FV$v1"),
+                overwrite=False,
+                metadata_manager=metadata_manager,
+                telemetry_stmp={},
+                get_stream_source_fn=lambda name: _make_stream_source(),
+                get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+            )
+        # Validation must fire before any DDL.
+        session.sql.assert_not_called()
+
 
 # ============================================================================
 # run_streaming_postamble tests
@@ -948,8 +978,8 @@ class RunStreamingPostambleTest(absltest.TestCase):
     The postamble flow:
       1. Build an inline ``CREATE TEMPORARY FUNCTION`` with the user
          transformation source baked in.
-      2. Build the ``INSERT ALL ... LATERAL TABLE(<udtf>(...) OVER (PARTITION BY 1))``
-         SELECT.
+      2. Build the ``INSERT ALL ... TABLE(<udtf>(...))`` SELECT (vectorized
+         ``process`` UDTF — no ``OVER`` clause).
       3. Wrap (1) + (2) in a ``CREATE OR REPLACE PROCEDURE`` (SQL Scripting,
          EXECUTE AS OWNER).
       4. Create a root + finalizer task graph; the root task body is a
@@ -1052,7 +1082,7 @@ class RunStreamingPostambleTest(absltest.TestCase):
         self.assertIn("LANGUAGE SQL", proc_sql)
         self.assertIn("EXECUTE AS OWNER", proc_sql)
         self.assertIn("INSERT ALL INTO DB.SCH.UDF_TABLE INTO DB.SCH.UDF_TABLE$BACKFILL", proc_sql)
-        self.assertIn("OVER (PARTITION BY 1)", proc_sql)
+        self.assertNotIn("OVER (PARTITION BY", proc_sql)
         # Proc body references the UDTF by fully-qualified name.
         self.assertIn("$BACKFILL_UDTF", proc_sql)
         # No embedded Python source in the proc body itself.
@@ -1616,14 +1646,15 @@ class RunStreamingPostambleTest(absltest.TestCase):
             fq_udtf="DB.SCH.UDTF",
             backfill_source_select="SELECT * FROM SRC",
             input_col_names=["USER_ID", "AMOUNT", "EVENT_TIME"],
+            input_col_types=["VARCHAR", "FLOAT", "TIMESTAMP_NTZ"],
             output_col_names=["USER_ID", "AMOUNT_CENTS"],
             timestamp_col="EVENT_TIME",
         )
         # The window predicate must be applied INSIDE the source subquery
         # (not as an outer WHERE after the implicit lateral join with the
-        # UDTF). With OVER (PARTITION BY 1) a vectorized UDTF receives the
-        # whole source as one partition, so an outer WHERE would still
-        # feed out-of-window rows to ``transformation_fn``.
+        # UDTF). An outer WHERE would still be correct, but it would
+        # waste compute by feeding out-of-window rows through
+        # ``transformation_fn``.
         self.assertIn("WHERE", sql_with_ts)
         # Predicate is qualified by the inner alias ``_bf`` so it stays
         # unambiguous if the source query is ever altered to emit a join.
@@ -1644,21 +1675,61 @@ class RunStreamingPostambleTest(absltest.TestCase):
             fq_udtf="DB.SCH.UDTF",
             backfill_source_select="SELECT * FROM SRC",
             input_col_names=["USER_ID", "AMOUNT"],
+            input_col_types=["VARCHAR", "FLOAT"],
             output_col_names=["USER_ID", "AMOUNT_CENTS"],
             timestamp_col=None,
         )
         self.assertNotIn(" WHERE ", sql_no_ts)
         self.assertNotIn("WINDOW_START", sql_no_ts)
         self.assertNotIn("WINDOW_END", sql_no_ts)
-        # Both still produce the TABLE(udtf(...) OVER (PARTITION BY 1)) shape.
-        # Note: Snowflake does not accept the explicit LATERAL keyword for
-        # vectorized-UDTF calls with OVER (PARTITION BY ...); the implicit
-        # lateral join via comma-FROM is the only supported form.
+        # Both still produce the comma-join ``s, TABLE(udtf(...))`` shape
+        # with no ``OVER`` clause — the documented call form for a
+        # vectorized ``process`` UDTF.
         for sql in (sql_with_ts, sql_no_ts):
             self.assertIn("INSERT ALL INTO DB.SCH.T INTO DB.SCH.T$BACKFILL", sql)
             self.assertIn("TABLE(", sql)
             self.assertNotIn("LATERAL TABLE(", sql)
-            self.assertIn("OVER (PARTITION BY 1)", sql)
+            self.assertNotIn("OVER (PARTITION BY", sql)
+
+    def test_render_backfill_insert_all_casts_udtf_args_to_declared_types(self) -> None:
+        """UDTF args are cast to their declared param type to bridge precision mismatches."""
+        from snowflake.ml.feature_store.streaming_registration import (
+            _render_backfill_insert_all_sql,
+        )
+
+        sql = _render_backfill_insert_all_sql(
+            fq_udf_table="DB.SCH.T",
+            fq_backfill_table="DB.SCH.T$BACKFILL",
+            fq_udtf="DB.SCH.UDTF",
+            backfill_source_select="SELECT * FROM SRC",
+            input_col_names=["USER_ID", "EVENT_TIME", "AMOUNT"],
+            input_col_types=["VARCHAR", "TIMESTAMP_NTZ", "FLOAT"],
+            output_col_names=["USER_ID"],
+            timestamp_col=None,
+        )
+        self.assertIn('s."USER_ID"::VARCHAR', sql)
+        self.assertIn('s."EVENT_TIME"::TIMESTAMP_NTZ', sql)
+        self.assertIn('s."AMOUNT"::FLOAT', sql)
+        self.assertNotIn('UDTF(s."USER_ID",', sql)
+        self.assertNotIn(', s."EVENT_TIME",', sql)
+
+    def test_render_backfill_insert_all_rejects_mismatched_input_lengths(self) -> None:
+        """``input_col_names`` and ``input_col_types`` must be the same length."""
+        from snowflake.ml.feature_store.streaming_registration import (
+            _render_backfill_insert_all_sql,
+        )
+
+        with self.assertRaisesRegex(ValueError, "same length"):
+            _render_backfill_insert_all_sql(
+                fq_udf_table="DB.SCH.T",
+                fq_backfill_table="DB.SCH.T$BACKFILL",
+                fq_udtf="DB.SCH.UDTF",
+                backfill_source_select="SELECT * FROM SRC",
+                input_col_names=["A", "B"],
+                input_col_types=["VARCHAR"],
+                output_col_names=["A"],
+                timestamp_col=None,
+            )
 
     def test_render_backfill_udtf_rejects_dollar_quote_collision(self) -> None:
         """The renderer refuses to embed user source containing ``$$``.

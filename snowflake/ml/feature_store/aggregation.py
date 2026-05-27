@@ -175,6 +175,19 @@ class AggregationSpec:
                     f"'{self.output_column}', got: {percentile}"
                 )
 
+        # Validate params for approx_count_distinct (HLL precision)
+        if self.function == AggregationType.APPROX_COUNT_DISTINCT:
+            if "hll_lg_k" not in self.params:
+                raise ValueError(
+                    f"Parameter 'precision' is required for approx_count_distinct aggregation '{self.output_column}'"
+                )
+            hll_lg_k = self.params["hll_lg_k"]
+            if not isinstance(hll_lg_k, int) or not (4 <= hll_lg_k <= 21):
+                raise ValueError(
+                    f"Parameter 'precision' must be an integer between 4 and 21 for aggregation "
+                    f"'{self.output_column}', got: {hll_lg_k}"
+                )
+
         # Validate _SECONDARY_KEY_ARRAY specs
         if self.function.is_secondary_key_array():
             if self.params:
@@ -232,7 +245,7 @@ class AggregationSpec:
         Similar to get_tile_column_name but with _CUM_ prefix instead of _PARTIAL_.
 
         Args:
-            partial_type: One of "SUM", "COUNT", "SUM_SQ", "HLL", "TDIGEST", "MIN", "MAX", "FIRST".
+            partial_type: One of "SUM", "COUNT", "SUM_SQ", "DS_HLL", "TDIGEST", "MIN", "MAX", "FIRST".
 
         Returns:
             Column name used in the tile table (prefixed with _CUM_).
@@ -247,13 +260,13 @@ class AggregationSpec:
         - _PARTIAL_SUM_{col}: SUM(col) - used by SUM, AVG, STD, VAR
         - _PARTIAL_COUNT_{col}: COUNT(col) - used by COUNT, AVG, STD, VAR
         - _PARTIAL_SUM_SQ_{col}: SUM(col*col) - used by STD, VAR
-        - _PARTIAL_HLL_{col}: HLL state - used by APPROX_COUNT_DISTINCT
+        - _PARTIAL_DS_HLL_{col}: Datasketches HLL sketch (BINARY) - used by APPROX_COUNT_DISTINCT
         - _PARTIAL_TDIGEST_{col}: T-Digest state - used by APPROX_PERCENTILE
 
         This allows sharing columns across aggregation types on the same column.
 
         Args:
-            partial_type: One of "SUM", "COUNT", "SUM_SQ", "HLL", "TDIGEST", "LAST", "FIRST".
+            partial_type: One of "SUM", "COUNT", "SUM_SQ", "DS_HLL", "TDIGEST", "LAST", "FIRST".
 
         Returns:
             Column name used in the tile table (prefixed with _PARTIAL_).

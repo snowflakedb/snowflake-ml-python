@@ -1,7 +1,11 @@
+import datetime
 import pathlib
 import tempfile
+from typing import Any, Callable, Sequence
 
 import importlib_resources
+import numpy as np
+import pandas as pd
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal import platform_capabilities
@@ -946,6 +950,206 @@ class FormatParamDefaultValueTest(absltest.TestCase):
         self.assertEqual(
             model_method.ModelMethod._format_param_default_value(dt), "'2024-01-01 12:00:00'::TIMESTAMP_NTZ"
         )
+
+
+class ParamDtypeCastTest(parameterized.TestCase):
+    """Tests for the scalar-param dtype cast logic embedded in the inference templates.
+
+    The wrapper templates (infer_function.py_template and its 5 siblings) build a
+    `param_dtype_map` at load time and apply it to each scalar param's runtime value
+    before passing it to the model. These helpers mirror that logic on real ParamSpec
+    objects so regressions in either the membership rule or the per-value cast are
+    caught here, separately from the fixture-equality checks above.
+    """
+
+    @staticmethod
+    def _build_param_dtype_map(
+        specs: Sequence[model_signature.BaseParamSpec],
+    ) -> dict[str, Callable[[Any], Any]]:
+        """Mirror of the load-time loop in the inference templates."""
+        param_dtype_map: dict[str, Callable[[Any], Any]] = {}
+        for param_spec in specs:
+            if param_spec.shape is None:
+                # BaseParamSpec doesn't declare `dtype`, but both concrete subclasses
+                # (ParamSpec, ParamGroupSpec) do — same duck-type access the templates use.
+                np_type = param_spec.dtype._numpy_type  # type: ignore[attr-defined]
+                if callable(np_type):
+                    param_dtype_map[param_spec.name] = np_type
+        return param_dtype_map
+
+    @staticmethod
+    def _extract_method_param(
+        col: str,
+        series: pd.Series,
+        param_defaults: dict[str, Any],
+        param_dtype_map: dict[str, Callable[[Any], Any]],
+    ) -> Any:
+        """Mirror of the per-request extraction branch in the inference templates."""
+        val = series.iloc[0]
+        if val is None or (not isinstance(val, (list, np.ndarray, dict)) and pd.isna(val)):
+            return param_defaults[col]
+        if col in param_dtype_map:
+            return param_dtype_map[col](val)
+        return val
+
+    def test_int64_widens_narrower_numpy_int(self) -> None:
+        """np.int16(3) arriving for an INT64 param must be re-widened to np.int64.
+
+        This is the original MLflow failure mode: Snowflake's column inference
+        can narrow a BIGINT constant column to a smaller numpy width, and MLflow's
+        enforce_param_datatype rejects np.int16 for a `long` param.
+        """
+        specs = [model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1)]
+        m = self._build_param_dtype_map(specs)
+        self.assertIn("repeat", m)
+        cast = m["repeat"](np.int16(3))
+        self.assertIsInstance(cast, np.int64)
+        self.assertEqual(cast, 3)
+
+    def test_int64_widens_python_int(self) -> None:
+        specs = [model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1)]
+        m = self._build_param_dtype_map(specs)
+        cast = m["repeat"](3)
+        self.assertIsInstance(cast, np.int64)
+        self.assertEqual(cast, 3)
+
+    def test_int64_idempotent_when_already_correct(self) -> None:
+        specs = [model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1)]
+        m = self._build_param_dtype_map(specs)
+        cast = m["repeat"](np.int64(7))
+        self.assertIsInstance(cast, np.int64)
+        self.assertEqual(cast, 7)
+
+    def test_double_widens_float32(self) -> None:
+        specs = [model_signature.ParamSpec("temperature", model_signature.DataType.DOUBLE, default_value=1.0)]
+        m = self._build_param_dtype_map(specs)
+        cast = m["temperature"](np.float32(0.5))
+        self.assertIsInstance(cast, np.float64)
+        self.assertAlmostEqual(float(cast), 0.5)
+
+    def test_float_narrows_float64(self) -> None:
+        specs = [model_signature.ParamSpec("temperature", model_signature.DataType.FLOAT, default_value=1.0)]
+        m = self._build_param_dtype_map(specs)
+        cast = m["temperature"](np.float64(0.5))
+        self.assertIsInstance(cast, np.float32)
+        self.assertAlmostEqual(float(cast), 0.5)
+
+    def test_bool_param_in_map(self) -> None:
+        specs = [model_signature.ParamSpec("flag", model_signature.DataType.BOOL, default_value=False)]
+        m = self._build_param_dtype_map(specs)
+        cast = m["flag"](True)
+        self.assertIsInstance(cast, np.bool_)
+        self.assertTrue(bool(cast))
+
+    def test_string_param_in_map(self) -> None:
+        specs = [model_signature.ParamSpec("name", model_signature.DataType.STRING, default_value="x")]
+        m = self._build_param_dtype_map(specs)
+        cast = m["name"]("hello")
+        self.assertIsInstance(cast, np.str_)
+        self.assertEqual(str(cast), "hello")
+
+    def test_timestamp_ntz_scalar_skipped(self) -> None:
+        """TIMESTAMP_NTZ's _numpy_type is the string 'datetime64[ns]', not a callable.
+
+        The `callable(np_type)` guard intentionally excludes it, so the per-request
+        branch falls through and the value passes to the model unchanged.
+        """
+        specs = [
+            model_signature.ParamSpec(
+                "when",
+                model_signature.DataType.TIMESTAMP_NTZ,
+                default_value=datetime.datetime(2025, 1, 1),
+            )
+        ]
+        self.assertNotIn("when", self._build_param_dtype_map(specs))
+
+    def test_array_param_skipped(self) -> None:
+        """shape != None ⇒ the param flows as a Python list, not a scalar, so we don't cast."""
+        specs = [
+            model_signature.ParamSpec(
+                "xs",
+                model_signature.DataType.FLOAT,
+                default_value=[],
+                shape=(-1,),
+            )
+        ]
+        self.assertNotIn("xs", self._build_param_dtype_map(specs))
+
+    def test_param_group_spec_scalar_in_map_is_noop_on_dict(self) -> None:
+        """ParamGroupSpec.dtype is always OBJECT (np.object_), which is a callable.
+
+        np.object_ on a dict is effectively a no-op, so including it costs nothing
+        and keeps the membership rule uniform across BaseParamSpec subclasses.
+        """
+        group = model_signature.ParamGroupSpec(
+            name="opts",
+            specs=[model_signature.ParamSpec("a", model_signature.DataType.INT64, default_value=1)],
+        )
+        m = self._build_param_dtype_map([group])
+        self.assertIn("opts", m)
+        val = {"a": 1}
+        self.assertEqual(m["opts"](val), val)
+
+    def test_param_group_spec_with_shape_skipped(self) -> None:
+        group = model_signature.ParamGroupSpec(
+            name="opts",
+            specs=[model_signature.ParamSpec("a", model_signature.DataType.INT64, default_value=1)],
+            shape=(-1,),
+        )
+        self.assertNotIn("opts", self._build_param_dtype_map([group]))
+
+    def test_per_request_null_value_uses_default(self) -> None:
+        """The null branch is unchanged: a Series of NULLs returns the spec default."""
+        specs = [model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1)]
+        m = self._build_param_dtype_map(specs)
+        defaults = {spec.name: spec.default_value for spec in specs}
+        series = pd.Series([None, None], dtype=object)
+        self.assertEqual(self._extract_method_param("repeat", series, defaults, m), 1)
+
+    def test_per_request_cast_applied_to_extracted_scalar(self) -> None:
+        """End-to-end: an Arrow-style int16 column becomes np.int64 by the time it reaches the model."""
+        specs = [model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1)]
+        m = self._build_param_dtype_map(specs)
+        defaults = {spec.name: spec.default_value for spec in specs}
+        series = pd.Series([3, 3, 3], dtype=np.int16)
+        out = self._extract_method_param("repeat", series, defaults, m)
+        self.assertIsInstance(out, np.int64)
+        self.assertEqual(out, 3)
+
+    def test_per_request_no_cast_for_array_param(self) -> None:
+        """Array params take the else-branch and the value (a list) is forwarded as-is."""
+        specs = [
+            model_signature.ParamSpec(
+                "xs",
+                model_signature.DataType.FLOAT,
+                default_value=[],
+                shape=(-1,),
+            )
+        ]
+        m = self._build_param_dtype_map(specs)
+        defaults = {spec.name: spec.default_value for spec in specs}
+        series = pd.Series([[0.1, 0.2, 0.3]], dtype=object)
+        out = self._extract_method_param("xs", series, defaults, m)
+        self.assertEqual(out, [0.1, 0.2, 0.3])
+
+    def test_mixed_specs_split_correctly(self) -> None:
+        """A representative mix: only the scalar non-timestamp params end up in the map."""
+        specs = [
+            model_signature.ParamSpec("repeat", model_signature.DataType.INT64, default_value=1),
+            model_signature.ParamSpec("temperature", model_signature.DataType.DOUBLE, default_value=1.0),
+            model_signature.ParamSpec(
+                "when",
+                model_signature.DataType.TIMESTAMP_NTZ,
+                default_value=datetime.datetime(2025, 1, 1),
+            ),
+            model_signature.ParamSpec(
+                "rates",
+                model_signature.DataType.FLOAT,
+                default_value=[],
+                shape=(-1,),
+            ),
+        ]
+        self.assertEqual(set(self._build_param_dtype_map(specs)), {"repeat", "temperature"})
 
 
 class ModelMethodOptionsTest(absltest.TestCase):

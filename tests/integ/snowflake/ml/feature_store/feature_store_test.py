@@ -13,16 +13,18 @@ from common_utils import (
     compare_dataframe,
     create_mock_session,
     create_random_schema,
+    execute_snapshot_refresh,
 )
-from fs_integ_test_base import FeatureStoreIntegTestBase
 from pytimeparse.timeparse import timeparse
 
 import snowflake.ml.feature_store.feature_view as fv_mod
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml import dataset
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import (
     _FEATURE_STORE_OBJECT_TAG,
+    _SNAPSHOT_STATUS_TABLE,
     CreationMode,
     FeatureStore,
 )
@@ -175,6 +177,21 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 VALUES
                 ('jonh', 1, 'boss', 20, 'sales', 100),
                 ('porter', 2, 'manager', 30, 'engineer', 200)
+            """
+        ).collect()
+        return table_full_path
+
+    def _create_mock_table_with_timestamp(self, name: str) -> str:
+        table_full_path = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.{name}_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {table_full_path}
+                (name VARCHAR(64), id INT, title VARCHAR(128), age INT, ts TIMESTAMP_NTZ)
+            """
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {table_full_path} (name, id, title, age, ts) VALUES
+                ('john', 1, 'boss', 20, '2024-01-01 00:00:00'),
+                ('porter', 2, 'manager', 30, '2024-01-02 00:00:00')
             """
         ).collect()
         return table_full_path
@@ -615,6 +632,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "WAREHOUSE": [None, None],
                 "CLUSTER_BY": [None, None],
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
+                "KIND": ["BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG", "STREAM_CONFIG"],
@@ -1076,6 +1094,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "SCHEDULING_STATE": ["SUSPENDED", "ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID"]', '["AID", "UID", "TS"]', '["AID", "UID"]'],
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}', '{"format": "snowflake"}'],
+                "KIND": ["BATCH", "BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
@@ -1102,6 +1121,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "SCHEDULING_STATE": ["ACTIVE", "ACTIVE"],
                 "CLUSTER_BY": ['["AID", "UID", "TS"]', '["AID", "UID"]'],
                 "STORAGE_CONFIG": ['{"format": "snowflake"}', '{"format": "snowflake"}'],
+                "KIND": ["BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
             exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
@@ -1492,43 +1512,68 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         {"new_refresh_freq": "1 minute", "expected_refresh_freq": "1 minute"},
         {"new_refresh_freq": "DOWNSTREAM", "expected_refresh_freq": "DOWNSTREAM"},
     )
-    def test_overwrite_cron_fv_cleans_up_task(self, new_refresh_freq: str, expected_refresh_freq: str) -> None:
-        """Test that overwriting a CRON-based FV with a non-CRON FV cleans up the task."""
+    def test_overwrite_cron_fv_cleans_up_task_and_snapshot(
+        self, new_refresh_freq: str, expected_refresh_freq: str
+    ) -> None:
+        """Overwriting a CRON+append_only FV with a non-CRON, non-append_only FV must clean up
+        both the companion Task and the orphaned snapshot table.
+
+        Starting from append_only=True (which requires CRON) exercises both cleanup paths in a
+        single parameterized test: the Task created for the CRON schedule and the snapshot
+        accumulation table created for append_only must both be dropped on overwrite.
+        """
         fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("cron_overwrite_src")
 
         e = Entity("foo", ["id"])
         fs.register_entity(e)
 
-        sql = f"SELECT name, id, title, age, ts FROM {self._mock_table}"
+        sql = f"SELECT name, id, title, age, ts FROM {mock_table}"
 
-        # First, register a CRON-based feature view (creates a task)
+        # First, register a CRON-based append_only feature view (creates a task and a snapshot table).
         cron_fv = FeatureView(
             name="cron_overwrite_fv",
             entities=[e],
             feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
             refresh_freq="* * * * * America/Los_Angeles",
+            append_only=True,
         )
         cron_fv = fs.register_feature_view(feature_view=cron_fv, version="v1")
 
         task_name = FeatureView._get_physical_name(cron_fv.name, cron_fv.version).resolved()  # type: ignore[arg-type]
+        snapshot_table_name = FeatureView._get_snapshot_table_name("CRON_OVERWRITE_FV", "v1")
+
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 1, "Task should exist after registering CRON-based FV")
+        pre_overwrite_snapshot = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(pre_overwrite_snapshot), 0, "Snapshot table should exist after append_only registration")
 
-        # Now overwrite with a non-CRON FV (should clean up the task)
+        # Now overwrite with a non-CRON, non-append_only FV. This should clean up both the
+        # companion Task and the orphaned snapshot table.
         new_fv = FeatureView(
             name="cron_overwrite_fv",
             entities=[e],
             feature_df=self._session.sql(sql),
             refresh_freq=new_refresh_freq,
         )
-        new_fv = fs.register_feature_view(feature_view=new_fv, version="v1", overwrite=True)
+        retrieved_fv = fs.register_feature_view(feature_view=new_fv, version="v1", overwrite=True)
 
-        # Verify the task has been cleaned up
         res = self._session.sql(f"SHOW TASKS LIKE '{task_name}' IN SCHEMA {fs._config.full_schema_path}").collect()
         self.assertEqual(len(res), 0, f"Task should be cleaned up after overwriting with {new_refresh_freq} FV")
+        post_overwrite_snapshot = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(
+            len(post_overwrite_snapshot),
+            0,
+            "Snapshot table should be dropped when overwriting append_only with non-append_only",
+        )
 
-        # Verify the DT still exists and has the correct refresh_freq
-        retrieved_fv = fs.get_feature_view("cron_overwrite_fv", "v1")
+        self.assertFalse(retrieved_fv.append_only, "Re-registered FV should not be append_only")
         self.assertEqual(retrieved_fv.refresh_freq, expected_refresh_freq)
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -1719,6 +1764,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "ONLINE_CONFIG": [],
                 "STORAGE_CONFIG": [],
                 "STREAM_CONFIG": [],
+                "KIND": [],
             },
             sort_cols=["NAME"],
         )
@@ -1781,7 +1827,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["NAME"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STORAGE_CONFIG",
+                "STREAM_CONFIG",
+                "KIND",
+            ],
         )
 
         compare_dataframe(
@@ -1799,7 +1853,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "TS"]', '["ID", "NAME"]', '["ID"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STORAGE_CONFIG",
+                "STREAM_CONFIG",
+                "KIND",
+            ],
         )
 
         compare_dataframe(
@@ -1817,7 +1879,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STORAGE_CONFIG",
+                "STREAM_CONFIG",
+                "KIND",
+            ],
         )
 
         compare_dataframe(
@@ -1835,7 +1905,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STORAGE_CONFIG",
+                "STREAM_CONFIG",
+                "KIND",
+            ],
         )
 
         compare_dataframe(
@@ -1853,7 +1931,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "CLUSTER_BY": ['["ID", "NAME"]'],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STORAGE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STORAGE_CONFIG",
+                "STREAM_CONFIG",
+                "KIND",
+            ],
         )
 
         # Verify STORAGE_CONFIG column shows correct format for all feature views
@@ -1898,6 +1984,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "ONLINE_CONFIG": [],
                 "STORAGE_CONFIG": [],
                 "STREAM_CONFIG": [],
+                "KIND": [],
             },
             sort_cols=["NAME"],
         )
@@ -4868,6 +4955,927 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         # Clean up the manually created task
         self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect()
+
+    # ── Snapshot / Append-Only BFV Integration Tests ─────────────────────
+
+    def test_register_append_only_feature_view(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("snapshot_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="snap_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # DT should exist
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE 'SNAP_FV$V1' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(dt_results), 0, "Dynamic table should exist")
+
+        # Snapshot table should exist (no system columns — only DT columns)
+        snapshot_table_name = FeatureView._get_snapshot_table_name("SNAP_FV", "v1")
+        snapshot_results = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(snapshot_results), 0, "Snapshot table should exist")
+
+        # Snapshot clustering keys should match the DT's cluster_by
+        dt_cluster_keys = [str(col) for col in registered_fv.cluster_by]
+        snapshot_cluster_keys = FeatureStore._extract_cluster_by_columns(snapshot_results[0]["cluster_by"])
+        self.assertEqual(dt_cluster_keys, snapshot_cluster_keys)
+
+        # Status table should exist
+        status_results = self._session.sql(
+            f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(status_results), 0, "Snapshot status table should exist")
+
+        # get_feature_view should return FV with append_only=True
+        retrieved_fv = fs.get_feature_view("snap_fv", "v1")
+        self.assertTrue(retrieved_fv.append_only)
+
+    def test_register_append_only_with_backfill(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("backfill_src")
+
+        # Create a backup table with pre-existing historical data
+        backup_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.BACKUP_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {backup_table}
+                (name VARCHAR(64), id INT, age INT, ts TIMESTAMP_NTZ)"""
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {backup_table} (name, id, age, ts) VALUES
+                ('alice', 10, 25, '2023-06-01 00:00:00'),
+                ('bob', 20, 35, '2023-07-01 00:00:00'),
+                ('carol', 30, 45, '2023-08-01 00:00:00')"""
+        ).collect()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="backfill_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+            backup_source=backup_table,
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Snapshot table should exist and contain the backfill data
+        snapshot_table_name = FeatureView._get_snapshot_table_name("BACKFILL_FV", "v1")
+        snapshot_fqn = fs._get_fully_qualified_name(snapshot_table_name)
+
+        row_count = self._session.sql(f"SELECT COUNT(*) AS CNT FROM {snapshot_fqn}").collect()
+        self.assertEqual(row_count[0]["CNT"], 3, "Snapshot table should contain 3 backfill rows")
+
+        # Clean up backup table
+        self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
+
+    def test_register_append_only_with_backfill_schema_reconciliation(self) -> None:
+        """Backfill schema reconciliation is extend-only and rejects positional reorderings.
+
+        The backup table here has ``(id, ts)`` and the FV projects ``name, id, age, ts``.
+        Reconciling the cloned snapshot against the DT would require inserting NAME at
+        position 0 and AGE at position 2, which violates the extend-only invariant that
+        existing columns keep their original positions. Registration must fail before
+        the snapshot table is left in an inconsistent state.
+        """
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("reconcile_src")
+
+        # Backup table has only (id, ts); the FV projection adds NAME at the front and
+        # AGE in the middle, both of which break extend-only ordering.
+        backup_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.BACKUP_PARTIAL_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {backup_table}
+                (id INT, ts TIMESTAMP_NTZ)"""
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {backup_table} (id, ts) VALUES
+                (100, '2023-01-01 00:00:00'),
+                (200, '2023-02-01 00:00:00')"""
+        ).collect()
+
+        try:
+            e = Entity("foo", ["id"])
+            fs.register_entity(e)
+
+            sql = f"SELECT name, id, age, ts FROM {mock_table}"
+            fv = FeatureView(
+                name="reconcile_fv",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="ts",
+                refresh_mode="FULL",
+                refresh_freq="0 0 * * * UTC",
+                append_only=True,
+                backup_source=backup_table,
+            )
+            with self.assertRaises(Exception) as ctx:
+                fs.register_feature_view(feature_view=fv, version="v1")
+            message = str(ctx.exception)
+            self.assertIn(
+                "Column at position 0 mismatch",
+                message,
+                f"Expected extend-only ordering rejection. Got: {message}",
+            )
+            self.assertIn("ID", message, f"Error should reference the displaced existing column 'ID'. Got: {message}")
+            self.assertIn(
+                "NAME",
+                message,
+                f"Error should reference the new column 'NAME' at position 0. Got: {message}",
+            )
+
+            # Registration must roll back cleanly: no snapshot table left behind.
+            snapshot_table_name = FeatureView._get_snapshot_table_name("RECONCILE_FV", "v1")
+            snapshot_fqn = fs._get_fully_qualified_name(snapshot_table_name)
+            existing_snapshots = self._session.sql(
+                f"SHOW TABLES LIKE '{snapshot_table_name}' IN SCHEMA {self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}"
+            ).collect()
+            self.assertEqual(
+                len(existing_snapshots),
+                0,
+                f"Snapshot table {snapshot_fqn} must not exist after a failed registration.",
+            )
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
+
+    def test_snapshot_manual_refresh(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("refresh_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="refresh_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Execute manual snapshot refresh
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("REFRESH_FV"), registered_fv.version)
+        fully_qualified_name = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fully_qualified_name)
+
+        snapshot_table_name = FeatureView._get_snapshot_table_name("REFRESH_FV", "v1")
+        snapshot_fqn = fs._get_fully_qualified_name(snapshot_table_name)
+
+        row_count = self._session.sql(f"SELECT COUNT(*) AS CNT FROM {snapshot_fqn}").collect()
+        self.assertGreater(row_count[0]["CNT"], 0, "Snapshot table should have rows after refresh")
+
+        # Status table should be clean (transactional cleanup removes the row)
+        status_fqn = fs._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        status_rows = self._session.sql(
+            f"SELECT COUNT(*) AS CNT FROM {status_fqn} WHERE FV_FQN = '{fully_qualified_name}'"
+        ).collect()
+        self.assertEqual(status_rows[0]["CNT"], 0, "Status row should be cleaned up after successful refresh")
+
+    def test_update_append_only_refresh_freq(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("update_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="update_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("UPDATE_FV"), "v1")
+
+        # Suspend and verify both DT and Task are suspended
+        suspended_fv = fs.suspend_feature_view("update_fv", "v1")
+        self.assertEqual(suspended_fv.status, FeatureViewStatus.SUSPENDED)
+        task_results = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(task_results[0]["state"], "suspended")
+
+        # Resume and verify both DT and Task are active
+        resumed_fv = fs.resume_feature_view(suspended_fv)
+        self.assertTrue(resumed_fv.status == FeatureViewStatus.ACTIVE)
+        task_results = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(task_results[0]["state"], "started")
+
+        # Update to a new cron schedule
+        fs.update_feature_view("update_fv", "v1", refresh_freq="30 12 * * * UTC")
+
+        # Verify the task schedule changed
+        task_results = self._session.sql(
+            f"SHOW TASKS LIKE '{fv_physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(task_results), 0, "Task should exist after update")
+        task_schedule = task_results[0]["schedule"]
+        self.assertIn("30 12", task_schedule, "Task should have updated schedule")
+
+    def test_delete_append_only_cleans_up_snapshot(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("delete_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="delete_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        snapshot_table_name = FeatureView._get_snapshot_table_name("DELETE_FV", "v1")
+        snapshot_status_table = fs._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        fv_fqn = registered_fv.fully_qualified_name()
+        fv_fqn_lit = fv_fqn.replace("'", "''")
+
+        # Verify snapshot table exists before deletion
+        pre_delete = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(len(pre_delete), 0, "Snapshot table should exist before delete")
+        self._session.sql(
+            f"""INSERT INTO {snapshot_status_table} (FV_FQN, SNAPSHOT_START_TIME)
+                VALUES ('{fv_fqn_lit}', CURRENT_TIMESTAMP())"""
+        ).collect()
+        status_pre_delete = self._session.sql(
+            f"SELECT FV_FQN FROM {snapshot_status_table} WHERE FV_FQN = '{fv_fqn_lit}'"
+        ).collect()
+        self.assertLen(status_pre_delete, 1, "Snapshot status row should exist before delete")
+
+        # Delete the feature view
+        fs.delete_feature_view(registered_fv)
+
+        # Snapshot table should be dropped
+        post_delete = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(post_delete), 0, "Snapshot table should be dropped after delete")
+
+        # DT should be dropped
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE 'DELETE_FV$V1' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dt_results), 0, "Dynamic table should be dropped after delete")
+        status_post_delete = self._session.sql(
+            f"SELECT FV_FQN FROM {snapshot_status_table} WHERE FV_FQN = '{fv_fqn_lit}'"
+        ).collect()
+        self.assertEmpty(status_post_delete, "Snapshot status row should be deleted after feature-view delete")
+
+    def test_list_feature_views_includes_append_only(self) -> None:
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("list_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        # Register a normal (non-append-only) FV
+        normal_sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        normal_fv = FeatureView(
+            name="normal_fv",
+            entities=[e],
+            feature_df=self._session.sql(normal_sql),
+            refresh_freq="1d",
+        )
+        fs.register_feature_view(feature_view=normal_fv, version="v1")
+
+        # Register an append-only FV
+        append_sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        append_fv = FeatureView(
+            name="append_fv",
+            entities=[e],
+            feature_df=self._session.sql(append_sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        fs.register_feature_view(feature_view=append_fv, version="v1")
+
+        # list_feature_views should include both
+        listed = fs.list_feature_views().collect()
+        listed_names = {row["NAME"] for row in listed}
+        self.assertIn("NORMAL_FV", listed_names)
+        self.assertIn("APPEND_FV", listed_names)
+
+    def test_generate_dataset_append_only_point_in_time(self) -> None:
+        """generate_dataset with spine_timestamp_col performs ASOF JOIN against the snapshot table."""
+        fs = self._create_feature_store()
+        self.assertTrue(fs._is_asof_join_enabled())
+
+        source_table = f"{fs._config.full_schema_path}.PIT_SNAPSHOT_SRC_{uuid4().hex[:8].upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {source_table} (
+                GUEST_ID INT, FEATURE_TS TIMESTAMP_NTZ, SCORE INT)"""
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {source_table} VALUES
+                (1, '2024-01-01 00:00:00', 10),
+                (2, '2024-01-01 00:00:00', 20)"""
+        ).collect()
+
+        e = Entity("GUEST", ["GUEST_ID"])
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="PIT_SNAP_FV",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT GUEST_ID, FEATURE_TS, SCORE FROM {source_table}"),
+            timestamp_col="FEATURE_TS",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("PIT_SNAP_FV"), registered_fv.version)
+        fqn = registered_fv.fully_qualified_name()
+
+        # First snapshot: scores are 10, 20
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        # Update source data and take a second snapshot
+        self._session.sql(f"UPDATE {source_table} SET SCORE = 100 WHERE GUEST_ID = 1").collect()
+        self._session.sql(f"UPDATE {source_table} SET SCORE = 200 WHERE GUEST_ID = 2").collect()
+        self._session.sql(f"UPDATE {source_table} SET FEATURE_TS = '2024-02-01 00:00:00'").collect()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        # Spine with timestamps between the two snapshots: should match first snapshot
+        spine_df = self._session.create_dataframe(
+            [(1, "2024-01-15 00:00:00"), (2, "2024-01-15 00:00:00")],
+            schema=["GUEST_ID", "EVENT_TS"],
+        )
+
+        retrieved_fv = fs.get_feature_view("PIT_SNAP_FV", "v1")
+        ds = fs.generate_dataset(
+            spine_df=spine_df,
+            features=[retrieved_fv],
+            name=f"pit_snap_ds_{uuid4().hex[:8]}",
+            spine_timestamp_col="EVENT_TS",
+            output_type="table",
+        )
+        result = ds.to_pandas().sort_values("GUEST_ID").reset_index(drop=True)
+        self.assertEqual(result.loc[0, "SCORE"], 10)
+        self.assertEqual(result.loc[1, "SCORE"], 20)
+
+        # Spine with timestamps after the second snapshot: should match second snapshot
+        spine_df_late = self._session.create_dataframe(
+            [(1, "2024-03-01 00:00:00"), (2, "2024-03-01 00:00:00")],
+            schema=["GUEST_ID", "EVENT_TS"],
+        )
+        ds_late = fs.generate_dataset(
+            spine_df=spine_df_late,
+            features=[retrieved_fv],
+            name=f"pit_snap_ds_late_{uuid4().hex[:8]}",
+            spine_timestamp_col="EVENT_TS",
+            output_type="table",
+        )
+        result_late = ds_late.to_pandas().sort_values("GUEST_ID").reset_index(drop=True)
+        self.assertEqual(result_late.loc[0, "SCORE"], 100)
+        self.assertEqual(result_late.loc[1, "SCORE"], 200)
+
+        self._session.sql(f"DROP TABLE IF EXISTS {source_table}").collect()
+
+    def test_generate_training_set_append_only_point_in_time(self) -> None:
+        """generate_training_set with spine_timestamp_col performs ASOF JOIN against the snapshot table."""
+        fs = self._create_feature_store()
+        self.assertTrue(fs._is_asof_join_enabled())
+
+        source_table = f"{fs._config.full_schema_path}.PIT_TRAIN_SRC_{uuid4().hex[:8].upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {source_table} (
+                GUEST_ID INT, FEATURE_TS TIMESTAMP_NTZ, SCORE INT, LABEL INT)"""
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {source_table} VALUES
+                (1, '2024-01-01 00:00:00', 10, 0),
+                (2, '2024-01-01 00:00:00', 20, 1)"""
+        ).collect()
+
+        e = Entity("GUEST", ["GUEST_ID"])
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="PIT_TRAIN_FV",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT GUEST_ID, FEATURE_TS, SCORE FROM {source_table}"),
+            timestamp_col="FEATURE_TS",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        fv_physical_name = FeatureView._get_physical_name(SqlIdentifier("PIT_TRAIN_FV"), registered_fv.version)
+        fqn = registered_fv.fully_qualified_name()
+
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        # Update source and take second snapshot
+        self._session.sql(f"UPDATE {source_table} SET SCORE = 100 WHERE GUEST_ID = 1").collect()
+        self._session.sql(f"UPDATE {source_table} SET SCORE = 200 WHERE GUEST_ID = 2").collect()
+        self._session.sql(f"UPDATE {source_table} SET FEATURE_TS = '2024-02-01 00:00:00'").collect()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        retrieved_fv = fs.get_feature_view("PIT_TRAIN_FV", "v1")
+
+        # Spine between snapshots: should match first snapshot values
+        spine_df = self._session.create_dataframe(
+            [(1, "2024-01-15 00:00:00", 0), (2, "2024-01-15 00:00:00", 1)],
+            schema=["GUEST_ID", "EVENT_TS", "LABEL"],
+        )
+        ts = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[retrieved_fv],
+            spine_timestamp_col="EVENT_TS",
+            spine_label_cols=["LABEL"],
+            include_feature_view_timestamp_col=True,
+        )
+        result = ts.to_pandas().sort_values("GUEST_ID").reset_index(drop=True)
+        self.assertEqual(result.loc[0, "SCORE"], 10)
+        self.assertEqual(result.loc[1, "SCORE"], 20)
+        self.assertIn("LABEL", result.columns)
+        self.assertIn("PIT_TRAIN_FV_v1_FEATURE_TS", result.columns)
+
+        # Spine after second snapshot: should match second snapshot values
+        spine_df_late = self._session.create_dataframe(
+            [(1, "2024-03-01 00:00:00", 0), (2, "2024-03-01 00:00:00", 1)],
+            schema=["GUEST_ID", "EVENT_TS", "LABEL"],
+        )
+        ts_late = fs.generate_training_set(
+            spine_df=spine_df_late,
+            features=[retrieved_fv],
+            spine_timestamp_col="EVENT_TS",
+            spine_label_cols=["LABEL"],
+        )
+        result_late = ts_late.to_pandas().sort_values("GUEST_ID").reset_index(drop=True)
+        self.assertEqual(result_late.loc[0, "SCORE"], 100)
+        self.assertEqual(result_late.loc[1, "SCORE"], 200)
+
+        self._session.sql(f"DROP TABLE IF EXISTS {source_table}").collect()
+
+    def test_append_only_without_spine_timestamp_raises(self) -> None:
+        """generate_training_set raises when append_only FV is used without spine_timestamp_col."""
+        fs = self._create_feature_store()
+
+        source_table = f"{fs._config.full_schema_path}.NO_TS_SRC_{uuid4().hex[:8].upper()}"
+        self._session.sql(f"CREATE TABLE {source_table} (GUEST_ID INT, FEATURE_TS TIMESTAMP_NTZ, SCORE INT)").collect()
+        self._session.sql(f"INSERT INTO {source_table} VALUES (1, '2024-01-01 00:00:00', 10)").collect()
+
+        e = Entity("GUEST", ["GUEST_ID"])
+        fs.register_entity(e)
+
+        fv = FeatureView(
+            name="NO_TS_FV",
+            entities=[e],
+            feature_df=self._session.sql(f"SELECT GUEST_ID, FEATURE_TS, SCORE FROM {source_table}"),
+            timestamp_col="FEATURE_TS",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+        retrieved_fv = fs.get_feature_view("NO_TS_FV", "v1")
+
+        spine_df = self._session.create_dataframe([(1,)], schema=["GUEST_ID"])
+
+        with self.assertRaisesRegex(Exception, "append_only.*requires spine_timestamp_col"):
+            fs.generate_training_set(
+                spine_df=spine_df,
+                features=[retrieved_fv],
+            )
+
+        with self.assertRaisesRegex(Exception, "append_only.*requires spine_timestamp_col"):
+            fs.generate_dataset(
+                spine_df=spine_df,
+                features=[retrieved_fv],
+                name=f"no_ts_ds_{uuid4().hex[:8]}",
+                output_type="table",
+            )
+
+        self._session.sql(f"DROP TABLE IF EXISTS {source_table}").collect()
+
+    def test_schema_evolution_register_backfill_rejects_extra_columns(self) -> None:
+        """Registration rejects a backfill table that has columns not present in the DT.
+
+        Snapshot evolution is extend-only with respect to the DT schema, so a backfill
+        column that the DT does not declare is treated as an implicit drop and rejected.
+        """
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_extra_src")
+
+        backup_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.BACKUP_EXTRA_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {backup_table}
+                (id INT, ts TIMESTAMP_NTZ, extra_col VARCHAR(100))"""
+        ).collect()
+        self._session.sql(f"""INSERT INTO {backup_table} VALUES (1, '2023-01-01 00:00:00', 'extra')""").collect()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_extra_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+            backup_source=backup_table,
+        )
+
+        try:
+            with self.assertRaises(Exception) as ctx:
+                fs.register_feature_view(feature_view=fv, version="v1")
+            self.assertIn("cannot drop columns", str(ctx.exception).lower())
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
+
+    def test_schema_evolution_register_backfill_rejects_varchar_width_change(self) -> None:
+        """Registration rejects a backfill table whose VARCHAR width differs from the DT."""
+        fs = self._create_feature_store()
+
+        source_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.WIDEN_SRC_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {source_table}
+                (id INT, name VARCHAR(16777216), ts TIMESTAMP_NTZ)"""
+        ).collect()
+        self._session.sql(f"""INSERT INTO {source_table} VALUES (1, 'alice', '2024-01-01 00:00:00')""").collect()
+
+        backup_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.BACKUP_NARROW_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {backup_table}
+                (id INT, name VARCHAR(100), ts TIMESTAMP_NTZ)"""
+        ).collect()
+        self._session.sql(f"""INSERT INTO {backup_table} VALUES (99, 'old', '2023-01-01 00:00:00')""").collect()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {source_table}"
+        fv = FeatureView(
+            name="widen_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+            backup_source=backup_table,
+        )
+
+        try:
+            with self.assertRaises(Exception) as ctx:
+                fs.register_feature_view(feature_view=fv, version="v1")
+            self.assertIn("type changed", str(ctx.exception).lower())
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
+            self._session.sql(f"DROP TABLE IF EXISTS {source_table}").collect()
+
+    def test_schema_evolution_update_adds_column_to_snapshot(self) -> None:
+        """update_feature_view with updated_feature_df adds new columns to the snapshot table."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_update_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_update_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        snapshot_fqn = registered_fv.fully_qualified_snapshot_table_name()
+        fv_physical_name = FeatureView._get_physical_name("EVO_UPDATE_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        pre_cols = {r["name"] for r in self._session.sql(f"DESCRIBE TABLE {snapshot_fqn}").collect()}
+        self.assertNotIn("AGE", pre_cols)
+
+        # Extend-only schema evolution requires existing columns to keep their original
+        # positions; the new column must therefore be appended to the end of the SELECT
+        # rather than inserted before TS.
+        updated_sql = f"SELECT id, name, ts, age FROM {mock_table}"
+        fs.update_feature_view(
+            "evo_update_fv",
+            "v1",
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+
+        post_cols = {r["name"] for r in self._session.sql(f"DESCRIBE TABLE {snapshot_fqn}").collect()}
+        self.assertIn("AGE", post_cols, "AGE column should have been added by schema evolution")
+        self.assertIn("NAME", post_cols)
+        self.assertIn("ID", post_cols)
+
+    def test_schema_evolution_update_preserves_existing_feature_descriptions(self) -> None:
+        """updated_feature_df preserves stored descriptions and honors caller-updated ones."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_update_desc_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_update_desc_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        ).attach_feature_desc({"NAME": "my name"})
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_UPDATE_DESC_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        updated_sql = f"SELECT id, name, ts, age FROM {mock_table}"
+        fs.update_feature_view(
+            "evo_update_desc_fv",
+            "v1",
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+
+        describe_rows = self._session.sql(f"DESC DYNAMIC TABLE {fqn}").collect()
+        column_comments = {row["name"]: row["comment"] for row in describe_rows}
+        self.assertEqual(column_comments["NAME"], "my name")
+
+        current_fv = fs.get_feature_view("evo_update_desc_fv", "v1")
+        current_fv.attach_feature_desc({"NAME": "caller updated name"})
+        fs.update_feature_view(
+            current_fv,
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+
+        describe_rows = self._session.sql(f"DESC DYNAMIC TABLE {fqn}").collect()
+        column_comments = {row["name"]: row["comment"] for row in describe_rows}
+        self.assertEqual(column_comments["NAME"], "caller updated name")
+
+    def test_schema_evolution_update_rejects_dropped_column(self) -> None:
+        """update_feature_view rejects updated_feature_df that drops a column from the snapshot."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_drop_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_drop_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_DROP_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        dropped_sql = f"SELECT id, ts FROM {mock_table}"
+        with self.assertRaises(Exception) as ctx:
+            fs.update_feature_view(
+                "evo_drop_fv",
+                "v1",
+                updated_feature_df=self._session.sql(dropped_sql),
+            )
+        self.assertIn("drop", str(ctx.exception).lower())
+
+    def test_schema_evolution_update_rejects_dropped_entity_key(self) -> None:
+        """Entity join key columns are immutable within a version: dropping one is rejected."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_drop_entity_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_drop_entity_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_DROP_ENTITY_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        dropped_sql = f"SELECT name, age, ts FROM {mock_table}"
+        with self.assertRaises(Exception) as ctx:
+            fs.update_feature_view(
+                "evo_drop_entity_fv",
+                "v1",
+                updated_feature_df=self._session.sql(dropped_sql),
+            )
+        message = str(ctx.exception)
+        self.assertIn("ID", message, f"Error should reference dropped entity column 'ID'. Got: {message}")
+        self.assertIn(
+            "join_key",
+            message.lower(),
+            f"Error should mention 'join_key' to indicate entity-column immutability. Got: {message}",
+        )
+
+    def test_schema_evolution_update_rejects_dropped_timestamp_col(self) -> None:
+        """timestamp_col is required for ASOF JOIN and snapshot continuity: dropping it is rejected."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_drop_ts_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_drop_ts_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_DROP_TS_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        dropped_sql = f"SELECT id, name, age FROM {mock_table}"
+        with self.assertRaises(Exception) as ctx:
+            fs.update_feature_view(
+                "evo_drop_ts_fv",
+                "v1",
+                updated_feature_df=self._session.sql(dropped_sql),
+            )
+        message = str(ctx.exception)
+        self.assertIn("TS", message, f"Error should reference dropped timestamp column 'TS'. Got: {message}")
+        self.assertIn(
+            "timestamp_col",
+            message.lower(),
+            f"Error should mention 'timestamp_col' to indicate it is required. Got: {message}",
+        )
+
+    def test_schema_evolution_update_rejects_renamed_timestamp_col(self) -> None:
+        """timestamp_col cannot be renamed within a version: snapshot ASOF JOIN depends on the original name."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_rename_ts_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, age, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_rename_ts_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+        fv_physical_name = FeatureView._get_physical_name("EVO_RENAME_TS_FV", "v1")
+        fqn = registered_fv.fully_qualified_name()
+        execute_snapshot_refresh(fs, fv_physical_name, fqn)
+
+        renamed_sql = f"SELECT id, name, age, ts AS event_ts FROM {mock_table}"
+        with self.assertRaises(Exception) as ctx:
+            fs.update_feature_view(
+                "evo_rename_ts_fv",
+                "v1",
+                updated_feature_df=self._session.sql(renamed_sql),
+            )
+        message = str(ctx.exception)
+        self.assertIn(
+            "TS",
+            message,
+            f"Error should reference the original timestamp column 'TS' that is missing after rename. "
+            f"Got: {message}",
+        )
+        self.assertIn(
+            "timestamp_col",
+            message.lower(),
+            f"Error should mention 'timestamp_col' to indicate the original is required. Got: {message}",
+        )
+
+    def test_schema_evolution_update_rejects_non_append_only(self) -> None:
+        """update_feature_view with updated_feature_df rejects non-append_only FVs."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_reject_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_reject_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_freq="1 day",
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        updated_sql = f"SELECT id, name, age, ts FROM {mock_table}"
+        with self.assertRaises(Exception) as ctx:
+            fs.update_feature_view(
+                "evo_reject_fv",
+                "v1",
+                updated_feature_df=self._session.sql(updated_sql),
+            )
+        self.assertIn("append_only", str(ctx.exception).lower())
+
+    def test_schema_evolution_update_returned_fv_reflects_new_schema(self) -> None:
+        """Returned FeatureView from update_feature_view reflects the evolved schema."""
+        fs = self._create_feature_store()
+        mock_table = self._create_mock_table_with_timestamp("evo_return_src")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, ts FROM {mock_table}"
+        fv = FeatureView(
+            name="evo_return_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+        )
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Extend-only schema evolution requires existing columns to keep their original
+        # positions; the new column must therefore be appended to the end of the SELECT
+        # rather than inserted before TS.
+        updated_sql = f"SELECT id, name, ts, age FROM {mock_table}"
+        updated_fv = fs.update_feature_view(
+            "evo_return_fv",
+            "v1",
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+
+        col_names = {f.name for f in updated_fv.feature_df.schema.fields}
+        self.assertIn("AGE", col_names, "Returned FV should include AGE in its schema")
+        self.assertIn("NAME", col_names)
+        self.assertIn("ID", col_names)
+        self.assertIn("TS", col_names)
 
 
 if __name__ == "__main__":

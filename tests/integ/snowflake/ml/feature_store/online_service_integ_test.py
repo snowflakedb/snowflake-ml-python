@@ -7,8 +7,8 @@ from absl.testing import absltest
 from feature_store_streaming_fv_integ_base import (
     wait_online_service_running_with_query_endpoint,
 )
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import feature_store
 from snowflake.ml.feature_store.feature_store import FeatureStore
@@ -54,9 +54,36 @@ class OnlineServiceIntegTest(FeatureStoreIntegTestBase):
                 consumer_role=consumer,
                 reuse_if_running=False,
             )
+            self._assert_endpoint_urls_well_formed()
             self.fs.drop_online_service()
         finally:
             self._session.sql(f"DROP ROLE IF EXISTS {SqlIdentifier(consumer)}").collect()
+
+    def _assert_endpoint_urls_well_formed(self) -> None:
+        """Endpoint URL contract: ``url`` and ``internal_url`` are always present and HTTP(S).
+        ``privatelink_url`` is only emitted for PrivateLink-enabled accounts; when present, it must
+        also be HTTP(S).
+        """
+        st = self.fs.get_online_service_status()
+        self.assertEqual(st.status, "RUNNING")
+        self.assertTrue(st.endpoints, "expected at least one endpoint when status=RUNNING")
+        for ep in st.endpoints:
+            self.assertTrue(
+                ep.url.startswith(("http://", "https://")),
+                f"endpoint {ep.name!r} url is not http(s): {ep.url!r}",
+            )
+            self.assertIsNotNone(ep.internal_url, f"endpoint {ep.name!r} missing internal_url")
+            assert ep.internal_url is not None  # for type checker
+            self.assertTrue(
+                ep.internal_url.startswith(("http://", "https://")),
+                f"endpoint {ep.name!r} internal_url is not http(s): {ep.internal_url!r}",
+            )
+            if ep.privatelink_url is not None:
+                self.assertIsInstance(ep.privatelink_url, str)
+                self.assertTrue(
+                    ep.privatelink_url.startswith(("http://", "https://")),
+                    f"endpoint {ep.name!r} privatelink_url is not http(s): {ep.privatelink_url!r}",
+                )
 
 
 if __name__ == "__main__":

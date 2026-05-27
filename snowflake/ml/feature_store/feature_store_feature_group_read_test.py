@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -29,7 +29,15 @@ from snowflake.ml.feature_store.metadata_manager import (
     FeatureGroupMetadata,
     FeatureGroupSourceRef,
 )
-from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
+from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+from snowflake.ml.feature_store.request_source import RequestSource
+from snowflake.snowpark.types import (
+    DoubleType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 # Helpers duplicated from feature_store_feature_group_test.py — py_test targets can't share srcs.
 
@@ -85,6 +93,7 @@ def _new_fs_with_mocks(
     object.__setattr__(fs, "_telemetry_stmp", {})
     object.__setattr__(fs, "_metadata_manager", md)
     object.__setattr__(fs, "_default_warehouse", SqlIdentifier("WH"))
+    object.__setattr__(fs, "_online_service_access", None)
     return fs
 
 
@@ -100,6 +109,139 @@ def _make_hydrated_fg(
     """Construct a FeatureGroup that mimics the one returned by ``get_feature_group``."""
     fv = _make_registered_fv(name=fv_name, version=fv_version, feature_columns=list(feature_columns))
     fg = FeatureGroup(name=name, features=[fv], auto_prefix=True)
+    fg._version = FeatureGroupVersion(version)
+    fg._postgres_online_query_url = query_url
+    return fg
+
+
+def _rtfv_compute_fn(req: Any, upstream: Any) -> Any:
+    """Placeholder ``compute_fn`` for RTFV fixtures; tests never invoke it."""
+    return req
+
+
+def _rtfv_compute_fn_no_request(upstream: Any) -> Any:
+    """Placeholder ``compute_fn`` for no-RequestSource RTFV fixtures."""
+    return upstream
+
+
+def _make_registered_rtfv(
+    *,
+    name: str,
+    version: str,
+    output_fields: list[StructField],
+    request_fields: Optional[list[StructField]] = None,
+    upstream: Optional[FeatureView] = None,
+    join_keys: Optional[list[str]] = None,
+    with_request_source: bool = True,
+) -> FeatureView:
+    """Build a FeatureView that looks like a registered RTFV for FG read tests.
+
+    Set ``with_request_source=False`` to build an RTFV whose
+    ``RealtimeConfig.request_source`` is ``None``; ``request_fields`` is
+    ignored in that case.
+    """
+    join_keys = join_keys or ["USER_ID"]
+    upstream = upstream or _make_registered_fv(
+        name=f"{name}_UPSTREAM",
+        version=version,
+        feature_columns=["UPSTREAM_F"],
+        entity_join_keys=join_keys,
+    )
+    if with_request_source:
+        request = RequestSource(schema=StructType(request_fields or []))
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[request, upstream],
+            output_schema=StructType(output_fields),
+        )
+    else:
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn_no_request,
+            sources=[upstream],
+            output_schema=StructType(output_fields),
+        )
+    fv = FeatureView(
+        name=name,
+        entities=[Entity(name="USER", join_keys=join_keys)],
+        realtime_config=rtc,
+        online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+    )
+    fv._version = FeatureViewVersion(version)
+    fv._database = SqlIdentifier("DB")
+    fv._schema = SqlIdentifier("SCH")
+    fv._status = FeatureViewStatus.ACTIVE
+    return fv
+
+
+def _make_hydrated_mixed_fg(
+    *,
+    name: str = "FG",
+    version: str = "v1",
+    request_fields: Optional[list[StructField]] = None,
+    rtfv_output_fields: Optional[list[StructField]] = None,
+    include_bfv: bool = True,
+    query_url: str = "https://q.example/svc",
+) -> FeatureGroup:
+    """Construct a registered-looking FG with one BFV + one RTFV source."""
+    sources: list[Any] = []
+    if include_bfv:
+        sources.append(_make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"]))
+    sources.append(
+        _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=rtfv_output_fields or [StructField("WEIGHTED_BALANCE", DoubleType())],
+            request_fields=request_fields or [StructField("WEIGHT", DoubleType())],
+        )
+    )
+    fg = FeatureGroup(name=name, features=sources, auto_prefix=False)
+    fg._version = FeatureGroupVersion(version)
+    fg._postgres_online_query_url = query_url
+    return fg
+
+
+def _make_hydrated_no_rs_rtfv_fg(
+    *,
+    name: str = "FG",
+    version: str = "v1",
+    query_url: str = "https://q.example/svc",
+) -> FeatureGroup:
+    """Construct a registered-looking FG whose only RTFV source has no ``RequestSource``."""
+    rtfv = _make_registered_rtfv(
+        name="RT_FV",
+        version="v1",
+        output_fields=[
+            StructField("USER_ID", StringType()),
+            StructField("DOUBLED_BALANCE", DoubleType()),
+        ],
+        with_request_source=False,
+    )
+    fg = FeatureGroup(name=name, features=[rtfv], auto_prefix=False)
+    fg._version = FeatureGroupVersion(version)
+    fg._postgres_online_query_url = query_url
+    return fg
+
+
+def _make_hydrated_dual_rtfv_fg(
+    *,
+    name: str = "FG",
+    version: str = "v1",
+    query_url: str = "https://q.example/svc",
+) -> FeatureGroup:
+    """FG with two RTFVs: one declares a ``RequestSource``, one does not."""
+    rtfv_with_rs = _make_registered_rtfv(
+        name="RT_WITH",
+        version="v1",
+        output_fields=[StructField("WEIGHTED_BALANCE", DoubleType())],
+        request_fields=[StructField("WEIGHT", DoubleType())],
+    )
+    rtfv_no_rs = _make_registered_rtfv(
+        name="RT_NORS",
+        version="v1",
+        output_fields=[StructField("DOUBLED_BALANCE", DoubleType())],
+        with_request_source=False,
+    )
+    fg = FeatureGroup(name=name, features=[rtfv_with_rs, rtfv_no_rs], auto_prefix=False)
     fg._version = FeatureGroupVersion(version)
     fg._postgres_online_query_url = query_url
     return fg
@@ -269,6 +411,203 @@ class ReadFeatureGroupValidationTest(absltest.TestCase):
         cause = ctx.exception.__cause__
         self.assertIsInstance(cause, snowml_exceptions.SnowflakeMLException)
         self.assertEqual(cause.error_code, error_codes.INVALID_ARGUMENT)
+
+
+class ReadFeatureGroupRequestContextTest(absltest.TestCase):
+    """``request_context`` dispatch for FGs with one or more RTFV sources."""
+
+    def _new_fs_for_mixed_fg(self) -> FeatureStore:
+        fs = _new_fs_with_mocks()
+        object.__setattr__(fs, "_get_or_create_online_http_client", MagicMock(return_value=MagicMock()))
+        return fs
+
+    @staticmethod
+    def _stub_read(captured: dict[str, object]) -> Any:
+        def _fake_read(**kwargs: object) -> tuple[list[dict[str, object]], object]:
+            captured.update(kwargs)
+            schema = StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("BALANCE", DoubleType()),
+                    StructField("WEIGHTED_BALANCE", DoubleType()),
+                ]
+            )
+            return [{"USER_ID": "u1", "BALANCE": 1.0, "WEIGHTED_BALANCE": 0.5}], schema
+
+        return _fake_read
+
+    def test_rtfv_source_requires_request_context(self) -> None:
+        fg = _make_hydrated_mixed_fg()
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(ValueError, "`request_context` is required"):
+            fs.read_feature_group(fg, keys=[["u1"]])
+
+    def test_no_rtfv_source_rejects_request_context(self) -> None:
+        """``request_context`` on an FG without an RTFV source is rejected before the HTTP call."""
+        fg = _make_hydrated_fg()
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(
+            ValueError,
+            "only supported when at least one RealtimeFeatureView source declares a RequestSource",
+        ):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"WEIGHT": [1.0]}))
+
+    def test_request_context_must_be_dataframe(self) -> None:
+        fg = _make_hydrated_mixed_fg()
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(ValueError, "must be a pandas.DataFrame"):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=[{"WEIGHT": 1.0}])
+
+    def test_request_context_missing_required_column_rejected(self) -> None:
+        fg = _make_hydrated_mixed_fg(request_fields=[StructField("WEIGHT", DoubleType())])
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(ValueError, "missing required columns \\['WEIGHT'\\]"):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"OTHER": [1.0]}))
+
+    def test_request_context_length_mismatch_rejected(self) -> None:
+        fg = _make_hydrated_mixed_fg()
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(ValueError, "but `keys` has 2 row"):
+            fs.read_feature_group(fg, keys=[["u1"], ["u2"]], request_context=pd.DataFrame({"WEIGHT": [1.0]}))
+
+    def test_request_context_extras_dropped_with_warning(self) -> None:
+        """Extras are dropped with a ``UserWarning``; the forwarded payload omits them."""
+        fg = _make_hydrated_mixed_fg()
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            with self.assertWarns(UserWarning) as warn_ctx:
+                fs.read_feature_group(
+                    fg,
+                    keys=[["u1"]],
+                    request_context=pd.DataFrame({"WEIGHT": [1.5], "STRAY": ["x"]}),
+                )
+        self.assertIn("STRAY", str(warn_ctx.warning))
+        payload = captured["request_context"]
+        assert isinstance(payload, list)
+        # Extras are dropped; only the canonical required column survives.
+        self.assertEqual(payload, [{"WEIGHT": 1.5}])
+
+    def test_case_insensitive_column_matching(self) -> None:
+        """Caller-supplied lower-case column matches a canonical upper-case RequestSource field."""
+        fg = _make_hydrated_mixed_fg(request_fields=[StructField("AMOUNT", DoubleType())])
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"amount": [42.0]}))
+        payload = captured["request_context"]
+        assert isinstance(payload, list)
+        # Canonical name (server-expected) — not the caller's casing.
+        self.assertEqual(payload, [{"AMOUNT": 42.0}])
+
+    def test_payload_forwarded_in_keys_order_as_list_of_dicts(self) -> None:
+        """Row alignment is positional: ``request_context[i]`` rides with ``keys[i]``."""
+        fg = _make_hydrated_mixed_fg(request_fields=[StructField("WEIGHT", DoubleType())])
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            fs.read_feature_group(
+                fg,
+                keys=[["u1"], ["u2"], ["u3"]],
+                request_context=pd.DataFrame({"WEIGHT": [1.0, 2.0, 3.0]}),
+            )
+        payload = captured["request_context"]
+        self.assertEqual(payload, [{"WEIGHT": 1.0}, {"WEIGHT": 2.0}, {"WEIGHT": 3.0}])
+        self.assertEqual(captured["object_type"], "feature_group")
+
+    def test_rtfv_only_fg_join_key_types_use_upstream_fallback(self) -> None:
+        """RTFV-only FG (no BFV anchor) emits join-key datatypes via ``resolve_realtime_join_key_fields``."""
+        # No BFV in this FG -> the read path can only derive USER_ID's datatype
+        # by walking the RTFV's upstream BFV (the resolve_realtime_join_key_fields
+        # fallback path).
+        fg = _make_hydrated_mixed_fg(include_bfv=False)
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"WEIGHT": [1.0]}))
+        join_types = captured["join_key_field_types"]
+        assert isinstance(join_types, dict)
+        self.assertEqual(set(join_types), {"USER_ID"})
+        # The RTFV's upstream BFV (built by _make_registered_rtfv) keys on USER_ID
+        # with StringType, so the fallback should resolve to that exact type.
+        self.assertEqual(join_types["USER_ID"], StringType())
+
+    def test_union_of_request_columns_across_multiple_rtfvs(self) -> None:
+        """Two RTFVs each declare one RequestSource column -> required columns = union of both."""
+        rtfv_a = _make_registered_rtfv(
+            name="RT_A",
+            version="v1",
+            output_fields=[StructField("FEAT_A", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        rtfv_b = _make_registered_rtfv(
+            name="RT_B",
+            version="v1",
+            output_fields=[StructField("FEAT_B", DoubleType())],
+            request_fields=[StructField("WEIGHT", IntegerType())],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv_a, rtfv_b], auto_prefix=False)
+        fg._version = FeatureGroupVersion("v1")
+        fg._postgres_online_query_url = "https://q.example/svc"
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            fs.read_feature_group(
+                fg,
+                keys=[["u1"]],
+                request_context=pd.DataFrame({"AMOUNT": [42.0], "WEIGHT": [7]}),
+            )
+        payload = captured["request_context"]
+        self.assertEqual(payload, [{"AMOUNT": 42.0, "WEIGHT": 7}])
+
+    def test_no_request_source_rtfv_omits_request_context(self) -> None:
+        """FG whose only RTFV source has no ``RequestSource``: read with ``request_context=None`` succeeds."""
+        fg = _make_hydrated_no_rs_rtfv_fg()
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+
+        def _fake_read(**kwargs: object) -> tuple[list[dict[str, object]], object]:
+            captured.update(kwargs)
+            schema = StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("DOUBLED_BALANCE", DoubleType()),
+                ]
+            )
+            return [{"USER_ID": "u1", "DOUBLED_BALANCE": 2.0}], schema
+
+        with patch.object(online_service, "read_postgres_online_features", side_effect=_fake_read):
+            fs.read_feature_group(fg, keys=[["u1"]])
+
+        self.assertIsNone(captured["request_context"])
+        self.assertEqual(captured["object_type"], "feature_group")
+
+    def test_no_request_source_rtfv_rejects_request_context(self) -> None:
+        """FG whose only RTFV source has no ``RequestSource``: any ``request_context`` is rejected."""
+        fg = _make_hydrated_no_rs_rtfv_fg()
+        fs = self._new_fs_for_mixed_fg()
+        with self.assertRaisesRegex(
+            ValueError,
+            "only supported when at least one RealtimeFeatureView source declares a RequestSource",
+        ):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"WEIGHT": [1.0]}))
+
+    def test_dual_rtfv_with_and_without_request_source_uses_only_with_rs_columns(self) -> None:
+        """Mixed RTFV-only FG: required payload columns come from the with-RS RTFV alone."""
+        fg = _make_hydrated_dual_rtfv_fg()
+        fs = self._new_fs_for_mixed_fg()
+
+        captured: dict[str, object] = {}
+        with patch.object(online_service, "read_postgres_online_features", side_effect=self._stub_read(captured)):
+            fs.read_feature_group(fg, keys=[["u1"]], request_context=pd.DataFrame({"WEIGHT": [1.5]}))
+        payload = captured["request_context"]
+        self.assertEqual(payload, [{"WEIGHT": 1.5}])
 
 
 if __name__ == "__main__":

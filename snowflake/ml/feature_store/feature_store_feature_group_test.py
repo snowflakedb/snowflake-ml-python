@@ -39,7 +39,15 @@ from snowflake.ml.feature_store.metadata_manager import (
     FeatureGroupMetadata,
     FeatureGroupSourceRef,
 )
-from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
+from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+from snowflake.ml.feature_store.request_source import RequestSource
+from snowflake.snowpark.types import (
+    DoubleType,
+    IntegerType,
+    StringType,
+    StructField,
+    StructType,
+)
 
 
 def _make_registered_fv(
@@ -80,6 +88,69 @@ def _make_registered_fv(
     return fv
 
 
+def _rtfv_compute_fn(req: Any, upstream: Any) -> Any:
+    """Placeholder ``compute_fn`` for RTFV fixtures; tests never invoke it."""
+    return req
+
+
+def _rtfv_compute_fn_no_request(upstream: Any) -> Any:
+    """Placeholder ``compute_fn`` for no-RequestSource RTFV fixtures."""
+    return upstream
+
+
+def _make_registered_rtfv(
+    *,
+    name: str,
+    version: str,
+    output_fields: list[StructField],
+    request_fields: Optional[list[StructField]] = None,
+    upstream: Optional[FeatureView] = None,
+    join_keys: Optional[list[str]] = None,
+    with_request_source: bool = True,
+) -> FeatureView:
+    """Build a FeatureView that looks like a registered RTFV for FG tests.
+
+    ``output_fields`` is the canonical ``compute_fn`` return shape (may
+    include the join key). ``upstream`` defaults to a single-key BFV
+    matching ``join_keys``; pass a custom one to exercise upstream PK
+    datatype variants. Set ``with_request_source=False`` to build an RTFV
+    whose ``RealtimeConfig.request_source`` is ``None`` (legal since the
+    RequestSource-optional change); ``request_fields`` is ignored in that
+    case.
+    """
+    join_keys = join_keys or ["USER_ID"]
+    upstream = upstream or _make_registered_fv(
+        name=f"{name}_UPSTREAM",
+        version=version,
+        feature_columns=["UPSTREAM_F"],
+        entity_join_keys=join_keys,
+    )
+    if with_request_source:
+        request = RequestSource(schema=StructType(request_fields or []))
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[request, upstream],
+            output_schema=StructType(output_fields),
+        )
+    else:
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn_no_request,
+            sources=[upstream],
+            output_schema=StructType(output_fields),
+        )
+    fv = FeatureView(
+        name=name,
+        entities=[Entity(name="USER", join_keys=join_keys)],
+        realtime_config=rtc,
+        online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+    )
+    fv._version = FeatureViewVersion(version)
+    fv._database = SqlIdentifier("DB")
+    fv._schema = SqlIdentifier("SCH")
+    fv._status = FeatureViewStatus.ACTIVE
+    return fv
+
+
 def _new_fs_with_mocks(
     *,
     metadata_manager: Optional[MagicMock] = None,
@@ -98,6 +169,7 @@ def _new_fs_with_mocks(
     object.__setattr__(fs, "_telemetry_stmp", {})
     object.__setattr__(fs, "_metadata_manager", md)
     object.__setattr__(fs, "_default_warehouse", SqlIdentifier("WH"))
+    object.__setattr__(fs, "_online_service_access", None)
     return fs
 
 
@@ -258,6 +330,272 @@ class RegisterFeatureGroupHappyPathTest(absltest.TestCase):
         # Spec rendered into the FROM SPECIFICATION blob carries the same union.
         spec_dict = fg._to_spec(database="DB", schema="SCH", version="v1").to_dict()
         self.assertEqual(spec_dict["spec"]["ordered_entity_column_names"], ["USER_ID", "ITEM_ID"])
+
+
+class RegisterFeatureGroupWithRtfvSourceTest(absltest.TestCase):
+    """Register-time validations + persistence for mixed-kind / multi-RTFV FGs."""
+
+    def _new_register_setup(self) -> tuple[FeatureStore, MagicMock, MagicMock]:
+        md = MagicMock()
+        sess = MagicMock()
+        fs = _new_fs_with_mocks(metadata_manager=md, session=sess)
+        object.__setattr__(fs, "_validate_entity_exists", MagicMock(return_value=True))
+        object.__setattr__(fs, "_find_object", MagicMock(return_value=[]))
+        object.__setattr__(fs, "_get_fv_backend_representations", MagicMock(return_value=[]))
+        return fs, sess, md
+
+    def _stub_online_service(self) -> Any:
+        """Stash + replace the running-service assertion so tests don't hit the network."""
+        original = online_service.assert_online_service_running_with_query_endpoint
+        online_service.assert_online_service_running_with_query_endpoint = MagicMock()
+        return original
+
+    def test_mixed_bfv_and_rtfv_registers(self) -> None:
+        """Mixed-kind FG (BFV + RTFV) passes every register-time validation."""
+        fs, sess, md = self._new_register_setup()
+        bfv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"])
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+            request_fields=[StructField("WEIGHT", DoubleType())],
+        )
+        fg = FeatureGroup(name="FG", features=[bfv, rtfv], auto_prefix=False)
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+        saved_meta: FeatureGroupMetadata = md.save_feature_group_metadata.call_args.args[0]
+        # Persisted output_columns inherits the deduped property; the RTFV's PK
+        # column is dropped, the BFV's BALANCE column stays.
+        self.assertEqual(saved_meta.output_columns, ["BALANCE", "WEIGHTED_BALANCE"])
+
+    def test_cross_source_join_key_datatype_conflict_rejected(self) -> None:
+        """BFV says VARCHAR, RTFV's upstream says INTEGER for the same key -> reject with both sources named."""
+        fs, _sess, _md = self._new_register_setup()
+        bfv_string_key = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"])
+        # RTFV's upstream uses an INTEGER USER_ID, so resolve_realtime_join_key_fields
+        # picks up INTEGER for the RTFV side of the FG-level type table.
+        rtfv_upstream_int = _make_registered_fv(
+            name="RT_UPSTREAM",
+            version="v1",
+            feature_columns=["AVG_BALANCE"],
+            schema_key_col="USER_ID",
+        )
+        # Override the upstream's USER_ID column type to IntegerType after construction.
+        assert rtfv_upstream_int.feature_df is not None
+        rtfv_upstream_int.feature_df.schema = StructType(
+            [StructField("USER_ID", IntegerType()), StructField("AVG_BALANCE", DoubleType())]
+        )
+        rtfv_upstream_int._infer_schema_df = rtfv_upstream_int.feature_df
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[StructField("WEIGHTED_BALANCE", DoubleType())],
+            upstream=rtfv_upstream_int,
+        )
+        fg = FeatureGroup(name="FG", features=[bfv_string_key, rtfv])
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            with self.assertRaisesRegex(ValueError, "join key 'USER_ID'") as cm:
+                fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+        msg = str(cm.exception)
+        self.assertIn("USER_FV@v1", msg)
+        self.assertIn("RT_FV@v1", msg)
+
+    def test_request_source_overlaps_fg_pk_rejected(self) -> None:
+        """An RTFV's RequestSource column that collides with the FG's superset PK is rejected."""
+        fs, _sess, _md = self._new_register_setup()
+        bfv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"])
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[StructField("WEIGHTED_BALANCE", DoubleType())],
+            # RequestSource column ``USER_ID`` overlaps the FG superset PK.
+            request_fields=[StructField("USER_ID", StringType())],
+        )
+        fg = FeatureGroup(name="FG", features=[bfv, rtfv])
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            with self.assertRaisesRegex(ValueError, "overlap the FeatureGroup's superset primary key") as cm:
+                fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+        self.assertIn("RT_FV@v1", str(cm.exception))
+
+    def test_cross_rtfv_request_source_datatype_conflict_rejected(self) -> None:
+        """Two RTFVs declare the same canonical RequestSource column with conflicting types -> reject."""
+        fs, _sess, _md = self._new_register_setup()
+        rtfv_a = _make_registered_rtfv(
+            name="RT_A",
+            version="v1",
+            output_fields=[StructField("FEAT_A", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        rtfv_b = _make_registered_rtfv(
+            name="RT_B",
+            version="v1",
+            output_fields=[StructField("FEAT_B", DoubleType())],
+            request_fields=[StructField("AMOUNT", IntegerType())],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv_a, rtfv_b])
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            with self.assertRaisesRegex(ValueError, "request column 'AMOUNT'") as cm:
+                fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+        msg = str(cm.exception)
+        self.assertIn("RT_A@v1", msg)
+        self.assertIn("RT_B@v1", msg)
+
+    def test_cross_rtfv_request_source_datatype_conflict_case_insensitive(self) -> None:
+        """``AMOUNT`` vs ``amount`` canonicalize to the same key and still raise on type drift."""
+        fs, _sess, _md = self._new_register_setup()
+        rtfv_a = _make_registered_rtfv(
+            name="RT_A",
+            version="v1",
+            output_fields=[StructField("FEAT_A", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        rtfv_b = _make_registered_rtfv(
+            name="RT_B",
+            version="v1",
+            output_fields=[StructField("FEAT_B", DoubleType())],
+            request_fields=[StructField("amount", IntegerType())],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv_a, rtfv_b])
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            with self.assertRaisesRegex(ValueError, "realtime feature view sources disagree"):
+                fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+    def test_cross_rtfv_request_source_same_name_same_datatype_passes(self) -> None:
+        """De-facto shared column: same canonical name + same datatype across RTFVs registers."""
+        fs, _sess, md = self._new_register_setup()
+        rtfv_a = _make_registered_rtfv(
+            name="RT_A",
+            version="v1",
+            output_fields=[StructField("FEAT_A", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        rtfv_b = _make_registered_rtfv(
+            name="RT_B",
+            version="v1",
+            output_fields=[StructField("FEAT_B", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        # ``auto_prefix=False`` keeps the assertion focused on the validator
+        # outcome rather than the prefixing rules covered in feature_group_test.py.
+        fg = FeatureGroup(name="FG", features=[rtfv_a, rtfv_b], auto_prefix=False)
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+        saved_meta: FeatureGroupMetadata = md.save_feature_group_metadata.call_args.args[0]
+        self.assertEqual(saved_meta.output_columns, ["FEAT_A", "FEAT_B"])
+
+    def test_register_fg_with_no_request_source_rtfv_passes(self) -> None:
+        """An RTFV source with ``request_source=None`` is skipped by the RequestSource validators."""
+        fs, _sess, md = self._new_register_setup()
+        bfv = _make_registered_fv(name="USER_FV", version="v1", feature_columns=["BALANCE"])
+        # RTFV without a RequestSource: the PK-overlap and cross-RTFV datatype
+        # validators must skip it instead of dereferencing ``request_source``.
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("DOUBLED_BALANCE", DoubleType()),
+            ],
+            with_request_source=False,
+        )
+        fg = FeatureGroup(name="FG", features=[bfv, rtfv], auto_prefix=False)
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+        saved_meta: FeatureGroupMetadata = md.save_feature_group_metadata.call_args.args[0]
+        self.assertEqual(saved_meta.output_columns, ["BALANCE", "DOUBLED_BALANCE"])
+
+    def test_cross_rtfv_request_source_datatype_conflict_skips_no_rs_rtfv(self) -> None:
+        """Cross-RTFV datatype check ignores RTFVs that do not declare a ``RequestSource``."""
+        fs, _sess, md = self._new_register_setup()
+        rtfv_a = _make_registered_rtfv(
+            name="RT_A",
+            version="v1",
+            output_fields=[StructField("FEAT_A", DoubleType())],
+            request_fields=[StructField("AMOUNT", DoubleType())],
+        )
+        # No RequestSource: contributes no canonical request columns and so
+        # cannot conflict with ``RT_A``'s ``AMOUNT``.
+        rtfv_b = _make_registered_rtfv(
+            name="RT_B",
+            version="v1",
+            output_fields=[StructField("FEAT_B", DoubleType())],
+            with_request_source=False,
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv_a, rtfv_b], auto_prefix=False)
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+        saved_meta: FeatureGroupMetadata = md.save_feature_group_metadata.call_args.args[0]
+        self.assertEqual(saved_meta.output_columns, ["FEAT_A", "FEAT_B"])
+
+    def test_persisted_output_columns_dedupes_pk_for_rtfv_source(self) -> None:
+        """End-to-end through register: persisted ``output_columns`` drops the FG PK column."""
+        fs, _sess, md = self._new_register_setup()
+        rtfv = _make_registered_rtfv(
+            name="RT_FV",
+            version="v1",
+            output_fields=[
+                StructField("USER_ID", StringType()),
+                StructField("WEIGHTED_BALANCE", DoubleType()),
+            ],
+        )
+        fg = FeatureGroup(name="FG", features=[rtfv], auto_prefix=False)
+        object.__setattr__(fs, "get_feature_group", MagicMock(return_value=fg))
+
+        original = self._stub_online_service()
+        try:
+            fs.register_feature_group(fg, "v1")
+        finally:
+            online_service.assert_online_service_running_with_query_endpoint = original
+
+        saved_meta: FeatureGroupMetadata = md.save_feature_group_metadata.call_args.args[0]
+        self.assertEqual(saved_meta.output_columns, ["WEIGHTED_BALANCE"])
 
 
 class FeatureGroupOftNameTest(absltest.TestCase):

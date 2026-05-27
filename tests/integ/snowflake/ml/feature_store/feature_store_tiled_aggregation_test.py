@@ -16,6 +16,7 @@ from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStat
 from snowflake.ml.feature_store.metadata_manager import (
     _METADATA_TABLE_NAME as _FS_METADATA_TABLE,
 )
+from snowflake.ml.feature_store.tile_sql_generator import _SECONDARY_KEY_MAX_COUNT
 
 
 class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -4020,6 +4021,91 @@ class SecondaryKeyAggregationTest(FeatureStoreIntegTestBase, parameterized.TestC
             self.assertEqual(impressions_dict, {"ad_a": 0, "ad_b": 1})
         finally:
             self._session.sql(f"DROP TABLE IF EXISTS {null_events_table}").collect()
+
+    def test_secondary_key_response_capped_at_global_limit(self) -> None:
+        """Per-row response arrays are truncated to the global cap.
+
+        With ``cap + 50`` distinct ``ad_id`` values for one user inside one 24h
+        window, the keys/values arrays must each be capped at ``cap``, the
+        *same* ``cap`` sks must survive on both sides (element alignment), and
+        the dropped tail must be the lexicographically-largest 50 (since the
+        inner ``ARRAY_AGG`` is ``WITHIN GROUP (ORDER BY ad_id ASC NULLS LAST)``).
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        cap = _SECONDARY_KEY_MAX_COUNT
+        total = cap + 50
+        # Width is derived from total so lexicographic order == numeric order
+        # for every generated id, regardless of the cap value.
+        width = len(str(total - 1))
+
+        cap_events_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.ad_events_cap_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE IF NOT EXISTS {cap_events_table}
+                (user_id INT, event_ts TIMESTAMP_NTZ, ad_id VARCHAR(64), impression INT, amount FLOAT)
+            """
+        ).collect()
+
+        # Zero-pad ad_id so lexicographic order == numeric order; that lets
+        # us deterministically assert which sks survive the slice.
+        self._session.sql(
+            f"""INSERT INTO {cap_events_table} (user_id, event_ts, ad_id, impression, amount)
+                SELECT
+                    1                                            AS user_id,
+                    '2024-01-01 12:00:00'::TIMESTAMP_NTZ         AS event_ts,
+                    'ad_' || LPAD(seq::STRING, {width}, '0')     AS ad_id,
+                    1                                            AS impression,
+                    seq::FLOAT                                   AS amount
+                FROM (SELECT SEQ4() AS seq FROM TABLE(GENERATOR(ROWCOUNT => {total})))
+            """
+        ).collect()
+
+        try:
+            features = [Feature.sum("amount", "24h").alias("amount_per_ad")]
+            sql = f"SELECT user_id, event_ts, ad_id, impression, amount FROM {cap_events_table}"
+            fv = FeatureView(
+                name="user_ad_cap",
+                entities=[e],
+                feature_df=self._session.sql(sql),
+                timestamp_col="event_ts",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=features,
+                aggregation_secondary_keys=["ad_id"],
+            )
+            registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+
+            spine_df = self._session.create_dataframe(
+                [(1, datetime(2024, 1, 2, 0, 0, 0))],
+                schema=["user_id", "query_ts"],
+            )
+            result_pd = fs.generate_training_set(
+                spine_df=spine_df,
+                features=[registered_fv],
+                spine_timestamp_col="query_ts",
+                join_method="cte",
+            ).to_pandas()
+
+            self.assertEqual(len(result_pd), 1)
+            row = result_pd.iloc[0]
+
+            # Full equality on keys: the lex-first ``cap`` ids must survive in
+            # order; the dropped tail of 50 is caught implicitly — any stray
+            # entry would surface as the first diff.
+            expected_keys = [f"ad_{i:0{width}d}" for i in range(cap)]
+            keys = json.loads(row["AD_ID_KEYS_24H"])
+            self.assertEqual(keys, expected_keys)
+
+            # Full element-alignment check: amount inserted for ad_NNNNN was
+            # float(NNNNN). Any drift between keys and values at any of the
+            # ``cap`` slice positions would surface here.
+            paired = self._zip_keys_values(row["AD_ID_KEYS_24H"], row["AMOUNT_PER_AD"])
+            self.assertEqual(paired, {key: float(i) for i, key in enumerate(expected_keys)})
+        finally:
+            self._session.sql(f"DROP TABLE IF EXISTS {cap_events_table}").collect()
 
 
 if __name__ == "__main__":

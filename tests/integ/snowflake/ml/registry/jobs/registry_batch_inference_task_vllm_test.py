@@ -135,6 +135,7 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",
+            compute_pool_for_log=None,
         )
 
         name = f"model_{uuid.uuid4().hex[:8]}"
@@ -218,11 +219,8 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         """Batch vLLM with ``response_format`` finishes, then SQL extracts ``city``/``country`` from assistant JSON.
 
         The successor task materializes parquet, parses ``choices[0].message.content``, and stores structured fields
-        as columns. Requires image overrides so batch inference and structured output handling match current images.
+        as columns.
         """
-        if not self._has_image_override():
-            self.skipTest("Batch inference with response_format needs aligned inference proxy and vLLM images.")
-
         params_with_response_format = list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.params) + [
             signature_core.ParamGroupSpec(
                 name="response_format",

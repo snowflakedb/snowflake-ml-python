@@ -82,12 +82,9 @@ class TestRegistryMultiModalityVLLMExternalStageInteg(
 
     def test_image_and_video_with_vllm_external_stage(self) -> None:
         """Test image+video vLLM inference with files served from an external S3 stage."""
-        if not self._has_image_override():
-            self.skipTest(
-                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
-                "so the ray_orchestrator image carries that fix."
-            )
-        model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text")
+        model = huggingface.TransformersPipeline(
+            model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text", compute_pool_for_log=None
+        )
 
         test_subdir = f"batch_inference_test/{uuid.uuid4()}"
 
@@ -187,12 +184,9 @@ class TestRegistryMultiModalityVLLMExternalStageInteg(
 
     def test_image_and_video_with_vllm_mixed_stages(self) -> None:
         """Test image+video vLLM inference with rows spanning external and internal stages."""
-        if not self._has_image_override():
-            self.skipTest(
-                "Validator asserts the column-alignment fix in ray_inference_job.py; requires image override "
-                "so the ray_orchestrator image carries that fix."
-            )
-        model = huggingface.TransformersPipeline(model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text")
+        model = huggingface.TransformersPipeline(
+            model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text", compute_pool_for_log=None
+        )
 
         test_subdir = f"batch_inference_test/{uuid.uuid4()}"
 

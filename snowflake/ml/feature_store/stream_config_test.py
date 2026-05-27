@@ -6,12 +6,11 @@ from unittest.mock import MagicMock
 import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml.feature_store._compute_fn_validation import validate_compute_fn_source
 from snowflake.ml.feature_store.stream_config import (
-    ALLOWED_MODULES,
     StreamConfig,
     _infer_structtype_from_pandas,
     _snowpark_type_to_sql,
-    _validate_imports,
 )
 from snowflake.snowpark.types import (
     BooleanType,
@@ -69,7 +68,7 @@ def transform_with_re(df: pd.DataFrame) -> pd.DataFrame:
     """A valid transformation using re (allowed module)."""
     import re
 
-    df["cleaned"] = df["name"].apply(lambda x: re.sub(r"[^a-zA-Z]", "", str(x)))
+    df["cleaned"] = [re.sub(r"[^a-zA-Z]", "", str(x)) for x in df["name"]]
     return df
 
 
@@ -235,16 +234,18 @@ class StreamConfigValidationTest(parameterized.TestCase):
 
 
 # ============================================================================
-# _validate_imports tests
+# validate_compute_fn_source tests (shared SFV/RTFV policy)
 # ============================================================================
 
 
-class ValidateImportsTest(parameterized.TestCase):
-    """Unit tests for _validate_imports."""
+class ValidateComputeFnSourceTest(parameterized.TestCase):
+    """Unit tests for :func:`validate_compute_fn_source`."""
+
+    _kind = "streaming feature view"
 
     def test_no_imports(self) -> None:
         """Test source with no imports passes."""
-        _validate_imports("def f(x): return x", ALLOWED_MODULES)
+        validate_compute_fn_source("def f(x): return x", kind=self._kind)
 
     @parameterized.parameters(  # type: ignore[misc]
         "import numpy",
@@ -258,7 +259,7 @@ class ValidateImportsTest(parameterized.TestCase):
     )
     def test_allowed_imports(self, source: str) -> None:
         """Test that allowed imports pass."""
-        _validate_imports(f"def f():\n    {source}", ALLOWED_MODULES)
+        validate_compute_fn_source(f"def f():\n    {source}", kind=self._kind)
 
     @parameterized.parameters(  # type: ignore[misc]
         "import os",
@@ -271,7 +272,7 @@ class ValidateImportsTest(parameterized.TestCase):
     def test_disallowed_imports(self, source: str) -> None:
         """Test that disallowed imports are rejected."""
         with self.assertRaisesRegex(ValueError, "not allowed"):
-            _validate_imports(f"def f():\n    {source}", ALLOWED_MODULES)
+            validate_compute_fn_source(f"def f():\n    {source}", kind=self._kind)
 
     @parameterized.parameters(  # type: ignore[misc]
         "__import__('os')",
@@ -281,8 +282,8 @@ class ValidateImportsTest(parameterized.TestCase):
     )
     def test_dangerous_builtins_rejected(self, call_expr: str) -> None:
         """Test that __import__, eval, exec, compile calls are rejected."""
-        with self.assertRaisesRegex(ValueError, "not allowed"):
-            _validate_imports(f"def f():\n    {call_expr}", ALLOWED_MODULES)
+        with self.assertRaisesRegex(ValueError, "must not call"):
+            validate_compute_fn_source(f"def f():\n    {call_expr}", kind=self._kind)
 
 
 # ============================================================================

@@ -284,6 +284,7 @@ py_test(
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model/_signatures:numpy_handler",
     ],
 )
@@ -403,7 +404,7 @@ py_test(
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/model:custom_model",
-        "//snowflake/ml/model/parameters:enable_pip_only_packaging",
+        "//tests/integ/snowflake/ml/registry:pip_only_packaging_integ_util",
     ],
 )
 

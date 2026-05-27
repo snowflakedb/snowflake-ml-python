@@ -8,6 +8,7 @@ py_library(
     deps = [
         "//snowflake/ml/_internal:env",
         "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:platform_capabilities",
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
     ],
 )
@@ -25,6 +26,20 @@ py_test(
     deps = [
         ":model_env",
         "//snowflake/ml/_internal:env",
+        "//snowflake/ml/_internal:env_utils",
+        "//snowflake/ml/_internal:platform_capabilities",
+    ],
+)
+
+py_test(
+    name = "resolve_prefer_pip_for_automatic_dependencies_test",
+    srcs = ["resolve_prefer_pip_for_automatic_dependencies_test.py"],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
+    deps = [
+        ":model_env",
         "//snowflake/ml/_internal:env_utils",
     ],
 )

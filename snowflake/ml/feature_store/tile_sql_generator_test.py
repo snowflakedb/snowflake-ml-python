@@ -5,6 +5,7 @@ from absl.testing import absltest
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.feature_view import _prepend_keys_specs
 from snowflake.ml.feature_store.tile_sql_generator import (
+    _SECONDARY_KEY_MAX_COUNT,
     MergingSqlGenerator,
     RollupSqlGenerator,
     TilingSqlGenerator,
@@ -274,6 +275,52 @@ class TilingSqlGeneratorTest(absltest.TestCase):
         self.assertIn("SUM", sql)
         self.assertIn("COUNT", sql)
         self.assertIn("ARRAY_AGG", sql)
+
+    def test_datasketches_hll_accumulate(self) -> None:
+        """APPROX_COUNT_DISTINCT tile uses DATASKETCHES_HLL_ACCUMULATE with precision."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.APPROX_COUNT_DISTINCT,
+                source_column="USER_ID",
+                window="24h",
+                output_column="UNIQUE_USERS_24H",
+                params={"hll_lg_k": 12},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["ENTITY_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+        )
+        sql = generator.generate()
+
+        self.assertIn("DATASKETCHES_HLL_ACCUMULATE(USER_ID, 12) AS _PARTIAL_DS_HLL_USER_ID", sql)
+        self.assertNotIn("HLL_EXPORT", sql)
+        self.assertNotIn("HLL_ACCUMULATE", sql.replace("DATASKETCHES_HLL_ACCUMULATE", ""))
+
+    def test_datasketches_hll_default_lg_k(self) -> None:
+        """Default precision (hll_lg_k=8) is used when not explicitly specified in params."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.APPROX_COUNT_DISTINCT,
+                source_column="USER_ID",
+                window="24h",
+                output_column="UNIQUE_USERS_24H",
+                params={"hll_lg_k": 8},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["ENTITY_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+        )
+        sql = generator.generate()
+
+        self.assertIn("DATASKETCHES_HLL_ACCUMULATE(USER_ID, 8)", sql)
 
 
 class MergingSqlGeneratorTest(absltest.TestCase):
@@ -557,6 +604,35 @@ class MergingSqlGeneratorTest(absltest.TestCase):
 
         self.assertIn('"記録時刻"', spine_boundary[1])
         self.assertNotIn('""記録時刻""', spine_boundary[1], "Double-quoted Unicode timestamp found")
+
+    def test_datasketches_hll_merging(self) -> None:
+        """APPROX_COUNT_DISTINCT merge uses DATASKETCHES_HLL_ESTIMATE/COMBINE."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.APPROX_COUNT_DISTINCT,
+                source_column="USER_ID",
+                window="24h",
+                output_column="UNIQUE_USERS_24H",
+                params={"hll_lg_k": 8},
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["ENTITY_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+        )
+        ctes = generator.generate_all_ctes()
+        simple_cte = next(cte for cte in ctes if cte[0] == "SIMPLE_MERGED_FV0")
+        body = simple_cte[1]
+
+        self.assertIn("DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(", body)
+        self.assertIn("_PARTIAL_DS_HLL_USER_ID", body)
+        self.assertNotIn("HLL_IMPORT", body)
+        self.assertNotIn("HLL_ESTIMATE(HLL_COMBINE", body)
 
 
 class RollupSqlGeneratorTest(absltest.TestCase):
@@ -1585,12 +1661,13 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         # column uses the user's literal window suffix (matches Feature
         # default-output convention).
         self.assertIn(
-            "ARRAY_AGG(AD_ID) WITHIN GROUP (ORDER BY AD_ID) AS AD_ID_KEYS_24H",
+            "ARRAY_AGG(NVL(AD_ID::VARIANT, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS AD_ID_KEYS_24H",
             body,
         )
         self.assertIn(
             "ARRAY_AGG(NVL(IMPRESSIONS_PER_AD, PARSE_JSON('null'))) "
-            "WITHIN GROUP (ORDER BY AD_ID) AS IMPRESSIONS_PER_AD",
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS IMPRESSIONS_PER_AD",
             body,
         )
         # Outer is grouped only by (entity, boundary) — the sk is collapsed.
@@ -1647,7 +1724,7 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         # Outer wraps the per-sk scalar into the final value array.
         self.assertIn(
             "ARRAY_AGG(NVL(STD_PRICE_PER_PRODUCT, PARSE_JSON('null'))) "
-            "WITHIN GROUP (ORDER BY PRODUCT_ID) AS STD_PRICE_PER_PRODUCT",
+            "WITHIN GROUP (ORDER BY PRODUCT_ID ASC NULLS LAST) AS STD_PRICE_PER_PRODUCT",
             body,
         )
 
@@ -1778,8 +1855,6 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         self.assertIn("WHERE TILE_START >= DATEADD(HOUR, -2, TILE_BOUNDARY)", body)
         # No CASE WHEN ... ELSE 0 pattern in the inner per-sk expression.
         self.assertNotIn("ELSE 0 END AS AMOUNT_PER_AD_2H", body)
-        # Nulls in the secondary key dimension are filtered out.
-        self.assertIn("WHERE AD_ID IS NOT NULL", body)
 
     def test_per_group_window_filter_uses_its_own_window(self) -> None:
         """Each ``(window, offset)`` subquery filters by its *own* window, not the max.
@@ -1888,6 +1963,7 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
                 source_column="USER_AGENT",
                 window="24h",
                 output_column="UNIQUE_AGENTS_PER_AD",
+                params={"hll_lg_k": 8},
             ),
             AggregationSpec(
                 function=AggregationType.APPROX_PERCENTILE,
@@ -1899,9 +1975,9 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         ]
         body = self._secondary_cte(self._generator(features))
 
-        # HLL: HLL_ESTIMATE(HLL_COMBINE(HLL_IMPORT(_PARTIAL_HLL_USER_AGENT))) per sk
+        # Datasketches HLL: DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(...)) per sk
         self.assertIn(
-            "HLL_ESTIMATE(HLL_COMBINE(HLL_IMPORT(_PARTIAL_HLL_USER_AGENT))) AS UNIQUE_AGENTS_PER_AD",
+            "DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(_PARTIAL_DS_HLL_USER_AGENT)) AS UNIQUE_AGENTS_PER_AD",
             body,
         )
         # T-Digest: APPROX_PERCENTILE_ESTIMATE(APPROX_PERCENTILE_COMBINE(state), pct)
@@ -1913,14 +1989,84 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         # Outer ARRAY_AGG wraps each per-sk estimate.
         self.assertIn(
             "ARRAY_AGG(NVL(UNIQUE_AGENTS_PER_AD, PARSE_JSON('null'))) "
-            "WITHIN GROUP (ORDER BY AD_ID) AS UNIQUE_AGENTS_PER_AD",
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS UNIQUE_AGENTS_PER_AD",
             body,
         )
         self.assertIn(
             "ARRAY_AGG(NVL(P95_LATENCY_PER_AD, PARSE_JSON('null'))) "
-            "WITHIN GROUP (ORDER BY AD_ID) AS P95_LATENCY_PER_AD",
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS P95_LATENCY_PER_AD",
             body,
         )
+
+    def test_secondary_key_response_is_capped_at_global_limit(self) -> None:
+        """Per-(entity, boundary) row count is capped by ``QUALIFY ROW_NUMBER()``."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_PER_AD",
+            ),
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        cap = _SECONDARY_KEY_MAX_COUNT
+
+        # The cap is applied via QUALIFY ROW_NUMBER() inside per_sk, with the
+        # same ordering as the outer ARRAY_AGG so the kept rows are the
+        # "first cap" by (sk ASC NULLS LAST). No ARRAY_SLICE on the outside.
+        self.assertIn("QUALIFY ROW_NUMBER() OVER (", body)
+        self.assertIn("PARTITION BY USER_ID, TILE_BOUNDARY", body)
+        self.assertIn("ORDER BY AD_ID ASC NULLS LAST", body)
+        self.assertIn(f") <= {cap}", body)
+
+        # Outer keys/value ARRAY_AGGs are bare (no ARRAY_SLICE) and share the
+        # same ordering as the QUALIFY clause.
+        self.assertNotIn("ARRAY_SLICE", body)
+        self.assertIn(
+            "ARRAY_AGG(NVL(AD_ID::VARIANT, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS AD_ID_KEYS_24H",
+            body,
+        )
+        self.assertIn(
+            "ARRAY_AGG(NVL(AMOUNT_PER_AD, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS AMOUNT_PER_AD",
+            body,
+        )
+        self.assertIn(
+            "ARRAY_AGG(NVL(IMPRESSIONS_PER_AD, PARSE_JSON('null'))) "
+            "WITHIN GROUP (ORDER BY AD_ID ASC NULLS LAST) AS IMPRESSIONS_PER_AD",
+            body,
+        )
+
+    def test_null_secondary_keys_are_preserved_in_response(self) -> None:
+        """NULL secondary-key buckets are kept in the response, not dropped."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.COUNT,
+                source_column="IMPRESSION",
+                window="24h",
+                output_column="IMPRESSIONS_PER_AD",
+            ),
+        ]
+        body = self._secondary_cte(self._generator(features))
+
+        # Filter must be gone — NULL-sk rows now flow through to ARRAY_AGG.
+        self.assertNotIn("WHERE AD_ID IS NOT NULL", body)
+
+        # Keys aggregation must NVL-coerce so ARRAY_AGG keeps NULL slots.
+        self.assertIn(
+            "ARRAY_AGG(NVL(AD_ID::VARIANT, PARSE_JSON('null')))",
+            body,
+        )
+        # Bare ARRAY_AGG(AD_ID) form (which would drop NULL slots) is gone.
+        self.assertNotIn("ARRAY_AGG(AD_ID) ", body)
 
 
 if __name__ == "__main__":

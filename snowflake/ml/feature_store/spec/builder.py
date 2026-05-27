@@ -123,7 +123,9 @@ class BatchSource:
 
 
 # Aggregation functions supported by the Postgres (PG) online store backend.
-# Sketch and list aggregations are not implemented in the PG path.
+# List aggregations are not implemented in the PG path.
+# APPROX_COUNT_DISTINCT is supported but restricted to STRING source columns
+# (enforced by _validate_pg_source_types).
 _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
     {
         AggregationType.SUM,
@@ -133,6 +135,7 @@ _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
         AggregationType.AVG,
         AggregationType.STD,
         AggregationType.VAR,
+        AggregationType.APPROX_COUNT_DISTINCT,
     }
 )
 
@@ -397,17 +400,13 @@ class FeatureViewSpecBuilder:
     def _kind_of_fv(fv: FeatureView) -> FeatureViewKind:
         """Map a user-facing FeatureView to its spec FeatureViewKind.
 
-        Today the only user-facing kinds are Streaming and Batch (surfaced
-        via :attr:`FeatureView.is_streaming`), so this helper can only
-        return those two values for real inputs. The chaining-rejection
-        branches in :meth:`_validate_features_upstream_kinds` that guard
-        against ``RealtimeFeatureView`` / ``FeatureGroup`` upstreams are
-        staged for the follow-up that introduces those user-facing FV
-        classes; they are exercised today by tests that seed
-        ``self._source_kinds`` directly (see ``_seed_upstream_kind``).
+        Realtime takes precedence over streaming/batch because the realtime
+        path is what distinguishes RTFVs from a hypothetical SFV that also
+        sets ``realtime_config`` (which the constructor rejects, but the
+        check here makes the dispatch self-evidently correct).
 
-        TODO(snowml-quake): Switch to isinstance dispatch once user-facing
-        RealtimeFeatureView and FeatureGroup FV classes land.
+        FeatureGroup is dispatched by a separate type (not a FeatureView)
+        and never flows through this helper.
 
         Args:
             fv: A user-facing FeatureView.
@@ -415,6 +414,8 @@ class FeatureViewSpecBuilder:
         Returns:
             The spec FeatureViewKind that this FV represents.
         """
+        if fv.is_realtime_feature_view:
+            return FeatureViewKind.RealtimeFeatureView
         if fv.is_streaming:
             return FeatureViewKind.StreamingFeatureView
         return FeatureViewKind.BatchFeatureView
@@ -528,6 +529,9 @@ class FeatureViewSpecBuilder:
         # 2. Resolve user features → spec features
         spec_features = self._resolve_features()
 
+        # 2a. Validate PG source type constraints (needs resolved features).
+        self._validate_pg_source_types(spec_features)
+
         # 2b. Reject duplicate output column names (e.g., unprefixed
         #     FeatureGroup sources that expose the same feature name).
         self._validate_unique_output_columns(spec_features)
@@ -603,7 +607,28 @@ class FeatureViewSpecBuilder:
 
     @staticmethod
     def _columns_from_feature_view(fv: FeatureView) -> list[FSColumn]:
-        """Extract feature columns from a FeatureView's output schema."""
+        """Extract feature columns from a FeatureView's output schema.
+
+        RTFV sources rehydrate with an empty ``_feature_desc`` (so
+        :attr:`FeatureView.feature_names` returns ``[]``); fall back to the
+        canonical ``realtime_config.output_schema`` minus the RTFV's own
+        entity columns. The FeatureGroup passthrough path additionally
+        drops the FG's superset primary key from this list before emitting
+        spec features.
+
+        Args:
+            fv: The FeatureView whose feature columns to extract.
+
+        Returns:
+            FSColumns for the source's feature columns, in declaration order.
+        """
+        if fv.realtime_config is not None:
+            entity_names = set(fv.ordered_entity_columns)
+            return [
+                _make_fs_column(f.name, f.datatype)
+                for f in fv.realtime_config.output_schema.fields
+                if f.name not in entity_names
+            ]
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
         return [_make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields if f.name in feature_name_set]
 
@@ -730,35 +755,20 @@ class FeatureViewSpecBuilder:
 
             is_secondary_key_array = agg_spec.function.is_secondary_key_array()
 
-            # Determine output column type based on aggregation function.
-            if is_secondary_key_array:
-                output_col = FSColumn(
-                    name=agg_spec.output_column,
-                    type="ArrayType",
-                    element_type=source_col.type,
-                )
-            else:
-                predetermined = _AGG_PREDETERMINED_OUTPUT.get(agg_spec.function)
-                if predetermined is not None:
-                    output_col = FSColumn(
-                        name=agg_spec.output_column,
-                        type=predetermined.type,
-                        precision=predetermined.precision,
-                        scale=predetermined.scale,
-                        length=predetermined.length,
-                        timezone=predetermined.timezone,
-                    )
-                else:
-                    # SUM, MIN, MAX, LAST_N, etc. preserve source column type
-                    # including precision/scale/length/timezone.
-                    output_col = FSColumn(
-                        name=agg_spec.output_column,
-                        type=source_col.type,
-                        precision=source_col.precision,
-                        scale=source_col.scale,
-                        length=source_col.length,
-                        timezone=source_col.timezone,
-                    )
+            # On a secondary-key FV every per-feature value is served as one
+            # element per SK bucket; the server reads output_column.type as the
+            # COALESCE fallback for array_agg(...)
+            type_template: FSColumn = _AGG_PREDETERMINED_OUTPUT.get(agg_spec.function) or source_col
+            output_is_array = bool(self._secondary_key_columns) or agg_spec.function.is_list()
+            output_col = FSColumn(
+                name=agg_spec.output_column,
+                type="ArrayType" if output_is_array else type_template.type,
+                element_type=type_template.type if output_is_array else None,
+                precision=type_template.precision,
+                scale=type_template.scale,
+                length=type_template.length,
+                timezone=type_template.timezone,
+            )
 
             # interval_to_seconds() returns -1 as a sentinel for lifetime
             # windows.  Convert non-positive values to None so they are
@@ -972,8 +982,8 @@ class FeatureViewSpecBuilder:
 
         RealtimeFeatureView rules:
           - No offline configs (computed at request time)
-          - Exactly 1 Request source plus at least 1 Features source;
-            no Stream/Batch
+          - At least 1 Features source; at most 1 Request source (when
+            present, it must be at position 0); no Stream/Batch
           - UDF required; features are derived from its output_columns
           - No aggregation (no agg_method, no granularity_sec, no agg features)
           - No timestamp_field
@@ -991,22 +1001,19 @@ class FeatureViewSpecBuilder:
             raise ValueError("RealtimeFeatureView must not have offline configs")
 
         request_count = source_types.count(SourceType.REQUEST)
-        if request_count != 1:
-            raise ValueError(f"RealtimeFeatureView requires exactly 1 Request source, got {request_count}")
+        if request_count > 1:
+            raise ValueError(f"RealtimeFeatureView allows at most 1 Request source, got {request_count}")
         if SourceType.STREAM in source_types:
             raise ValueError("RealtimeFeatureView must not have Stream sources")
         if SourceType.BATCH in source_types:
             raise ValueError("RealtimeFeatureView must not have Batch sources")
-        if self._sources[0].source_type != SourceType.REQUEST:
+        if request_count == 1 and self._sources[0].source_type != SourceType.REQUEST:
             raise ValueError(
                 "RealtimeFeatureView requires the Request source to be first in "
                 "sources[] (its data is bound to the UDF's first positional argument)."
             )
         if source_types.count(SourceType.FEATURES) < 1:
-            raise ValueError(
-                "RealtimeFeatureView requires at least 1 Features source "
-                "(an upstream FeatureView) in addition to the Request source."
-            )
+            raise ValueError("RealtimeFeatureView requires at least 1 Features source (an upstream FeatureView).")
 
         if self._udf is None:
             raise ValueError("RealtimeFeatureView requires a UDF")
@@ -1124,6 +1131,28 @@ class FeatureViewSpecBuilder:
             raise ValueError(
                 f"Unsupported aggregation(s) for Postgres online store: {names}. " f"Supported aggregations: {allowed}"
             )
+
+    def _validate_pg_source_types(self, features: list[Feature]) -> None:
+        """Reject APPROX_COUNT_DISTINCT on non-STRING columns for PG online store.
+
+        This runs after feature resolution so that source column types are
+        available.  Only fires for spec-builder invocations (Postgres OFT).
+
+        Args:
+            features: Resolved spec-internal Feature models.
+
+        Raises:
+            ValueError: If an APPROX_COUNT_DISTINCT feature uses a non-STRING
+                source column.
+        """
+        for feat in features:
+            if feat.function == AggregationType.APPROX_COUNT_DISTINCT.value:
+                if feat.source_column.type != "StringType":
+                    raise ValueError(
+                        f"APPROX_COUNT_DISTINCT on column '{feat.source_column.name}' "
+                        f"(type {feat.source_column.type}) is not supported for Postgres "
+                        f"online store. Only STRING/TEXT source columns are allowed."
+                    )
 
     def _validate_source_fields(self) -> None:
         """Validate that each source has the correct fields for its type."""
