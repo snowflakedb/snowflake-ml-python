@@ -802,12 +802,16 @@ class FeatureViewConversionTest(absltest.TestCase):
         feature_names: Optional[list[str]] = None,
         output_schema: Optional[StructType] = None,
     ) -> mock.MagicMock:
-        """Create a mock FeatureView with SqlIdentifier names and real StructType."""
+        """Create a mock non-tiled FeatureView with SqlIdentifier names and real StructType."""
         from snowflake.ml.feature_store.feature_view import FeatureView
 
         fv = mock.MagicMock(spec=FeatureView)
         fv.name = SqlIdentifier(name)
         fv.version = version
+        # MagicMock's auto-mock would make these truthy and route through the wrong branch.
+        fv.realtime_config = None
+        fv.is_tiled = False
+        fv.aggregation_specs = None
         fv.feature_names = [SqlIdentifier(n) for n in (feature_names or ["SCORE", "RISK"])]
         fv.output_schema = output_schema or StructType(
             [
@@ -891,6 +895,171 @@ class FeatureViewConversionTest(absltest.TestCase):
 
         source = FeatureViewSpecBuilder._convert_feature_view_slice(fvs)
         self.assertEqual([c.name for c in source.columns], ["RISK", "SCORE"])
+
+
+# ============================================================================
+# Tiled FeatureView Conversion Tests
+# ============================================================================
+
+
+class TiledFeatureViewConversionTest(absltest.TestCase):
+    """Tests for ``_columns_from_feature_view`` when the upstream FV is tiled."""
+
+    @staticmethod
+    def _make_tiled_fv(
+        *,
+        aggregation_specs: list[AggregationSpec],
+        output_schema: StructType,
+        name: str = "tiled_fv",
+        version: str = "v1",
+    ) -> mock.MagicMock:
+        """Build a mock tiled FeatureView with the given agg specs and tile schema."""
+        from snowflake.ml.feature_store.feature_view import FeatureView
+
+        fv = mock.MagicMock(spec=FeatureView)
+        fv.name = SqlIdentifier(name)
+        fv.version = version
+        fv.realtime_config = None
+        fv.is_tiled = True
+        fv.aggregation_specs = aggregation_specs
+        fv.output_schema = output_schema
+        fv.feature_names = [SqlIdentifier(s.output_column) for s in aggregation_specs]
+        return fv
+
+    @staticmethod
+    def _tile_schema_for_amount() -> StructType:
+        """Schema of the tile DT for aggregations on a NUMBER(38,4) AMOUNT column."""
+        return StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+                StructField("_PARTIAL_SUM_SQ_AMOUNT", DecimalType(38, 4)),
+                StructField("_PARTIAL_MIN_AMOUNT", DecimalType(38, 4)),
+                StructField("_PARTIAL_MAX_AMOUNT", DecimalType(38, 4)),
+            ]
+        )
+
+    def test_predetermined_count_output_type(self) -> None:
+        """COUNT outputs DecimalType(18, 0) regardless of source column type."""
+        spec = AggregationSpec(
+            function=AggregationType.COUNT,
+            source_column="AMOUNT",
+            window="1d",
+            output_column="AMOUNT_COUNT_1D",
+        )
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=self._tile_schema_for_amount())
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual(len(cols), 1)
+        self.assertEqual(cols[0].name, "AMOUNT_COUNT_1D")
+        self.assertEqual(cols[0].type, "DecimalType")
+        self.assertEqual(cols[0].precision, 18)
+        self.assertEqual(cols[0].scale, 0)
+
+    def test_predetermined_avg_std_var_output_type(self) -> None:
+        """AVG/STD/VAR all produce DoubleType."""
+        specs = [
+            AggregationSpec(AggregationType.AVG, "AMOUNT", "1d", "AMOUNT_AVG_1D"),
+            AggregationSpec(AggregationType.STD, "AMOUNT", "1d", "AMOUNT_STD_1D"),
+            AggregationSpec(AggregationType.VAR, "AMOUNT", "1d", "AMOUNT_VAR_1D"),
+        ]
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=self._tile_schema_for_amount())
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["AMOUNT_AVG_1D", "AMOUNT_STD_1D", "AMOUNT_VAR_1D"])
+        for col in cols:
+            self.assertEqual(col.type, "DoubleType")
+
+    def test_sum_preserves_source_type(self) -> None:
+        """SUM inherits the precision/scale from `_PARTIAL_SUM_<src>`."""
+        spec = AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D")
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=self._tile_schema_for_amount())
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual(len(cols), 1)
+        self.assertEqual(cols[0].name, "AMOUNT_SUM_1D")
+        self.assertEqual(cols[0].type, "DecimalType")
+        self.assertEqual(cols[0].precision, 38)
+        self.assertEqual(cols[0].scale, 4)
+
+    def test_min_max_preserve_source_type(self) -> None:
+        """MIN/MAX inherit type from their `_PARTIAL_MIN_<src>` / `_PARTIAL_MAX_<src>`."""
+        specs = [
+            AggregationSpec(AggregationType.MIN, "AMOUNT", "1d", "AMOUNT_MIN_1D"),
+            AggregationSpec(AggregationType.MAX, "AMOUNT", "1d", "AMOUNT_MAX_1D"),
+        ]
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=self._tile_schema_for_amount())
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["AMOUNT_MIN_1D", "AMOUNT_MAX_1D"])
+        for col in cols:
+            self.assertEqual(col.type, "DecimalType")
+            self.assertEqual(col.precision, 38)
+            self.assertEqual(col.scale, 4)
+
+    def test_secondary_key_array_filtered_out(self) -> None:
+        """``_SECONDARY_KEY_ARRAY`` aggs are internal-only and excluded from the output columns."""
+        specs = [
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+            AggregationSpec(
+                function=AggregationType._SECONDARY_KEY_ARRAY,
+                source_column="MERCHANT",
+                window="1d",
+                output_column="_INTERNAL_MERCHANT_ARR",
+            ),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema)
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D"])
+
+    def test_slice_over_tiled_feature_view(self) -> None:
+        """``_convert_feature_view_slice`` selects logical agg outputs in slice order."""
+        from snowflake.ml.feature_store.feature_view import FeatureViewSlice
+
+        specs = [
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+            AggregationSpec(AggregationType.COUNT, "AMOUNT", "1d", "AMOUNT_COUNT_1D"),
+            AggregationSpec(AggregationType.MAX, "AMOUNT", "1d", "AMOUNT_MAX_1D"),
+        ]
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=self._tile_schema_for_amount())
+
+        fvs = mock.MagicMock(spec=FeatureViewSlice)
+        fvs.feature_view_ref = fv
+        fvs.names = [SqlIdentifier("AMOUNT_MAX_1D"), SqlIdentifier("AMOUNT_SUM_1D")]
+
+        source = FeatureViewSpecBuilder._convert_feature_view_slice(fvs)
+
+        self.assertEqual([c.name for c in source.columns], ["AMOUNT_MAX_1D", "AMOUNT_SUM_1D"])
+        self.assertEqual(source.columns[0].type, "DecimalType")
+        self.assertEqual(source.columns[1].type, "DecimalType")
+
+    def test_missing_partial_column_raises(self) -> None:
+        """Source-preserving aggs raise a clear error if their `_PARTIAL_*` is absent."""
+        spec = AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D")
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=schema)
+
+        with self.assertRaisesRegex(ValueError, "_PARTIAL_SUM_AMOUNT"):
+            FeatureViewSpecBuilder._columns_from_feature_view(fv)
 
 
 # ============================================================================

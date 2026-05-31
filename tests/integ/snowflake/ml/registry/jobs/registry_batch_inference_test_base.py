@@ -205,11 +205,10 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                 the class default.
 
         Returns:
-            True if the bundle is fully set, False if fully unset.
+            True if any env var in the bundle is set, False if none are set.
 
         Raises:
-            ValueError: If the chosen mode's env vars are only partially set, or if ``mode`` (or
-                ``self._BATCH_IMAGE_OVERRIDE_MODE`` when ``mode`` is None) is not a known value.
+            ValueError: If ``mode`` is not a known value.
         """
         effective_mode = mode if mode is not None else self._BATCH_IMAGE_OVERRIDE_MODE
 
@@ -223,17 +222,11 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                 self.VLLM_IMAGE_PATH,
             ]
 
-            all_set = all(path is not None for path in image_paths)
-            all_unset = all(path is None for path in image_paths)
-
-            if not all_set and not all_unset:
-                raise ValueError(
-                    "Please set or unset all batch inference image override environment variables at the same time: "
-                    "BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, "
-                    "RAY_ORCHESTRATOR_PATH, PROXY_IMAGE_PATH, and VLLM_IMAGE_PATH."
+            if any(image_paths) and not all(image_paths):
+                logger.warning(
+                    "Partial image override for mode %r. Set: %s", effective_mode, [p for p in image_paths if p]
                 )
-
-            return all_set
+            return any(image_paths)
 
         if effective_mode == "pip_only_batch":
             image_paths = [
@@ -242,14 +235,11 @@ class RegistryBatchInferenceTestBase(registry_spcs_test_base.RegistrySPCSTestBas
                 self.BASE_BATCH_GPU_IMAGE_PATH,
                 self.MODEL_LOGGER_PATH,
             ]
-            if all(image_paths):
-                return True
-            if not any(image_paths):
-                return False
-            raise ValueError(
-                "Please set or unset BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, "
-                "BASE_BATCH_GPU_IMAGE_PATH, and MODEL_LOGGER_PATH at the same time."
-            )
+            if any(image_paths) and not all(image_paths):
+                logger.warning(
+                    "Partial image override for mode %r. Set: %s", effective_mode, [p for p in image_paths if p]
+                )
+            return any(image_paths)
 
         raise ValueError(f"Unknown batch image override mode: {effective_mode!r}")
 

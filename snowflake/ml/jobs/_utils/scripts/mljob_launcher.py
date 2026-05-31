@@ -230,8 +230,8 @@ def save_mljob_result_v1(value: Any, is_error: bool, path: str) -> None:
     try:
         # Serialize result to JSON as fallback path in case of cross version incompatibility
         result_json_path = os.path.splitext(path)[0] + ".json"
-        with open(result_json_path, "w") as f:
-            json.dump(result_dict, f, indent=2, cls=SimpleJSONEncoder)
+        with open(result_json_path, "w") as f:  # type: ignore[assignment]
+            json.dump(result_dict, f, indent=2, cls=SimpleJSONEncoder)  # type: ignore[arg-type]
     except Exception as json_exc:
         logger.warning(f"Failed to serialize JSON result to {result_json_path}: {json_exc}")
 

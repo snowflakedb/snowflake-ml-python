@@ -1,6 +1,7 @@
 """Unit tests for stream_config module."""
 
 import datetime
+from typing import Any
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -81,6 +82,14 @@ def transform_with_copy(df: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def transform_with_dataclasses(df: pd.DataFrame) -> pd.DataFrame:
+    """A valid transformation using dataclasses (allowed module)."""
+    import dataclasses
+
+    df["is_dc"] = [dataclasses.is_dataclass(x) for x in df["amount"]]
+    return df
+
+
 # ============================================================================
 # StreamConfig validation tests
 # ============================================================================
@@ -147,6 +156,15 @@ class StreamConfigValidationTest(parameterized.TestCase):
             backfill_df=self._mock_df(),
         )
         self.assertIn("copy", config.get_function_source())
+
+    def test_valid_with_dataclasses(self) -> None:
+        """Test that dataclasses imports are allowed."""
+        config = StreamConfig(
+            stream_source="src",
+            transformation_fn=transform_with_dataclasses,
+            backfill_df=self._mock_df(),
+        )
+        self.assertIn("dataclasses", config.get_function_source())
 
     def test_reject_lambda(self) -> None:
         """Test that lambdas are rejected."""
@@ -231,6 +249,104 @@ class StreamConfigValidationTest(parameterized.TestCase):
         )
         with self.assertRaises(AttributeError):
             config.stream_source = "other"  # type: ignore[misc]
+
+
+class StreamConfigSchemaCompatibilityTest(absltest.TestCase):
+    """Tests for opportunistic StreamSource vs backfill_df schema compatibility check."""
+
+    def _make_stream_source(self) -> Any:
+        from snowflake.ml.feature_store.stream_source import StreamSource
+        from snowflake.snowpark.types import StructField, StructType
+
+        return StreamSource(
+            name="txn_events",
+            schema=StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("AMOUNT", DoubleType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                ]
+            ),
+        )
+
+    def _backfill_with_schema(self, schema: Any) -> MagicMock:
+        from snowflake.snowpark.types import StructType as _StructType
+
+        assert isinstance(schema, _StructType)
+        df = MagicMock()
+        df.schema = schema
+        return df
+
+    def test_matching_object_form_passes(self) -> None:
+        from snowflake.snowpark.types import StructField, StructType
+
+        backfill_df = self._backfill_with_schema(
+            StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("AMOUNT", DoubleType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                ]
+            )
+        )
+        StreamConfig(
+            stream_source=self._make_stream_source(),
+            transformation_fn=valid_transform,
+            backfill_df=backfill_df,
+        )
+
+    def test_missing_column_object_form_rejected(self) -> None:
+        from snowflake.snowpark.types import StructField, StructType
+
+        backfill_df = self._backfill_with_schema(
+            StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("EVENT_TIME", TimestampType()),
+                ]
+            )
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            r"streaming feature view: backfill_df is missing column 'AMOUNT'",
+        ):
+            StreamConfig(
+                stream_source=self._make_stream_source(),
+                transformation_fn=valid_transform,
+                backfill_df=backfill_df,
+            )
+
+    def test_type_mismatch_object_form_rejected(self) -> None:
+        from snowflake.snowpark.types import StructField, StructType
+
+        backfill_df = self._backfill_with_schema(
+            StructType(
+                [
+                    StructField("USER_ID", StringType()),
+                    StructField("AMOUNT", StringType()),  # should be DoubleType
+                    StructField("EVENT_TIME", TimestampType()),
+                ]
+            )
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'AMOUNT' has type StringType but "
+            r"StreamSource 'TXN_EVENTS' declares column 'AMOUNT' with type DoubleType",
+        ):
+            StreamConfig(
+                stream_source=self._make_stream_source(),
+                transformation_fn=valid_transform,
+                backfill_df=backfill_df,
+            )
+
+    def test_string_form_skips_check(self) -> None:
+        """When stream_source is just a name string, schema check is deferred to registration."""
+        # Use a plain MagicMock backfill_df — no schema set; the check must not fire.
+        StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=valid_transform,
+            backfill_df=MagicMock(),
+        )
 
 
 # ============================================================================

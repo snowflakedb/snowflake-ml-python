@@ -69,7 +69,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
         model_blobs_dir_path: str,
         sample_input_data: Optional[model_types.SupportedDataType] = None,
         is_sub_model: Optional[bool] = False,
-        **kwargs: Unpack[model_types.TensorflowSaveOptions],
+        **kwargs: Unpack[model_types.KerasSaveOptions],
     ) -> None:
         enable_explainability = kwargs.get("enable_explainability", False)
         if enable_explainability:
@@ -154,7 +154,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
         name: str,
         model_meta: model_meta_api.ModelMetadata,
         model_blobs_dir_path: str,
-        **kwargs: Unpack[model_types.TensorflowLoadOptions],
+        **kwargs: Unpack[model_types.KerasLoadOptions],
     ) -> "keras.Model":
         import keras
 
@@ -177,7 +177,7 @@ class KerasHandler(_base.BaseModelHandler["keras.Model"]):
         raw_model: "keras.Model",
         model_meta: model_meta_api.ModelMetadata,
         background_data: Optional[pd.DataFrame] = None,
-        **kwargs: Unpack[model_types.TensorflowLoadOptions],
+        **kwargs: Unpack[model_types.KerasLoadOptions],
     ) -> custom_model.CustomModel:
 
         from snowflake.ml.model import custom_model

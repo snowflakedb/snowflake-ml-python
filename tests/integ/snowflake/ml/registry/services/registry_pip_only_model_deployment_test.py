@@ -13,7 +13,7 @@ from tests.integ.snowflake.ml.registry.services import (
 )
 
 # Python versions supported by the base image's cached standalone tarballs (dockerfile_template_pip path).
-PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12")
+PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13")
 
 
 class PipOnlyModel(custom_model.CustomModel):
@@ -207,7 +207,7 @@ class TestRegistryPipOnlyModelDeploymentInteg(
 
     @parameterized.parameters(*PIP_ONLY_PYTHON_VERSIONS)  # type: ignore[misc]
     def test_pip_only_model_python_versions(self, py_ver: str) -> None:
-        """E2E test: deploy a pip-only model with each supported Python version (3.10, 3.11, 3.12).
+        """E2E test: deploy a pip-only model with each supported Python version (3.10, 3.11, 3.12, 3.13).
 
         Verifies:
         1. Model runs with the correct Python version

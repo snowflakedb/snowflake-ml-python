@@ -1,6 +1,6 @@
 import pandas as pd
-import xgboost as xgb
 from absl.testing import absltest
+from sklearn.linear_model import LinearRegression
 
 from tests.integ.snowflake.ml.experiment._integ_test_base import (
     ExperimentTrackingIntegTestBase,
@@ -19,7 +19,7 @@ class ExperimentModelIntegTest(ExperimentTrackingIntegTestBase):
 
         self.exp.set_experiment(experiment_name=experiment_name)
         with self.exp.start_run(run_name=run_name):
-            model = xgb.XGBClassifier()
+            model = LinearRegression()
             model.fit(X, y)
             mv = self.exp.log_model(
                 model,

@@ -153,6 +153,87 @@ def _columns_from_struct_type(schema: StructType) -> list["FSColumn"]:
     return [_make_fs_column(f.name, f.datatype) for f in schema.fields]
 
 
+def _format_fs_column_type(col: "FSColumn") -> str:
+    if col.type == "DecimalType" and col.precision is not None and col.scale is not None:
+        return f"DecimalType({col.precision},{col.scale})"
+    if col.type == "StringType" and col.length is not None:
+        return f"StringType({col.length})"
+    return col.type
+
+
+def validate_fs_columns_match(
+    *,
+    expected: list["FSColumn"],
+    actual: list["FSColumn"],
+    expected_label: str,
+    actual_label: str,
+    error_prefix: str,
+) -> None:
+    """Validate that every column in ``expected`` is present in ``actual`` with a compatible type.
+
+    Names match case-insensitively. Type compatibility is governed by
+    :func:`_fs_columns_compatible`. Extra columns in ``actual`` are allowed.
+    Reports the first offending column.
+
+    Args:
+        expected: Canonical column list (e.g. from a declared schema).
+        actual: Column list to verify against ``expected``.
+        expected_label: Label for the expected schema's owner in error messages
+            (e.g. ``"StreamSource 'transaction_events'"``).
+        actual_label: Label for the actual schema's owner in error messages
+            (e.g. ``"backfill_df"``).
+        error_prefix: Domain prefix for the error message (e.g.
+            ``"streaming feature view"``).
+
+    Raises:
+        ValueError: If any expected column is missing from ``actual`` or has a
+            type that is not compatible.
+    """
+    actual_by_name = {c.name.upper(): c for c in actual}
+    for exp in expected:
+        act = actual_by_name.get(exp.name.upper())
+        if act is None:
+            raise ValueError(
+                f"{error_prefix}: {actual_label} is missing column '{exp.name}' " f"declared by {expected_label}."
+            )
+        if not _fs_columns_compatible(expected=exp, actual=act):
+            raise ValueError(
+                f"{error_prefix}: {actual_label} column '{act.name}' has type "
+                f"{_format_fs_column_type(act)} but {expected_label} declares "
+                f"column '{exp.name}' with type {_format_fs_column_type(exp)}."
+            )
+
+
+def _fs_columns_compatible(*, expected: "FSColumn", actual: "FSColumn") -> bool:
+    """Return True when ``actual`` is type-compatible with ``expected``.
+
+    ``type``, ``timezone``, and ``element_type`` always match exactly.
+    ``StringType`` length on ``expected`` is a wildcard when ``None``: Snowpark
+    can report a specific length even for unbounded ``VARCHAR`` columns, so a
+    schema declared with ``StringType()`` must accept those.
+    ``DecimalType`` precision/scale must match exactly — different scales would
+    truncate data silently.
+
+    Args:
+        expected: Declared FSColumn from the canonical schema.
+        actual: FSColumn observed in the schema being validated.
+
+    Returns:
+        True if the two columns are compatible per the rules above.
+    """
+    if expected.type != actual.type:
+        return False
+    if expected.timezone != actual.timezone:
+        return False
+    if expected.element_type != actual.element_type:
+        return False
+    if expected.type == "StringType":
+        return expected.length is None or expected.length == actual.length
+    if expected.type == "DecimalType":
+        return expected.precision == actual.precision and expected.scale == actual.scale
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Dollar-quoting sanitization
 # ---------------------------------------------------------------------------

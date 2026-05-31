@@ -286,7 +286,6 @@ py_test(
     shard_count = 1,
     tags = [
         "feature:model_serving",
-        "short_regress",
     ],
     deps = [
         ":registry_model_deployment_test_base",

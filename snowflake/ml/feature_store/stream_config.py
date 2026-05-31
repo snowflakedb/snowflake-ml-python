@@ -211,6 +211,26 @@ class StreamConfig:
         if self.backfill_df is None:
             raise ValueError("backfill_df is required.")
 
+        # When stream_source is passed as an object we have its schema here, so we can
+        # surface the mismatch at construction time. The string-form case is covered
+        # by the canonical check in run_streaming_preamble.
+        from snowflake.ml.feature_store.spec.models import (
+            _columns_from_struct_type,
+            validate_fs_columns_match,
+        )
+        from snowflake.ml.feature_store.stream_source import StreamSource
+
+        if isinstance(self.stream_source, StreamSource) and hasattr(self.backfill_df, "schema"):
+            backfill_schema = self.backfill_df.schema
+            if isinstance(backfill_schema, StructType):
+                validate_fs_columns_match(
+                    expected=_columns_from_struct_type(self.stream_source.schema),
+                    actual=_columns_from_struct_type(backfill_schema),
+                    expected_label=f"StreamSource '{self.stream_source.name}'",
+                    actual_label="backfill_df",
+                    error_prefix="streaming feature view",
+                )
+
     def get_function_source(self) -> str:
         """Return the dedented plain-text source code of ``transformation_fn``."""
         return textwrap.dedent(inspect.getsource(self.transformation_fn))

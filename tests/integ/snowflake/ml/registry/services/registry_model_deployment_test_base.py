@@ -22,6 +22,8 @@ from snowflake.ml.utils import authentication
 from tests.integ.snowflake.ml.registry import registry_spcs_test_base
 from tests.integ.snowflake.ml.test_utils import test_env_utils
 
+logger = logging.getLogger(__name__)
+
 
 class RestInferencePayloadFormat(enum.Enum):
     """JSON request body layout for ingress calls in registry deployment integ tests.
@@ -82,10 +84,7 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
         """Check if image override environment variables are set.
 
         Returns:
-            True if all image override environment variables are set, False otherwise.
-
-        Raises:
-            ValueError: If some but not all of the required variables are set.
+            True if any image override environment variable is set, False if none are set.
         """
         image_paths = [
             self.BUILDER_IMAGE_PATH,
@@ -94,15 +93,9 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
             self.MODEL_LOGGER_PATH,
         ]
 
-        if all(image_paths):
-            return True
-        elif not any(image_paths):
-            return False
-        else:
-            raise ValueError(
-                "Please set or unset BUILDER_IMAGE_PATH, BASE_CPU_IMAGE_PATH, BASE_GPU_IMAGE_PATH, "
-                "and MODEL_LOGGER_PATH at the same time."
-            )
+        if any(image_paths) and not all(image_paths):
+            logger.warning("Partial image override. Set: %s", [p for p in image_paths if p])
+        return any(image_paths)
 
     def _test_registry_model_deployment(
         self,

@@ -82,6 +82,7 @@ class TensorflowModelBlobOptions(BaseModelBlobOptions):
 
 class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
     batch_size: Required[int]
+    truncate_dim: NotRequired[int]
 
 
 class ProphetModelBlobOptions(BaseModelBlobOptions):

@@ -849,6 +849,47 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
         self.assertEqual(count_feat.output_column.precision, 18)
         self.assertEqual(count_feat.output_column.scale, 0)
 
+    def test_non_tiled_uses_materialized_schema_when_provided(self) -> None:
+        fv = self._make_feature_view(
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=134217728), StringType(length=134217728), DoubleType()],
+            entity_keys=["USER_ID"],
+        )
+        materialized = StructType(
+            [
+                StructField("USER_ID", StringType(length=16777216)),
+                StructField("DEVICE_ID", StringType(length=16777216)),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        fs = self._make_mock_feature_store()
+        spec = fs._build_batch_feature_view_spec(
+            fv,
+            SqlIdentifier("DT_NAME"),
+            "v1",
+            "30s",
+            offline_materialized_schema=materialized,
+        )
+
+        offline_cols = {c.name: c for c in spec.offline_configs[0].columns}
+        self.assertEqual(offline_cols["DEVICE_ID"].length, 16777216)
+
+        feat_by_name = {f.output_column.name: f for f in spec.spec.features}
+        self.assertEqual(feat_by_name["DEVICE_ID"].output_column.length, 16777216)
+        self.assertEqual(feat_by_name["DEVICE_ID"].source_column.length, 16777216)
+
+    def test_non_tiled_falls_back_to_output_schema_when_no_materialized(self) -> None:
+        fv = self._make_feature_view(
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=100), StringType(length=255), DoubleType()],
+            entity_keys=["USER_ID"],
+        )
+        fs = self._make_mock_feature_store()
+        spec = fs._build_batch_feature_view_spec(fv, SqlIdentifier("DT_NAME"), "v1", "30s")
+
+        offline_cols = {c.name: c for c in spec.offline_configs[0].columns}
+        self.assertEqual(offline_cols["DEVICE_ID"].length, 255)
+
     # ------------------------------------------------------------------ #
     # Tiled batch FV
     # ------------------------------------------------------------------ #
@@ -1286,6 +1327,35 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         parsed = json.loads(spec_json)
         self.assertEqual(parsed["kind"], "BatchFeatureView")
         self.assertIn("features", parsed["spec"])
+
+    def test_postgres_non_tiled_uses_materialized_dt_for_offline_columns(self) -> None:
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=134217728), StringType(length=134217728), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [
+                StructField("USER_ID", StringType(length=16777216)),
+                StructField("DEVICE_ID", StringType(length=16777216)),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        query = self._first_online_feature_table_sql(fs)
+        start = query.index("$$") + 2
+        end = query.index("$$", start)
+        parsed = json.loads(query[start:end])
+
+        offline_cols = {c["name"]: c for c in parsed["offline_configs"][0]["columns"]}
+        self.assertEqual(offline_cols["DEVICE_ID"]["length"], 16777216)
+
+        feat_by_name = {f["output_column"]["name"]: f for f in parsed["spec"]["features"]}
+        self.assertEqual(feat_by_name["DEVICE_ID"]["output_column"]["length"], 16777216)
 
     # ------------------------------------------------------------------ #
     # $$ injection guard

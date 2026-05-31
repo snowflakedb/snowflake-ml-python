@@ -278,6 +278,9 @@ from feature_store_batch_online_read_bundled import (  # noqa: E402,F401
     FeatureStoreBatchOnlineReadIntegTest,
 )
 from feature_store_feature_group_bundled import FeatureGroupIntegTest  # noqa: E402,F401
+from feature_store_oft_varchar_length_bundled import (  # noqa: E402,F401
+    FeatureStoreOftVarcharLengthIntegTest,
+)
 from feature_store_realtime_bundled import (  # noqa: E402,F401
     RealtimeFeatureViewIntegTest,
 )
@@ -291,6 +294,7 @@ from feature_store_streaming_fv_bundled import (  # noqa: E402,F401
 
 FeatureStoreBatchOnlineReadIntegTest.__module__ = __name__
 FeatureGroupIntegTest.__module__ = __name__
+FeatureStoreOftVarcharLengthIntegTest.__module__ = __name__
 RealtimeFeatureViewIntegTest.__module__ = __name__
 FeatureStoreStreamIngestIntegTest.__module__ = __name__
 FeatureStoreAppendOnlyOFTIntegTest.__module__ = __name__

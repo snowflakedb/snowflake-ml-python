@@ -152,6 +152,71 @@ _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
     AggregationType.APPROX_PERCENTILE: FSColumn(name="", type="DoubleType"),
 }
 
+# Source-preserving aggregations: output type is inherited from the corresponding
+# ``_PARTIAL_<suffix>_<src>`` tile column.
+_AGG_PARTIAL_TYPE_LOOKUP: dict[AggregationType, str] = {
+    AggregationType.SUM: "SUM",
+    AggregationType.MIN: "MIN",
+    AggregationType.MAX: "MAX",
+    AggregationType.LAST_N: "LAST",
+    AggregationType.LAST_DISTINCT_N: "LAST",
+    AggregationType.FIRST_N: "FIRST",
+    AggregationType.FIRST_DISTINCT_N: "FIRST",
+}
+
+
+def _resolve_tiled_fv_output_column(
+    spec: AggregationSpec,
+    partials_by_name: dict[str, FSColumn],
+) -> FSColumn:
+    """Resolve the FSColumn an aggregation contributes when its tiled FV is an upstream source.
+
+    Args:
+        spec: The aggregation spec from the upstream FV.
+        partials_by_name: ``_PARTIAL_*`` columns from the FV's ``output_schema``,
+            keyed by name.
+
+    Returns:
+        FSColumn for the logical output of *spec*.
+
+    Raises:
+        ValueError: If the function has no resolution rule, or its expected
+            ``_PARTIAL_*`` companion column is missing from *partials_by_name*.
+    """
+    predetermined = _AGG_PREDETERMINED_OUTPUT.get(spec.function)
+    if predetermined is not None:
+        return FSColumn(
+            name=spec.output_column,
+            type=predetermined.type,
+            precision=predetermined.precision,
+            scale=predetermined.scale,
+            length=predetermined.length,
+            timezone=predetermined.timezone,
+        )
+    partial_suffix = _AGG_PARTIAL_TYPE_LOOKUP.get(spec.function)
+    if partial_suffix is None:
+        raise ValueError(
+            f"Cannot resolve output type for tiled feature view aggregation "
+            f"'{spec.output_column}' (function={spec.function.value})."
+        )
+    partial_name = spec.get_tile_column_name(partial_suffix)
+    partial = partials_by_name.get(partial_name)
+    if partial is None:
+        raise ValueError(
+            f"Cannot resolve output type for tiled feature view aggregation "
+            f"'{spec.output_column}': expected tile column '{partial_name}' was "
+            f"not found in the feature view's schema."
+        )
+    return FSColumn(
+        name=spec.output_column,
+        type=partial.type,
+        precision=partial.precision,
+        scale=partial.scale,
+        length=partial.length,
+        timezone=partial.timezone,
+    )
+
+
 # Type alias for the polymorphic source input
 SourceInput = Union[StreamSource, RequestSource, "FeatureView", "FeatureViewSlice", BatchSource]
 
@@ -616,6 +681,10 @@ class FeatureViewSpecBuilder:
         drops the FG's superset primary key from this list before emitting
         spec features.
 
+        For tiled FVs the columns are derived from ``aggregation_specs`` because
+        ``output_schema`` exposes ``_PARTIAL_*`` tile columns, not the FV's logical
+        aggregation outputs.
+
         Args:
             fv: The FeatureView whose feature columns to extract.
 
@@ -628,6 +697,13 @@ class FeatureViewSpecBuilder:
                 _make_fs_column(f.name, f.datatype)
                 for f in fv.realtime_config.output_schema.fields
                 if f.name not in entity_names
+            ]
+        if fv.is_tiled and fv.aggregation_specs is not None:
+            partials_by_name = {f.name: _make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
+            return [
+                _resolve_tiled_fv_output_column(spec, partials_by_name)
+                for spec in fv.aggregation_specs
+                if not spec.function.is_secondary_key_array()
             ]
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
         return [_make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields if f.name in feature_name_set]

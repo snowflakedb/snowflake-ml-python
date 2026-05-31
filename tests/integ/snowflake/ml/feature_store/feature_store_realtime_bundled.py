@@ -25,10 +25,14 @@ from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest
-from feature_store_streaming_fv_integ_base import StreamingFeatureViewIntegTestBase
+from feature_store_streaming_fv_integ_base import (
+    StreamingFeatureViewIntegTestBase,
+    identity_transform,
+)
 
 from snowflake.ml._internal.exceptions import exceptions as snowml_exceptions
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewStatus,
@@ -37,6 +41,7 @@ from snowflake.ml.feature_store.feature_view import (
 )
 from snowflake.ml.feature_store.realtime_config import RealtimeConfig
 from snowflake.ml.feature_store.request_source import RequestSource
+from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
@@ -112,6 +117,27 @@ def _rtfv_no_request_compute_fn(balance_df: pd.DataFrame) -> pd.DataFrame:
     """
     balance = balance_df["BALANCE"].fillna(0.0).reset_index(drop=True)
     return pd.DataFrame({"DOUBLED_BALANCE": balance * 2.0})
+
+
+# Fixed alias names for tiled-upstream tests so the compute_fn can reference them by name.
+_TILED_SUM_COL = "AMOUNT_SUM_1D"
+_TILED_MAX_COL = "AMOUNT_MAX_1D"
+_TILED_COUNT_COL = "AMOUNT_COUNT_1D"
+
+
+def _rtfv_tiled_upstream_compute_fn(request_df: pd.DataFrame, agg_df: pd.DataFrame) -> pd.DataFrame:
+    """RTFV ``compute_fn`` over a tiled-FV upstream.
+
+    Args:
+        request_df: Request payload with ``WEIGHT``.
+        agg_df: Upstream tiled FV rows exposing ``AMOUNT_SUM_1D``, row-aligned.
+
+    Returns:
+        DataFrame with ``WEIGHTED_SUM = AMOUNT_SUM_1D * WEIGHT``, row-aligned.
+    """
+    weight = request_df["WEIGHT"].astype(float).reset_index(drop=True)
+    upstream_sum = agg_df["AMOUNT_SUM_1D"].fillna(0.0).astype(float).reset_index(drop=True)
+    return pd.DataFrame({"WEIGHTED_SUM": upstream_sum * weight})
 
 
 class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase):
@@ -258,6 +284,136 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         )
         self.fs.register_feature_view(fv, "v1")
         return fv_name, src_table
+
+    def _register_postgres_tiled_sfv(self, *, suffix: str) -> tuple[str, str]:
+        """Register a tiled streaming FV (PG online) with SUM/MAX/COUNT aggs over AMOUNT.
+
+        Args:
+            suffix: Short label embedded in the FV / stream / table names.
+
+        Returns:
+            Tuple of ``(fv_name, seeded_user_id)``. ``seeded_user_id`` matches a row
+            in the backfill table.
+        """
+        s = uuid.uuid4().hex[:8]
+        # StreamSource has a 32-char name limit.
+        stream_name = f"RT_TS_{suffix}_{s}"
+        fv_name = f"RTFV_INTEG_TILED_SFV_{suffix}_{s}"
+        seeded_user_id = "u1"  # `_create_backfill_table` seeds u1/u2/u3.
+
+        self._make_stream_source(self.fs, stream_name)
+        backfill_table = self._create_backfill_table(self.fs, suffix=f"{suffix}_{s}")
+        backfill_df = self._session.table(backfill_table)
+
+        stream_config = StreamConfig(
+            stream_source=stream_name,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        features = [
+            Feature.sum("AMOUNT", "1d").alias(_TILED_SUM_COL),
+            Feature.max("AMOUNT", "1d").alias(_TILED_MAX_COL),
+            Feature.count("AMOUNT", "1d").alias(_TILED_COUNT_COL),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.is_tiled)
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        return fv_name, seeded_user_id
+
+    def _register_postgres_tiled_bfv(self, *, suffix: str) -> tuple[str, str]:
+        """Register a tiled batch FV (PG online) with SUM/MAX/COUNT aggs over AMOUNT.
+
+        Args:
+            suffix: Short label embedded in the FV / source-table names.
+
+        Returns:
+            Tuple of ``(fv_name, seeded_user_id)``. ``seeded_user_id`` matches a row
+            in the source table.
+        """
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"RTFV_INTEG_TILED_BFV_{suffix}_{s}"
+        seeded_user_id = f"U_BTILED_{suffix}_{s}"
+        src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.RTFV_BTILED_SRC_{suffix}_{s}"
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AMOUNT FLOAT
+            )
+            """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table}
+            SELECT column1, column2, column3
+            FROM VALUES
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 1, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    10.0
+                ),
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 2, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    20.0
+                ),
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 3, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    30.0
+                )
+            """
+        ).collect()
+        feature_df = self._session.table(src_table)
+
+        features = [
+            Feature.sum("AMOUNT", "1d").alias(_TILED_SUM_COL),
+            Feature.max("AMOUNT", "1d").alias(_TILED_MAX_COL),
+            Feature.count("AMOUNT", "1d").alias(_TILED_COUNT_COL),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.is_tiled)
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        return fv_name, seeded_user_id
 
     def _wait_until_rtfv_read_returns_rows(
         self,
@@ -671,6 +827,93 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             weighted_col = next(c for c in pdf.columns if c.upper() == "WEIGHTED_BALANCE")
             self.assertEqual(pdf.iloc[0][user_col], missing_user)
             self.assertAlmostEqual(float(pdf.iloc[0][weighted_col]), 0.0, places=4)
+        finally:
+            self.fs.delete_feature_view(rtfv_name, version)
+
+    # ----- tiled-FV upstream cases ---------------------------------------
+
+    def test_realtime_feature_view_with_tiled_sfv_upstream_round_trip(self) -> None:
+        """register -> get -> delete for an RTFV whose upstream is a tiled streaming FV."""
+        upstream_name, _user_id = self._register_postgres_tiled_sfv(suffix="RTS")
+        upstream = self.fs.get_feature_view(upstream_name, "v1")
+
+        rtfv_name = f"RTFV_INTEG_TILED_SFV_{uuid.uuid4().hex[:8].upper()}"
+        realtime_config = RealtimeConfig(
+            compute_fn=_rtfv_tiled_upstream_compute_fn,
+            sources=[self._make_request_source(), upstream],
+            output_schema=StructType([StructField("WEIGHTED_SUM", DoubleType())]),
+        )
+        rtfv = FeatureView(name=rtfv_name, entities=[self.user_entity], realtime_config=realtime_config)
+
+        version = "v1"
+        try:
+            registered = self.fs.register_feature_view(rtfv, version)
+            self.assertTrue(registered.is_realtime_feature_view)
+            self.assertEqual(str(registered.version), version)
+
+            fetched = self.fs.get_feature_view(rtfv_name, version)
+            output_names = [f.name for f in fetched.realtime_config.output_schema.fields]
+            self.assertEqual(output_names, ["WEIGHTED_SUM"])
+        finally:
+            self.fs.delete_feature_view(rtfv_name, version)
+
+    def test_realtime_feature_view_with_tiled_bfv_upstream_round_trip(self) -> None:
+        """register -> get -> delete for an RTFV whose upstream is a tiled batch FV."""
+        upstream_name, _user_id = self._register_postgres_tiled_bfv(suffix="RTB")
+        upstream = self.fs.get_feature_view(upstream_name, "v1")
+
+        rtfv_name = f"RTFV_INTEG_TILED_BFV_{uuid.uuid4().hex[:8].upper()}"
+        realtime_config = RealtimeConfig(
+            compute_fn=_rtfv_tiled_upstream_compute_fn,
+            sources=[self._make_request_source(), upstream],
+            output_schema=StructType([StructField("WEIGHTED_SUM", DoubleType())]),
+        )
+        rtfv = FeatureView(name=rtfv_name, entities=[self.user_entity], realtime_config=realtime_config)
+
+        version = "v1"
+        try:
+            registered = self.fs.register_feature_view(rtfv, version)
+            self.assertTrue(registered.is_realtime_feature_view)
+            self.assertEqual(str(registered.version), version)
+
+            fetched = self.fs.get_feature_view(rtfv_name, version)
+            output_names = [f.name for f in fetched.realtime_config.output_schema.fields]
+            self.assertEqual(output_names, ["WEIGHTED_SUM"])
+        finally:
+            self.fs.delete_feature_view(rtfv_name, version)
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
+    )
+    def test_read_feature_view_realtime_with_tiled_sfv_upstream(self) -> None:
+        """``read_feature_view(rtfv, ...)`` works when the RTFV's upstream is a tiled SFV."""
+        upstream_name, user_id = self._register_postgres_tiled_sfv(suffix="RTRD")
+        upstream = self.fs.get_feature_view(upstream_name, "v1")
+
+        rtfv_name = f"RTFV_INTEG_TILED_RD_{uuid.uuid4().hex[:8].upper()}"
+        realtime_config = RealtimeConfig(
+            compute_fn=_rtfv_tiled_upstream_compute_fn,
+            sources=[self._make_request_source(), upstream],
+            output_schema=StructType([StructField("WEIGHTED_SUM", DoubleType())]),
+        )
+        rtfv = FeatureView(name=rtfv_name, entities=[self.user_entity], realtime_config=realtime_config)
+
+        version = "v1"
+        try:
+            self.fs.register_feature_view(rtfv, version)
+            rtfv_live = self.fs.get_feature_view(rtfv_name, version)
+
+            request_context = pd.DataFrame({"WEIGHT": [2.5]})
+            pdf = self._wait_until_rtfv_read_returns_rows(
+                rtfv_live,
+                keys=[[user_id]],
+                request_context=request_context,
+            )
+            self.assertEqual(len(pdf), 1)
+            actual_cols = {c.upper() for c in pdf.columns}
+            self.assertIn("USER_ID", actual_cols)
+            self.assertIn("WEIGHTED_SUM", actual_cols)
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 

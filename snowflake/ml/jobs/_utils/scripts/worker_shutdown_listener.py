@@ -8,9 +8,9 @@ import logging
 import signal
 import sys
 import time
+from types import FrameType
 from typing import Optional
 
-import get_instance_ip
 import ray
 from constants import (
     SHUTDOWN_ACTOR_NAME,
@@ -123,7 +123,7 @@ def initialize_ray_connection(max_retries: int, initial_retry_delay: int, max_re
         bool: True if connection successful, False otherwise
     """
     retry_count = 0
-    retry_delay = initial_retry_delay
+    retry_delay: float = initial_retry_delay
 
     while retry_count < max_retries:
         try:
@@ -160,7 +160,10 @@ def monitor_shutdown_signal(check_interval: int, max_consecutive_failures: int) 
     Raises:
         ConnectionError: If Ray connection failures exceed threshold
     """
-    worker_id = get_instance_ip.get_self_ip()
+    # CRITICAL: Use Ray NodeName to match what the head node expects from ray.nodes()
+    # The head node gets worker IDs via node.get("NodeName"), so we must use the same format.
+    # Using IP address (e.g., from get_instance_ip.get_self_ip()) causes ID mismatch and timeout.
+    worker_id = ray.get_runtime_context().get_node_id()
     actor_check_count = 0
     consecutive_connection_failures = 0
 
@@ -223,10 +226,10 @@ def run_listener() -> int:
     return monitor_shutdown_signal(check_interval, max_consecutive_failures)
 
 
-def main():
+def main() -> None:
     """Main entry point with signal handling"""
 
-    def signal_handler(signum, frame):
+    def signal_handler(signum: int, frame: Optional[FrameType]) -> None:
         logging.info(f"Received signal {signum}, exiting worker process.")
         sys.exit(0)
 

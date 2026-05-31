@@ -21,6 +21,7 @@ from snowflake.ml.feature_store.spec.models import (
     _columns_from_struct_type,
     _make_fs_column,
     _sanitize_json_for_dollar_quoting,
+    validate_fs_columns_match,
     validate_schema_types,
     validate_spec_oft_offline_table_schema,
 )
@@ -112,6 +113,104 @@ class ColumnsFromStructTypeTest(absltest.TestCase):
     def test_empty_schema(self) -> None:
         schema = StructType([])
         self.assertEqual(_columns_from_struct_type(schema), [])
+
+
+class ValidateFsColumnsMatchTest(absltest.TestCase):
+    """Tests for validate_fs_columns_match."""
+
+    def _validate(self, expected: list[FSColumn], actual: list[FSColumn]) -> None:
+        validate_fs_columns_match(
+            expected=expected,
+            actual=actual,
+            expected_label="StreamSource 'src'",
+            actual_label="backfill_df",
+            error_prefix="streaming feature view",
+        )
+
+    def test_exact_match(self) -> None:
+        cols = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="AMOUNT", type="DoubleType"),
+        ]
+        self._validate(cols, list(cols))
+
+    def test_case_insensitive_name_match(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="StringType")]
+        actual = [FSColumn(name="user_id", type="StringType")]
+        self._validate(expected, actual)
+
+    def test_extra_actual_columns_allowed(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="StringType")]
+        actual = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="EXTRA", type="DoubleType"),
+        ]
+        self._validate(expected, actual)
+
+    def test_missing_column(self) -> None:
+        expected = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="AMOUNT", type="DoubleType"),
+        ]
+        actual = [FSColumn(name="USER_ID", type="StringType")]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"streaming feature view: backfill_df is missing column 'AMOUNT' " r"declared by StreamSource 'src'\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_long_vs_decimal_rejected(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="LongType")]
+        actual = [FSColumn(name="USER_ID", type="DecimalType", precision=38, scale=0)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'USER_ID' has type DecimalType\(38,0\) but "
+            r"StreamSource 'src' declares column 'USER_ID' with type LongType\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_decimal_precision_scale_mismatch(self) -> None:
+        expected = [FSColumn(name="PRICE", type="DecimalType", precision=38, scale=0)]
+        actual = [FSColumn(name="PRICE", type="DecimalType", precision=38, scale=2)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"DecimalType\(38,2\).*DecimalType\(38,0\)",
+        ):
+            self._validate(expected, actual)
+
+    def test_string_length_wildcard_when_expected_length_none(self) -> None:
+        """expected.length=None acts as a wildcard — any actual length is accepted.
+
+        Snowpark may report a specific length for an unbounded SQL VARCHAR column,
+        so a StreamSource declared with ``StringType()`` must accept those columns.
+        """
+        expected = [FSColumn(name="NAME", type="StringType")]
+        actual = [FSColumn(name="NAME", type="StringType", length=255)]
+        self._validate(expected, actual)
+
+    def test_string_length_strict_when_expected_length_set(self) -> None:
+        """When expected has a length, actual must match exactly."""
+        expected = [FSColumn(name="NAME", type="StringType", length=10)]
+        actual = [FSColumn(name="NAME", type="StringType", length=255)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"StringType\(255\).*StringType\(10\)",
+        ):
+            self._validate(expected, actual)
+
+    def test_type_mismatch(self) -> None:
+        expected = [FSColumn(name="AMOUNT", type="DoubleType")]
+        actual = [FSColumn(name="AMOUNT", type="StringType")]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'AMOUNT' has type StringType but "
+            r"StreamSource 'src' declares column 'AMOUNT' with type DoubleType\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_empty_expected_passes(self) -> None:
+        actual = [FSColumn(name="X", type="StringType")]
+        self._validate([], actual)
 
 
 class SourceModelTest(absltest.TestCase):

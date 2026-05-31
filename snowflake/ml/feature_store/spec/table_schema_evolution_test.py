@@ -10,6 +10,7 @@ from snowflake.ml.feature_store.spec.table_schema_evolution import (
 )
 from snowflake.snowpark.types import (
     ArrayType,
+    BinaryType,
     BooleanType,
     DataType,
     DecimalType,
@@ -24,6 +25,7 @@ _TABLE = "DB.SCH.T"
 
 # Sample instances for identity evolution tests — must define one per entry in ``_SUPPORTED_TYPES``.
 _IDENTITY_EVOLUTION_SAMPLES: dict[type, DataType] = {
+    BinaryType: BinaryType(),
     BooleanType: BooleanType(),
     DecimalType: DecimalType(10, 2),
     DoubleType: DoubleType(),

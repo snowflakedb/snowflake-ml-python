@@ -145,11 +145,11 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )
@@ -167,6 +167,75 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                     lambda res: dataframe_utils.check_sp_df_res(res, y_df_expected, atol=1e-6),
                 ),
             },
+            additional_dependencies=["datasets>=2.15"],
+        )
+
+    def test_sentence_transformers_batch_size_and_truncate_dim_params(self) -> None:
+        """Verify batch_size and truncate_dim runtime params reach encode at inference."""
+        import sentence_transformers
+
+        from snowflake.ml.model import type_hints as model_types
+        from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
+            _supports_encode_truncate_dim_param,
+        )
+
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
+        embedding_dim = model.get_sentence_embedding_dimension()
+        self.assertIsNotNone(embedding_dim)
+        assert embedding_dim is not None
+        self.assertGreaterEqual(embedding_dim, 64)
+
+        batch_size = 2
+        runtime_truncate_dim = embedding_dim // 4
+
+        test_sentences = pd.DataFrame(
+            {
+                "sentence": [
+                    "Why don't scientists trust atoms? Because they make up everything.",
+                    "I told my wife she should embrace her mistakes. She gave me a hug.",
+                    "Im reading a book on anti-gravity. Its impossible to put down!",
+                ]
+            }
+        )
+
+        expected_default = model.encode(test_sentences["sentence"].tolist(), batch_size=batch_size)
+        expected_runtime_params = model.encode(
+            test_sentences["sentence"].tolist(),
+            batch_size=1,
+            truncate_dim=runtime_truncate_dim,
+        )
+
+        def check_default(res: pd.DataFrame) -> bool:
+            if "output" not in res.columns:
+                return False
+            actual = np.array(res["output"].tolist())
+            return actual.shape == expected_default.shape and np.allclose(actual, expected_default, atol=1e-6)
+
+        def check_runtime_params(res: pd.DataFrame) -> bool:
+            if "output" not in res.columns:
+                return False
+            actual = np.array(res["output"].tolist())
+            return actual.shape == expected_runtime_params.shape and np.allclose(
+                actual, expected_runtime_params, atol=1e-6
+            )
+
+        self._test_registry_model(
+            model=model,
+            sample_input_data=None,
+            prediction_assert_fns={
+                "encode": (test_sentences, check_default),
+            },
+            params_assert_fns={
+                "encode": (
+                    test_sentences,
+                    {"batch_size": 1, "truncate_dim": runtime_truncate_dim},
+                    check_runtime_params,
+                ),
+            },
+            options=model_types.SentenceTransformersSaveOptions(batch_size=batch_size),
             additional_dependencies=["datasets>=2.15"],
         )
 

@@ -9,6 +9,7 @@ from packaging import requirements
 
 from snowflake.ml._internal import env_utils
 from snowflake.ml.model import model_signature, openai_signatures
+from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
 
@@ -109,17 +110,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_question_answering_pipeline(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_question_answering_pipeline,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="question-answering",
             model="distilbert/distilbert-base-cased-distilled-squad",
+            compute_pool_for_log=None,
             top_k=1,
         )
 
@@ -175,17 +169,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_question_answering_pipeline_multiple_output(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_question_answering_pipeline_multiple_output,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="question-answering",
             model="distilbert/distilbert-base-cased-distilled-squad",
+            compute_pool_for_log=None,
             top_k=3,
         )
 
@@ -245,15 +232,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_summarization_pipeline(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_summarization_pipeline,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
+        model = huggingface.TransformersPipeline(
+            task="summarization",
+            model="Falconsai/text_summarization",
+            compute_pool_for_log=None,
         )
-        import transformers
-
-        model = transformers.pipeline(task="summarization", model="Falconsai/text_summarization")
 
         x_df = pd.DataFrame(
             [
@@ -290,20 +273,13 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_table_question_answering_pipeline(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_table_question_answering_pipeline,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
         model_id = "microsoft/tapex-base-finetuned-wtq"
         # TODO: Use this model after upgrading pytorch>=2.6.0
         # model_id = "google/tapas-large-finetuned-wtq"
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="table-question-answering",
             model=model_id,
+            compute_pool_for_log=None,
         )
 
         x_df = pd.DataFrame(
@@ -560,17 +536,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_hf_pipeline_text2text_generation(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_hf_pipeline_text2text_generation,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="text2text-generation",
             model="google-t5/t5-small",
+            compute_pool_for_log=None,
         )
 
         x_df = pd.DataFrame(
@@ -592,15 +561,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_translation_pipeline(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_translation_pipeline,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
+        model = huggingface.TransformersPipeline(
+            task="translation_en_to_ja",
+            model="Mitsua/elan-mt-tiny-en-ja",
+            compute_pool_for_log=None,
         )
-        import transformers
-
-        model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")
 
         x_df = pd.DataFrame(
             [
@@ -1082,17 +1047,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_visual_question_answering_pipeline(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_visual_question_answering_pipeline,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="visual-question-answering",
             model="dandelin/vilt-b32-finetuned-vqa",
+            compute_pool_for_log=None,
         )
 
         with open("tests/integ/snowflake/ml/test_data/cat.jpeg", "rb") as f:
@@ -1237,15 +1195,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_summarization_pipeline_with_params(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_summarization_pipeline_with_params,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
+        model = huggingface.TransformersPipeline(
+            task="summarization",
+            model="Falconsai/text_summarization",
+            compute_pool_for_log=None,
         )
-        import transformers
-
-        model = transformers.pipeline(task="summarization", model="Falconsai/text_summarization")
 
         x_df = pd.DataFrame(
             [
@@ -1319,15 +1273,11 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_translation_pipeline_with_params(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_translation_pipeline_with_params,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
+        model = huggingface.TransformersPipeline(
+            task="translation_en_to_ja",
+            model="Mitsua/elan-mt-tiny-en-ja",
+            compute_pool_for_log=None,
         )
-        import transformers
-
-        model = transformers.pipeline(task="translation_en_to_ja", model="Mitsua/elan-mt-tiny-en-ja")
 
         x_df = pd.DataFrame([{"inputs": "Hello, how are you?"}])
 
@@ -1380,17 +1330,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_text2text_generation_pipeline_with_params(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_text2text_generation_pipeline_with_params,
-             because it doesn't work with transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="text2text-generation",
             model="google-t5/t5-small",
+            compute_pool_for_log=None,
         )
 
         x_df = pd.DataFrame(
@@ -1455,17 +1398,10 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_image_to_text_pipeline_with_params(self) -> None:
-        self.skipTest(
-            """SNOW-3425334: Skipping test_image_to_text_pipeline_with_params,
-             because image-to-text was removed in transformers 5.x.
-             TODO: Migrate these tests to use `TransformersPipelineModel`
-             after next image release 1.6.0"""
-        )
-        import transformers
-
-        model = transformers.pipeline(
+        model = huggingface.TransformersPipeline(
             task="image-to-text",
             model="nlpconnect/vit-gpt2-image-captioning",
+            compute_pool_for_log=None,
         )
 
         from PIL import Image

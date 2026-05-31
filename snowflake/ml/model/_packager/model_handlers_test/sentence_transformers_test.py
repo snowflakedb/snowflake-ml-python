@@ -18,7 +18,9 @@ from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     _ALLOWED_TARGET_METHODS,
     SentenceTransformerHandler,
     _auto_infer_signature,
+    _capture_model_truncate_dim,
     _get_available_default_methods,
+    _supports_encode_truncate_dim_param,
     _validate_sentence_transformers_signatures,
 )
 from snowflake.ml.model._signatures import utils as model_signature_utils
@@ -114,7 +116,12 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         embedding_dim = 384
 
         # Test encode method
-        sig = _auto_infer_signature("encode", embedding_dim, batch_size=32)
+        sig = _auto_infer_signature(
+            "encode",
+            embedding_dim,
+            batch_size=32,
+            include_truncate_dim_param=True,
+        )
         assert sig is not None  # Type narrowing for mypy
         self.assertEqual(len(sig.inputs), 1)
         self.assertEqual(sig.inputs[0].name, "sentence")
@@ -126,21 +133,40 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         self.assertEqual(sig.outputs[0]._dtype, model_signature.DataType.DOUBLE)
         self.assertEqual(sig.outputs[0]._shape, (embedding_dim,))
 
-        # Verify batch_size param is present
-        self.assertEqual(len(sig.params), 1)
+        # Verify runtime params are present
+        self.assertEqual(len(sig.params), 2)
         self.assertEqual(sig.params[0].name, "batch_size")
         assert isinstance(sig.params[0], model_signature.ParamSpec)
         self.assertEqual(sig.params[0]._dtype, model_signature.DataType.INT64)
         self.assertEqual(sig.params[0].default_value, 32)
+        self.assertEqual(sig.params[1].name, "truncate_dim")
+        assert isinstance(sig.params[1], model_signature.ParamSpec)
+        self.assertEqual(sig.params[1]._dtype, model_signature.DataType.INT64)
+        self.assertEqual(sig.params[1].default_value, None)
 
-        # Test custom batch_size default
-        sig_custom = _auto_infer_signature("encode", embedding_dim, batch_size=64)
-        assert sig_custom is not None
-        self.assertEqual(sig_custom.params[0].default_value, 64)
+        sig_batch_only = _auto_infer_signature("encode", embedding_dim, batch_size=32)
+        assert sig_batch_only is not None
+        self.assertEqual(len(sig_batch_only.params), 1)
+
+        sig_custom_batch_size = _auto_infer_signature(
+            "encode",
+            embedding_dim,
+            batch_size=64,
+            include_truncate_dim_param=True,
+        )
+        assert sig_custom_batch_size is not None
+        self.assertEqual(sig_custom_batch_size.params[0].default_value, 64)
+        self.assertEqual(sig_custom_batch_size.outputs[0]._shape, (embedding_dim,))
+        self.assertIsNone(sig_custom_batch_size.params[1].default_value)
 
         # Test all allowed methods
         for method in _ALLOWED_TARGET_METHODS:
-            method_sig = _auto_infer_signature(method, embedding_dim, batch_size=32)
+            method_sig = _auto_infer_signature(
+                method,
+                embedding_dim,
+                batch_size=32,
+                include_truncate_dim_param=True,
+            )
             self.assertIsNotNone(method_sig, f"Should infer signature for {method}")
 
         # Test unsupported method returns None
@@ -351,11 +377,19 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
 
             # Verify batch_size param is present with default value
-            self.assertEqual(len(sig.params), 1)
-            self.assertEqual(sig.params[0].name, "batch_size")
-            assert isinstance(sig.params[0], model_signature.ParamSpec)
-            self.assertEqual(sig.params[0]._dtype, model_signature.DataType.INT64)
-            self.assertEqual(sig.params[0].default_value, 32)
+            batch_size_param = next(p for p in sig.params if p.name == "batch_size")
+            assert isinstance(batch_size_param, model_signature.ParamSpec)
+            self.assertEqual(batch_size_param._dtype, model_signature.DataType.INT64)
+            self.assertEqual(batch_size_param.default_value, 32)
+
+            if _supports_encode_truncate_dim_param():
+                self.assertEqual(len(sig.params), 2)
+                truncate_dim_param = next(p for p in sig.params if p.name == "truncate_dim")
+                assert isinstance(truncate_dim_param, model_signature.ParamSpec)
+                self.assertEqual(truncate_dim_param._dtype, model_signature.DataType.INT64)
+                self.assertIsNone(truncate_dim_param.default_value)
+            else:
+                self.assertEqual(len(sig.params), 1)
 
             # Test that the model works correctly with auto-inferred signature
             pk.load(as_custom_model=True)
@@ -1025,10 +1059,15 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             assert pk.meta is not None
 
             sig = pk.meta.signatures["encode"]
-            self.assertEqual(len(sig.params), 1)
-            self.assertEqual(sig.params[0].name, "batch_size")
-            assert isinstance(sig.params[0], model_signature.ParamSpec)
-            self.assertEqual(sig.params[0].default_value, 64)
+            expected_param_count = 2 if _supports_encode_truncate_dim_param() else 1
+            self.assertEqual(len(sig.params), expected_param_count)
+            batch_size_param = next(p for p in sig.params if p.name == "batch_size")
+            assert isinstance(batch_size_param, model_signature.ParamSpec)
+            self.assertEqual(batch_size_param.default_value, 64)
+            if _supports_encode_truncate_dim_param():
+                truncate_dim_param = next(p for p in sig.params if p.name == "truncate_dim")
+                assert isinstance(truncate_dim_param, model_signature.ParamSpec)
+                self.assertIsNone(truncate_dim_param.default_value)
 
     def test_batch_size_param_explicit_signature_no_injection(self) -> None:
         """Test that explicit signatures do NOT get batch_size param injected."""
@@ -1077,8 +1116,6 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_explicit_signature_paramspec_precedence(self) -> None:
         """Test that a ParamSpec default in explicit signatures takes precedence over blob options."""
-        import inspect
-
         model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
@@ -1112,12 +1149,11 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
             pk.load(as_custom_model=True)
             assert pk.model is not None
+            assert pk.meta is not None
 
-            encode_method = getattr(pk.model, "encode", None)
-            assert callable(encode_method)
-
-            fn_sig = inspect.signature(encode_method)
-            self.assertEqual(fn_sig.parameters["batch_size"].default, paramspec_batch_size)
+            batch_size_param = next(p for p in pk.meta.signatures["encode"].params if p.name == "batch_size")
+            assert isinstance(batch_size_param, model_signature.ParamSpec)
+            self.assertEqual(batch_size_param.default_value, paramspec_batch_size)
 
     def test_batch_size_param_runtime_override(self) -> None:
         """Test that the inference method respects a non-default batch_size kwarg."""
@@ -1163,10 +1199,220 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             assert pk.meta is not None
 
             sig = pk.meta.signatures["encode"]
-            self.assertEqual(len(sig.params), 1)
-            self.assertEqual(sig.params[0].name, "batch_size")
-            assert isinstance(sig.params[0], model_signature.ParamSpec)
-            self.assertEqual(sig.params[0].default_value, 16)
+            expected_param_count = 2 if _supports_encode_truncate_dim_param() else 1
+            self.assertEqual(len(sig.params), expected_param_count)
+            batch_size_param = next(p for p in sig.params if p.name == "batch_size")
+            self.assertEqual(batch_size_param.name, "batch_size")
+            assert isinstance(batch_size_param, model_signature.ParamSpec)
+            self.assertEqual(batch_size_param.default_value, 16)
+            if _supports_encode_truncate_dim_param():
+                truncate_dim_param = next(p for p in sig.params if p.name == "truncate_dim")
+                assert isinstance(truncate_dim_param, model_signature.ParamSpec)
+                self.assertIsNone(truncate_dim_param.default_value)
+
+    def test_model_truncate_dim_captured_in_blob(self) -> None:
+        """Test that model.truncate_dim is captured in blob metadata without a save option."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+        self.assertEqual(_capture_model_truncate_dim(model), 128)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+            blob_options = pk.meta.models["model"].options
+            self.assertEqual(blob_options.get("truncate_dim"), 128)
+            self.assertEqual(pk.meta.signatures["encode"].outputs[0]._shape, (128,))
+
+    def test_model_truncate_dim_not_in_blob_when_unset(self) -> None:
+        """Test that blob metadata omits truncate_dim when the model has no init override."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+            blob_options = pk.meta.models["model"].options
+            self.assertNotIn("truncate_dim", blob_options)
+
+    def test_load_model_applies_blob_truncate_dim(self) -> None:
+        """Test that load_model applies captured truncate_dim via SentenceTransformer __init__."""
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.model is not None
+            loaded_model = pk.model
+            assert isinstance(loaded_model, sentence_transformers.SentenceTransformer)
+            self.assertEqual(getattr(loaded_model, "truncate_dim", None), 128)
+            self.assertEqual(loaded_model.get_sentence_embedding_dimension(), 128)
+
+    def test_truncate_dim_param_when_supported(self) -> None:
+        """Test that truncate_dim param is added only when sentence-transformers supports encode override."""
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            sig = pk.meta.signatures["encode"]
+            truncate_dim_param = next(p for p in sig.params if p.name == "truncate_dim")
+            assert isinstance(truncate_dim_param, model_signature.ParamSpec)
+            self.assertIsNone(truncate_dim_param.default_value)
+
+    def test_truncate_dim_param_default_none_when_model_init_truncated(self) -> None:
+        """Test runtime truncate_dim ParamSpec stays None; init truncation is blob-only."""
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            truncate_dim_param = next(p for p in pk.meta.signatures["encode"].params if p.name == "truncate_dim")
+            assert isinstance(truncate_dim_param, model_signature.ParamSpec)
+            self.assertIsNone(truncate_dim_param.default_value)
+            self.assertEqual(pk.meta.models["model"].options.get("truncate_dim"), 128)
+
+    def test_truncate_dim_param_explicit_signature_no_injection(self) -> None:
+        """Test that explicit signatures do NOT get truncate_dim param injected."""
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
+        embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
+        sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                signatures=sig,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            self.assertEqual(len(pk.meta.signatures["encode"].params), 0)
+
+    def test_truncate_dim_param_explicit_signature_paramspec_precedence(self) -> None:
+        """Test that a ParamSpec default in explicit signatures is used for inference defaults."""
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
+        embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
+
+        paramspec_truncate_dim = 64
+
+        sig = {
+            "encode": model_signature.ModelSignature(
+                inputs=model_signature.infer_signature(sentences, embeddings).inputs,
+                outputs=model_signature.infer_signature(sentences, embeddings).outputs,
+                params=[
+                    model_signature.ParamSpec(
+                        name="truncate_dim",
+                        dtype=model_signature.DataType.INT64,
+                        default_value=paramspec_truncate_dim,
+                    ),
+                ],
+            )
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                signatures=sig,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+
+            test_data = pd.DataFrame({"sentence": ["Hello world"]})
+            result = encode_method(test_data)
+            self.assertEqual(len(result.iloc[0, 0]), paramspec_truncate_dim)
+
+    def test_truncate_dim_param_runtime_override(self) -> None:
+        """Test that the inference method respects a non-default truncate_dim kwarg from params."""
+        if not _supports_encode_truncate_dim_param():
+            self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+
+        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+
+            test_data = pd.DataFrame({"sentence": ["Hello world", "Test sentence"]})
+
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+            result = encode_method(test_data, truncate_dim=64)
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 2)
+            self.assertEqual(len(result.iloc[0, 0]), 64)
 
 
 if __name__ == "__main__":

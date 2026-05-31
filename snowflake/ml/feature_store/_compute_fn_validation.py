@@ -31,7 +31,7 @@ import textwrap
 from typing import Any, Callable, Optional
 
 # Top-level packages permitted in import statements inside compute_fn.
-ALLOWED_MODULES: frozenset[str] = frozenset({"numpy", "pandas", "re", "copy"})
+ALLOWED_MODULES: frozenset[str] = frozenset({"numpy", "pandas", "re", "copy", "dataclasses"})
 
 # Names that may appear as free globals inside compute_fn. Mirrors the
 # runtime namespace populated by RTFV reconstruction so the same source

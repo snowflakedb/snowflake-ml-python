@@ -18,6 +18,7 @@ from snowflake.ml.model._client.service import (
     model_deployment_spec_schema,
 )
 from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._packager import model_handler, model_save_options
 from snowflake.ml.model._packager.model_meta import model_meta
 from snowflake.ml.model.models import huggingface
 from snowflake.ml.registry._manager import model_parameter_reconciler
@@ -28,6 +29,21 @@ if TYPE_CHECKING:
     from snowflake.ml.experiment._experiment_info import ExperimentInfo
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_user_model_save_options(
+    model: type_hints.SupportedModelType,
+    options: Optional[type_hints.ModelSaveOption],
+) -> None:
+    """Reject unknown user ``options`` keys before reconciliation or remote logging."""
+    handler = model_handler.find_handler(model)
+    if handler is None:
+        return
+    model_save_options.validate_model_save_option_keys(
+        handler_type=handler.HANDLER_TYPE,
+        options=options or {},
+        include_internal_option_keys=False,
+    )
 
 
 class ModelManager:
@@ -185,6 +201,8 @@ class ModelManager:
     ) -> model_version_impl.ModelVersion:
         database_name_id, schema_name_id, model_name_id = sql_identifier.parse_fully_qualified_name(model_name)
         version_name_id = sql_identifier.SqlIdentifier(version_name)
+
+        _validate_user_model_save_options(model, options)
 
         # Check if model is HuggingFace TransformersPipeline with no repo_snapshot_dir
         # If so, use remote logging via SYSTEM$IMPORT_MODEL
