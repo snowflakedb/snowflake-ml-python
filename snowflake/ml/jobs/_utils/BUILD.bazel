@@ -25,7 +25,15 @@ py_library(
 
 py_library(
     name = "payload_scripts",
+    srcs = glob(
+        ["scripts/*.py"],
+        exclude = ["scripts/*_test.py"],
+    ),
     data = glob(["scripts/**"]),
+    deps = [
+        "//snowflake/ml/jobs/_interop:data_utils",
+        "//snowflake/ml/jobs/_interop:results",
+    ],
 )
 
 py_library(
@@ -166,5 +174,17 @@ py_library(
         ":stage_utils",
         "//snowflake/ml/_internal/utils:mixins",
         "//snowflake/ml/jobs/_interop:legacy",
+    ],
+)
+
+py_test(
+    name = "signal_workers_test",
+    srcs = ["scripts/signal_workers_test.py"],
+    tags = [
+        "feature:jobs",
+        "short_regress",
+    ],
+    deps = [
+        ":payload_scripts",
     ],
 )

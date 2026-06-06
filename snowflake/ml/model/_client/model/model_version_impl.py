@@ -847,7 +847,11 @@ class ModelVersion(lineage_node.LineageNode):
             self._service_ops._enforce_save_mode(output_spec.mode, output_stage_location)
 
         try:
-            X.write.copy_into_location(location=input_stage_location, file_format_type="parquet", header=True)
+            # overwrite=True prevents "Files already existing" errors on large warehouses where
+            # COPY INTO parallelizes the unload and internal waves see files from earlier waves.
+            X.write.copy_into_location(  # type:ignore[call-overload]
+                location=input_stage_location, file_format_type="parquet", header=True, overwrite=True
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to process input data: {e}")
 

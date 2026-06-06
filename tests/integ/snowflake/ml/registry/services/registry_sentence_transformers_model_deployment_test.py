@@ -5,6 +5,7 @@ from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
+from packaging import version as pkg_version
 
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
@@ -38,28 +39,41 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
-        if not pip_requirements:
-            self.skipTest(
-                """SNOW-3420922: Skipping test due to known issue with
-                sentence-transformers and transformers package conflict"""
-            )
+        if pip_requirements is None:
+            import sentence_transformers
+            import transformers
 
+            if pkg_version.parse(sentence_transformers.__version__) >= pkg_version.parse("5.3.0") and pkg_version.parse(
+                transformers.__version__
+            ) >= pkg_version.parse("5.0.0"):
+                self.skipTest(
+                    f"sentence-transformers {sentence_transformers.__version__} with transformers "
+                    f"{transformers.__version__}: model serving container image build fails because pinned "
+                    "transformers>=5.0.0 conflicts with sentence-transformers requiring transformers<5.0.0."
+                )
         import sentence_transformers
 
         # Sample Data
         sentences = pd.DataFrame(
             {
                 "SENTENCES": [
-                    "Why don’t scientists trust atoms? Because they make up everything.",
+                    "Why don't scientists trust atoms? Because they make up everything.",
                     "I told my wife she should embrace her mistakes. She gave me a hug.",
                     "Im reading a book on anti-gravity. Its impossible to put down!",
-                    "Did you hear about the mathematician who’s afraid of negative numbers?",
-                    "Parallel lines have so much in common. It’s a shame they’ll never meet.",
+                    "Did you hear about the mathematician who's afraid of negative numbers?",
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
                 ]
             }
         )
+        truncate_dim = 128
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
-        embeddings = pd.DataFrame(model.encode(sentences["SENTENCES"].to_list(), batch_size=sentences.shape[0]))
+        embeddings = pd.DataFrame(
+            model.encode(
+                sentences["SENTENCES"].to_list(),
+                batch_size=sentences.shape[0],
+                truncate_dim=truncate_dim,
+            )
+        )
 
         self._test_registry_model_deployment(
             model=model,
@@ -79,6 +93,7 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
             options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
             pip_requirements=pip_requirements,
             rest_inference_formats=[registry_model_deployment_test_base.RestInferencePayloadFormat.DATAFRAME_RECORDS],
+            params={"truncate_dim": truncate_dim},
         )
 
 

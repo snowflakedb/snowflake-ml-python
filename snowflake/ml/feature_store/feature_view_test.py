@@ -849,6 +849,47 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
         self.assertEqual(count_feat.output_column.precision, 18)
         self.assertEqual(count_feat.output_column.scale, 0)
 
+    def test_non_tiled_uses_materialized_schema_when_provided(self) -> None:
+        fv = self._make_feature_view(
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=134217728), StringType(length=134217728), DoubleType()],
+            entity_keys=["USER_ID"],
+        )
+        materialized = StructType(
+            [
+                StructField("USER_ID", StringType(length=16777216)),
+                StructField("DEVICE_ID", StringType(length=16777216)),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+        fs = self._make_mock_feature_store()
+        spec = fs._build_batch_feature_view_spec(
+            fv,
+            SqlIdentifier("DT_NAME"),
+            "v1",
+            "30s",
+            offline_materialized_schema=materialized,
+        )
+
+        offline_cols = {c.name: c for c in spec.offline_configs[0].columns}
+        self.assertEqual(offline_cols["DEVICE_ID"].length, 16777216)
+
+        feat_by_name = {f.output_column.name: f for f in spec.spec.features}
+        self.assertEqual(feat_by_name["DEVICE_ID"].output_column.length, 16777216)
+        self.assertEqual(feat_by_name["DEVICE_ID"].source_column.length, 16777216)
+
+    def test_non_tiled_falls_back_to_output_schema_when_no_materialized(self) -> None:
+        fv = self._make_feature_view(
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=100), StringType(length=255), DoubleType()],
+            entity_keys=["USER_ID"],
+        )
+        fs = self._make_mock_feature_store()
+        spec = fs._build_batch_feature_view_spec(fv, SqlIdentifier("DT_NAME"), "v1", "30s")
+
+        offline_cols = {c.name: c for c in spec.offline_configs[0].columns}
+        self.assertEqual(offline_cols["DEVICE_ID"].length, 255)
+
     # ------------------------------------------------------------------ #
     # Tiled batch FV
     # ------------------------------------------------------------------ #
@@ -1286,6 +1327,35 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         parsed = json.loads(spec_json)
         self.assertEqual(parsed["kind"], "BatchFeatureView")
         self.assertIn("features", parsed["spec"])
+
+    def test_postgres_non_tiled_uses_materialized_dt_for_offline_columns(self) -> None:
+        fv = self._make_feature_view(
+            entity_keys=["USER_ID"],
+            columns=["USER_ID", "DEVICE_ID", "AMOUNT"],
+            column_types=[StringType(length=134217728), StringType(length=134217728), DoubleType()],
+            store_type=OnlineStoreType.POSTGRES,
+        )
+        fs = self._make_mock_feature_store(postgres_online_service_running=True)
+        fs._session.table.return_value.schema = StructType(
+            [
+                StructField("USER_ID", StringType(length=16777216)),
+                StructField("DEVICE_ID", StringType(length=16777216)),
+                StructField("AMOUNT", DoubleType()),
+            ]
+        )
+
+        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
+
+        query = self._first_online_feature_table_sql(fs)
+        start = query.index("$$") + 2
+        end = query.index("$$", start)
+        parsed = json.loads(query[start:end])
+
+        offline_cols = {c["name"]: c for c in parsed["offline_configs"][0]["columns"]}
+        self.assertEqual(offline_cols["DEVICE_ID"]["length"], 16777216)
+
+        feat_by_name = {f["output_column"]["name"]: f for f in parsed["spec"]["features"]}
+        self.assertEqual(feat_by_name["DEVICE_ID"]["output_column"]["length"], 16777216)
 
     # ------------------------------------------------------------------ #
     # $$ injection guard
@@ -2722,6 +2792,47 @@ class FeatureViewAppendOnlyTest(absltest.TestCase):
         restored = FeatureView.from_json(stripped_json, session=mock_session)
         self.assertFalse(restored.append_only)
         self.assertIsNone(restored.backup_source)
+
+    def test_to_json_from_json_roundtrip_authoring_pkg_version(self) -> None:
+        """Round-trip preserves _authoring_pkg_version so new FVs don't degrade to legacy SQL."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="VERSIONED_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        fv._authoring_pkg_version = "1.42.0"
+
+        json_str = fv.to_json()
+        self.assertIn("_authoring_pkg_version", json_str)
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._make_mock_df()
+        restored = FeatureView.from_json(json_str, session=mock_session)
+        self.assertEqual(restored.authoring_pkg_version, "1.42.0")
+
+    def test_from_json_backward_compat_without_authoring_pkg_version(self) -> None:
+        """Old-format JSON (without _authoring_pkg_version) deserializes to None (legacy default)."""
+        entity = Entity(name="guest", join_keys=["GUEST_ID"])
+        fv = FeatureView(
+            name="OLD_VERSION_FV",
+            entities=[entity],
+            feature_df=self._make_mock_df(),
+            timestamp_col="SNAPSHOT_TS",
+            refresh_freq="1 day",
+        )
+        fv._authoring_pkg_version = "1.41.0"
+        json_str = fv.to_json()
+        json_dict = json.loads(json_str)
+        json_dict.pop("_authoring_pkg_version", None)
+        stripped_json = json.dumps(json_dict)
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = self._make_mock_df()
+        restored = FeatureView.from_json(stripped_json, session=mock_session)
+        self.assertIsNone(restored.authoring_pkg_version)
 
 
 if __name__ == "__main__":

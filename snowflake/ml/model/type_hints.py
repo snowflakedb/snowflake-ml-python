@@ -183,6 +183,10 @@ class BaseModelSaveOption(TypedDict):
     model_init_once: When True, the model is loaded once per worker process at startup, eliminating
         model-loading overhead on the first inference batch. Applies to FUNCTION and TABLE_FUNCTION
         (including partitioned) warehouse methods. Defaults to False.
+    capture_sample_input_data: When True (default), a representative row from sample_input_data is
+        captured and stored alongside the model so that inference code snippets shown in the model
+        registry UI can be pre-filled with realistic values. Set to False to opt out (e.g., for
+        sensitive data); generic placeholder values will be used in the snippets instead.
     """
 
     embed_local_ml_library: NotRequired[bool]
@@ -193,11 +197,13 @@ class BaseModelSaveOption(TypedDict):
     enable_explainability: NotRequired[bool]
     save_location: NotRequired[str]
     model_init_once: NotRequired[bool]
+    capture_sample_input_data: NotRequired[bool]
 
 
 class CatBoostModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    use_gpu: NotRequired[bool]
 
 
 class CustomModelSaveOption(BaseModelSaveOption):
@@ -211,6 +217,7 @@ class SKLModelSaveOptions(BaseModelSaveOption):
 class XGBModelSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
+    use_gpu: NotRequired[bool]
 
 
 class LGBMModelSaveOptions(BaseModelSaveOption):
@@ -225,12 +232,14 @@ class PyTorchSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
     multiple_inputs: NotRequired[bool]
+    use_gpu: NotRequired[bool]
 
 
 class TorchScriptSaveOptions(BaseModelSaveOption):
     target_methods: NotRequired[Sequence[str]]
     cuda_version: NotRequired[str]
     multiple_inputs: NotRequired[bool]
+    use_gpu: NotRequired[bool]
 
 
 class TensorflowSaveOptions(BaseModelSaveOption):
@@ -341,6 +350,7 @@ class HuggingFaceLoadOptions(BaseModelLoadOption):
 class SentenceTransformersLoadOptions(BaseModelLoadOption):
     use_gpu: NotRequired[bool]
     device: NotRequired[str]
+    truncate_dim: NotRequired[int]
 
 
 class KerasLoadOptions(BaseModelLoadOption):

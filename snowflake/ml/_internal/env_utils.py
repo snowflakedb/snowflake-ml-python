@@ -57,20 +57,22 @@ def get_execution_context() -> str:
 
 
 def is_local_conda_environment() -> bool:
-    """Return True if the active Python interpreter appears to run inside a conda env
-    or under conda session context (e.g. a venv created inside an activated conda env).
+    """Return True if the active Python interpreter appears to run inside a conda env.
 
-    Uses the presence of a ``conda-meta`` directory under :py:data:`sys.prefix`, which is
-    standard for conda-created environments. A nested venv typically has ``sys.prefix``
-    pointing at the venv without ``conda-meta``; conda still sets ``CONDA_PREFIX`` when
-    an environment is activated, so a non-empty ``CONDA_PREFIX`` is treated as conda context.
+    Uses ``conda-meta`` under :py:data:`sys.prefix` for conda-created environments.
+    Standard-library virtual environments (``pyvenv.cfg`` present) are **not** treated as
+    conda even when ``CONDA_PREFIX`` is still set in the shell (e.g. conda base
+    auto-activation while a separate venv kernel is selected).
 
     Returns:
-        ``True`` if ``sys.prefix`` contains ``conda-meta`` or ``CONDA_PREFIX`` is set and
-        non-empty, else ``False``.
+        ``True`` if ``sys.prefix`` contains ``conda-meta``, or ``CONDA_PREFIX`` is set and
+        there is no ``pyvenv.cfg`` under ``sys.prefix``; else ``False``.
     """
-    if os.path.isdir(os.path.join(sys.prefix, "conda-meta")):
+    prefix = sys.prefix
+    if os.path.isdir(os.path.join(prefix, "conda-meta")):
         return True
+    if os.path.isfile(os.path.join(prefix, "pyvenv.cfg")):
+        return False
     return bool(os.environ.get("CONDA_PREFIX", "").strip())
 
 

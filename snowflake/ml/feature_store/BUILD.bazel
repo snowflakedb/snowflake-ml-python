@@ -100,6 +100,18 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_entity_test",
+    srcs = ["feature_store_entity_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "feature_store_feature_group_test",
     srcs = ["feature_store_feature_group_test.py"],
     tags = [

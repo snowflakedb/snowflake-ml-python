@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|short_regression] [--with-snowpark] [--with-spcs-image] [--run-grype] [--grype-scan-only] [--report <report_path>] [--feature-areas <areas>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--report <report_path>] [--feature-areas <areas>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -15,7 +15,8 @@
 #   quarantined: run all quarantined tests.
 #   short_regression: run tests tagged with "short_regress".
 # with-snowpark: Build and test with snowpark in snowpark-python directory in the workspace.
-# with-spcs-image: Build and test with spcs-image in spcs-image directory in the workspace.
+# with-spcs-image: Build and test with all spcs images.
+# build-spcs-images: Comma-separated list of specific SPCS images to build and push. Implies --with-spcs-image.
 # run-grype: Run grype security scanning on SPCS images. Only valid with --with-spcs-image.
 # grype-scan-only: Only build images and run grype scan, skip package build and tests. Requires --with-spcs-image and --run-grype.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
@@ -36,7 +37,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined|short_regression] [--with-snowpark] [--with-spcs-image] [--run-grype] [--grype-scan-only] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
     exit "${exit_code}"
 }
 
@@ -56,6 +57,7 @@ IS_NT=false
 JUNIT_REPORT_PATH=""
 SF_ENV="prod3"
 FEATURE_AREAS=""
+BUILD_SPCS_IMAGES=""
 
 while (($#)); do
     case $1 in
@@ -100,6 +102,10 @@ while (($#)); do
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
+    --build-spcs-images)
+        shift
+        BUILD_SPCS_IMAGES=$1
+        ;;
     --run-grype)
         RUN_GRYPE=true
         ;;
@@ -119,6 +125,14 @@ while (($#)); do
     esac
     shift
 done
+
+# Resolve --build-spcs-images vs --with-spcs-image
+if [[ -n "${BUILD_SPCS_IMAGES}" && "${WITH_SPCS_IMAGE}" = true ]]; then
+    echo "Warning: --with-spcs-image builds all images; ignoring --build-spcs-images."
+    BUILD_SPCS_IMAGES=""
+elif [[ -n "${BUILD_SPCS_IMAGES}" ]]; then
+    WITH_SPCS_IMAGE=true
+fi
 
 # Validate flag combinations
 if [ "${RUN_GRYPE}" = true ] && [ "${WITH_SPCS_IMAGE}" = false ]; then
@@ -391,6 +405,7 @@ if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     pushd ${SNOWML_DIR}
     echo "Building SPCS Image ..."
     export RUN_GRYPE
+    export BUILD_SPCS_IMAGES
     source model_container_services_deployment/ci/build_and_push_images.sh
     popd
 fi

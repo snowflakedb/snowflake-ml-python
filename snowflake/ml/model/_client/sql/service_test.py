@@ -450,6 +450,75 @@ class ServiceSQLTest(absltest.TestCase):
         ]
         self.assertEqual(res, m_res)
 
+    def test_show_services(self) -> None:
+        m_statement_params = {"test": "1"}
+        Outcome = Row("name", "status", "database_name", "schema_name")
+        rows = [
+            Outcome("SVC_A", "RUNNING", "TEMP", "test"),
+            Outcome("SVC_B", "SUSPENDED", "TEMP", "test"),
+        ]
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows, collect_statement_params=m_statement_params)
+        self.m_session.add_mock_sql(
+            'SHOW SERVICES IN SCHEMA TEMP."test"',
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_services(
+            database_name=None,
+            schema_name=None,
+            starts_with=None,
+            statement_params=m_statement_params,
+        )
+        self.assertEqual(len(res), 2)
+
+    def test_show_services_empty(self) -> None:
+        m_df = mock_data_frame.MockDataFrame(collect_result=[])
+        self.m_session.add_mock_sql(
+            'SHOW SERVICES IN SCHEMA TEMP."test"',
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_services(
+            database_name=None,
+            schema_name=None,
+            starts_with=None,
+        )
+        self.assertEqual(res, [])
+
+    def test_show_services_starts_with(self) -> None:
+        m_statement_params = {"test": "1"}
+        Outcome = Row("name", "status", "database_name", "schema_name")
+        rows = [
+            Outcome("MYSERVICE", "RUNNING", "TEMP", "test"),
+        ]
+        m_df = mock_data_frame.MockDataFrame(collect_result=rows, collect_statement_params=m_statement_params)
+        self.m_session.add_mock_sql(
+            "SHOW SERVICES IN SCHEMA TEMP.\"test\" STARTS WITH 'MYSERVICE'",
+            copy.deepcopy(m_df),
+        )
+        c_session = cast(Session, self.m_session)
+        res = service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).show_services(
+            database_name=None,
+            schema_name=None,
+            starts_with="MYSERVICE",
+            statement_params=m_statement_params,
+        )
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["name"], "MYSERVICE")
+        self.assertEqual(res[0]["status"], "RUNNING")
+
     def test_drop_service(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame(

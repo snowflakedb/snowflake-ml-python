@@ -3,16 +3,21 @@
 import json
 from datetime import datetime
 from typing import Optional
+from unittest.mock import patch
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
 
+import snowflake.ml.version as snowml_version
 from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import Feature, RollupConfig
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
 from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewStatus
+from snowflake.ml.feature_store.metadata_manager import (
+    _METADATA_TABLE_NAME as _FS_METADATA_TABLE,
+)
 
 
 class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -1365,6 +1370,98 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             f"SHOW TASKS LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
         ).collect()
         self.assertEqual(len(tasks), 0, "Task should be cleaned up when switching from cron to duration")
+
+    def _delete_fv_metadata_row(self, fs: FeatureStore, fv_name: str, version: str) -> None:
+        """Delete the FEATURE_VIEW_METADATA row to simulate a genuine legacy FV."""
+        metadata_table = f"{fs._config.full_schema_path}.{_FS_METADATA_TABLE}"
+        self._session.sql(
+            f"""DELETE FROM {metadata_table}
+            WHERE OBJECT_TYPE = 'FEATURE_VIEW'
+            AND OBJECT_NAME = '{fv_name.upper()}'
+            AND VERSION = '{version}'
+            AND METADATA_TYPE = 'FEATURE_VIEW_METADATA'"""
+        ).collect()
+
+    @parameterized.named_parameters(
+        ("legacy", True),
+        ("new", False),
+    )
+    def test_rollup_last_distinct_n_aggregation(self, legacy: bool) -> None:
+        """LAST_DISTINCT_N rolls up with correct global ordering.
+
+        The parent (visitor-level) FV holds the LAST_DISTINCT_N aggregation. When
+        ``legacy`` is True it is registered with the snowml version pinned to
+        1.41.0 so its tiles use the legacy shared-column format, then its
+        FEATURE_VIEW_METADATA row is deleted to mirror a real pre-1.42.0 FV
+        (reloads as None; no "1.41.0" persisted). The rollup inherits that legacy
+        behavior. Otherwise the current per-N pre-deduplicated format is used.
+        Both roll up to the same deduplicated *set* of values, but order them
+        differently: legacy emits most-recent-first while the new version emits
+        oldest-first.
+        """
+        fs = self._create_feature_store()
+
+        visitor_entity = self._create_visitor_entity()
+        subscriber_entity = self._create_subscriber_entity()
+        fs.register_entity(visitor_entity)
+        fs.register_entity(subscriber_entity)
+
+        visitor_fv = FeatureView(
+            name="visitor_last_distinct_products",
+            entities=[visitor_entity],
+            feature_df=self._get_events_df(),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[Feature.last_distinct_n("product_id", "24h", n=5).alias("recent_distinct_products")],
+        )
+        if legacy:
+            with patch("snowflake.ml.version.VERSION", "1.41.0"):
+                fs.register_feature_view(visitor_fv, "v1")
+            # A real legacy FV predates the version metadata, so drop the row; the
+            # parent reloads as None and the rollup inherits legacy behavior.
+            self._delete_fv_metadata_row(fs, "visitor_last_distinct_products", "v1")
+            registered_visitor = fs.get_feature_view("visitor_last_distinct_products", "v1")
+            self.assertIsNone(registered_visitor.authoring_pkg_version)
+        else:
+            registered_visitor = fs.register_feature_view(visitor_fv, "v1")
+            self.assertEqual(registered_visitor.authoring_pkg_version, snowml_version.VERSION)
+
+        subscriber_fv = FeatureView(
+            name="subscriber_last_distinct_products",
+            entities=[subscriber_entity],
+            rollup_config=RollupConfig(
+                source=registered_visitor,
+                mapping_df=self._get_mapping_df(),
+            ),
+        )
+        registered_subscriber = fs.register_feature_view(subscriber_fv, "v1")
+
+        spine_df = self._session.create_dataframe(
+            [("s1", "c1", datetime(2024, 1, 1, 12, 0, 0))],
+            schema=["subscriber_id", "company_id", "ts"],
+        )
+
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[registered_subscriber],
+            spine_timestamp_col="ts",
+            join_method="cte",
+        )
+
+        result_pd = result_df.to_pandas()
+        self.assertEqual(len(result_pd), 1)
+        products_col = [c for c in result_pd.columns if "RECENT_DISTINCT_PRODUCTS" in c.upper()][0]
+        products = json.loads(result_pd.iloc[0][products_col])
+
+        # Subscriber s1 aggregates visitors v1 + v2 within the 24h window, by time:
+        #   p1(10:00,v1), p3(10:15,v2), p2(10:30,v1), p1(10:45,v2), p1(11:00,v1)
+        # last_distinct_n(n=5) distinct set: {p1, p2, p3}.
+        #   legacy ordering (most-recent-first): p1, p2, p3
+        #   new ordering (oldest-first by event time): p3, p2, p1
+        expected = ["p1", "p2", "p3"] if legacy else ["p3", "p2", "p1"]
+        self.assertEqual(products, expected)
+        self.assertEqual(len(set(products)), len(products), "Rollup distinct should not contain duplicates")
 
 
 class TemporalRollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):

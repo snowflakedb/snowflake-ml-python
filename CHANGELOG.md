@@ -1,6 +1,30 @@
 # Release History
 
-## 1.41.0
+## 1.42.0
+
+### New Features
+
+* Registry: Support `truncate_dim` for `SentenceTransformers` models. Truncation set at
+  construction (`SentenceTransformer(..., truncate_dim=N)`) is captured when the model is logged
+  and restored on reload. On clients with `sentence-transformers` 5.0.0 or later, `truncate_dim`
+  is also exposed as a runtime parameter in the model signature.
+
+* Registry: `log_model()` now captures a representative row from `sample_input_data` and stores it alongside the model
+  so inference code snippets shown in the model registry UI can be pre-filled with realistic values. Pass
+  `options={"capture_sample_input_data": False}` to opt out (e.g., for sensitive data); generic placeholder values
+  will be used in the snippets instead.
+
+### Bug Fixes
+
+* Registry: Pin `transformers<5` for additional HuggingFace pipeline tasks removed in
+  `transformers 5.x` (`summarization`, `text2text-generation`, `question-answering`, and
+  `translation_*`), preventing deployment failures from missing pipeline classes.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.41.0 (2026-05-27)
 
 ### New Features
 
@@ -25,6 +49,14 @@
   `read_feature_view(store_type=ONLINE)` to fail with "Online store is not enabled".
 
 ### Behavior Changes
+
+* Registry: `log_model(..., options=...)` now rejects unknown top-level keys and unknown keys inside each
+  `method_options` entry (for example misspellings or options that belong to a different model framework).
+  Previously those keys were ignored. Validation is based on the public save-option TypedDicts and runs
+  before dependency reconciliation.
+
+* Registry: `use_gpu` is declared on the CatBoost, XGBoost, PyTorch, and TorchScript save-option
+  TypedDicts to match the save paths that already read this flag.
 
 ### Deprecations
 

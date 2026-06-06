@@ -892,6 +892,8 @@ class RunStreamingPreambleTest(absltest.TestCase):
         """backfill_start_time causes F.col filter on backfill_df."""
         backfill_df = _make_mock_backfill_df()
         filtered_df = MagicMock()
+        # Real Snowpark .filter() preserves schema; mirror that for the mock.
+        filtered_df.schema = backfill_df.schema
         backfill_df.filter.return_value = filtered_df
         filtered_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
 
@@ -965,6 +967,103 @@ class RunStreamingPreambleTest(absltest.TestCase):
             )
         # Validation must fire before any DDL.
         session.sql.assert_not_called()
+
+    def test_preamble_rejects_backfill_missing_stream_source_column(self) -> None:
+        """Backfill missing a column declared by the stream source is rejected before any DDL/probe."""
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                # AMOUNT (declared by stream source) is missing.
+            ]
+        )
+        fv = self._make_streaming_fv(backfill_df)
+        session = MagicMock()
+        metadata_manager = MagicMock()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"streaming feature view: backfill_df is missing column 'AMOUNT' "
+            r"declared by StreamSource 'TXN_EVENTS'\.",
+        ):
+            run_streaming_preamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=SqlIdentifier("TEST_FV$v1"),
+                overwrite=False,
+                metadata_manager=metadata_manager,
+                telemetry_stmp={},
+                get_stream_source_fn=lambda name: _make_stream_source(),
+                get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+            )
+        # Validation must fire before any DDL or probe.
+        session.sql.assert_not_called()
+        backfill_df.limit.assert_not_called()
+
+    def test_preamble_rejects_backfill_type_mismatch(self) -> None:
+        """Backfill column whose type disagrees with stream source is rejected before any DDL/probe."""
+        backfill_df = _make_mock_backfill_df()
+        # Stream source declares AMOUNT as DoubleType; backfill has it as StringType.
+        backfill_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+            ]
+        )
+        fv = self._make_streaming_fv(backfill_df)
+        session = MagicMock()
+        metadata_manager = MagicMock()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'AMOUNT' has type StringType but "
+            r"StreamSource 'TXN_EVENTS' declares column 'AMOUNT' with type DoubleType\.",
+        ):
+            run_streaming_preamble(
+                session=session,
+                feature_view=fv,
+                version=FeatureViewVersion("v1"),
+                feature_view_name=SqlIdentifier("TEST_FV$v1"),
+                overwrite=False,
+                metadata_manager=metadata_manager,
+                telemetry_stmp={},
+                get_stream_source_fn=lambda name: _make_stream_source(),
+                get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+            )
+        session.sql.assert_not_called()
+        backfill_df.limit.assert_not_called()
+
+    def test_preamble_allows_backfill_with_extra_columns(self) -> None:
+        """Backfill with extra columns beyond the stream source schema is accepted."""
+        backfill_df = _make_mock_backfill_df()
+        backfill_df.schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("AMOUNT", DoubleType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("EXTRA_DERIVATION_COL", DoubleType()),  # not in stream source
+            ]
+        )
+        backfill_df.limit.return_value.to_pandas.return_value = self._make_probe_pdf()
+        fv = self._make_streaming_fv(backfill_df)
+        session = MagicMock()
+        metadata_manager = MagicMock()
+
+        # Should not raise.
+        run_streaming_preamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=SqlIdentifier("TEST_FV$v1"),
+            overwrite=False,
+            metadata_manager=metadata_manager,
+            telemetry_stmp={},
+            get_stream_source_fn=lambda name: _make_stream_source(),
+            get_fully_qualified_name_fn=lambda name: f"DB.SCH.{name}",
+        )
 
 
 # ============================================================================

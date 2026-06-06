@@ -3,12 +3,13 @@
 import json
 from datetime import datetime
 from typing import Any, Optional
+from unittest.mock import patch
 from uuid import uuid4
 
 from absl.testing import absltest, parameterized
 from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import Feature
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -1607,8 +1608,52 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(len(result_pd), 1)
         self.assertIn("FIRST_PAGES", result_pd.columns)
 
-    def test_last_distinct_n_aggregation_values(self) -> None:
-        """Test LAST_DISTINCT_N aggregation produces correct array of distinct values."""
+    def _register_fv_pinned_version(self, fs: FeatureStore, fv: FeatureView, version: str, legacy: bool) -> FeatureView:
+        """Register an FV, optionally simulating a genuine legacy (pre-1.42.0) FV.
+
+        When ``legacy`` is True the snowml package version is patched to
+        ``"1.41.0"`` during registration so the tile DT uses the legacy
+        (shared-column, merge-time-dedup) distinct format, then the
+        FEATURE_VIEW_METADATA row is deleted to mirror a real FV authored before
+        the version field existed. Such an FV reloads with
+        ``authoring_pkg_version is None``; the legacy default is applied
+        client-side at consumption time. Otherwise the current version is used
+        (per-N pre-deduplicated tiles).
+
+        Args:
+            fs: Feature store to register into.
+            fv: The feature view definition.
+            version: Feature view version string.
+            legacy: Whether to register as a legacy-version FV.
+
+        Returns:
+            The registered FeatureView reloaded from the store.
+        """
+        if legacy:
+            with patch("snowflake.ml.version.VERSION", "1.41.0"):
+                fs.register_feature_view(feature_view=fv, version=version)
+            # A real legacy FV predates the version metadata, so drop the row.
+            self._delete_fv_metadata_row(fs, fv.name, version)
+        else:
+            fs.register_feature_view(feature_view=fv, version=version)
+        loaded = fs.get_feature_view(fv.name, version)
+        if legacy:
+            self.assertIsNone(loaded.authoring_pkg_version)
+        else:
+            self.assertNotEqual(loaded.authoring_pkg_version, "1.41.0")
+        return loaded
+
+    @parameterized.named_parameters(
+        ("legacy", True),
+        ("new", False),
+    )
+    def test_last_distinct_n_aggregation_values(self, legacy: bool) -> None:
+        """LAST_DISTINCT_N returns the most-recent distinct values.
+
+        Both versions keep the same *set* of distinct values (the most-recent N),
+        but they order the output differently: legacy emits most-recent-first
+        while the new version emits oldest-first (matching FIRST_DISTINCT_N).
+        """
         fs = self._create_feature_store()
 
         e = Entity("user", ["user_id"])
@@ -1627,11 +1672,22 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             features=features,
         )
 
-        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        registered_fv = self._register_fv_pinned_version(fs, fv, "v1", legacy)
 
-        # User 1 has categories: cat1, cat2, cat1, cat3, cat2
-        # Distinct should give at most 3 unique categories
-        spine_df = self._session.create_dataframe([(1, datetime(2024, 1, 1, 3, 0, 0))], schema=["user_id", "query_ts"])
+        # User 1 events within the 3h window before query_ts=03:00, by time:
+        #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
+        # last_distinct_n(n=3) distinct set (most-recent): {cat2, cat3, cat1}.
+        #   legacy ordering (most-recent-first): cat2, cat3, cat1
+        #   new ordering (oldest-first by event time): cat1, cat3, cat2
+        # User 2 events within the 3h window before query_ts=03:00 (complete tiles
+        # only, so the 03:00 event is excluded), by time: cat1(01:00), cat2(02:00).
+        # last_distinct_n(n=3) distinct set: {cat2, cat1}.
+        #   legacy ordering (most-recent-first): cat2, cat1
+        #   new ordering (oldest-first by event time): cat1, cat2
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
 
         result_df = fs.generate_training_set(
             spine_df=spine_df,
@@ -1641,11 +1697,67 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         )
 
         result_pd = result_df.to_pandas()
-        self.assertEqual(len(result_pd), 1)
+        self.assertEqual(len(result_pd), 2)
         self.assertIn("RECENT_CATEGORIES", result_pd.columns)
+        by_user = {int(row["USER_ID"]): json.loads(row["RECENT_CATEGORIES"]) for _, row in result_pd.iterrows()}
+        self.assertEqual(by_user[1], ["cat2", "cat3", "cat1"] if legacy else ["cat1", "cat3", "cat2"])
+        self.assertEqual(by_user[2], ["cat2", "cat1"] if legacy else ["cat1", "cat2"])
 
-    def test_first_distinct_n_aggregation_values(self) -> None:
-        """Test FIRST_DISTINCT_N aggregation produces correct array of distinct values."""
+        # Ingest 5 more (irregularly-spaced, unevenly-distributed) events for user
+        # 1, then refresh the tiles and re-query at 07:00. The 3h window before
+        # 07:00 covers complete tiles 04:00 and 06:00 (tile 05:00 is empty -- a
+        # realistic gap):
+        #   cat1(04:07), cat1(04:52), cat2(04:58)   <- tile 04:00 (3 events)
+        #   cat3(06:11), cat2(06:43)                <- tile 06:00 (2 events)
+        # Most-recent occurrence per value: cat2(06:43, t06), cat3(06:11, t06),
+        # cat1(04:52, t04). This deliberately hits the legacy raw-row cap quirk:
+        # in most-recent-first order the duplicate cat2(04:58) sits at raw rank 3,
+        # pushing cat1's first occurrence to rank 4, so legacy drops cat1.
+        #   legacy (raw-row cap rn<=3 drops cat1): [cat2, cat3]
+        #   new (distinct-rank cap keeps cat1, oldest-first display): [cat1, cat3, cat2]
+        self._session.sql(
+            f"""INSERT INTO {self._events_table} (user_id, event_ts, amount, page_id, category)
+                VALUES
+                (1, '2024-01-01 04:07:00', 60.0, 'page_f', 'cat1'),
+                (1, '2024-01-01 04:52:00', 70.0, 'page_g', 'cat1'),
+                (1, '2024-01-01 04:58:00', 80.0, 'page_h', 'cat2'),
+                (1, '2024-01-01 06:11:00', 90.0, 'page_i', 'cat3'),
+                (1, '2024-01-01 06:43:00', 100.0, 'page_j', 'cat2')
+            """
+        ).collect()
+        fs.refresh_feature_view(registered_fv)
+
+        spine_df_2 = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 7, 0, 0))], schema=["user_id", "query_ts"]
+        )
+        result_df_2 = fs.generate_training_set(
+            spine_df=spine_df_2,
+            features=[registered_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+        result_pd_2 = result_df_2.to_pandas()
+        self.assertEqual(len(result_pd_2), 1)
+        result_2 = json.loads(result_pd_2.iloc[0]["RECENT_CATEGORIES"])
+        self.assertEqual(result_2, ["cat2", "cat3"] if legacy else ["cat1", "cat3", "cat2"])
+
+    @parameterized.named_parameters(
+        ("legacy", True),
+        ("new", False),
+    )
+    def test_first_distinct_n_aggregation_values(self, legacy: bool) -> None:
+        """FIRST_DISTINCT_N returns the oldest distinct values.
+
+        This case intentionally exercises the divergence between the legacy and
+        new merge logic. Both keep the first occurrence of each distinct value,
+        oldest-first, but they cap differently:
+
+        * legacy caps on the raw pre-dedup row number (``rn <= n``), so a distinct
+          value whose first occurrence sits past position ``n`` is wrongly dropped.
+        * new caps on the DISTINCT rank, returning the true first ``n`` distinct
+          values.
+
+        """
         fs = self._create_feature_store()
 
         e = Entity("user", ["user_id"])
@@ -1664,9 +1776,22 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             features=features,
         )
 
-        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        registered_fv = self._register_fv_pinned_version(fs, fv, "v1", legacy)
 
-        spine_df = self._session.create_dataframe([(1, datetime(2024, 1, 1, 3, 0, 0))], schema=["user_id", "query_ts"])
+        # User 1 events within the 3h window before query_ts=03:00, by time:
+        #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
+        # The 3 distinct values, oldest-first, are cat1, cat2, cat3. cat3's first
+        # occurrence is the 4th row overall (two earlier duplicates push it down).
+        #   * legacy: rn <= 3 cap drops cat3 -> [cat1, cat2]
+        #   * new:    distinct-rank cap keeps it -> [cat1, cat2, cat3]
+        # User 2 events within the 3h window before query_ts=03:00 (complete tiles
+        # only, so the 03:00 event is excluded), by time: cat1(01:00), cat2(02:00).
+        # Only 2 distinct values (no cap pressure), oldest-first: [cat1, cat2] for
+        # both versions.
+        spine_df = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 3, 0, 0)), (2, datetime(2024, 1, 1, 3, 0, 0))],
+            schema=["user_id", "query_ts"],
+        )
 
         result_df = fs.generate_training_set(
             spine_df=spine_df,
@@ -1676,8 +1801,48 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         )
 
         result_pd = result_df.to_pandas()
-        self.assertEqual(len(result_pd), 1)
+        self.assertEqual(len(result_pd), 2)
         self.assertIn("FIRST_CATEGORIES", result_pd.columns)
+        by_user = {int(row["USER_ID"]): json.loads(row["FIRST_CATEGORIES"]) for _, row in result_pd.iterrows()}
+        self.assertEqual(by_user[1], ["cat1", "cat2"] if legacy else ["cat1", "cat2", "cat3"])
+        self.assertEqual(by_user[2], ["cat1", "cat2"])
+
+        # Ingest 5 more (irregularly-spaced, unevenly-distributed) events for user
+        # 1, then refresh the tiles and re-query at 07:00. The 3h window before
+        # 07:00 covers complete tiles 04:00 and 06:00 (tile 05:00 is empty -- a
+        # realistic gap):
+        #   cat1(04:07), cat1(04:52), cat2(04:58)   <- tile 04:00 (3 events)
+        #   cat3(06:11), cat2(06:43)                <- tile 06:00 (2 events)
+        # The 3 distinct values, oldest-first by first occurrence, are cat1, cat2,
+        # cat3. This deliberately hits the legacy raw-row cap quirk: the duplicate
+        # cat1(04:52) sits at raw rank 2, pushing cat3's first occurrence to rank 4.
+        #   legacy (raw-row cap rn<=3 drops cat3): [cat1, cat2]
+        #   new (distinct-rank cap keeps cat3): [cat1, cat2, cat3]
+        self._session.sql(
+            f"""INSERT INTO {self._events_table} (user_id, event_ts, amount, page_id, category)
+                VALUES
+                (1, '2024-01-01 04:07:00', 60.0, 'page_f', 'cat1'),
+                (1, '2024-01-01 04:52:00', 70.0, 'page_g', 'cat1'),
+                (1, '2024-01-01 04:58:00', 80.0, 'page_h', 'cat2'),
+                (1, '2024-01-01 06:11:00', 90.0, 'page_i', 'cat3'),
+                (1, '2024-01-01 06:43:00', 100.0, 'page_j', 'cat2')
+            """
+        ).collect()
+        fs.refresh_feature_view(registered_fv)
+
+        spine_df_2 = self._session.create_dataframe(
+            [(1, datetime(2024, 1, 1, 7, 0, 0))], schema=["user_id", "query_ts"]
+        )
+        result_df_2 = fs.generate_training_set(
+            spine_df=spine_df_2,
+            features=[registered_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+        result_pd_2 = result_df_2.to_pandas()
+        self.assertEqual(len(result_pd_2), 1)
+        result_2 = json.loads(result_pd_2.iloc[0]["FIRST_CATEGORIES"])
+        self.assertEqual(result_2, ["cat1", "cat2"] if legacy else ["cat1", "cat2", "cat3"])
 
     def test_all_aggregations_combined(self) -> None:
         """Test all aggregation types in a single feature view."""
@@ -2868,6 +3033,157 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             f"SHOW TABLES LIKE '{_FS_METADATA_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
         ).collect()
         self.assertEqual(len(result), 1)
+
+    # =========================================================================
+    # Versioned Distinct-N Tests
+    # =========================================================================
+
+    def _delete_fv_metadata_row(self, fs: FeatureStore, fv_name: str, version: str) -> None:
+        """Delete the FEATURE_VIEW_METADATA row to simulate a legacy FV."""
+        metadata_table = f"{fs._config.full_schema_path}.{_FS_METADATA_TABLE}"
+        self._session.sql(
+            f"""DELETE FROM {metadata_table}
+            WHERE OBJECT_TYPE = 'FEATURE_VIEW'
+            AND OBJECT_NAME = '{fv_name.upper()}'
+            AND VERSION = '{version}'
+            AND METADATA_TYPE = 'FEATURE_VIEW_METADATA'"""
+        ).collect()
+
+    def test_last_distinct_n_legacy_compat(self) -> None:
+        """Test that a missing FEATURE_VIEW_METADATA row reloads as None (legacy default applied client-side)."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [Feature.last_distinct_n("category", "3h", n=3).alias("recent_categories")]
+
+        sql = f"SELECT user_id, event_ts, category FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_last_distinct_legacy",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+        )
+
+        fs.register_feature_view(feature_view=fv, version="v1")
+
+        # Delete the FEATURE_VIEW_METADATA row to simulate a legacy FV
+        self._delete_fv_metadata_row(fs, "user_last_distinct_legacy", "v1")
+
+        # Re-fetch the FV — a missing row resolves to None (no "1.41.0" persisted);
+        # the legacy default is applied on the fly by consumers.
+        loaded_fv = fs.get_feature_view("user_last_distinct_legacy", "v1")
+        self.assertIsNone(loaded_fv.authoring_pkg_version)
+
+    def test_last_distinct_n_new_version_has_authoring_version(self) -> None:
+        """Test that newly registered FV has authoring_pkg_version set."""
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        features = [Feature.last_distinct_n("category", "3h", n=3).alias("recent_categories")]
+
+        sql = f"SELECT user_id, event_ts, category FROM {self._events_table}"
+        fv = FeatureView(
+            name="user_last_distinct_versioned",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=features,
+        )
+
+        fs.register_feature_view(feature_view=fv, version="v1")
+        loaded_fv = fs.get_feature_view("user_last_distinct_versioned", "v1")
+        self.assertIsNotNone(loaded_fv.authoring_pkg_version)
+        self.assertNotEqual(loaded_fv.authoring_pkg_version, "1.41.0")
+
+    def test_generate_dataset_version_mix(self) -> None:
+        """Test generate_dataset mixing a legacy and a new-version LAST_DISTINCT_N FV.
+
+        Both FVs compute LAST_DISTINCT_N on the same source. The legacy FV is
+        registered with the snowml version pinned to 1.41.0 so its tile DT and
+        metadata use the legacy (shared-column, merge-time-dedup) format; the
+        new FV uses the current version (per-N pre-deduplicated tiles).
+
+        Both versions select the same *set* of distinct values (the most-recent
+        N), but they order the output differently: legacy emits most-recent-first
+        while the new version emits oldest-first.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT user_id, event_ts, category FROM {self._events_table}"
+
+        # FV1: genuine legacy FV — pin snowml version to 1.41.0 during registration
+        # so the DT is built with legacy tile columns (not just metadata-deleted).
+        legacy_features = [Feature.last_distinct_n("category", "3h", n=3).alias("legacy_categories")]
+        legacy_fv_def = FeatureView(
+            name="mix_legacy_distinct_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=legacy_features,
+        )
+        with patch("snowflake.ml.version.VERSION", "1.41.0"):
+            fs.register_feature_view(feature_view=legacy_fv_def, version="v1")
+        # A real legacy FV predates the version metadata, so drop the row; it
+        # reloads as None and consumers apply the legacy default on the fly.
+        self._delete_fv_metadata_row(fs, "mix_legacy_distinct_fv", "v1")
+        legacy_fv = fs.get_feature_view("mix_legacy_distinct_fv", "v1")
+        self.assertIsNone(legacy_fv.authoring_pkg_version)
+
+        # FV2: new-version FV with the same aggregation.
+        new_features = [Feature.last_distinct_n("category", "3h", n=3).alias("new_categories")]
+        new_fv_def = FeatureView(
+            name="mix_new_distinct_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=new_features,
+        )
+        fs.register_feature_view(feature_view=new_fv_def, version="v1")
+        new_fv = fs.get_feature_view("mix_new_distinct_fv", "v1")
+        self.assertNotEqual(new_fv.authoring_pkg_version, "1.41.0")
+
+        spine_df = self._session.create_dataframe([(1, datetime(2024, 1, 1, 3, 0, 0))], schema=["user_id", "query_ts"])
+
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[legacy_fv, new_fv],
+            spine_timestamp_col="query_ts",
+            join_method="cte",
+        )
+
+        result_pd = result_df.to_pandas()
+        self.assertEqual(len(result_pd), 1)
+        self.assertIn("LEGACY_CATEGORIES", result_pd.columns)
+        self.assertIn("NEW_CATEGORIES", result_pd.columns)
+
+        # User 1 events within the 3h window before query_ts=03:00, by time:
+        #   cat1(00:30), cat2(00:45), cat1(01:15), cat3(01:45), cat2(02:30)
+        # last_distinct_n(n=3) distinct set (most-recent): {cat2, cat3, cat1}.
+        #   legacy ordering (most-recent-first): cat2, cat3, cat1
+        #   new ordering (oldest-first by event time): cat1, cat3, cat2
+        legacy_result = json.loads(result_pd.iloc[0]["LEGACY_CATEGORIES"])
+        new_result = json.loads(result_pd.iloc[0]["NEW_CATEGORIES"])
+
+        # Same distinct set, different (version-specific) ordering.
+        self.assertEqual(legacy_result, ["cat2", "cat3", "cat1"])
+        self.assertEqual(new_result, ["cat1", "cat3", "cat2"])
+        self.assertEqual(set(legacy_result), set(new_result))
 
 
 class LifetimeAggregationTest(FeatureStoreIntegTestBase, parameterized.TestCase):

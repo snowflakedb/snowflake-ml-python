@@ -14,7 +14,7 @@ REQUIREMENTS = [
     "packaging>=20.9,<26",
     "pandas>=2.1.4,<3",
     "platformdirs<5",
-    "pyarrow<19.0.0",
+    "pyarrow",
     "pydantic>=2.8.2, <3",
     "pyjwt>=2.0.0, <3",
     "pytimeparse>=1.1.8,<2",

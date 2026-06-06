@@ -10,6 +10,7 @@ from packaging import version
 from sklearn import datasets, linear_model
 
 from snowflake.ml._internal import file_utils
+from snowflake.ml._internal.exceptions import error_codes
 from snowflake.ml.model import custom_model, type_hints
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
@@ -128,6 +129,71 @@ class ModelLoadHygieneTest(absltest.TestCase):
 
 
 class ModelPackagerTest(absltest.TestCase):
+    def test_save_rejects_unknown_option_key(self) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+        model = linear_model.LinearRegression()
+        model.fit(df[["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]], df["TARGET"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with exception_utils.assert_snowml_exceptions(
+                self,
+                expected_error_code=error_codes.INVALID_ARGUMENT,
+                expected_original_error_type=ValueError,
+                expected_regex=r"model save: unrecognized option keys.*not_a_real_save_option",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model,
+                    sample_input_data=df.head(2),
+                    options={"not_a_real_save_option": True},  # type: ignore[arg-type]
+                )
+
+    def test_save_rejects_cross_framework_option_key(self) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+        model = linear_model.LinearRegression()
+        model.fit(df[["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]], df["TARGET"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with exception_utils.assert_snowml_exceptions(
+                self,
+                expected_error_code=error_codes.INVALID_ARGUMENT,
+                expected_original_error_type=ValueError,
+                expected_regex=r"model save: unrecognized option keys.*model_uri",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model,
+                    sample_input_data=df.head(2),
+                    options={"model_uri": "runs:/foo/bar"},
+                )
+
+    def test_save_rejects_unknown_method_option_key(self) -> None:
+        iris = datasets.load_iris()
+        df = pd.DataFrame(data=np.c_[iris["data"], iris["target"]], columns=iris["feature_names"] + ["target"])
+        df.columns = [s.replace(" (CM)", "").replace(" ", "") for s in df.columns.str.upper()]
+        model = linear_model.LinearRegression()
+        model.fit(df[["SEPALLENGTH", "SEPALWIDTH", "PETALLENGTH", "PETALWIDTH"]], df["TARGET"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with exception_utils.assert_snowml_exceptions(
+                self,
+                expected_error_code=error_codes.INVALID_ARGUMENT,
+                expected_original_error_type=ValueError,
+                expected_regex=r"model save: unrecognized method_options keys.*not_a_method_option",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=model,
+                    sample_input_data=df.head(2),
+                    options={
+                        "method_options": {"predict": {"not_a_method_option": True}}
+                    },  # type: ignore[arg-type, misc]
+                )
+
     def test_save_validation_1(self) -> None:
         with tempfile.TemporaryDirectory() as workspace:
             pk = model_packager.ModelPackager(os.path.join(workspace, "model1"))

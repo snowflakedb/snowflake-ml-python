@@ -8,8 +8,8 @@ from snowflake.ml._internal.exceptions import (
     exceptions as snowml_exceptions,
 )
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
-from snowflake.ml.model._packager import model_handler
-from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.model._packager import model_handler, model_save_options
+from snowflake.ml.model._packager.model_meta import model_meta, model_sample_input_data
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,11 @@ class ModelPackager:
                 error_code=error_codes.INVALID_TYPE,
                 original_exception=TypeError(f"{type(model)} is not supported."),
             )
+        model_save_options.validate_model_save_option_keys(
+            handler_type=handler.HANDLER_TYPE,
+            options=options,
+            include_internal_option_keys=True,
+        )
         with model_meta.create_model_metadata(
             model_dir_path=self.local_dir_path,
             name=name,
@@ -100,6 +105,13 @@ class ModelPackager:
             )
             if signatures is None:
                 logger.info(f"Model signatures are auto inferred as:\n\n{meta.signatures}")
+
+            if sample_input_data is not None and (options or {}).get("capture_sample_input_data", True):
+                model_sample_input_data.persist_sample_input_data(
+                    sample_input_data=sample_input_data,
+                    model_meta=meta,
+                    model_dir_path=self.local_dir_path,
+                )
 
         self.model = model
         self.meta = meta

@@ -121,6 +121,10 @@ class TransformersPipelineHandler(
             raise NotImplementedError("Explainability is not supported for huggingface model.")
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             task = model.task  # type:ignore[attr-defined]
+            pretrained_model = getattr(model, "model", None)
+            pretrained_model_name = (
+                getattr(pretrained_model, "name_or_path", None) if pretrained_model is not None else None
+            )
             framework = getattr(model, "framework", None)
             batch_size = getattr(model, "_batch_size", None) or getattr(model, "batch_size", None)
             tokenizer = getattr(model, "tokenizer", None)
@@ -133,6 +137,7 @@ class TransformersPipelineHandler(
                 model, huggingface_base.TransformersPipeline
             )
             task = model.task
+            pretrained_model_name = model.model
             framework = getattr(model, "framework", None)
             batch_size = getattr(model, "batch_size", None)
             has_chat_template = getattr(model, "has_chat_template", False)
@@ -251,6 +256,7 @@ class TransformersPipelineHandler(
             options=model_meta_schema.HuggingFacePipelineModelBlobOptions(
                 task=task,
                 batch_size=batch_size if batch_size is not None else 1,
+                model=pretrained_model_name,
                 has_tokenizer=has_tokenizer,
                 has_feature_extractor=has_feature_extractor,
                 has_image_preprocessor=has_image_preprocessor,

@@ -76,6 +76,7 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
         engine_args_override: Optional[list[str]],
     ) -> None:
         """Test text generation with vLLM inference engine and various resource configurations."""
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",

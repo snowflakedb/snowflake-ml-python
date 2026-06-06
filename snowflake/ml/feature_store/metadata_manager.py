@@ -52,6 +52,28 @@ class MetadataType(str, Enum):
     # references (as ``FvSourceRef`` rows), request source schema, output
     # schema, and the captured output_columns list.
     REALTIME_CONFIG = "REALTIME_CONFIG"
+    FEATURE_VIEW_METADATA = "FEATURE_VIEW_METADATA"
+
+
+@dataclass
+class FeatureViewMetadataConfig:
+    """General-purpose metadata for a registered feature view.
+
+    Stored under MetadataType.FEATURE_VIEW_METADATA. Currently tracks the
+    snowml package version that authored the feature view, used to select
+    between legacy and new tile/merge behavior.
+    """
+
+    authoring_pkg_version: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {"authoring_pkg_version": self.authoring_pkg_version}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FeatureViewMetadataConfig:
+        """Create from dictionary."""
+        return cls(authoring_pkg_version=data["authoring_pkg_version"])
 
 
 @dataclass
@@ -508,17 +530,19 @@ class FeatureStoreMetadataManager:
         version: str,
         specs: AggregationMetadata,
         descs: Optional[dict[str, str]] = None,
+        fv_metadata_config: Optional[FeatureViewMetadataConfig] = None,
     ) -> None:
         """Save all metadata for a tiled feature view atomically.
 
-        This method saves both feature specs and descriptions in a single
-        INSERT statement for atomicity during creation.
+        This method saves feature specs, descriptions, and general FV metadata
+        in a single INSERT statement for atomicity during creation.
 
         Args:
             fv_name: Feature view name.
             version: Feature view version.
             specs: Aggregation metadata (required).
             descs: Optional dictionary of feature descriptions.
+            fv_metadata_config: Optional general-purpose FV metadata (e.g. authoring version).
         """
         self.ensure_table_exists()
 
@@ -536,6 +560,13 @@ class FeatureStoreMetadataManager:
             selects.append(
                 f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
                 f"'{version}', '{MetadataType.FEATURE_DESCS.value}', PARSE_JSON($${descs_json}$$)"
+            )
+
+        if fv_metadata_config is not None:
+            config_json = json.dumps(fv_metadata_config.to_dict())
+            selects.append(
+                f"SELECT '{MetadataObjectType.FEATURE_VIEW.value}', '{normalized_name}', "
+                f"'{version}', '{MetadataType.FEATURE_VIEW_METADATA.value}', PARSE_JSON($${config_json}$$)"
             )
 
         union_query = " UNION ALL ".join(selects)
@@ -569,6 +600,34 @@ class FeatureStoreMetadataManager:
             metadata_type=MetadataType.FEATURE_DESCS,
         )
         return data
+
+    # =========================================================================
+    # Feature View Metadata Config
+    # =========================================================================
+
+    def get_feature_view_metadata_config(
+        self,
+        fv_name: str,
+        version: str,
+    ) -> Optional[FeatureViewMetadataConfig]:
+        """Get general-purpose metadata for a feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+
+        Returns:
+            FeatureViewMetadataConfig if found, None otherwise.
+        """
+        data = self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.FEATURE_VIEW_METADATA,
+        )
+        if data is None:
+            return None
+        return FeatureViewMetadataConfig.from_dict(data)
 
     # =========================================================================
     # Rollup Config

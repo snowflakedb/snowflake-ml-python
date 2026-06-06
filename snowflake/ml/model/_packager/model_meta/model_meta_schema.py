@@ -48,6 +48,7 @@ class CatBoostModelBlobOptions(BaseModelBlobOptions):
 class HuggingFacePipelineModelBlobOptions(BaseModelBlobOptions):
     task: Required[str]
     batch_size: Required[int]
+    model: NotRequired[Optional[str]]
     has_tokenizer: NotRequired[bool]
     has_feature_extractor: NotRequired[bool]
     has_image_preprocessor: NotRequired[bool]
@@ -82,6 +83,8 @@ class TensorflowModelBlobOptions(BaseModelBlobOptions):
 
 class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
     batch_size: Required[int]
+    model: NotRequired[Optional[str]]
+    truncate_dim: NotRequired[int]
 
 
 class ProphetModelBlobOptions(BaseModelBlobOptions):

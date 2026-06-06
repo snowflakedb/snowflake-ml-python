@@ -22,6 +22,7 @@ from snowflake.ml.feature_store.spec.enums import (
     TableType,
 )
 from snowflake.snowpark.types import (
+    ArrayType,
     BinaryType,
     BooleanType,
     DataType,
@@ -92,16 +93,32 @@ def validate_spec_oft_offline_table_schema(schema: StructType) -> None:
 
     Same rules as :func:`validate_schema_types`: only types that serialize to
     :class:`FSColumn` in the unified FeatureView spec. Unsupported types (e.g.
-    ARRAY, BINARY, VARIANT) must fail before embedding the schema in
+    ARRAY, VARIANT) must fail before embedding the schema in
     ``CREATE ONLINE FEATURE TABLE ... FROM SPECIFICATION``.
 
-    Call once per offline table whose schema is included in the spec (batch
-    view/DT, streaming UDF-transformed table, tile DT, etc.).
+    Use this for served, scalar offline tables (e.g. a non-tiled FV's output
+    view). Tiled DTs that carry list-aggregation partial arrays use
+    :func:`validate_spec_oft_tiled_offline_table_schema` instead.
 
     Args:
         schema: Snowpark StructType describing the offline table columns.
     """
     validate_schema_types(schema)
+
+
+def validate_spec_oft_tiled_offline_table_schema(schema: StructType) -> None:
+    """Validate a tiled FV's offline DT schema for OFT ``offline_configs``.
+
+    A tiled DT legitimately carries list-aggregation partial columns stored as
+    ``ARRAY`` (e.g. the distinct-N value/timestamp arrays). Those are permitted
+    here; every other column is validated with the standard scalar rules via
+    :func:`validate_schema_types`.
+
+    Args:
+        schema: Snowpark StructType describing the tiled offline DT columns.
+    """
+    scalar_fields = [field for field in schema.fields if not isinstance(field.datatype, ArrayType)]
+    validate_schema_types(StructType(scalar_fields))
 
 
 def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
@@ -138,6 +155,30 @@ def _make_fs_column(name: str, dt: DataType) -> "FSColumn":
     )
 
 
+def _make_tiled_fs_column(name: str, dt: DataType) -> "FSColumn":
+    """Convert a tiled-DT column to an FSColumn, permitting list-aggregation arrays.
+
+    ``ArrayType`` columns are serialized as ``type="ArrayType"`` with
+    ``element_type`` taken from the Snowpark ``ArrayType.element_type`` when
+    available. Physical tile arrays built with ``ARRAY_AGG`` report no usable
+    element type, so callers that need an exact one (e.g. distinct-N partials)
+    set it explicitly from the aggregation spec after conversion. Non-array
+    columns fall back to the scalar :func:`_make_fs_column` rules.
+
+    Args:
+        name: Column name.
+        dt: Snowpark DataType instance.
+
+    Returns:
+        An FSColumn with type metadata extracted from *dt*.
+    """
+    if isinstance(dt, ArrayType):
+        element = getattr(dt, "element_type", None)
+        element_name = type(element).__name__ if element is not None else None
+        return FSColumn(name=name, type="ArrayType", element_type=element_name)
+    return _make_fs_column(name, dt)
+
+
 def _columns_from_struct_type(schema: StructType) -> list["FSColumn"]:
     """Convert a Snowpark StructType to a list of FSColumns.
 
@@ -151,6 +192,103 @@ def _columns_from_struct_type(schema: StructType) -> list["FSColumn"]:
         A list of FSColumn instances.
     """
     return [_make_fs_column(f.name, f.datatype) for f in schema.fields]
+
+
+def _columns_from_tiled_struct_type(schema: StructType) -> list["FSColumn"]:
+    """Convert a tiled-DT StructType to FSColumns, permitting list-aggregation arrays.
+
+    Like :func:`_columns_from_struct_type` but uses :func:`_make_tiled_fs_column`
+    so that the list-aggregation partial columns stored as ``ARRAY`` (e.g.
+    distinct-N value/timestamp arrays) are carried through instead of rejected.
+
+    Args:
+        schema: A Snowpark StructType schema describing a tiled offline DT.
+
+    Returns:
+        A list of FSColumn instances.
+    """
+    return [_make_tiled_fs_column(f.name, f.datatype) for f in schema.fields]
+
+
+def _format_fs_column_type(col: "FSColumn") -> str:
+    if col.type == "DecimalType" and col.precision is not None and col.scale is not None:
+        return f"DecimalType({col.precision},{col.scale})"
+    if col.type == "StringType" and col.length is not None:
+        return f"StringType({col.length})"
+    return col.type
+
+
+def validate_fs_columns_match(
+    *,
+    expected: list["FSColumn"],
+    actual: list["FSColumn"],
+    expected_label: str,
+    actual_label: str,
+    error_prefix: str,
+) -> None:
+    """Validate that every column in ``expected`` is present in ``actual`` with a compatible type.
+
+    Names match case-insensitively. Type compatibility is governed by
+    :func:`_fs_columns_compatible`. Extra columns in ``actual`` are allowed.
+    Reports the first offending column.
+
+    Args:
+        expected: Canonical column list (e.g. from a declared schema).
+        actual: Column list to verify against ``expected``.
+        expected_label: Label for the expected schema's owner in error messages
+            (e.g. ``"StreamSource 'transaction_events'"``).
+        actual_label: Label for the actual schema's owner in error messages
+            (e.g. ``"backfill_df"``).
+        error_prefix: Domain prefix for the error message (e.g.
+            ``"streaming feature view"``).
+
+    Raises:
+        ValueError: If any expected column is missing from ``actual`` or has a
+            type that is not compatible.
+    """
+    actual_by_name = {c.name.upper(): c for c in actual}
+    for exp in expected:
+        act = actual_by_name.get(exp.name.upper())
+        if act is None:
+            raise ValueError(
+                f"{error_prefix}: {actual_label} is missing column '{exp.name}' " f"declared by {expected_label}."
+            )
+        if not _fs_columns_compatible(expected=exp, actual=act):
+            raise ValueError(
+                f"{error_prefix}: {actual_label} column '{act.name}' has type "
+                f"{_format_fs_column_type(act)} but {expected_label} declares "
+                f"column '{exp.name}' with type {_format_fs_column_type(exp)}."
+            )
+
+
+def _fs_columns_compatible(*, expected: "FSColumn", actual: "FSColumn") -> bool:
+    """Return True when ``actual`` is type-compatible with ``expected``.
+
+    ``type``, ``timezone``, and ``element_type`` always match exactly.
+    ``StringType`` length on ``expected`` is a wildcard when ``None``: Snowpark
+    can report a specific length even for unbounded ``VARCHAR`` columns, so a
+    schema declared with ``StringType()`` must accept those.
+    ``DecimalType`` precision/scale must match exactly — different scales would
+    truncate data silently.
+
+    Args:
+        expected: Declared FSColumn from the canonical schema.
+        actual: FSColumn observed in the schema being validated.
+
+    Returns:
+        True if the two columns are compatible per the rules above.
+    """
+    if expected.type != actual.type:
+        return False
+    if expected.timezone != actual.timezone:
+        return False
+    if expected.element_type != actual.element_type:
+        return False
+    if expected.type == "StringType":
+        return expected.length is None or expected.length == actual.length
+    if expected.type == "DecimalType":
+        return expected.precision == actual.precision and expected.scale == actual.scale
+    return True
 
 
 # ---------------------------------------------------------------------------

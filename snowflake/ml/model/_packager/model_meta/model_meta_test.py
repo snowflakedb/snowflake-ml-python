@@ -548,6 +548,36 @@ class ModelMetaEnvTest(absltest.TestCase):
 
         self.assertTrue(meta.env.prefer_pip_for_automatic_dependencies)
 
+    def test_model_meta_sample_input_file_paths_omitted_when_unpopulated(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+
+            with open(os.path.join(tmpdir, model_meta.MODEL_METADATA_FILE), encoding="utf-8") as f:
+                raw = yaml.safe_load(f)
+            self.assertNotIn("sample_input_file_path", raw["signatures"]["predict"])
+
+            loaded = model_meta.ModelMetadata.load(tmpdir)
+            self.assertEqual(loaded.sample_input_file_paths, {})
+
+    def test_model_meta_sample_input_file_paths_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with model_meta.create_model_metadata(
+                model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+            ) as meta:
+                meta.models["model1"] = _DUMMY_BLOB
+                meta.sample_input_file_paths["predict"] = "sample_input_data.json"
+
+            with open(os.path.join(tmpdir, model_meta.MODEL_METADATA_FILE), encoding="utf-8") as f:
+                raw = yaml.safe_load(f)
+            self.assertEqual(raw["signatures"]["predict"]["sample_input_file_path"], "sample_input_data.json")
+            self.assertNotIn("sample_input_file_path", raw)
+
+            loaded = model_meta.ModelMetadata.load(tmpdir)
+            self.assertEqual(loaded.sample_input_file_paths, {"predict": "sample_input_data.json"})
+
 
 if __name__ == "__main__":
     absltest.main()

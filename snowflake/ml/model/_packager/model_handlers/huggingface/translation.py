@@ -1,6 +1,7 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 import pandas as pd
+from packaging import version
 from typing_extensions import override
 
 from snowflake.ml.model import model_signature
@@ -11,7 +12,11 @@ if TYPE_CHECKING:
 
 
 class TranslationTaskHandler(_task_handler.HuggingFaceTaskHandler):
-    """Handles translation pipelines."""
+    """Handles translation pipelines, removed in transformers 5.x."""
+
+    @override
+    def get_transformers_upper_bound(self) -> Optional[version.Version]:
+        return version.Version("5")
 
     @override
     def run_inference(

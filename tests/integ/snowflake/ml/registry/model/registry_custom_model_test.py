@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import tempfile
 
@@ -100,6 +101,28 @@ class DemoModelPassthrough(custom_model.CustomModel):
     @custom_model.inference_api
     def predict(self, input: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame({"out_a": input["a"].astype(float), "out_b": input["b"].astype(float)})
+
+
+class ComplexInputModel(custom_model.CustomModel):
+    """Accepts a mix of scalar types (int, float, string, bool), a categorical column, a list column, a
+    timestamp, and bytes.
+
+    Predict deterministically combines the value-bearing columns (including the categorical ``level``);
+    name, timestamp and payload are accepted but not used in the computation (timestamps would round-trip
+    through ISO formatting and bytes are serialized as null by design, so neither contributes a stable
+    value to compare against).
+    """
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+
+    @custom_model.inference_api
+    def predict(self, input: pd.DataFrame) -> pd.DataFrame:
+        tag_counts = input["tags"].apply(lambda v: len(v) if v is not None else 0)
+        active_flag = input["active"].astype(int)
+        level = input["level"].astype(int)
+        output = input["count"].astype(int) + tag_counts + active_flag + input["price"].astype(int) + level
+        return pd.DataFrame({"output": output})
 
 
 class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBase):
@@ -782,6 +805,166 @@ class TestRegistryCustomModelInteg(registry_model_test_base.RegistryModelTestBas
             }
         )
         _check(mv.run(input_with_only_nans, function_name="predict"), input_with_only_nans)
+
+    def _list_model_version_stage_files(self, fully_qualified_model_name: str, version_name: str) -> list[str]:
+        rows = self.session.sql(f"LIST 'snow://model/{fully_qualified_model_name}/versions/{version_name}/'").collect()
+        return [row["name"] for row in rows]
+
+    def test_capture_sample_input_data(self) -> None:
+        """The sample input data is persisted as a separate fileon the model stage and the
+        server-side inference template function returns templates populated from the captured row."""
+        lm = DemoModel(custom_model.ModelContext())
+        sample_df = pd.DataFrame([[1, 2, 3], [4, 2, 5]], columns=["c1", "c2", "c3"])
+
+        name = f"model_test_capture_sample_input_data_{self._run_id}".upper()
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=lm,
+            model_name=name,
+            version_name=version,
+            sample_input_data=sample_df,
+        )
+
+        stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)
+        self.assertTrue(
+            any(f.endswith("sample_input_data.json") for f in stage_files),
+            f"Expected 'sample_input_data.json' on stage; found: {stage_files}",
+        )
+
+        self.session.sql("ALTER SESSION SET ALLOW_CALLING_MODEL_SERVING_FUNCTIONS_OUTSIDE_UI = TRUE").collect()
+        try:
+            result = self.session.sql(
+                f"SELECT SYSTEM$GENERATE_MODEL_INFERENCE_TEMPLATE("
+                f"'{mv.fully_qualified_model_name}', '{mv.version_name}')"
+            ).collect()
+        finally:
+            self.session.sql("ALTER SESSION UNSET ALLOW_CALLING_MODEL_SERVING_FUNCTIONS_OUTSIDE_UI").collect()
+
+        response = json.loads(result[0][0])
+
+        expected_sql = (
+            "WITH input_data AS (\n"
+            "    SELECT\n"
+            "        1::BIGINT AS c1,\n"
+            "        2::BIGINT AS c2,\n"
+            "        3::BIGINT AS c3\n"
+            ")\n"
+            "SELECT\n"
+            "    *,\n"
+            "    MODEL(\n"
+            f"        {mv.fully_qualified_model_name},\n"
+            f"        {mv.version_name}\n"
+            "    )!predict(\n"
+            "        c1,\n"
+            "        c2,\n"
+            "        c3\n"
+            "    )\n"
+            "FROM\n"
+            "    input_data;"
+        )
+        self.assertEqual(expected_sql, response["SQL"]["predict"]["template"].strip())
+
+        expected_python = (
+            "import pandas as pd\n"
+            "from snowflake.ml.registry import Registry\n"
+            "\n"
+            "reg = Registry(session=session)\n"
+            f'mv = reg.get_model("{mv.fully_qualified_model_name}").version("{mv.version_name}")\n'
+            "\n"
+            "output_df = mv.run(\n"
+            "    pd.DataFrame.from_records([{\n"
+            '        "c1": 1,\n'
+            '        "c2": 2,\n'
+            '        "c3": 3\n'
+            "    }]),\n"
+            '    function_name="predict"\n'
+            ")"
+        )
+        self.assertEqual(expected_python, response["PYTHON"]["predict"]["template"].strip())
+
+        captured_row = sample_df.head(1).reset_index(drop=True)
+        sql_rows = self.session.sql(response["SQL"]["predict"]["template"]).collect()
+        self.assertEqual(len(sql_rows), 1)
+        sql_prediction_object = list(sql_rows[0].as_dict().values())[-1]
+        if isinstance(sql_prediction_object, str):
+            sql_prediction_object = json.loads(sql_prediction_object)
+        run_result_df = mv.run(captured_row, function_name="predict")
+        self.assertEqual(int(sql_prediction_object["output"]), int(run_result_df.iloc[0]["output"]))
+
+    def test_capture_sample_input_data_complex_types(self) -> None:
+        """Capture path runs end-to-end for a model spanning scalars, categorical, list, timestamp, and bytes."""
+        lm = ComplexInputModel(custom_model.ModelContext())
+        sample_df = pd.DataFrame(
+            {
+                "count": [5, 3],
+                "price": [9.99, 19.99],
+                "name": ["alpha", "beta"],
+                "active": [True, False],
+                "level": pd.Categorical([2, 1]),
+                "tags": [["red", "blue"], ["green"]],
+                "created_at": pd.to_datetime(["2026-01-15 10:30:00", "2026-02-20 14:00:00"]),
+                "payload": [b"\x00\x01", b"\x02"],
+            }
+        )
+
+        name = f"model_test_capture_sample_input_data_complex_{self._run_id}".upper()
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=lm,
+            model_name=name,
+            version_name=version,
+            sample_input_data=sample_df,
+        )
+
+        stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)
+        self.assertTrue(
+            any(f.endswith("sample_input_data.json") for f in stage_files),
+            f"Expected 'sample_input_data.json' on stage; found: {stage_files}",
+        )
+
+        self.session.sql("ALTER SESSION SET ALLOW_CALLING_MODEL_SERVING_FUNCTIONS_OUTSIDE_UI = TRUE").collect()
+        try:
+            result = self.session.sql(
+                f"SELECT SYSTEM$GENERATE_MODEL_INFERENCE_TEMPLATE("
+                f"'{mv.fully_qualified_model_name}', '{mv.version_name}')"
+            ).collect()
+        finally:
+            self.session.sql("ALTER SESSION UNSET ALLOW_CALLING_MODEL_SERVING_FUNCTIONS_OUTSIDE_UI").collect()
+        response = json.loads(result[0][0])
+
+        captured_row = sample_df.head(1).reset_index(drop=True)
+        sql_rows = self.session.sql(response["SQL"]["predict"]["template"]).collect()
+        self.assertEqual(len(sql_rows), 1)
+        sql_prediction_object = list(sql_rows[0].as_dict().values())[-1]
+        if isinstance(sql_prediction_object, str):
+            sql_prediction_object = json.loads(sql_prediction_object)
+        run_result_df = mv.run(captured_row, function_name="predict")
+        self.assertEqual(int(sql_prediction_object["output"]), int(run_result_df.iloc[0]["output"]))
+
+    def test_capture_sample_input_data_opt_out(self) -> None:
+        """Opt-out path: the sample input file is not persisted when
+        capture_sample_input_data is explicitly disabled."""
+        lm = DemoModel(custom_model.ModelContext())
+        sample_df = pd.DataFrame([[1, 2, 3], [4, 2, 5]], columns=["c1", "c2", "c3"])
+
+        name = f"model_test_capture_sample_input_data_opt_out_{self._run_id}".upper()
+        version = f"ver_{self._run_id}"
+
+        mv = self.registry.log_model(
+            model=lm,
+            model_name=name,
+            version_name=version,
+            sample_input_data=sample_df,
+            options={"capture_sample_input_data": False},
+        )
+
+        stage_files = self._list_model_version_stage_files(mv.fully_qualified_model_name, mv.version_name)
+        self.assertFalse(
+            any(f.endswith("sample_input_data.json") for f in stage_files),
+            f"Did not expect 'sample_input_data.json' on stage; found: {stage_files}",
+        )
 
 
 if __name__ == "__main__":

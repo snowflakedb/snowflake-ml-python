@@ -351,7 +351,9 @@ py_test(
     timeout = "eternal",
     srcs = [
         "feature_store_batch_online_read_bundled.py",
+        "feature_store_distinct_n_online_bundled.py",
         "feature_store_feature_group_bundled.py",
+        "feature_store_oft_varchar_length_bundled.py",
         "feature_store_realtime_bundled.py",
         "feature_store_spec_oft_bundle_test.py",
         "feature_store_stream_ingest_bundled.py",

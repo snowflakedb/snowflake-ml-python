@@ -36,6 +36,18 @@ py_library(
     ],
 )
 
+py_library(
+    name = "model_sample_input_data",
+    srcs = ["model_sample_input_data.py"],
+    deps = [
+        ":model_meta",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_signatures:core",
+        "//snowflake/ml/model/_signatures:snowpark_handler",
+    ],
+)
+
 py_test(
     name = "model_meta_test",
     srcs = ["model_meta_test.py"],
@@ -47,6 +59,24 @@ py_test(
         ":model_meta",
         "//snowflake/ml/_internal:env_utils",
         "//snowflake/ml/model:model_signature",
+    ],
+)
+
+py_test(
+    name = "model_sample_input_data_test",
+    srcs = ["model_sample_input_data_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":model_blob_meta",
+        ":model_meta",
+        ":model_sample_input_data",
+        "//snowflake/ml/model:custom_model",
+        "//snowflake/ml/model:model_signature",
+        "//snowflake/ml/model/_packager:model_packager",
+        "//snowflake/ml/model/_signatures:core",
     ],
 )
 

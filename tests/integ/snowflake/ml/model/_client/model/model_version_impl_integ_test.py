@@ -95,6 +95,7 @@ class TestModelVersionImplInteg(parameterized.TestCase):
                 "model/models/TEST_MODEL/model.pkl",
                 "model/env/requirements.txt",
                 "model/env/conda.yml",
+                "model/sample_input_data.json",
             ]
             expected_file_list = [os.path.join(tmpdir, expected_file) for expected_file in expected_file_list]
             actual_file_list = list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True))
@@ -132,6 +133,7 @@ class TestModelVersionImplInteg(parameterized.TestCase):
                 "functions/predict_proba.py",
                 "functions/predict.py",
                 "functions/explain.py",
+                "model/sample_input_data.json",
             ]
             expected_file_list = [os.path.join(tmpdir, expected_file) for expected_file in expected_file_list]
             actual_file_list = list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True))

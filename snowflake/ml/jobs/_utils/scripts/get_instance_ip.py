@@ -81,7 +81,7 @@ def get_first_instance(service_name: str) -> Optional[tuple[str, str, str]]:
         return None
 
 
-def main():
+def main() -> None:
     """Retrieves the IP address of a specified service instance or the current service.
     Args:
         service_name (str,required) Name of the service to query

@@ -169,5 +169,6 @@ def resolve_path(path: Union[str, Path]) -> "type_utils.PayloadPath":
     try:
         stage_path = StagePath(path_str)
     except ValueError:
+        # Always return platform-native Path for local filesystem access
         return Path(path_str)
     return stage_path

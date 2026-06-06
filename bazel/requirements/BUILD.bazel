@@ -1,4 +1,5 @@
 load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@rules_python//python:defs.bzl", "py_test")
 load("//bazel:py_rules.bzl", "py_binary")
 load("//bazel/platforms:optional_dependency_groups.bzl", "OPTIONAL_DEPENDENCY_GROUPS")
 load("//bazel/requirements:rules.bzl", "generate_requirement_file", "generate_requirement_file_yaml", "sync_target")
@@ -25,8 +26,22 @@ py_binary(
 )
 
 py_binary(
-    name = "update_model_logger_version",
-    srcs = ["update_model_logger_version.py"],
+    name = "update_pinned_snowml_python",
+    srcs = ["update_pinned_snowml_python.py"],
+)
+
+py_test(
+    name = "update_pinned_snowml_python_test",
+    size = "small",
+    srcs = ["update_pinned_snowml_python_test.py"],
+    imports = ["."],
+    tags = [
+        "feature:core",
+        "short_regress",
+    ],
+    deps = [
+        ":update_pinned_snowml_python",
+    ],
 )
 
 _SRC_REQUIREMENT_FILE = "//:requirements.yml"
@@ -143,20 +158,34 @@ generate_requirement_file_yaml(
     template_file = "//bazel/requirements/templates:meta.tpl.yaml",
 )
 
-# The model_logger pins the last released version of snowflake-ml-python,
+# Container images pin the last released version of snowflake-ml-python,
 # fetched from PyPI at sync time (requires network access via local = True).
 _MODEL_LOGGER_REQUIREMENTS_TARGET = {
     "generated": "model_logger_requirements.txt",
     "target": "//model_container_services_deployment/model_logger:requirements.txt",
 }
 
+_RAY_ORCHESTRATOR_CONDA_TARGET = {
+    "generated": "ray_orchestrator_conda.yml",
+    "target": "//model_container_services_deployment/ray_orchestrator:conda.yml",
+}
+
 genrule(
     name = "gen_model_logger_requirements",
     srcs = ["//model_container_services_deployment/model_logger:base_requirements.txt"],
     outs = [_MODEL_LOGGER_REQUIREMENTS_TARGET["generated"]],
-    cmd = "$(location :update_model_logger_version) $< > $@",
+    cmd = "$(location :update_pinned_snowml_python) --format pip $< > $@",
     local = True,
-    tools = [":update_model_logger_version"],
+    tools = [":update_pinned_snowml_python"],
+)
+
+genrule(
+    name = "gen_ray_orchestrator_conda",
+    srcs = ["//model_container_services_deployment/ray_orchestrator:base_conda.yml"],
+    outs = [_RAY_ORCHESTRATOR_CONDA_TARGET["generated"]],
+    cmd = "$(location :update_pinned_snowml_python) --format conda $< > $@",
+    local = True,
+    tools = [":update_pinned_snowml_python"],
 )
 
 diff_test(
@@ -166,19 +195,36 @@ diff_test(
     file2 = _MODEL_LOGGER_REQUIREMENTS_TARGET["target"],
 )
 
+diff_test(
+    name = "check_ray_orchestrator_conda",
+    failure_message = "Please run: " + _SYNC_BAZEL_CMD,
+    file1 = ":" + _RAY_ORCHESTRATOR_CONDA_TARGET["generated"],
+    file2 = _RAY_ORCHESTRATOR_CONDA_TARGET["target"],
+)
+
 # Generate the updater script so there's only one target for devs to run,
 # even if many generated files are in the source folder.
 _MODEL_LOGGER_TARGET_PATH = _MODEL_LOGGER_REQUIREMENTS_TARGET["target"].lstrip("//").replace(":", "/")
+
+_RAY_ORCHESTRATOR_CONDA_TARGET_PATH = _RAY_ORCHESTRATOR_CONDA_TARGET["target"].lstrip("//").replace(":", "/")
 
 sync_target(
     name = _SYNC_RULE_NAME,
     root_path = _CURRENT_PATH,
     runtime_cmds = [
         {
-            "cmd": "python3 {root_path}/update_model_logger_version.py {src} > {target}".format(
+            "cmd": "python3 {root_path}/update_pinned_snowml_python.py --format pip {src} > {target}".format(
                 src = "model_container_services_deployment/model_logger/base_requirements.txt",
                 root_path = _CURRENT_PATH,
                 target = _MODEL_LOGGER_TARGET_PATH,
+            ),
+            "tools": [],
+        },
+        {
+            "cmd": "python3 {root_path}/update_pinned_snowml_python.py --format conda {src} > {target}".format(
+                src = "model_container_services_deployment/ray_orchestrator/base_conda.yml",
+                root_path = _CURRENT_PATH,
+                target = _RAY_ORCHESTRATOR_CONDA_TARGET_PATH,
             ),
             "tools": [],
         },

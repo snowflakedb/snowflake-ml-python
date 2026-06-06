@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 from importlib import metadata as importlib_metadata
-from typing import TYPE_CHECKING, Any, Callable, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast
 from unittest import mock
 
 import numpy as np
@@ -26,7 +26,7 @@ from snowflake.ml.model._packager.model_handlers import (
 from snowflake.ml.model._packager.model_handlers.huggingface import (
     TransformersPipelineHandler,
 )
-from snowflake.ml.model._packager.model_meta import model_meta
+from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._signatures import utils
 from snowflake.ml.model.models import huggingface as hf_base, huggingface_pipeline
 
@@ -350,6 +350,59 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
                 any(spec.operator == "==" for spec in deps["tokenizers"].specifier),
                 "TransformersPipeline wrapper should not pin tokenizers to an exact version",
             )
+
+    def test_save_pipeline_captures_model(self) -> None:
+        """Verify that saving a transformers.Pipeline captures model in blob options."""
+        import transformers
+
+        expected_model_name = "google-bert/bert-base-uncased"
+        model = transformers.pipeline(task="fill-mask", model=expected_model_name)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            blob_options = cast(
+                model_meta_schema.HuggingFacePipelineModelBlobOptions,
+                pk.meta.models["model"].options,
+            )
+            self.assertEqual(blob_options["task"], "fill-mask")
+            self.assertEqual(blob_options["model"], expected_model_name)
+
+    def test_save_wrapper_captures_model(self) -> None:
+        """Verify that saving a TransformersPipeline wrapper captures model in blob options."""
+        expected_model_name = "google-bert/bert-base-uncased"
+        wrapper_model = hf_base.TransformersPipeline(
+            task="fill-mask",
+            model=expected_model_name,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            blob_options = cast(
+                model_meta_schema.HuggingFacePipelineModelBlobOptions,
+                pk.meta.models["model"].options,
+            )
+            self.assertEqual(blob_options["task"], "fill-mask")
+            self.assertEqual(blob_options["model"], expected_model_name)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"transformers_version": "4.41.2", "tokenizers_version": "0.19.1"},
@@ -1620,7 +1673,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
         fake_model = mock.MagicMock()
 
-        for task_name in ("fill-mask", "text-generation", "translation_en_to_fr", "unknown-task-xyz"):
+        for task_name in ("fill-mask", "text-generation", "unknown-task-xyz"):
             fake_model.task = task_name
             handler = _handler._get_task_handler(fake_model)
             self.assertIsNone(handler.get_transformers_upper_bound())
@@ -1632,7 +1685,15 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         from snowflake.ml.model._packager.model_handlers.huggingface import _handler
 
         fake_model = mock.MagicMock()
-        deprecated_tasks = ["conversational", "image-to-text", "visual-question-answering"]
+        deprecated_tasks = [
+            "conversational",
+            "image-to-text",
+            "visual-question-answering",
+            "summarization",
+            "text2text-generation",
+            "question-answering",
+            "translation_en_to_fr",
+        ]
         for task in deprecated_tasks:
             fake_model.task = task
             handler = _handler._get_task_handler(fake_model)
@@ -1644,6 +1705,10 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         {"task": "conversational"},
         {"task": "image-to-text"},
         {"task": "visual-question-answering"},
+        {"task": "summarization"},
+        {"task": "text2text-generation"},
+        {"task": "question-answering"},
+        {"task": "translation_en_to_fr"},
     )
     def test_save_wrapper_deprecated_task_pins_transformers_below_5(self, task: str) -> None:
         """Verify that saving a TransformersPipeline wrapper for a deprecated task pins transformers<5."""
@@ -1684,7 +1749,6 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         {"task": "fill-mask"},
         {"task": "text-generation"},
         {"task": "text-classification"},
-        {"task": "summarization"},
     )
     def test_save_wrapper_non_deprecated_task_allows_transformers_5(self, task: str) -> None:
         """Verify that saving a TransformersPipeline wrapper for a non-deprecated task does not cap at <5."""

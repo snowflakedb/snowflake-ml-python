@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from functools import cached_property
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any, Generic, Literal, Optional, TypeVar, Union, cast, overload
 
 import yaml
@@ -142,24 +142,47 @@ class MLJob(Generic[T], SerializableSessionMixin):
         self,
         path_str: str,
     ) -> str:
-        """Transform a local path within the container to a stage path."""
+        """Transform a local path within the container to a stage path.
+
+        Container paths (from Linux SPCS) are always POSIX-style and must be handled
+        with PurePosixPath to ensure consistent behavior across platforms (e.g., when
+        Windows clients retrieve results from Linux containers).
+
+        Args:
+            path_str: The path string to transform.
+
+        Returns:
+            A stage path string in the format @stage_name/path.
+
+        Raises:
+            ValueError: If the path is absolute but not relative to any known mount point.
+        """
         path = stage_utils.resolve_path(path_str)
         if isinstance(path, stage_utils.StagePath):
             return path.as_posix()
-        if not path.is_absolute():
-            return f"{self._result_stage_path}/{path.as_posix()}"
+
+        # Use PurePosixPath for all path operations to ensure cross-platform compatibility.
+        # Container paths are always POSIX-style (from Linux SPCS), regardless of client OS.
+        # On Windows, Path("/mnt/...").is_absolute() returns False (the bug), but
+        # PurePosixPath("/mnt/...").is_absolute() correctly returns True on all platforms.
+        posix_path = PurePosixPath(path_str)
+
+        if not posix_path.is_absolute():
+            return f"{self._result_stage_path}/{posix_path.as_posix()}"
 
         volume_mounts = self._container_spec["volumeMounts"]
         stage_volume = next((v for v in volume_mounts if v["name"] == constants.RESULT_VOLUME_NAME), None)
         if stage_volume is None:
             stage_volume = next(v for v in volume_mounts if v["name"] == constants.STAGE_VOLUME_NAME)
         stage_mount_str = stage_volume["mountPath"]
-        stage_mount = Path(stage_mount_str)
+        stage_mount = PurePosixPath(stage_mount_str)
         try:
-            relative_path = path.relative_to(stage_mount)
+            relative_path = posix_path.relative_to(stage_mount)
             return f"{self._result_stage_path}/{relative_path.as_posix()}"
         except ValueError:
-            raise ValueError(f"Result Path {path} is absolute, but should be relative to stage mount {stage_mount}")
+            raise ValueError(
+                f"Result Path {posix_path} is absolute, but should be relative to stage mount {stage_mount}"
+            )
 
     @overload
     def get_logs(

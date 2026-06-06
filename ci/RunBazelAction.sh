@@ -1,7 +1,7 @@
 #!/bin/bash
 # DESCRIPTION: Utility Shell script to run bazel action for snowml repository
 #
-# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted|short_regression] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]
+# RunBazelAction.sh <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|targeted|short_regression] [-t <target>] [-c <path_to_coverage_report>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]
 #
 # Args:
 #   action: bazel action, choose from test and coverage
@@ -21,7 +21,8 @@
 #   -e: specify the environment, used to determine.
 #   -p: specify the Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14). Default: uses bazel default (3.11)
 #   --tags: specify bazel test tag filters (e.g., "feature:jobs,feature:data")
-#   --with-spcs-image: use spcs image for testing.
+#   --with-spcs-image: build and push all spcs images for testing.
+#   --build-spcs-images: comma-separated list of specific images to build and push. Implies --with-spcs-image.
 #   --targets: comma-separated Bazel targets for targeted mode (e.g., "//snowflake/ml/modeling:xgboost_test,//tests/integ/...")
 #   --test-filter: filter to run specific test class/method (e.g., "TestClassName.test_method")
 #
@@ -35,6 +36,7 @@ mode="continuous_run"
 target=""
 SF_ENV="prod3"
 WITH_SPCS_IMAGE=false
+BUILD_SPCS_IMAGES=""
 TAG_FILTERS=""
 PYTHON_VERSION=""
 TARGETED_BAZEL_TARGETS=""
@@ -45,12 +47,13 @@ action=$1 && shift
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--targets <bazel_targets>] [--test-filter <filter>]"
+    echo "Usage: ${PROG} <test|coverage> [-b <bazel_path>] [-m merge_gate|continuous_run|quarantined|local_unittest|local_all|perf|targeted|short_regression] [-e <snowflake_env>] [-p <python_version>] [--tags <tags>] [--with-spcs-image] [--build-spcs-images <images>] [--targets <bazel_targets>] [--test-filter <filter>]"
     echo ""
     echo "Options:"
     echo "  -p <version>           Specify Python version (e.g., 3.9, 3.10, 3.11, 3.12, 3.13, 3.14)"
     echo "  --tags <tags>          Specify bazel tag filters (comma-separated)"
-    echo "  --with-spcs-image      Use spcs image for testing."
+    echo "  --with-spcs-image            Build and push all SPCS images for testing."
+    echo "  --build-spcs-images <images> Build and push only these SPCS images (comma-separated). Implies --with-spcs-image."
     echo "  --targets <targets>    Comma-separated Bazel targets for targeted mode (e.g., '//path:target,//path/...')"
     echo "  --test-filter <filter> Filter to run specific test class/method (e.g., 'TestClassName.test_method')"
     echo ""
@@ -127,6 +130,10 @@ while (($#)); do
     --with-spcs-image)
         WITH_SPCS_IMAGE=true
         ;;
+    --build-spcs-images)
+        shift
+        BUILD_SPCS_IMAGES="$1"
+        ;;
     -h | --help)
         help 0
         ;;
@@ -136,6 +143,13 @@ while (($#)); do
     esac
     shift
 done
+
+if [[ -n "${BUILD_SPCS_IMAGES}" && "${WITH_SPCS_IMAGE}" = true ]]; then
+    echo "Warning: --with-spcs-image builds all images; ignoring --build-spcs-images."
+    BUILD_SPCS_IMAGES=""
+elif [[ -n "${BUILD_SPCS_IMAGES}" ]]; then
+    WITH_SPCS_IMAGE=true
+fi
 
 if [[ ("${mode}" = "local_unittest" || "${mode}" = "local_all") ]]; then
     if [[ -z "${target}" ]]; then
@@ -202,18 +216,19 @@ trap 'echo "ERROR: Setup failed at line ${LINENO}: ${BASH_COMMAND}" >&2; exit 2'
 
 if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     export RUN_GRYPE=false
+    export BUILD_SPCS_IMAGES
     source model_container_services_deployment/ci/build_and_push_images.sh
-    action_env=(
-        "--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}"
-        "--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}"
-        "--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}"
-        "--action_env=BASE_BATCH_CPU_IMAGE_PATH=${BASE_BATCH_CPU_IMAGE_PATH}"
-        "--action_env=BASE_BATCH_GPU_IMAGE_PATH=${BASE_BATCH_GPU_IMAGE_PATH}"
-        "--action_env=RAY_ORCHESTRATOR_PATH=${RAY_ORCHESTRATOR_PATH}"
-        "--action_env=MODEL_LOGGER_PATH=${MODEL_LOGGER_PATH}"
-        "--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}"
-        "--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}"
-    )
+    action_env=()
+    [[ -n "${BUILDER_IMAGE_PATH:-}" ]] && action_env+=("--action_env=BUILDER_IMAGE_PATH=${BUILDER_IMAGE_PATH}")
+    [[ -n "${BASE_CPU_IMAGE_PATH:-}" ]] && action_env+=("--action_env=BASE_CPU_IMAGE_PATH=${BASE_CPU_IMAGE_PATH}")
+    [[ -n "${BASE_GPU_IMAGE_PATH:-}" ]] && action_env+=("--action_env=BASE_GPU_IMAGE_PATH=${BASE_GPU_IMAGE_PATH}")
+    [[ -n "${BASE_BATCH_CPU_IMAGE_PATH:-}" ]] && action_env+=("--action_env=BASE_BATCH_CPU_IMAGE_PATH=${BASE_BATCH_CPU_IMAGE_PATH}")
+    [[ -n "${BASE_BATCH_GPU_IMAGE_PATH:-}" ]] && action_env+=("--action_env=BASE_BATCH_GPU_IMAGE_PATH=${BASE_BATCH_GPU_IMAGE_PATH}")
+    [[ -n "${RAY_ORCHESTRATOR_PATH:-}" ]] && action_env+=("--action_env=RAY_ORCHESTRATOR_PATH=${RAY_ORCHESTRATOR_PATH}")
+    [[ -n "${MODEL_LOGGER_PATH:-}" ]] && action_env+=("--action_env=MODEL_LOGGER_PATH=${MODEL_LOGGER_PATH}")
+    [[ -n "${PROXY_IMAGE_PATH:-}" ]] && action_env+=("--action_env=PROXY_IMAGE_PATH=${PROXY_IMAGE_PATH}")
+    [[ -n "${VLLM_IMAGE_PATH:-}" ]] && action_env+=("--action_env=VLLM_IMAGE_PATH=${VLLM_IMAGE_PATH}")
+    [[ -n "${INFERENCE_IMAGE_BUILDER_PATH:-}" ]] && action_env+=("--action_env=INFERENCE_IMAGE_BUILDER_PATH=${INFERENCE_IMAGE_BUILDER_PATH}")
 fi
 
 working_dir=$(mktemp -d "/tmp/tmp_XXXXX")

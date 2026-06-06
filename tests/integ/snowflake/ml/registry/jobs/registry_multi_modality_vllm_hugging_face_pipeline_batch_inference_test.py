@@ -59,10 +59,10 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
     def test_audio_with_vllm(self) -> None:
         # from transformers import pipeline
 
-        # TODO: update the task to "audio-to-text"
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             model="Qwen/Qwen2-Audio-7B-Instruct",
-            task="text-generation",
+            task="audio-text-to-text",
             trust_remote_code=True,
             compute_pool_for_log=None,
         )
@@ -147,9 +147,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm(self) -> None:
-        # TODO: change to correct task type
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation", compute_pool_for_log=None
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
         )
 
         (
@@ -237,9 +239,11 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_image_and_video_with_vllm_multi_replica(self) -> None:
-        # TODO: change to correct task type
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-VL-2B-Instruct", task="text-generation", compute_pool_for_log=None
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
         )
 
         (
@@ -336,6 +340,7 @@ class TestRegistryMultiModalityVLLMHuggingFacePipelineBatchInferenceInteg(
         )
 
     def test_mljob_get_logs_on_vllm(self) -> None:
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B",

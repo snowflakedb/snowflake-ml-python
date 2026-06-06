@@ -12,7 +12,7 @@ from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 # Python versions supported by the base image's cached standalone tarballs (dockerfile_template_pip path).
-PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12")
+PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
 
 
 class PipOnlyModel(custom_model.CustomModel):
@@ -76,8 +76,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(
     Set BUILDER_IMAGE_PATH, BASE_BATCH_CPU_IMAGE_PATH, BASE_BATCH_GPU_IMAGE_PATH, and
     MODEL_LOGGER_PATH together to run with image overrides.
     """
-
-    _BATCH_IMAGE_OVERRIDE_MODE = "pip_only_batch"
 
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
         params = super()._get_batch_image_override_session_params()
@@ -179,9 +177,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(
         1. Model prediction works correctly
         2. Environment uses a pip-only path (venv) instead of conda
         """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only batch inference test: image override not enabled.")
-
         model = PipOnlyModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
 
@@ -213,7 +208,7 @@ class TestRegistryPipOnlyBatchInferenceInteg(
 
     @parameterized.parameters(*PIP_ONLY_PYTHON_VERSIONS)  # type: ignore[misc]
     def test_pip_only_batch_inference_python_versions(self, py_ver: str) -> None:
-        """Batch inference with a pip-only model for each supported Python version (3.10, 3.11, 3.12).
+        """Batch inference with a pip-only model for each supported Python version (3.10, 3.11, 3.12, 3.13, 3.14).
 
         Verifies:
         1. Model runs with the correct Python version
@@ -225,8 +220,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(
                 f"Skipping Python {py_ver} test: model is pickled with {current_ver} and "
                 f"cloudpickle cannot deserialize across Python versions."
             )
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only batch inference test: image override not enabled.")
 
         model = PipOnlyModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0]})

@@ -36,13 +36,18 @@ import os
 import time
 import unittest
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 import pandas as pd
 from absl.testing import absltest
-from feature_store_streaming_fv_integ_base import StreamingFeatureViewIntegTestBase
+from feature_store_streaming_fv_integ_base import (
+    StreamingFeatureViewIntegTestBase,
+    identity_transform,
+)
 
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_group import FeatureGroup
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
@@ -52,6 +57,7 @@ from snowflake.ml.feature_store.feature_view import (
 )
 from snowflake.ml.feature_store.realtime_config import RealtimeConfig
 from snowflake.ml.feature_store.request_source import RequestSource
+from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
@@ -195,6 +201,141 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         )
         self.fs.register_feature_view(fv, "v1")
         return fv_name
+
+    def _register_postgres_tiled_sfv(self, *, suffix: str) -> tuple[str, str]:
+        """Create + register a tiled streaming FV on Postgres with SUM/MAX/COUNT aggs.
+
+        The FV joins on ``USER_ID`` (matching ``_register_postgres_fv``) so it can
+        be combined with batch FVs in a single FeatureGroup. Uses the base class's
+        stream-source / backfill-table helpers so the backfill DT is populated by
+        the time the FG is registered.
+
+        Args:
+            suffix: Short label embedded in the FV / stream / table names.
+
+        Returns:
+            Tuple of ``(fv_name, seeded_user_id)``. ``seeded_user_id`` matches a row
+            in the backfill table so downstream reads return non-empty data.
+        """
+        s = uuid.uuid4().hex[:8]
+        # StreamSource has a 32-char name limit.
+        stream_name = f"FG_TS_{suffix}_{s}"
+        fv_name = f"FG_INTEG_TILED_SFV_{suffix}_{s}"
+        seeded_user_id = "u1"  # `_create_backfill_table` seeds u1/u2/u3.
+
+        self._make_stream_source(self.fs, stream_name)
+        backfill_table = self._create_backfill_table(self.fs, suffix=f"{suffix}_{s}")
+        backfill_df = self._session.table(backfill_table)
+
+        stream_config = StreamConfig(
+            stream_source=stream_name,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        features = [
+            Feature.sum("AMOUNT", "1d").alias(f"AMOUNT_SUM_1D_{suffix}"),
+            Feature.max("AMOUNT", "1d").alias(f"AMOUNT_MAX_1D_{suffix}"),
+            Feature.count("AMOUNT", "1d").alias(f"AMOUNT_COUNT_1D_{suffix}"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.is_tiled)
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        return fv_name, seeded_user_id
+
+    def _register_postgres_tiled_bfv(self, *, suffix: str) -> tuple[str, str]:
+        """Create + register a tiled batch FV on Postgres with SUM/MAX/COUNT aggs.
+
+        Args:
+            suffix: Short label embedded in the FV / source-table names.
+
+        Returns:
+            Tuple of ``(fv_name, seeded_user_id)``. ``seeded_user_id`` matches a row
+            in the source table so downstream reads return non-empty data.
+        """
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"FG_INTEG_TILED_BFV_{suffix}_{s}"
+        seeded_user_id = f"U_BTILED_{suffix}_{s}"
+        src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.FG_BTILED_SRC_{suffix}_{s}"
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AMOUNT FLOAT
+            )
+            """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table}
+            SELECT column1, column2, column3
+            FROM VALUES
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 1, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    10.0
+                ),
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 2, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    20.0
+                ),
+                (
+                    {seeded_user_id!r},
+                    DATEADD('hour', 3, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
+                    30.0
+                )
+            """
+        ).collect()
+        feature_df = self._session.table(src_table)
+
+        features = [
+            Feature.sum("AMOUNT", "1d").alias(f"AMOUNT_SUM_1D_{suffix}"),
+            Feature.max("AMOUNT", "1d").alias(f"AMOUNT_MAX_1D_{suffix}"),
+            Feature.count("AMOUNT", "1d").alias(f"AMOUNT_COUNT_1D_{suffix}"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.is_tiled)
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        return fv_name, seeded_user_id
 
     def _wait_until_fg_read_returns_rows(self, fg_live: FeatureGroup, key: str, timeout: float = 300.0) -> None:
         """Poll ``read_feature_group`` until at least one row is returned."""
@@ -856,6 +997,113 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                 self.fs.delete_feature_group(fg_name, "v1")
             finally:
                 self.fs.delete_feature_view(rtfv_name, "v1")
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
+    )
+    def test_feature_group_with_tiled_sfv_online_read(self) -> None:
+        """A FG over a tiled SFV upstream registers and ``read_feature_group`` returns its schema."""
+        sfx = "TS"
+        fv_tiled_name, seeded_user_id = self._register_postgres_tiled_sfv(suffix=sfx)
+        fv_batch_name, _src_b, _key_b = self._register_postgres_fv(suffix="TB2")
+
+        fv_tiled = self.fs.get_feature_view(fv_tiled_name, "v1")
+        fv_batch = self.fs.get_feature_view(fv_batch_name, "v1")
+
+        fg_name = f"FG_INTEG_TILED_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        # auto_prefix=True keeps the SFV's agg outputs distinct from the batch FV's columns.
+        fg = FeatureGroup(name=fg_name, features=[fv_tiled, fv_batch], auto_prefix=True)
+
+        try:
+            registered = self.fs.register_feature_group(fg, fg_version)
+            normalized_outputs = {_normalize_column_name(c) for c in registered.output_columns}
+            for agg in (f"AMOUNT_SUM_1D_{sfx}", f"AMOUNT_MAX_1D_{sfx}", f"AMOUNT_COUNT_1D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in normalized_outputs),
+                    f"expected agg '{agg}' in FG output_columns; got {sorted(normalized_outputs)}",
+                )
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            # Schema-only smoke: data may be empty before the SFV backfill lands in the OFT.
+            pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
+            pdf_cols = {_normalize_column_name(c) for c in pdf.columns}
+            for agg in (f"AMOUNT_SUM_1D_{sfx}", f"AMOUNT_MAX_1D_{sfx}", f"AMOUNT_COUNT_1D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in pdf_cols),
+                    f"expected agg '{agg}' in read columns; got {sorted(pdf_cols)}",
+                )
+        finally:
+            self.fs.delete_feature_group(fg_name, fg_version)
+
+    @unittest.skipUnless(
+        _HAS_SNOWFLAKE_PAT,
+        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
+    )
+    def test_feature_group_with_tiled_bfv_online_read(self) -> None:
+        """A FG over a tiled BFV upstream registers and ``read_feature_group`` returns its schema."""
+        sfx = "TB"
+        fv_tiled_name, seeded_user_id = self._register_postgres_tiled_bfv(suffix=sfx)
+        fv_batch_name, _src_b, _key_b = self._register_postgres_fv(suffix="TBB")
+
+        fv_tiled = self.fs.get_feature_view(fv_tiled_name, "v1")
+        fv_batch = self.fs.get_feature_view(fv_batch_name, "v1")
+
+        fg_name = f"FG_INTEG_TILED_BFV_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        # auto_prefix=True keeps the tiled BFV's agg outputs distinct from the batch FV's columns.
+        fg = FeatureGroup(name=fg_name, features=[fv_tiled, fv_batch], auto_prefix=True)
+
+        try:
+            registered = self.fs.register_feature_group(fg, fg_version)
+            normalized_outputs = {_normalize_column_name(c) for c in registered.output_columns}
+            for agg in (f"AMOUNT_SUM_1D_{sfx}", f"AMOUNT_MAX_1D_{sfx}", f"AMOUNT_COUNT_1D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in normalized_outputs),
+                    f"expected agg '{agg}' in FG output_columns; got {sorted(normalized_outputs)}",
+                )
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+            # Schema-only smoke: data may be empty before the BFV tile DT backfills.
+            pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
+            pdf_cols = {_normalize_column_name(c) for c in pdf.columns}
+            for agg in (f"AMOUNT_SUM_1D_{sfx}", f"AMOUNT_MAX_1D_{sfx}", f"AMOUNT_COUNT_1D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in pdf_cols),
+                    f"expected agg '{agg}' in read columns; got {sorted(pdf_cols)}",
+                )
+        finally:
+            self.fs.delete_feature_group(fg_name, fg_version)
+
+    def test_generate_training_set_from_feature_group_with_tiled_sfv(self) -> None:
+        """``generate_training_set(feature_group=...)`` works when one upstream FV is tiled."""
+        sfx = "TS2"
+        fv_tiled_name, _seeded_user_id = self._register_postgres_tiled_sfv(suffix=sfx)
+        fv_tiled = self.fs.get_feature_view(fv_tiled_name, "v1")
+
+        fg_name = f"FG_INTEG_TILED_TS_{uuid.uuid4().hex[:8].upper()}"
+        fg = FeatureGroup(name=fg_name, features=[fv_tiled], auto_prefix=False)
+
+        try:
+            self.fs.register_feature_group(fg, "v1")
+            fg_live = self.fs.get_feature_group(fg_name, "v1")
+
+            spine = self._session.create_dataframe(
+                [
+                    ("u1", datetime(2024, 1, 5, 0, 0, 0)),
+                    ("u2", datetime(2024, 1, 5, 0, 0, 0)),
+                ],
+                schema=["USER_ID", "QUERY_TS"],
+            )
+            ts = self.fs.generate_training_set(spine, feature_group=fg_live, spine_timestamp_col="QUERY_TS")
+            cols = {_normalize_column_name(c) for c in ts.columns}
+            for agg in (f"AMOUNT_SUM_1D_{sfx}", f"AMOUNT_MAX_1D_{sfx}", f"AMOUNT_COUNT_1D_{sfx}"):
+                self.assertIn(agg, cols, f"expected agg '{agg}' in training-set columns; got {sorted(cols)}")
+            # Schema-only smoke: data may be empty before the tile DT backfills.
+            ts.limit(1).collect()
+        finally:
+            self.fs.delete_feature_group(fg_name, "v1")
 
 
 if __name__ == "__main__":

@@ -206,15 +206,21 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
             model = huggingface.TransformersPipeline(
                 model="HuggingFaceTB/SmolLM2-135M-Instruct",
                 task="text-generation",
+                token_or_secret=self._create_hf_token_secret(),
+            )
+        elif compute_pool_for_log is None:
+            # Local logging: download on the client; no Snowflake secret for HF auth.
+            model = huggingface.TransformersPipeline(
+                model="HuggingFaceTB/SmolLM2-135M-Instruct",
+                task="text-generation",
+                compute_pool_for_log=None,
             )
         else:
-            # test
-            # 1. the remote logging behavior, pass compute_pool_for_log
-            # 2. the local mode behavior, pass None
             model = huggingface.TransformersPipeline(
                 model="HuggingFaceTB/SmolLM2-135M-Instruct",
                 task="text-generation",
                 compute_pool_for_log=compute_pool_for_log,
+                token_or_secret=self._create_hf_token_secret(),
             )
         mv = self.registry.log_model(
             model=model,

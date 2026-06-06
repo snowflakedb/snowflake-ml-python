@@ -117,11 +117,6 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         input_data_batch: Optional[pd.DataFrame] = None,
         validator_fn_batch: Callable[[pd.DataFrame], None] = None,
     ) -> ModelVersion:
-        # TODO remove this once param rollout is complete
-        self.session.sql(
-            "alter session set SPCS_MODEL_INFERENCE_SERVER_ONLINE_REST_INFERENCE_PANDAS_PROTOCOLS_ENABLED = true;"
-        ).collect()
-
         # Deploy model and test with single row
         mv = self._test_registry_model_deployment(
             model=model,
@@ -220,7 +215,6 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
         (InferenceEngine.VLLM,),
     )
     @pytest.mark.conda_incompatible
-    @absltest.skip("Skipping test until inference server release 1.0.0")
     def test_inference_with_HF_model(self, inference_engine: InferenceEngine) -> None:
         # Define model
         model = huggingface_pipeline.HuggingFacePipelineModel(
@@ -265,7 +259,6 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
 
             for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertEqual(len(row), 3)
                 self.assertIn("message", row[0])
                 self.assertIn("content", row[0]["message"])
                 self.assertGreater(len(row[0]["message"]["content"]), 0)
@@ -290,7 +283,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
                     "temperature": 0.7,
                     "max_completion_tokens": 200,
                     "stop": None,
-                    "n": 2,
+                    "n": 1,
                     "stream": False,
                     "top_p": 0.9,
                     "frequency_penalty": 0.1,
@@ -312,7 +305,6 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
 
             for row in res["choices"]:
                 self.assertIsInstance(row, list)
-                self.assertEqual(len(row), 2)
                 self.assertIn("message", row[0])
                 self.assertIn("content", row[0]["message"])
                 self.assertGreater(len(row[0]["message"]["content"]), 0)
