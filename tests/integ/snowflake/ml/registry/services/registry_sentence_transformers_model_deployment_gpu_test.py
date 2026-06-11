@@ -5,6 +5,7 @@ from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest, parameterized
+from packaging import version as pkg_version
 
 from snowflake.ml.model._packager.model_env import model_env
 from tests.integ.snowflake.ml.registry.services import (
@@ -35,6 +36,18 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         pip_requirements: Optional[list[str]],
         use_default_repo: bool,
     ) -> None:
+        if pip_requirements is None:
+            import sentence_transformers
+            import transformers
+
+            if pkg_version.parse(sentence_transformers.__version__) >= pkg_version.parse("5.3.0") and pkg_version.parse(
+                transformers.__version__
+            ) >= pkg_version.parse("5.0.0"):
+                self.skipTest(
+                    f"sentence-transformers {sentence_transformers.__version__} with transformers "
+                    f"{transformers.__version__}: model serving container image build fails because pinned "
+                    "transformers>=5.0.0 conflicts with sentence-transformers requiring transformers<5.0.0."
+                )
         import sentence_transformers
 
         # Sample Data
@@ -81,20 +94,11 @@ class TestRegistrySentenceTransformerDeploymentModelInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
-        if not pip_requirements:
-            self.skipTest(
-                """SNOW-3420922: Skipping test due to known issue with
-                sentence-transformers and transformers package conflict"""
-            )
         self._test_sentence_transformers(pip_requirements, use_default_repo=False)
 
     def test_sentence_transformers_with_default_repo(
         self,
     ) -> None:
-        self.skipTest(
-            """SNOW-3420922: Skipping test due to known issue with
-            sentence-transformers and transformers package conflict"""
-        )
         self._test_sentence_transformers(None, use_default_repo=True)
 
 

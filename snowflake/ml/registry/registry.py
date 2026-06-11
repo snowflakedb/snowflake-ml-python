@@ -230,6 +230,11 @@ class Registry:
 
                 - save_location: Local directory to save the the serialized model files first before
                   uploading to Snowflake. This is useful when default tmp directory is not writable.
+                - capture_sample_input_data: When True (default), a representative row from
+                  sample_input_data is captured and stored alongside the model so that inference
+                  code snippets shown in the model registry UI can be pre-filled with realistic
+                  values. Set to False to opt out (e.g., for sensitive data); generic placeholder
+                  values will be used in the snippets instead.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options.
 
@@ -394,6 +399,11 @@ class Registry:
                     inference jobs, not online inference services.
 
                 - save_location: Location to save the model and metadata.
+                - capture_sample_input_data: When True (default), a representative row from
+                  sample_input_data is captured and stored alongside the model so that inference
+                  code snippets shown in the model registry UI can be pre-filled with realistic
+                  values. Set to False to opt out (e.g., for sensitive data); generic placeholder
+                  values will be used in the snippets instead.
                 - method_options: Per-method saving options. This dictionary has method names as keys and dictionary
                     values with the desired options. See the example below.
 

@@ -1,6 +1,8 @@
 """Unit tests for tile_sql_generator module."""
 
-from absl.testing import absltest
+from typing import Optional
+
+from absl.testing import absltest, parameterized
 
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.feature_view import _prepend_keys_specs
@@ -13,7 +15,7 @@ from snowflake.ml.feature_store.tile_sql_generator import (
 )
 
 
-class TilingSqlGeneratorTest(absltest.TestCase):
+class TilingSqlGeneratorTest(parameterized.TestCase):
     """Unit tests for TilingSqlGenerator class."""
 
     def test_simple_sum_aggregation(self) -> None:
@@ -322,8 +324,175 @@ class TilingSqlGeneratorTest(absltest.TestCase):
 
         self.assertIn("DATASKETCHES_HLL_ACCUMULATE(USER_ID, 8)", sql)
 
+    def test_new_version_last_distinct_n_dedup_cte(self) -> None:
+        """New-version LAST_DISTINCT_N dedups in a single pass via ROW_NUMBER + CASE."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version="1.42.0",
+        )
+        sql = generator.generate()
 
-class MergingSqlGeneratorTest(absltest.TestCase):
+        # Final deduplicated columns emitted directly (no _RAW_ intermediates)
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_CATEGORY", sql)
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_TS_CATEGORY", sql)
+        self.assertNotIn("_RAW_LAST_DISTINCT", sql)
+        # Single-pass dedup: ROW_NUMBER in inner source + CASE filter, no FLATTEN/JOIN
+        self.assertIn("_DUP_RN_LAST_CATEGORY", sql)
+        self.assertIn("ROW_NUMBER()", sql)
+        self.assertIn("CASE WHEN _DUP_RN_LAST_CATEGORY = 1 THEN CATEGORY END", sql)
+        self.assertNotIn("LATERAL FLATTEN", sql)
+        self.assertNotIn("_DEDUP_0", sql)
+        # DESC ordering for LAST (in both the dedup window and the array build)
+        self.assertIn("ORDER BY EVENT_TS DESC", sql)
+
+    def test_new_version_first_distinct_n_dedup_cte(self) -> None:
+        """New-version FIRST_DISTINCT_N dedups in a single pass via ROW_NUMBER + CASE."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.FIRST_DISTINCT_N,
+                source_column="PAGE_ID",
+                window="24h",
+                output_column="FIRST_DISTINCT_PAGES",
+                params={"n": 3},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version="1.42.0",
+        )
+        sql = generator.generate()
+
+        self.assertIn("_PARTIAL_FIRST_DISTINCT_3_PAGE_ID", sql)
+        self.assertIn("_PARTIAL_FIRST_DISTINCT_3_TS_PAGE_ID", sql)
+        self.assertNotIn("_RAW_FIRST_DISTINCT", sql)
+        self.assertIn("_DUP_RN_FIRST_PAGE_ID", sql)
+        self.assertIn("CASE WHEN _DUP_RN_FIRST_PAGE_ID = 1 THEN PAGE_ID END", sql)
+        self.assertNotIn("LATERAL FLATTEN", sql)
+        # ASC ordering for FIRST
+        self.assertIn("ORDER BY EVENT_TS ASC", sql)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("explicit_1_41_0", "1.41.0"),
+        ("unset_none", None),
+    )
+    def test_legacy_version_last_distinct_n_uses_shared_columns(self, authoring_pkg_version: Optional[str]) -> None:
+        """Legacy-version LAST_DISTINCT_N uses shared _PARTIAL_LAST_ columns.
+
+        Covers both the explicit "1.41.0" string and None, which is the canonical
+        legacy representation (legacy FVs reload with authoring_pkg_version=None).
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version=authoring_pkg_version,
+        )
+        sql = generator.generate()
+
+        # Legacy columns (shared with LAST_N)
+        self.assertIn("_PARTIAL_LAST_CATEGORY", sql)
+        self.assertNotIn("_RAW_LAST_DISTINCT", sql)
+        self.assertNotIn("_PARTIAL_LAST_DISTINCT", sql)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("last_n", AggregationType.LAST_N),
+        ("first_n", AggregationType.FIRST_N),
+        ("last_distinct_n", AggregationType.LAST_DISTINCT_N),
+        ("first_distinct_n", AggregationType.FIRST_DISTINCT_N),
+    )
+    def test_list_agg_with_secondary_key_raises(self, list_function: AggregationType) -> None:
+        """Any list aggregation cannot coexist with secondary key aggs.
+
+        This is a defensive guard; in production the FV-level validation rejects
+        the combination first. It must fire for every list aggregation type.
+        """
+        features = [
+            AggregationSpec(
+                function=list_function,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LIST_CATS",
+                params={"n": 5},
+            ),
+            AggregationSpec(
+                function=AggregationType._SECONDARY_KEY_ARRAY,
+                source_column="AD_ID",
+                window="24h",
+                output_column="AD_IDS",
+            ),
+        ]
+        with self.assertRaisesRegex(ValueError, "cannot be combined with secondary-key"):
+            TilingSqlGenerator(
+                source_query="SELECT * FROM events",
+                join_keys=["USER_ID"],
+                timestamp_col="EVENT_TS",
+                feature_granularity="1h",
+                features=features,
+            )
+
+    def test_new_version_distinct_with_simple_passthrough(self) -> None:
+        """New-version distinct tile passes through simple aggregation columns."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="AMOUNT",
+                window="24h",
+                output_column="AMOUNT_SUM",
+            ),
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = TilingSqlGenerator(
+            source_query="SELECT * FROM events",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            authoring_pkg_version="1.42.0",
+        )
+        sql = generator.generate()
+
+        # Simple aggregation computed in the same GROUP BY as the distinct dedup
+        self.assertIn("SUM(AMOUNT) AS _PARTIAL_SUM_AMOUNT", sql)
+        # Distinct column deduplicated in a single pass
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_CATEGORY", sql)
+        self.assertIn("CASE WHEN _DUP_RN_LAST_CATEGORY = 1 THEN CATEGORY END", sql)
+
+
+class MergingSqlGeneratorTest(parameterized.TestCase):
     """Unit tests for MergingSqlGenerator class."""
 
     def test_simple_aggregation_ctes(self) -> None:
@@ -634,8 +803,132 @@ class MergingSqlGeneratorTest(absltest.TestCase):
         self.assertNotIn("HLL_IMPORT", body)
         self.assertNotIn("HLL_ESTIMATE(HLL_COMBINE", body)
 
+    def test_new_version_last_distinct_n_merge_reads_new_columns(self) -> None:
+        """New-version merge reads from _PARTIAL_LAST_DISTINCT_ tile columns."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+            authoring_pkg_version="1.42.0",
+        )
+        ctes = generator.generate_all_ctes()
+        tiles_joined = next(cte for cte in ctes if cte[0] == "TILES_JOINED_FV0")
 
-class RollupSqlGeneratorTest(absltest.TestCase):
+        # Reads from new tile column names
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_CATEGORY", tiles_joined[1])
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_TS_CATEGORY", tiles_joined[1])
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("explicit_1_41_0", "1.41.0"),
+        ("unset_none", None),
+    )
+    def test_legacy_version_last_distinct_n_merge_reads_shared_columns(
+        self, authoring_pkg_version: Optional[str]
+    ) -> None:
+        """Legacy-version merge reads from shared _PARTIAL_LAST_ tile columns.
+
+        Covers both the explicit "1.41.0" string and None, which is the canonical
+        legacy representation (legacy FVs reload with authoring_pkg_version=None).
+        """
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+            authoring_pkg_version=authoring_pkg_version,
+        )
+        ctes = generator.generate_all_ctes()
+        tiles_joined = next(cte for cte in ctes if cte[0] == "TILES_JOINED_FV0")
+
+        self.assertIn("_PARTIAL_LAST_CATEGORY", tiles_joined[1])
+        self.assertNotIn("_PARTIAL_LAST_DISTINCT", tiles_joined[1])
+
+    def _distinct_merge_body(self, version: str) -> str:
+        """Return the LIST_MERGED CTE body for a single LAST_DISTINCT_N spec."""
+        features = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+            authoring_pkg_version=version,
+        )
+        ctes = generator.generate_all_ctes()
+        return next(cte for cte in ctes if cte[0] == "LIST_MERGED_FV0")[1]
+
+    def test_new_version_distinct_merge_caps_on_distinct_rank(self) -> None:
+        """New-version merge dedups via QUALIFY then caps on the DISTINCT rank.
+
+        This is the correctness fix: the cap is applied to the deduplicated
+        (distinct) values, not to the raw pre-dedup row rank. Concretely, the
+        new-version SQL must NOT contain the legacy ``rn <= n`` raw-row cap.
+
+        For LAST_DISTINCT_N the cap order and the display order are decoupled:
+        survivors are chosen by most-recent (``ts_key DESC``) so we keep the
+        last N distinct values, but the final array is emitted oldest-first
+        (``ORDER BY ts_key ASC``).
+        """
+        body = self._distinct_merge_body("1.42.0")
+
+        # Step 1: dedup each value to its representative occurrence.
+        self.assertIn("QUALIFY ROW_NUMBER() OVER (", body)
+        self.assertIn("PARTITION BY t.USER_ID, t.TILE_BOUNDARY, flat.VALUE", body)
+        # Step 2: cap to the most-recent N DISTINCT values (ts_key DESC), not the
+        # raw-row rank. The buggy legacy cap must be gone in the new path.
+        self.assertIn("ORDER BY ts_key DESC, idx_key ASC\n         ) <= 5", body)
+        self.assertNotIn("dup_rn = 1 AND rn <=", body)
+        self.assertNotIn("ARRAY_SLICE(", body)
+        # Step 3: emit the survivors oldest-first (display order decoupled from
+        # cap). LAST_DISTINCT_N tiles are stored most-recent-first, so oldest-first
+        # display reverses the within-tile array index (idx_key DESC).
+        self.assertIn("ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key ASC, idx_key DESC)", body)
+
+    def test_legacy_version_distinct_merge_keeps_raw_row_cap(self) -> None:
+        """Legacy merge is unchanged: keeps the dup_rn=1 AND rn<=n raw-row cap."""
+        body = self._distinct_merge_body("1.41.0")
+
+        # Legacy shape preserved verbatim.
+        self.assertIn("dup_rn = 1 AND rn <= 5", body)
+        self.assertNotIn("QUALIFY ROW_NUMBER() OVER (", body)
+
+
+class RollupSqlGeneratorTest(parameterized.TestCase):
     """Unit tests for RollupSqlGenerator class."""
 
     def test_simple_rollup_no_cte(self) -> None:
@@ -889,6 +1182,68 @@ class RollupSqlGeneratorTest(absltest.TestCase):
         # Find the final SELECT (after all CTEs)
         self.assertIn("l0._PARTIAL_LAST_ORDER_VALUE", sql)
         self.assertIn("l0._PARTIAL_LAST_TS_ORDER_VALUE", sql)
+
+    def test_new_version_rollup_uses_distinct_columns(self) -> None:
+        """New-version rollup reads from _PARTIAL_LAST_DISTINCT_ columns."""
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.PARENT_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            authoring_pkg_version="1.42.0",
+        )
+        sql = generator.generate()
+
+        # New column names in base CTE and output
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_CATEGORY", sql)
+        self.assertIn("_PARTIAL_LAST_DISTINCT_5_TS_CATEGORY", sql)
+        # Should NOT use legacy shared column names
+        self.assertNotIn("_PARTIAL_LAST_CATEGORY", sql)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("explicit_1_41_0", "1.41.0"),
+        ("unset_none", None),
+    )
+    def test_last_distinct_n_legacy_version_rollup_uses_shared_columns(
+        self, authoring_pkg_version: Optional[str]
+    ) -> None:
+        """Legacy-version rollup reads from shared _PARTIAL_LAST_ columns.
+
+        Covers both the explicit "1.41.0" string and None, which is the canonical
+        legacy representation (legacy FVs reload with authoring_pkg_version=None).
+        """
+        specs = [
+            AggregationSpec(
+                function=AggregationType.LAST_DISTINCT_N,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="LAST_DISTINCT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = RollupSqlGenerator(
+            parent_tile_table="DB.SCHEMA.PARENT_FV$V1",
+            parent_join_keys=["VISITOR_ID"],
+            new_join_keys=["SUBSCRIBER_ID"],
+            mapping_query="SELECT * FROM mapping",
+            aggregation_specs=specs,
+            authoring_pkg_version=authoring_pkg_version,
+        )
+        sql = generator.generate()
+
+        # Legacy shared columns
+        self.assertIn("_PARTIAL_LAST_CATEGORY", sql)
+        self.assertNotIn("_PARTIAL_LAST_DISTINCT", sql)
 
 
 class TemporalRollupSqlGeneratorTest(absltest.TestCase):

@@ -143,6 +143,17 @@ def compute_fn_with_in_body_copy(req: pd.DataFrame, txn: pd.DataFrame) -> pd.Dat
     )
 
 
+def compute_fn_with_in_body_dataclasses(req: pd.DataFrame, txn: pd.DataFrame) -> pd.DataFrame:
+    import dataclasses
+
+    return pd.DataFrame(
+        {
+            "risk_score": req["amount"],
+            "risk_bucket": [str(dataclasses.is_dataclass(int))] * len(req),
+        }
+    )
+
+
 def bad_import_sklearn(req: pd.DataFrame, txn: pd.DataFrame) -> pd.DataFrame:
     import sklearn  # noqa: F401
 
@@ -294,6 +305,7 @@ class HappyPathTest(parameterized.TestCase):
         ("in_body_numpy_import", compute_fn_with_in_body_numpy),
         ("in_body_re_import", compute_fn_with_in_body_re),
         ("in_body_copy_import", compute_fn_with_in_body_copy),
+        ("in_body_dataclasses_import", compute_fn_with_in_body_dataclasses),
     )
     def test_constructs_successfully(self, fn: Callable[..., pd.DataFrame]) -> None:
         rt = RealtimeConfig(

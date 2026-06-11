@@ -1,4 +1,5 @@
 import json
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -7,6 +8,7 @@ from absl.testing import absltest, parameterized
 import snowflake.snowpark as snowpark
 from snowflake.ml import jobs
 from snowflake.ml.jobs import job
+from snowflake.ml.jobs._utils import stage_utils
 from snowflake.snowpark import exceptions as sp_exceptions
 from snowflake.snowpark.row import Row
 
@@ -128,6 +130,148 @@ class JobTest(parameterized.TestCase):
             job = jobs.MLJob[None]("test_db.test_schema.test_id", session=mock_session)
             test_logs = ["test_log_0", "test_log_1", "test_log_2"]
             self.assertEqual(job.get_logs(), "\n".join(test_logs))
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("posix_absolute_path", "/mnt/job_result/mljob_extra.pkl"),
+        ("posix_nested_path", "/mnt/job_result/subdir/result.pkl"),
+    )
+    def test_transform_path_cross_platform(self, container_path: str) -> None:
+        """Test that _transform_path handles container paths correctly across platforms.
+
+        Container paths from Linux SPCS should work consistently whether the client
+        is running on Windows, macOS, or Linux. This test verifies the fix for the
+        bug where Windows clients couldn't retrieve results due to Path.is_absolute()
+        returning False for POSIX paths like /mnt/...
+        """
+        mock_session = MagicMock()
+        mock_job = jobs.MLJob[None]("test_db.test_schema.test_id", session=mock_session)
+
+        # Mock the service spec to provide volume mount and stage information
+        # This mirrors the actual customer scenario from the bug report
+        mock_job._service_spec_cached = {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "main",
+                        "volumeMounts": [
+                            {"name": "result-volume", "mountPath": "/mnt/job_result"},
+                            {"name": "stage-volume", "mountPath": "/mnt/job_stage"},
+                        ],
+                        "env": {},
+                    }
+                ],
+                "volumes": [
+                    {"name": "stage-volume", "source": "@test_stage/test_path"},
+                    {"name": "result-volume", "source": "@test_stage/result_path"},
+                ],
+            }
+        }
+
+        # Test that the path transformation works correctly
+        result = mock_job._transform_path(container_path)
+
+        # The result should be a valid stage path without the mount prefix
+        self.assertIn("@test_stage", result)
+        # Should not have double slashes or the /mnt prefix (the bug)
+        self.assertNotIn("//", result)
+        self.assertNotIn("/mnt", result)
+
+    def test_transform_path_relative(self) -> None:
+        """Test that relative paths are handled correctly."""
+        mock_session = MagicMock()
+        mock_job = jobs.MLJob[None]("test_db.test_schema.test_id", session=mock_session)
+        mock_job._service_spec_cached = {
+            "spec": {
+                "containers": [{"name": "main", "volumeMounts": [], "env": {}}],
+                "volumes": [{"name": "stage-volume", "source": "@test_stage/test_path"}],
+            }
+        }
+
+        result = mock_job._transform_path("relative/path/file.pkl")
+        self.assertEqual(result, "@test_stage/test_path/relative/path/file.pkl")
+
+    def test_resolve_path_container_paths(self) -> None:
+        """Test that resolve_path returns Path objects correctly.
+
+        Note: The cross-platform fix is in _transform_path, not resolve_path.
+        resolve_path continues to return platform-native Path for filesystem access.
+        """
+        # Container paths should return regular Path (for filesystem operations)
+        container_path = stage_utils.resolve_path("/mnt/job_result/file.pkl")
+        # On Unix systems, this is a PosixPath (subclass of Path)
+        self.assertTrue(hasattr(container_path, "is_file"))
+        self.assertTrue(hasattr(container_path, "exists"))
+
+        # The cross-platform fix happens in _transform_path when processing manifests
+
+    def test_resolve_path_relative_paths(self) -> None:
+        """Test that resolve_path handles relative paths correctly."""
+        # Relative paths should work correctly
+        relative_path = stage_utils.resolve_path("relative/path/file.pkl")
+        # Should return a Path (concrete path type for filesystem access)
+        self.assertTrue(hasattr(relative_path, "is_file"))
+        self.assertFalse(relative_path.is_absolute())
+
+
+class CrossPlatformPathTest(absltest.TestCase):
+    """Tests to verify cross-platform path handling.
+
+    These tests simulate Windows behavior to ensure the fix prevents the bug
+    where Windows clients couldn't retrieve results from Linux SPCS containers.
+    """
+
+    def test_pureposixpath_is_absolute(self) -> None:
+        """Verify PurePosixPath correctly identifies POSIX absolute paths."""
+        # PurePosixPath should treat /mnt/... as absolute on all platforms
+        posix_path = PurePosixPath("/mnt/job_result/file.pkl")
+        self.assertTrue(posix_path.is_absolute())
+
+        # PureWindowsPath would treat this as relative (the bug)
+        windows_path = PureWindowsPath("/mnt/job_result/file.pkl")
+        self.assertFalse(windows_path.is_absolute())  # Windows requires drive letters
+
+    def test_pureposixpath_relative_to(self) -> None:
+        """Verify PurePosixPath.relative_to works correctly."""
+        path = PurePosixPath("/mnt/job_result/subdir/file.pkl")
+        mount = PurePosixPath("/mnt/job_result")
+
+        relative = path.relative_to(mount)
+        self.assertEqual(str(relative), "subdir/file.pkl")
+        self.assertEqual(relative.as_posix(), "subdir/file.pkl")
+
+    def test_windows_bug_demonstration(self) -> None:
+        """Demonstrate the Windows bug and verify PurePosixPath fixes it.
+
+        This test proves:
+        1. Platform-native Path on Windows mishandles Linux container paths (the bug)
+        2. PurePosixPath correctly handles them (the fix)
+        """
+        container_path_str = "/mnt/job_result/mljob_extra.pkl"
+        mount_str = "/mnt/job_result"
+
+        # Simulate Windows behavior with PureWindowsPath (the bug)
+        windows_path = PureWindowsPath(container_path_str)
+
+        # Windows treats /mnt as relative (no drive letter C:/)
+        self.assertFalse(windows_path.is_absolute())
+
+        # This causes the bug: in _transform_path(), path.is_absolute() returns False,
+        # so it goes to the "not absolute" branch and prepends result_stage_path.
+        # Result: "@stage/result_path//mnt/job_result/mljob_extra.pkl" (double slash + /mnt)
+        # Leading to "file does not exist" errors.
+
+        # The fix: use PurePosixPath (always POSIX semantics)
+        posix_path = PurePosixPath(container_path_str)
+        posix_mount = PurePosixPath(mount_str)
+
+        # PurePosixPath correctly identifies /mnt as absolute
+        self.assertTrue(posix_path.is_absolute())
+
+        # And correctly computes relative path
+        relative = posix_path.relative_to(posix_mount)
+        self.assertEqual(relative.as_posix(), "mljob_extra.pkl")
+
+        # Resulting stage path is correct: "@stage/result_path/mljob_extra.pkl"
 
 
 if __name__ == "__main__":

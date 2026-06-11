@@ -435,10 +435,6 @@ class ModelDeploymentSpec:
                 "--root-path",
                 "--middleware",
                 "--disable-frontend-multiprocessing",
-                "--enable-request-id-headers",
-                "--enable-auto-tool-choice",
-                "--tool-call-parser",
-                "--tool-parser-plugin",
                 "--log-config-file",
             }
 

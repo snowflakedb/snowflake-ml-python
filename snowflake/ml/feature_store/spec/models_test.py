@@ -19,10 +19,14 @@ from snowflake.ml.feature_store.spec.models import (
     Source,
     Spec,
     _columns_from_struct_type,
+    _columns_from_tiled_struct_type,
     _make_fs_column,
+    _make_tiled_fs_column,
     _sanitize_json_for_dollar_quoting,
+    validate_fs_columns_match,
     validate_schema_types,
     validate_spec_oft_offline_table_schema,
+    validate_spec_oft_tiled_offline_table_schema,
 )
 from snowflake.snowpark.types import (
     ArrayType,
@@ -112,6 +116,104 @@ class ColumnsFromStructTypeTest(absltest.TestCase):
     def test_empty_schema(self) -> None:
         schema = StructType([])
         self.assertEqual(_columns_from_struct_type(schema), [])
+
+
+class ValidateFsColumnsMatchTest(absltest.TestCase):
+    """Tests for validate_fs_columns_match."""
+
+    def _validate(self, expected: list[FSColumn], actual: list[FSColumn]) -> None:
+        validate_fs_columns_match(
+            expected=expected,
+            actual=actual,
+            expected_label="StreamSource 'src'",
+            actual_label="backfill_df",
+            error_prefix="streaming feature view",
+        )
+
+    def test_exact_match(self) -> None:
+        cols = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="AMOUNT", type="DoubleType"),
+        ]
+        self._validate(cols, list(cols))
+
+    def test_case_insensitive_name_match(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="StringType")]
+        actual = [FSColumn(name="user_id", type="StringType")]
+        self._validate(expected, actual)
+
+    def test_extra_actual_columns_allowed(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="StringType")]
+        actual = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="EXTRA", type="DoubleType"),
+        ]
+        self._validate(expected, actual)
+
+    def test_missing_column(self) -> None:
+        expected = [
+            FSColumn(name="USER_ID", type="StringType"),
+            FSColumn(name="AMOUNT", type="DoubleType"),
+        ]
+        actual = [FSColumn(name="USER_ID", type="StringType")]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"streaming feature view: backfill_df is missing column 'AMOUNT' " r"declared by StreamSource 'src'\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_long_vs_decimal_rejected(self) -> None:
+        expected = [FSColumn(name="USER_ID", type="LongType")]
+        actual = [FSColumn(name="USER_ID", type="DecimalType", precision=38, scale=0)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'USER_ID' has type DecimalType\(38,0\) but "
+            r"StreamSource 'src' declares column 'USER_ID' with type LongType\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_decimal_precision_scale_mismatch(self) -> None:
+        expected = [FSColumn(name="PRICE", type="DecimalType", precision=38, scale=0)]
+        actual = [FSColumn(name="PRICE", type="DecimalType", precision=38, scale=2)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"DecimalType\(38,2\).*DecimalType\(38,0\)",
+        ):
+            self._validate(expected, actual)
+
+    def test_string_length_wildcard_when_expected_length_none(self) -> None:
+        """expected.length=None acts as a wildcard — any actual length is accepted.
+
+        Snowpark may report a specific length for an unbounded SQL VARCHAR column,
+        so a StreamSource declared with ``StringType()`` must accept those columns.
+        """
+        expected = [FSColumn(name="NAME", type="StringType")]
+        actual = [FSColumn(name="NAME", type="StringType", length=255)]
+        self._validate(expected, actual)
+
+    def test_string_length_strict_when_expected_length_set(self) -> None:
+        """When expected has a length, actual must match exactly."""
+        expected = [FSColumn(name="NAME", type="StringType", length=10)]
+        actual = [FSColumn(name="NAME", type="StringType", length=255)]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"StringType\(255\).*StringType\(10\)",
+        ):
+            self._validate(expected, actual)
+
+    def test_type_mismatch(self) -> None:
+        expected = [FSColumn(name="AMOUNT", type="DoubleType")]
+        actual = [FSColumn(name="AMOUNT", type="StringType")]
+        with self.assertRaisesRegex(
+            ValueError,
+            r"backfill_df column 'AMOUNT' has type StringType but "
+            r"StreamSource 'src' declares column 'AMOUNT' with type DoubleType\.",
+        ):
+            self._validate(expected, actual)
+
+    def test_empty_expected_passes(self) -> None:
+        actual = [FSColumn(name="X", type="StringType")]
+        self._validate([], actual)
 
 
 class SourceModelTest(absltest.TestCase):
@@ -479,6 +581,79 @@ class ValidateSpecOftOfflineTableSchemaTest(absltest.TestCase):
         with self.assertRaises(ValueError) as ctx_base:
             validate_schema_types(schema)
         self.assertEqual(str(ctx_pg.exception), str(ctx_base.exception))
+
+
+class MakeTiledFSColumnTest(absltest.TestCase):
+    """``_make_tiled_fs_column`` permits list-aggregation arrays, scalars follow base rules."""
+
+    def test_array_typed_carries_element_type(self) -> None:
+        col = _make_tiled_fs_column("_PARTIAL_LAST_DISTINCT_3_PAGE_URL", ArrayType(StringType()))
+        self.assertEqual(col.type, "ArrayType")
+        self.assertEqual(col.element_type, "StringType")
+
+    def test_array_untyped_has_no_element_type(self) -> None:
+        # ARRAY_AGG tile columns introspect as untyped arrays (element_type
+        # None); element_type is stamped later from the aggregation spec.
+        untyped = ArrayType()
+        untyped.element_type = None
+        col = _make_tiled_fs_column("_PARTIAL_LAST_DISTINCT_3_PAGE_URL", untyped)
+        self.assertEqual(col.type, "ArrayType")
+        self.assertIsNone(col.element_type)
+
+    def test_scalar_delegates_to_make_fs_column(self) -> None:
+        col = _make_tiled_fs_column("USER_ID", LongType())
+        self.assertEqual(col.type, "LongType")
+
+    def test_scalar_timestamp_tz_still_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "TIMESTAMP_NTZ"):
+            _make_tiled_fs_column("ts", TimestampType(TimestampTimeZone.LTZ))
+
+
+class ColumnsFromTiledStructTypeTest(absltest.TestCase):
+    """``_columns_from_tiled_struct_type`` carries arrays through; scalars unchanged."""
+
+    def test_mixed_scalar_and_array(self) -> None:
+        untyped_ts_array = ArrayType()
+        untyped_ts_array.element_type = None
+        schema = StructType(
+            [
+                StructField("USER_ID", LongType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_LAST_DISTINCT_3_PAGE_URL", ArrayType(StringType())),
+                StructField("_PARTIAL_LAST_DISTINCT_3_TS_PAGE_URL", untyped_ts_array),
+            ]
+        )
+        cols = {c.name: c for c in _columns_from_tiled_struct_type(schema)}
+        self.assertEqual(cols["USER_ID"].type, "LongType")
+        self.assertEqual(cols["_PARTIAL_LAST_DISTINCT_3_PAGE_URL"].type, "ArrayType")
+        self.assertEqual(cols["_PARTIAL_LAST_DISTINCT_3_PAGE_URL"].element_type, "StringType")
+        self.assertEqual(cols["_PARTIAL_LAST_DISTINCT_3_TS_PAGE_URL"].type, "ArrayType")
+        self.assertIsNone(cols["_PARTIAL_LAST_DISTINCT_3_TS_PAGE_URL"].element_type)
+
+
+class ValidateSpecOftTiledOfflineTableSchemaTest(absltest.TestCase):
+    """``validate_spec_oft_tiled_offline_table_schema`` permits arrays, still validates scalars."""
+
+    def test_arrays_permitted(self) -> None:
+        schema = StructType(
+            [
+                StructField("USER_ID", LongType()),
+                StructField("_PARTIAL_LAST_DISTINCT_3_PAGE_URL", ArrayType(StringType())),
+                StructField("_PARTIAL_LAST_DISTINCT_3_TS_PAGE_URL", ArrayType()),
+            ]
+        )
+        validate_spec_oft_tiled_offline_table_schema(schema)
+
+    def test_non_array_unsupported_still_rejected(self) -> None:
+        schema = StructType(
+            [
+                StructField("USER_ID", LongType()),
+                StructField("BAD", DateType()),
+                StructField("_PARTIAL_LAST_DISTINCT_3_PAGE_URL", ArrayType(StringType())),
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "Unsupported column types.*DateType"):
+            validate_spec_oft_tiled_offline_table_schema(schema)
 
 
 # ============================================================================

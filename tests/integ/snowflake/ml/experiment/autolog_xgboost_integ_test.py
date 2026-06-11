@@ -34,11 +34,15 @@ class AutologXgboostIntegrationTest(AutologIntegrationTest, parameterized.TestCa
         self, model_class: type[Union[xgb.XGBModel, xgb.Booster]], metric_name: str, log_every_n_epochs: int
     ) -> None:
         """Test that autologging works for XGBoost models."""
+        # TODO: Re-enable model logging once xgboost's transitive dependencies (nvidia-nccl-cu12)
+        # are available on both x86 and ARM. Currently causes architecture mismatch failures
+        # when creating UDFs in CI pipelines running on Linux x86.
         self._test_autolog(
             model_class=model_class,
             callback_class=SnowflakeXgboostCallback,
             metric_name=metric_name,
             log_every_n_epochs=log_every_n_epochs,
+            log_model=False,
         )
 
 

@@ -82,8 +82,11 @@ class TestRegistryMultiModalityVLLMExternalStageInteg(
 
     def test_image_and_video_with_vllm_external_stage(self) -> None:
         """Test image+video vLLM inference with files served from an external S3 stage."""
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text", compute_pool_for_log=None
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
         )
 
         test_subdir = f"batch_inference_test/{uuid.uuid4()}"
@@ -184,8 +187,11 @@ class TestRegistryMultiModalityVLLMExternalStageInteg(
 
     def test_image_and_video_with_vllm_mixed_stages(self) -> None:
         """Test image+video vLLM inference with rows spanning external and internal stages."""
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
-            model="Qwen/Qwen2-VL-2B-Instruct", task="image-text-to-text", compute_pool_for_log=None
+            model="Qwen/Qwen2-VL-2B-Instruct",
+            task="image-text-to-text",
+            compute_pool_for_log=None,
         )
 
         test_subdir = f"batch_inference_test/{uuid.uuid4()}"

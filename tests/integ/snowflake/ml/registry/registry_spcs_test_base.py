@@ -95,6 +95,27 @@ class RegistrySPCSTestBase(common_test_base.CommonTestBase):
         """Create stage with appropriate settings. Can be overridden by subclasses."""
         self._db_manager.create_stage(self._test_stage)
 
+    def _create_hf_token_secret(self) -> Optional[str]:
+        """Create a Snowflake SECRET from the HF_TOKEN environment variable.
+
+        Returns:
+            Fully qualified secret name if HF_TOKEN is set, None otherwise.
+        """
+        hf_token = os.getenv("HF_TOKEN")
+        if not hf_token:
+            return None
+
+        fqn = f"{self._test_db}.{self._test_schema}.HF_TOKEN"
+        logging.info(f"Creating HF_TOKEN secret: {fqn}")
+        self.session.sql(
+            f"CREATE OR REPLACE SECRET {fqn} "
+            f"TYPE = GENERIC_STRING "
+            f"SECRET_STRING = '{hf_token}' "
+            f"COMMENT = 'Huggingface token'"
+        ).collect()
+        logging.info(f"Created HF_TOKEN secret: {fqn}")
+        return fqn
+
     def tearDown(self) -> None:
         self._db_manager.drop_database(self._test_db)
         super().tearDown()

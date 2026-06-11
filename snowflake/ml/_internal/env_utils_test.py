@@ -1299,12 +1299,19 @@ pandas>=2.0
                 mock_isdir.assert_called_once_with(os.path.join(conda_prefix, "conda-meta"))
         with mock.patch.object(sys, "prefix", "/fake/venv"):
             with mock.patch("os.path.isdir", return_value=False):
-                with mock.patch.dict(os.environ, {"CONDA_PREFIX": ""}):
-                    self.assertFalse(env_utils.is_local_conda_environment())
+                with mock.patch("os.path.isfile", return_value=False):
+                    with mock.patch.dict(os.environ, {"CONDA_PREFIX": ""}):
+                        self.assertFalse(env_utils.is_local_conda_environment())
         with mock.patch.object(sys, "prefix", "/fake/venv"):
             with mock.patch("os.path.isdir", return_value=False):
-                with mock.patch.dict(os.environ, {"CONDA_PREFIX": conda_prefix}):
-                    self.assertTrue(env_utils.is_local_conda_environment())
+                with mock.patch("os.path.isfile", return_value=True):
+                    with mock.patch.dict(os.environ, {"CONDA_PREFIX": conda_prefix}):
+                        self.assertFalse(env_utils.is_local_conda_environment())
+        with mock.patch.object(sys, "prefix", "/fake/venv"):
+            with mock.patch("os.path.isdir", return_value=False):
+                with mock.patch("os.path.isfile", return_value=False):
+                    with mock.patch.dict(os.environ, {"CONDA_PREFIX": conda_prefix}):
+                        self.assertTrue(env_utils.is_local_conda_environment())
 
     def test_validate_py_runtime_version(self) -> None:
         with mock.patch.object(snowml_env, "PYTHON_VERSION", "3.8.13"):

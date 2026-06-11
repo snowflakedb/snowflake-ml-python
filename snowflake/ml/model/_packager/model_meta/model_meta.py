@@ -308,6 +308,7 @@ class ModelMetadata:
         task: model_types.Task = model_types.Task.UNKNOWN,
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
         method_options: Optional[dict[str, dict[str, Any]]] = None,
+        sample_input_file_paths: Optional[dict[str, str]] = None,
     ) -> None:
         self.name = name
         self.signatures: dict[str, model_signature.ModelSignature] = dict()
@@ -336,6 +337,9 @@ class ModelMetadata:
         self.task: model_types.Task = task
         self.explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = explain_algorithm
         self.method_options: dict[str, dict[str, Any]] = method_options or {}
+        # Maps method name -> filename of the captured sample input data row,
+        # written into model.yaml as the per-method ``sample_input_file_path`` field.
+        self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
 
     @property
     def min_snowpark_ml_version(self) -> str:
@@ -387,7 +391,9 @@ class ModelMetadata:
                 "model_type": self.model_type,
                 "models": {model_name: blob.to_dict() for model_name, blob in self.models.items()},
                 "name": self.name,
-                "signatures": {func_name: sig.to_dict() for func_name, sig in self.signatures.items()},
+                "signatures": {
+                    func_name: self._serialize_signature(func_name, sig) for func_name, sig in self.signatures.items()
+                },
                 "version": model_meta_schema.MODEL_METADATA_VERSION,
                 "min_snowpark_ml_version": self.min_snowpark_ml_version,
                 "task": self.task.value,
@@ -403,6 +409,14 @@ class ModelMetadata:
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_dict, stream=out, default_flow_style=False)
+
+    def _serialize_signature(self, func_name: str, sig: model_signature.ModelSignature) -> dict[str, Any]:
+        """Serialize one method signature, optionally injecting ``sample_input_file_path``."""
+        sig_dict = sig.to_dict()
+        sample_path = self.sample_input_file_paths.get(func_name)
+        if sample_path:
+            sig_dict["sample_input_file_path"] = sample_path
+        return sig_dict
 
     @staticmethod
     def _validate_model_metadata(loaded_meta: Any) -> model_meta_schema.ModelMetadataDict:
@@ -461,6 +475,11 @@ class ModelMetadata:
             func_name: model_signature.ModelSignature.from_dict(sig)
             for func_name, sig in model_dict["signatures"].items()
         }
+        sample_input_file_paths = {
+            func_name: sig["sample_input_file_path"]
+            for func_name, sig in model_dict["signatures"].items()
+            if sig.get("sample_input_file_path")
+        }
         models = {name: model_blob_meta.ModelBlobMeta(**blob_meta) for name, blob_meta in model_dict["models"].items()}
         env = model_env.ModelEnv()
         env.load_from_dict(pathlib.Path(model_dir_path), model_dict["env"])
@@ -494,4 +513,5 @@ class ModelMetadata:
             explain_algorithm=explanation_algorithm,
             function_properties=model_dict.get("function_properties", {}),
             method_options=model_dict.get("method_options", {}),
+            sample_input_file_paths=sample_input_file_paths,
         )

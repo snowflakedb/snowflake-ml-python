@@ -182,7 +182,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -270,11 +275,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 query_params=["token"] if "hf_token" in huggingface_args else [],
             )
-            mock_get_service_container_statuses.assert_called_once_with(
+            mock_show_services.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                include_message=False,
+                starts_with="MYSERVICE",
                 statement_params=self.m_statement_params,
             )
 
@@ -342,7 +346,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -437,11 +446,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 query_params=[],
             )
-            mock_get_service_container_statuses.assert_called_once_with(
+            mock_show_services.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("DB"),
                 schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                include_message=False,
+                starts_with="MYSERVICE",
                 statement_params=self.m_statement_params,
             )
 
@@ -506,7 +514,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -601,11 +614,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
                 query_params=[],
             )
-            mock_get_service_container_statuses.assert_called_once_with(
+            mock_show_services.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("TEMP"),
                 schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                include_message=False,
+                starts_with="MYSERVICE",
                 statement_params=self.m_statement_params,
             )
 
@@ -657,6 +669,11 @@ class ServiceOpsTest(parameterized.TestCase):
                     self.m_ops._service_client,
                     "get_service_container_statuses",
                     return_value=m_statuses,
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "show_services",
+                    return_value=[],
                 ),
                 mock.patch.object(
                     self.m_ops._service_client,
@@ -736,6 +753,11 @@ class ServiceOpsTest(parameterized.TestCase):
                     self.m_ops._service_client,
                     "get_service_container_statuses",
                     return_value=m_statuses,
+                ),
+                mock.patch.object(
+                    self.m_ops._service_client,
+                    "show_services",
+                    return_value=[],
                 ),
                 mock.patch.object(
                     self.m_ops._service_client,
@@ -859,7 +881,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -959,11 +986,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 query_params=[],
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_container_statuses.assert_called_once_with(
+            mock_show_services.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                include_message=False,
+                starts_with="MYSERVICE",
                 statement_params=self.m_statement_params,
             )
 
@@ -1027,7 +1053,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -1128,11 +1159,10 @@ class ServiceOpsTest(parameterized.TestCase):
                 query_params=[],
                 statement_params=self.m_statement_params,
             )
-            mock_get_service_container_statuses.assert_called_once_with(
+            mock_show_services.assert_called_once_with(
                 database_name=sql_identifier.SqlIdentifier("SERVICE_DB"),
                 schema_name=sql_identifier.SqlIdentifier("SERVICE_SCHEMA"),
-                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
-                include_message=False,
+                starts_with="MYSERVICE",
                 statement_params=self.m_statement_params,
             )
 
@@ -1194,7 +1224,12 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
-            ) as mock_get_service_container_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],  # service does not exist; create_service takes the deploy path
+            ) as mock_show_services,
             mock.patch.object(
                 self.m_ops._service_client,
                 "get_service_logs",
@@ -1274,7 +1309,7 @@ class ServiceOpsTest(parameterized.TestCase):
 
             mock_save.assert_called_once()
             mock_deploy_model.assert_called_once()
-            mock_get_service_container_statuses.assert_called_once()
+            mock_show_services.assert_called_once()
 
     def test_create_service_with_python_generic_inference_engine_with_args(self) -> None:
         """Test create_service with PYTHON_GENERIC inference engine and custom args override."""
@@ -1330,6 +1365,11 @@ class ServiceOpsTest(parameterized.TestCase):
                 self.m_ops._service_client,
                 "get_service_container_statuses",
                 return_value=m_statuses,
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],
             ),
             mock.patch.object(
                 self.m_ops._service_client,
@@ -2459,6 +2499,11 @@ class ServiceOpsTest(parameterized.TestCase):
             ),
             mock.patch.object(
                 self.m_ops._service_client,
+                "show_services",
+                return_value=[],
+            ),
+            mock.patch.object(
+                self.m_ops._service_client,
                 "get_service_logs",
                 return_value="",
             ),
@@ -2547,6 +2592,11 @@ class ServiceOpsTest(parameterized.TestCase):
                     )
                 ],
             ),
+            mock.patch.object(
+                self.m_ops._service_client,
+                "show_services",
+                return_value=[],
+            ),
             mock.patch.object(self.m_ops._service_client, "get_service_logs", return_value=""),
             mock.patch.object(self.m_ops, "_wait_for_service_status", return_value=None),
         ):
@@ -2578,6 +2628,135 @@ class ServiceOpsTest(parameterized.TestCase):
             )
         _, kwargs = mock_add_service_spec.call_args
         self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
+
+    def test_show_service_returns_match(self) -> None:
+        Outcome = row.Row("name", "status", "database_name", "schema_name")
+        rows = [Outcome("MYSERVICE", "RUNNING", "DB", "SCHEMA")]
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=rows) as mock_show_services:
+            res = self.m_ops._show_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                statement_params=None,
+            )
+        self.assertIsNotNone(res)
+        assert res is not None
+        self.assertEqual(res["name"], "MYSERVICE")
+        self.assertEqual(res["status"], "RUNNING")
+        mock_show_services.assert_called_once_with(
+            database_name=sql_identifier.SqlIdentifier("DB"),
+            schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+            starts_with="MYSERVICE",
+            statement_params=None,
+        )
+
+    def test_show_service_returns_none_when_no_match(self) -> None:
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=[]):
+            res = self.m_ops._show_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("GHOST"),
+                statement_params=None,
+            )
+        self.assertIsNone(res)
+
+    def test_show_service_filters_prefix_collisions(self) -> None:
+        # STARTS WITH 'FOO' returns FOOBAR; _show_service must reject it.
+        Outcome = row.Row("name", "status", "database_name", "schema_name")
+        rows = [Outcome("FOOBAR", "RUNNING", "DB", "SCHEMA")]
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=rows):
+            res = self.m_ops._show_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("FOO"),
+                statement_params=None,
+            )
+        self.assertIsNone(res)
+
+    def test_show_service_quoted_identifier(self) -> None:
+        # Case-sensitive (quoted) service name. SHOW SERVICES returns the stored
+        # name unquoted in the `name` column; SqlIdentifier.resolved() also
+        # produces the stored form. The comparison must hold and STARTS WITH
+        # must receive the unquoted form.
+        #
+        # Note: a lowercase service name like "my-service" cannot actually be
+        # created in Snowflake — services require uppercase names because the
+        # name is compiled into a DNS label. We keep this unit test anyway to
+        # guard the code path: if Snowflake ever relaxes that rule, or if a
+        # caller constructs a SqlIdentifier from arbitrary user input, the
+        # resolved/identifier round-trip needs to keep working.
+        Outcome = row.Row("name", "status", "database_name", "schema_name")
+        rows = [Outcome("my-service", "RUNNING", "DB", "SCHEMA")]
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=rows) as mock_show_services:
+            res = self.m_ops._show_service(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier('"my-service"'),
+                statement_params=None,
+            )
+        self.assertIsNotNone(res)
+        assert res is not None
+        self.assertEqual(res["name"], "my-service")
+        mock_show_services.assert_called_once_with(
+            database_name=sql_identifier.SqlIdentifier("DB"),
+            schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+            starts_with="my-service",
+            statement_params=None,
+        )
+
+    def test_get_service_status_returns_status_when_match_exists(self) -> None:
+        Outcome = row.Row("name", "status", "database_name", "schema_name")
+        rows = [Outcome("MYSERVICE", "RUNNING", "DB", "SCHEMA")]
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "show_services",
+            return_value=rows,
+        ) as mock_show_services:
+            status = self.m_ops._get_service_status(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                statement_params=None,
+            )
+        self.assertEqual(status, service_sql.ServiceStatus.RUNNING)
+        mock_show_services.assert_called_once_with(
+            database_name=sql_identifier.SqlIdentifier("DB"),
+            schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+            starts_with="MYSERVICE",
+            statement_params=None,
+        )
+
+    def test_get_service_status_returns_none_when_no_match(self) -> None:
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=[]):
+            status = self.m_ops._get_service_status(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("GHOST"),
+                statement_params=None,
+            )
+        self.assertIsNone(status)
+
+    def test_check_if_service_exists_returns_true_when_match_exists(self) -> None:
+        Outcome = row.Row("name", "status", "database_name", "schema_name")
+        rows = [Outcome("MYSERVICE", "RUNNING", "DB", "SCHEMA")]
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=rows):
+            exists = self.m_ops._check_if_service_exists(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("MYSERVICE"),
+                statement_params=None,
+            )
+        self.assertTrue(exists)
+
+    def test_check_if_service_exists_returns_false_when_no_match(self) -> None:
+        with mock.patch.object(self.m_ops._service_client, "show_services", return_value=[]):
+            exists = self.m_ops._check_if_service_exists(
+                database_name=sql_identifier.SqlIdentifier("DB"),
+                schema_name=sql_identifier.SqlIdentifier("SCHEMA"),
+                service_name=sql_identifier.SqlIdentifier("GHOST"),
+                statement_params=None,
+            )
+        self.assertFalse(exists)
 
 
 if __name__ == "__main__":

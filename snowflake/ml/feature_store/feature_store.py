@@ -71,6 +71,7 @@ from snowflake.ml.feature_store.feature_view import (
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
     FeatureStoreMetadataManager,
+    FeatureViewMetadataConfig,
     MetadataObjectType,
     MetadataType,
     RealtimeConfigMetadata,
@@ -91,6 +92,7 @@ from snowflake.ml.feature_store.spec.enums import (
 from snowflake.ml.feature_store.spec.models import (
     FeatureViewSpec,
     validate_spec_oft_offline_table_schema,
+    validate_spec_oft_tiled_offline_table_schema,
 )
 from snowflake.ml.feature_store.stream_source import (
     _LIST_STREAM_SOURCE_SCHEMA,
@@ -218,6 +220,27 @@ _SNAPSHOT_STATUS_TABLE = "SNOWML_SNAPSHOT_STATUS"
 # skip refresh_freq handling entirely when the caller omits it, while still accepting None
 # as an intentional value — preserving backward compatibility with callers that never set it.
 _UNSET: Any = object()
+
+
+def _sql_string_literal(value: str) -> str:
+    """Quote a string for safe inclusion as a Snowflake DDL string literal.
+
+    Doubles embedded single quotes (the Snowflake convention for escaping
+    inside single-quoted literals) and wraps the result in single quotes so
+    callers cannot forget the surrounding quotes. Use this everywhere a
+    user-controlled string is interpolated into a single-quoted SQL literal
+    such as ``COMMENT = ...`` or ``ALLOWED_VALUES ...`` — Snowflake DDL does
+    not accept ``?`` bind parameters in those positions, so quote-doubling
+    is the only safe option.
+
+    Args:
+        value: Raw string to escape.
+
+    Returns:
+        ``'<value with `'` doubled>'`` — already quoted, ready to drop into
+        SQL with no surrounding quotes at the call site.
+    """
+    return "'" + value.replace("'", "''") + "'"
 
 
 @dataclass(frozen=True)
@@ -632,7 +655,7 @@ class FeatureStore:
                         statement_params=self._telemetry_stmp
                     )
                 # Metadata table for aggregation configs is created lazily by metadata manager
-                # Snapshot status table is created lazily by _ensure_snapshot_status_table_exists
+                self._ensure_snapshot_status_table_exists()
             except Exception as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INTERNAL_SNOWPARK_ERROR,
@@ -736,8 +759,8 @@ class FeatureStore:
         try:
             self._session.sql(
                 f"""CREATE TAG IF NOT EXISTS {full_tag_name}
-                    ALLOWED_VALUES '{join_keys_str}'
-                    COMMENT = '{entity.desc}'
+                    ALLOWED_VALUES {_sql_string_literal(join_keys_str)}
+                    COMMENT = {_sql_string_literal(entity.desc)}
                 """
             ).collect(statement_params=self._telemetry_stmp)
         except Exception as e:
@@ -801,7 +824,7 @@ class FeatureStore:
 
         try:
             full_name = f"{self._config.full_schema_path}.{self._get_entity_name(name)}"
-            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = '{new_desc}'").collect(
+            self._session.sql(f"ALTER TAG {full_name} SET COMMENT = {_sql_string_literal(new_desc)}").collect(
                 statement_params=self._telemetry_stmp
             )
         except Exception as e:
@@ -1004,6 +1027,17 @@ class FeatureStore:
                 feature_view._initialize_from_feature_df(udf_df)
                 feature_view._validate()
 
+            # Set authoring package version before tile query generation. A tiled
+            # rollup FV reads its parent's tile columns and emits the same column
+            # layout, so it must inherit the parent's authoring version (legacy
+            # vs. new distinct-N format); otherwise the rollup SQL would reference
+            # columns that don't exist on a legacy parent's DT. Every other feature
+            # view records the current snowml version.
+            if feature_view.is_tiled and feature_view.rollup_config is not None:
+                feature_view._authoring_pkg_version = feature_view.rollup_config.source.authoring_pkg_version
+            else:
+                feature_view._authoring_pkg_version = snowml_version.VERSION
+
             # For tiled feature views, skip column definitions since the tiling query
             # produces different columns (TILE_START, partial aggregates)
             column_descs = "" if feature_view.is_tiled else self._build_column_descs(feature_view)
@@ -1039,8 +1073,20 @@ class FeatureStore:
                 descs = None
                 if feature_view.feature_descs:
                     descs = {k.identifier(): v for k, v in feature_view.feature_descs.items()}
-                # Save specs and descs atomically in a single statement
-                self._metadata_manager.save_feature_view_metadata(feature_view.name, version, agg_metadata, descs)
+                # Save specs, descs, and FV metadata config atomically in a single
+                # statement. Persist the version actually used to author the tiles
+                # (a rollup FV inherits its parent's version) so reloads pick the
+                # matching tile-column layout. Legacy FVs carry None here (a rollup on
+                # a legacy parent inherits None) and persist no version row.
+                authored_version = feature_view.authoring_pkg_version
+                fv_meta_config = (
+                    FeatureViewMetadataConfig(authoring_pkg_version=authored_version)
+                    if authored_version is not None
+                    else None
+                )
+                self._metadata_manager.save_feature_view_metadata(
+                    feature_view.name, version, agg_metadata, descs, fv_metadata_config=fv_meta_config
+                )
 
             # Step 4: Save rollup metadata for PIT-correct training queries
             if feature_view._rollup_metadata is not None:
@@ -3759,7 +3805,7 @@ class FeatureStore:
         fqn = feature_view.fully_qualified_name()
 
         if feature_view.status == FeatureViewStatus.STATIC:
-            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = '{desc}'")], []
+            return [("OFFLINE_UPDATE", f"ALTER VIEW {fqn} SET COMMENT = {_sql_string_literal(desc)}")], []
 
         # Managed (Dynamic-Table-backed) FVs always have a refresh_freq — the
         # only refresh_freq=None case is an external (View-backed) FV, which
@@ -3778,7 +3824,8 @@ class FeatureStore:
         def alter_dt(op_type: str, *, target_lag: str, wh: Optional[SqlIdentifier], comment: str) -> tuple[str, str]:
             return (
                 op_type,
-                f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'" f" WAREHOUSE = {wh} COMMENT = '{comment}'",
+                f"ALTER DYNAMIC TABLE {fqn} SET TARGET_LAG = '{target_lag}'"
+                f" WAREHOUSE = {wh} COMMENT = {_sql_string_literal(comment)}",
             )
 
         def create_task_ops(op_type: str, *, cron_expr: str, wh: Optional[SqlIdentifier]) -> list[tuple[str, str]]:
@@ -4666,6 +4713,7 @@ class FeatureStore:
             features=feature_view.aggregation_specs,
             spine_timestamp_col="_QUERY_TS",
             fv_index=0,
+            authoring_pkg_version=feature_view.authoring_pkg_version,
         )
 
         merge_ctes = generator.generate_all_ctes()
@@ -5217,7 +5265,7 @@ class FeatureStore:
             assert storage_config.base_location is not None, "base_location is required for ICEBERG format"
             query = f"""CREATE{override_clause} DYNAMIC ICEBERG TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -5231,7 +5279,7 @@ class FeatureStore:
         else:
             query = f"""CREATE{override_clause} DYNAMIC TABLE {table_name}{column_clause}
                 TARGET_LAG = '{'DOWNSTREAM' if schedule_task else feature_view.refresh_freq}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause}
                 )
@@ -5257,7 +5305,12 @@ class FeatureStore:
         return query
 
     def _ensure_snapshot_status_table_exists(self) -> None:
-        """Lazily create the snapshot status table if it does not already exist."""
+        """Create the snapshot status table if it does not already exist.
+
+        Called from feature-store initialization (``CREATE_IF_NOT_EXIST``) and before
+        append-only snapshot registration so status-row cleanup never depends on a
+        prior append-only registration in the schema.
+        """
         status_table_fqn = self._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
         self._session.sql(
             f"""CREATE TABLE IF NOT EXISTS {status_table_fqn} (
@@ -5279,10 +5332,6 @@ class FeatureStore:
         Args:
             feature_view_name: The versioned physical name of the feature view, for
                 example ``MY_FV$V1``.
-
-        Raises:
-            SnowparkSQLException: If deleting snapshot status rows fails for a reason
-                other than the status table not existing (SQL error code 2003).
         """
         snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
         snapshot_fqn = self._get_fully_qualified_name(snapshot_table_name)
@@ -5298,12 +5347,11 @@ class FeatureStore:
                 statement_params=self._telemetry_stmp
             )
         except SnowparkSQLException as e:
-            # The status table is created lazily by ``_ensure_snapshot_status_table_exists``
-            # only on append_only registration paths. If no append_only FV was ever registered
-            # in this schema, the table won't exist and the DELETE is a vacuous no-op.
-            # Re-raise anything other than "object does not exist" (2003).
-            if e.sql_error_code != 2003:
-                raise
+            logger.warning(
+                "feature store: could not delete snapshot status row for %s: %s",
+                fully_qualified_name,
+                e,
+            )
 
     def _cleanup_stale_feature_view_resources(
         self,
@@ -5847,12 +5895,15 @@ END;"""
                 f"WHERE {vfc} <= CURRENT_TIMESTAMP() AND ({vtc} IS NULL OR {vtc} > CURRENT_TIMESTAMP())"
             )
 
+        # The rollup FV inherits its parent's authoring version (set at
+        # registration), so its tile-column naming matches the parent's DT.
         generator = RollupSqlGenerator(
             parent_tile_table=parent_tile_table,
             parent_join_keys=parent_join_keys,
             new_join_keys=new_join_keys,
             mapping_query=flat_mapping_query,
             aggregation_specs=feature_view.aggregation_specs or [],
+            authoring_pkg_version=feature_view.authoring_pkg_version,
         )
         rollup_sql = generator.generate()
 
@@ -5868,7 +5919,7 @@ END;"""
         try:
             query = f"""CREATE{overwrite_clause} DYNAMIC TABLE {fully_qualified_name}
                 TARGET_LAG = '{target_lag}'
-                COMMENT = '{feature_view.desc}'
+                COMMENT = {_sql_string_literal(feature_view.desc)}
                 TAG (
                     {tagging_clause_str}
                 )
@@ -6245,7 +6296,7 @@ END;"""
         tagging_clause_str: str,
     ) -> str:
         return f"""CREATE{overwrite_clause} VIEW {view_name} ({column_descs})
-            COMMENT = '{feature_view.desc}'
+            COMMENT = {_sql_string_literal(feature_view.desc)}
             TAG (
                 {tagging_clause_str}
             )
@@ -6381,6 +6432,7 @@ END;"""
                         aggregation_specs=feature_view.aggregation_specs or [],
                         mapping_valid_from_col=rm.mapping_valid_from_col,
                         mapping_valid_to_col=rm.mapping_valid_to_col,
+                        authoring_pkg_version=feature_view.authoring_pkg_version,
                     )
                     pit_cte_name = f"PIT_ROLLUP_FV{i}"
                     cte_name_str, cte_body = pit_generator.generate_as_cte(pit_cte_name)
@@ -6395,6 +6447,7 @@ END;"""
                     features=feature_view.aggregation_specs,  # type: ignore[arg-type]
                     spine_timestamp_col=spine_timestamp_col,
                     fv_index=i,
+                    authoring_pkg_version=feature_view.authoring_pkg_version,
                 )
                 # Add all CTEs from the merging generator
                 for cte_tuple in generator.generate_all_ctes():
@@ -7667,6 +7720,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             )
             self._hydrate_postgres_online_service(fv)
 
+            # Load authoring package version from metadata table. Legacy FVs have no
+            # row -> None.
+            if is_tiled:
+                fv_meta_config = self._metadata_manager.get_feature_view_metadata_config(name.identifier(), version)
+                fv._authoring_pkg_version = fv_meta_config.authoring_pkg_version if fv_meta_config else None
+
             if agg_metadata and agg_metadata.feature_aggregation_method:
                 fv._feature_aggregation_method = FeatureAggregationMethod(agg_metadata.feature_aggregation_method)
             elif is_tiled:
@@ -7719,6 +7778,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 is_streaming=fv_metadata.is_streaming,
             )
             self._hydrate_postgres_online_service(fv)
+
+            if is_tiled:
+                fv_meta_config = self._metadata_manager.get_feature_view_metadata_config(name.identifier(), version)
+                fv._authoring_pkg_version = fv_meta_config.authoring_pkg_version if fv_meta_config else None
+
             return fv
 
     def _resolve_postgres_online_query_url(self, *, log_label: str) -> Optional[str]:
@@ -7891,13 +7955,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 self._config.schema,
                 statement_params=self._telemetry_stmp,
             )
-            # Validate offline columns for the OFT spec. Tiled FVs: introspect the materialized DT
-            # so offline_configs match the table; reject ARRAY/BINARY/etc. per spec rules.
+            # Read offline column shapes from the materialized DT/View so storage-side
+            # lengths land in the spec. Non-tiled streaming is already materialized-backed
+            # via _initialize_from_feature_df, so skip the extra describe.
             pg_offline_dt_schema: Optional[StructType] = None
             try:
-                if feature_view.is_tiled:
+                if feature_view.is_tiled or not feature_view.is_streaming:
                     pg_offline_dt_schema = self._session.table(source_table_name).schema
-                    validate_spec_oft_offline_table_schema(pg_offline_dt_schema)
+                    validate_spec_oft_tiled_offline_table_schema(pg_offline_dt_schema)
                 else:
                     validate_spec_oft_offline_table_schema(feature_view.output_schema)
             except ValueError as e:
@@ -7993,16 +8058,16 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             feature_view_name: Physical name of the DT/View (already created).
             version: Feature view version string.
             target_lag: Resolved target lag string (e.g., ``"30s"``).
-            offline_materialized_schema: For tiled batch FVs, Snowpark schema of the materialized
-                dynamic table (from ``Session.table(fq_dt).schema``). Required when
-                ``feature_view.is_tiled``; must be ``None`` for non-tiled batch.
+            offline_materialized_schema: Snowpark schema of the materialized DT/View
+                (from ``Session.table(fq_dt).schema``). Required when ``feature_view.is_tiled``;
+                preferred for non-tiled batch so column shapes track storage. When omitted,
+                falls back to ``feature_view.output_schema``.
 
         Returns:
             FeatureViewSpec instance ready for serialization.
 
         Raises:
-            ValueError: If tiled batch is missing *offline_materialized_schema*, or non-tiled batch
-                passes a non-``None`` *offline_materialized_schema*.
+            ValueError: If tiled batch is missing *offline_materialized_schema*.
         """
         database = self._config.database.resolved()
         schema = self._config.schema.resolved()
@@ -8033,9 +8098,9 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 )
             offline_columns = offline_materialized_schema
         else:
-            if offline_materialized_schema is not None:
-                raise ValueError("Non-tiled batch feature view spec must not set offline_materialized_schema.")
-            offline_columns = feature_view.output_schema
+            offline_columns = (
+                offline_materialized_schema if offline_materialized_schema is not None else feature_view.output_schema
+            )
         # Batch FVs always register the materialized table as BatchSource; Tiled/UDFTransformed are streaming-only.
         offline_table_type = TableType.BATCH_SOURCE
 

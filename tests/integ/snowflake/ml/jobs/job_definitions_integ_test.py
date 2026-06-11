@@ -16,11 +16,6 @@ from tests.integ.snowflake.ml.jobs.job_test_base import JobTestBase
 from tests.integ.snowflake.ml.jobs.test_file_helper import TestAsset
 
 
-@jobs.remote(compute_pool=test_constants._TEST_COMPUTE_POOL, stage_name="payload_stage")
-def job_fn_lazy_registration() -> str:
-    return "hello world"
-
-
 class JobDefinitionsTest(JobTestBase):
     def test_delete_job_definition_stage_cleanup(self) -> None:
         """Test that deleting a job definition cleans up the stage files."""
@@ -266,6 +261,10 @@ class JobDefinitionsTest(JobTestBase):
             task_ref.drop(if_exists=True)
 
     def test_job_decorater_lazy_registration(self) -> None:
+        @jobs.remote(compute_pool=test_constants._TEST_COMPUTE_POOL, stage_name="payload_stage", session=self.session)
+        def job_fn_lazy_registration() -> str:
+            return "hello world"
+
         job_def = job_fn_lazy_registration
         self.assertFalse(job_def._is_registered)
         job = job_def()

@@ -62,7 +62,7 @@ class MLJobLauncherTests(parameterized.TestCase):
     )
     def test_run_script_with_function_and_args(self, arg_value: Optional[int], expected: dict[str, Any]) -> None:
         # Test running a script with a function that takes arguments
-        args = [] if arg_value is None else [arg_value]
+        args = () if arg_value is None else (arg_value,)
         result = mljob_launcher.main(
             self.function_script,
             session=self.session,

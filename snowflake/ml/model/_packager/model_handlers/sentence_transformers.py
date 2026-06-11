@@ -1,9 +1,11 @@
 import inspect
 import logging
 import os
-from typing import TYPE_CHECKING, Callable, Optional, Sequence, cast, final
+from importlib import metadata as importlib_metadata
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, cast, final
 
 import pandas as pd
+from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
@@ -27,6 +29,8 @@ logger = logging.getLogger(__name__)
 # Note: Not all methods are available in all sentence-transformers versions.
 _ALLOWED_TARGET_METHODS = ["encode", "encode_query", "encode_document", "encode_queries", "encode_documents"]
 _DEFAULT_BATCH_SIZE = 32
+_MIN_INIT_TRUNCATE_DIM_VERSION = version.parse("2.7.0")
+_MIN_ENCODE_TRUNCATE_DIM_PARAM_VERSION = version.parse("5.0.0")
 
 # All potential default methods to check for availability on the model
 _POTENTIAL_DEFAULT_METHODS = [
@@ -58,10 +62,73 @@ def _get_available_default_methods(model: "sentence_transformers.SentenceTransfo
     return available_methods
 
 
+def _get_sentence_transformers_version() -> Optional[version.Version]:
+    """Return the installed sentence-transformers version, or None if not installed."""
+    try:
+        return version.parse(importlib_metadata.version("sentence-transformers"))
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
+def _supports_init_truncate_dim() -> bool:
+    """Whether the installed sentence-transformers supports truncate_dim in __init__ (>= 2.7.0)."""
+    sentence_transformers_version = _get_sentence_transformers_version()
+    return sentence_transformers_version is not None and sentence_transformers_version >= _MIN_INIT_TRUNCATE_DIM_VERSION
+
+
+def _supports_encode_truncate_dim_param() -> bool:
+    """Whether the installed sentence-transformers supports truncate_dim as an encode() parameter (>= 5.0.0)."""
+    sentence_transformers_version = _get_sentence_transformers_version()
+    return (
+        sentence_transformers_version is not None
+        and sentence_transformers_version >= _MIN_ENCODE_TRUNCATE_DIM_PARAM_VERSION
+    )
+
+
+def _capture_model_truncate_dim(model: "sentence_transformers.SentenceTransformer") -> Optional[int]:
+    """Read and validate the model's truncate_dim attribute, returning None if unset.
+
+    Args:
+        model: The SentenceTransformer model instance.
+
+    Returns:
+        The model's truncate_dim attribute, or None if unset.
+
+    Raises:
+        ValueError: If truncate_dim is set but is not a positive integer.
+    """
+    model_truncate_dim = getattr(model, "truncate_dim", None)
+    if model_truncate_dim is None:
+        return None
+    if not isinstance(model_truncate_dim, int) or model_truncate_dim <= 0:
+        raise ValueError("truncate_dim must be a positive integer")
+    return model_truncate_dim
+
+
+def _capture_pretrained_model_name(model: "sentence_transformers.SentenceTransformer") -> Optional[str]:
+    """Read the pretrained model identifier from a SentenceTransformer instance.
+
+    Args:
+        model: The SentenceTransformer model instance.
+
+    Returns:
+        The hub model id or local path if available, otherwise None.
+    """
+    transformers_model = getattr(model, "transformers_model", None)
+    if transformers_model is not None:
+        name_or_path = getattr(transformers_model, "name_or_path", None)
+        if isinstance(name_or_path, str) and name_or_path:
+            return name_or_path
+
+    return None
+
+
 def _auto_infer_signature(
     target_method: str,
     embedding_dim: int,
     batch_size: Optional[int] = _DEFAULT_BATCH_SIZE,
+    *,
+    include_truncate_dim_param: bool = False,
 ) -> Optional[model_signature.ModelSignature]:
     """Auto-infer signature for SentenceTransformer models.
 
@@ -72,12 +139,29 @@ def _auto_infer_signature(
         target_method: The target method name (e.g., "encode", "encode_query").
         embedding_dim: The dimension of the embedding vector output by the model.
         batch_size: Default batch size for inference, exposed as a runtime param.
+        include_truncate_dim_param: Whether to add truncate_dim as a runtime param (default None).
 
     Returns:
         A ModelSignature for the target method, or None if the method is not supported.
     """
     if target_method not in _ALLOWED_TARGET_METHODS:
         return None
+
+    params = [
+        model_signature.ParamSpec(
+            name="batch_size",
+            dtype=model_signature.DataType.INT64,
+            default_value=batch_size,
+        ),
+    ]
+    if include_truncate_dim_param:
+        params.append(
+            model_signature.ParamSpec(
+                name="truncate_dim",
+                dtype=model_signature.DataType.INT64,
+                default_value=None,
+            )
+        )
 
     return model_signature.ModelSignature(
         inputs=[
@@ -90,33 +174,42 @@ def _auto_infer_signature(
                 shape=(embedding_dim,),
             ),
         ],
-        params=[
-            model_signature.ParamSpec(
-                name="batch_size",
-                dtype=model_signature.DataType.INT64,
-                default_value=batch_size,
-            ),
-        ],
+        params=params,
     )
 
 
-def _add_batch_size_param(
+def _add_inference_params(
     model_meta: model_meta_api.ModelMetadata,
     batch_size: int,
+    *,
+    include_truncate_dim_param: bool = False,
 ) -> None:
-    """Add batch_size as a runtime param to all signatures in model_meta."""
-    batch_size_param = model_signature.ParamSpec(
-        name="batch_size",
-        dtype=model_signature.DataType.INT64,
-        default_value=batch_size,
-    )
+    """Add batch_size and optionally truncate_dim as runtime params to all signatures in model_meta."""
+    inference_params = [
+        model_signature.ParamSpec(
+            name="batch_size",
+            dtype=model_signature.DataType.INT64,
+            default_value=batch_size,
+        ),
+    ]
+    if include_truncate_dim_param:
+        inference_params.append(
+            model_signature.ParamSpec(
+                name="truncate_dim",
+                dtype=model_signature.DataType.INT64,
+                default_value=None,
+            )
+        )
     for method_name, sig in model_meta.signatures.items():
-        if any(p.name == "batch_size" for p in sig.params):
+        params_to_add = [param for param in inference_params if not any(p.name == param.name for p in sig.params)]
+        if not params_to_add:
             continue
+        combined_params: list[model_signature.BaseParamSpec] = list(sig.params)
+        combined_params.extend(params_to_add)
         model_meta.signatures[method_name] = model_signature.ModelSignature(
             inputs=sig.inputs,
             outputs=sig.outputs,
-            params=list(sig.params) + [batch_size_param],
+            params=combined_params,
         )
 
 
@@ -219,6 +312,8 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         ):
             raise ValueError("batch_size must be a positive integer")
         batch_size = user_defined_batch_size or _DEFAULT_BATCH_SIZE
+        model_truncate_dim = _capture_model_truncate_dim(model)
+        include_truncate_dim_param = _supports_encode_truncate_dim_param()
 
         # Validate target methods and signature (if possible)
         if not is_sub_model:
@@ -227,6 +322,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 model_meta=model_meta,
                 sample_input_data=sample_input_data,
                 batch_size=batch_size,
+                include_truncate_dim_param=include_truncate_dim_param,
                 has_user_defined_batch_size=user_defined_batch_size is not None,
                 target_methods=kwargs.pop("target_methods", None),
             )
@@ -241,12 +337,18 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         )
 
         # save model metadata
+        pretrained_model_name = _capture_pretrained_model_name(model)
+        blob_options: model_meta_schema.SentenceTransformersModelBlobOptions = {"batch_size": batch_size}
+        if pretrained_model_name is not None:
+            blob_options["model"] = pretrained_model_name
+        if model_truncate_dim is not None:
+            blob_options["truncate_dim"] = model_truncate_dim
         base_meta = model_blob_meta.ModelBlobMeta(
             name=name,
             model_type=cls.HANDLER_TYPE,
             handler_version=cls.HANDLER_VERSION,
             path=cls.MODEL_BLOB_FILE_OR_DIR,
-            options=model_meta_schema.SentenceTransformersModelBlobOptions(batch_size=batch_size),
+            options=blob_options,
         )
         model_meta.models[name] = base_meta
         model_meta.min_snowpark_ml_version = cls._MIN_SNOWPARK_ML_VERSION
@@ -274,6 +376,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         batch_size: int,
         target_methods: Optional[Sequence[str]],
         *,
+        include_truncate_dim_param: bool = False,
         has_user_defined_batch_size: bool = False,
     ) -> model_meta_api.ModelMetadata:
         """Validate target methods and set signatures on model_meta.
@@ -289,6 +392,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             sample_input_data: Optional sample input data for signature inference.
             batch_size: Batch size for model inference.
             target_methods: Optional list of target methods to use.
+            include_truncate_dim_param: Whether to add truncate_dim as a runtime param (default None).
             has_user_defined_batch_size: Whether batch_size was explicitly provided by the caller.
 
         Returns:
@@ -318,6 +422,8 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 f"Unsupported model methods: {sorted(unsupported)}. "
                 f"SentenceTransformer model methods must be one of: {_ALLOWED_TARGET_METHODS}."
             )
+
+        embedding_dim = model.get_sentence_embedding_dimension()
 
         def get_prediction(
             target_method_name: str,
@@ -364,11 +470,14 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 get_prediction_fn=get_prediction,
             )
             _validate_sentence_transformers_signatures(model_meta.signatures)
-            _add_batch_size_param(model_meta, batch_size)
+            _add_inference_params(
+                model_meta,
+                batch_size,
+                include_truncate_dim_param=include_truncate_dim_param,
+            )
             return model_meta
 
         # Case 3: Auto-infer signature from model embedding dimension
-        embedding_dim = model.get_sentence_embedding_dimension()
         if embedding_dim is None:
             raise ValueError(
                 "Unable to determine the model's embedding dimension. "
@@ -380,6 +489,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 target_method=target_method,
                 embedding_dim=embedding_dim,
                 batch_size=batch_size,
+                include_truncate_dim_param=include_truncate_dim_param,
             )
             if inferred_sig is None:
                 raise ValueError(
@@ -430,14 +540,22 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         model_blob_filename = model_blob_metadata.path
         model_blob_file_or_dir_path = os.path.join(model_blob_path, model_blob_filename)
 
-        additional_kwargs = {}
+        additional_kwargs: dict[str, Any] = {}
         if "trust_remote_code" in inspect.signature(sentence_transformers.SentenceTransformer).parameters:
             additional_kwargs["trust_remote_code"] = True
+
+        blob_options = cast(
+            model_meta_schema.SentenceTransformersModelBlobOptions,
+            model_blob_metadata.options,
+        )
+        load_truncate_dim = kwargs.get("truncate_dim", blob_options.get("truncate_dim"))
+        if load_truncate_dim is not None and _supports_init_truncate_dim():
+            additional_kwargs["truncate_dim"] = load_truncate_dim
 
         model = sentence_transformers.SentenceTransformer(
             model_blob_file_or_dir_path,
             device=cls._get_device_config(**kwargs),
-            **additional_kwargs,  # type: ignore[arg-type]
+            **additional_kwargs,
         )
         return model
 
@@ -466,7 +584,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 raw_model: "sentence_transformers.SentenceTransformer",
                 signature: model_signature.ModelSignature,
                 target_method: str,
-            ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
+            ) -> Callable[..., pd.DataFrame]:
                 # Capture target_method in closure to call the correct model method
                 method_to_call = getattr(raw_model, target_method, None)
                 if not callable(method_to_call):
@@ -475,26 +593,34 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                         f"This method may not be available in your version of sentence-transformers."
                     )
 
-                # Prefer the signature's ParamSpec default (matches server-side resolution),
+                # Prefer the signature's ParamSpec defaults (matches server-side resolution),
                 # fall back to blob options for old models without a batch_size ParamSpec.
-                batch_size_param = next((p for p in signature.params if p.name == "batch_size"), None)
-                method_batch_size = (
-                    batch_size_param.default_value if batch_size_param is not None else default_batch_size
-                )
+                param_defaults = {param.name: param.default_value for param in signature.params}
+                method_batch_size = param_defaults.get("batch_size", default_batch_size)
+                has_truncate_dim_param = "truncate_dim" in param_defaults
+                method_truncate_dim = param_defaults["truncate_dim"] if has_truncate_dim_param else None
+                output_name = signature.outputs[0].name
 
-                @custom_model.inference_api
+                @custom_model._internal_inference_api
                 def fn(
-                    self: custom_model.CustomModel, X: pd.DataFrame, *, batch_size: int = method_batch_size
+                    self: custom_model.CustomModel,
+                    X: pd.DataFrame,
+                    **kwargs: Any,
                 ) -> pd.DataFrame:
                     X_list = X.iloc[:, 0].tolist()
+                    encode_kwargs: dict[str, Any] = {
+                        "batch_size": kwargs.get("batch_size", method_batch_size),
+                    }
+                    if has_truncate_dim_param:
+                        truncate_dim = kwargs.get("truncate_dim", method_truncate_dim)
+                        if truncate_dim is not None:
+                            encode_kwargs["truncate_dim"] = truncate_dim
 
-                    return pd.DataFrame(
-                        {signature.outputs[0].name: method_to_call(X_list, batch_size=batch_size).tolist()}
-                    )
+                    return pd.DataFrame({output_name: method_to_call(X_list, **encode_kwargs).tolist()})
 
                 return fn
 
-            type_method_dict = {}
+            type_method_dict: dict[str, Any] = {"_allows_kwargs": True}
             for target_method_name, sig in model_meta.signatures.items():
                 if target_method_name in _ALLOWED_TARGET_METHODS:
                     type_method_dict[target_method_name] = get_prediction(raw_model, sig, target_method_name)

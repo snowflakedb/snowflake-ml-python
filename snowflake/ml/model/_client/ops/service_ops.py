@@ -304,16 +304,16 @@ class ServiceOperator:
             )
 
         # check if the inference service is already running/suspended
-        model_inference_service_exists = self._check_if_service_exists(
+        inference_service_status = self._get_service_status(
             database_name=service_database_name,
             schema_name=service_schema_name,
             service_name=service_name,
-            service_status_list_if_exists=[
-                service_sql.ServiceStatus.RUNNING,
-                service_sql.ServiceStatus.SUSPENDING,
-                service_sql.ServiceStatus.SUSPENDED,
-            ],
             statement_params=statement_params,
+        )
+        model_inference_service_exists = inference_service_status in (
+            service_sql.ServiceStatus.RUNNING,
+            service_sql.ServiceStatus.SUSPENDING,
+            service_sql.ServiceStatus.SUSPENDED,
         )
 
         # Step 3: Initiating model deployment
@@ -920,35 +920,86 @@ class ServiceOperator:
 
             time.sleep(2)  # Poll every 2 seconds
 
+    def _show_service(
+        self,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> Optional[row.Row]:
+        """Return the SHOW SERVICES row for an exact service-name match, or None.
+
+        Wraps show_services with STARTS WITH plus a Python-side exact-name
+        filter. Service names are unique within a schema, so this returns at
+        most one row.
+
+        Args:
+            database_name: Database to scope the lookup; falls back to the client default.
+            schema_name: Schema to scope the lookup; falls back to the client default.
+            service_name: Service to look up.
+            statement_params: Optional Snowflake statement parameters.
+
+        Returns:
+            The row whose name exactly matches, or None if no service is
+            visible under that name.
+        """
+        target_name = service_name.resolved()
+        rows = self._service_client.show_services(
+            database_name=database_name,
+            schema_name=schema_name,
+            starts_with=target_name,
+            statement_params=statement_params,
+        )
+        return next(
+            (r for r in rows if r[service_sql.ServiceSQLClient.SHOW_SERVICES_NAME_COL] == target_name),
+            None,
+        )
+
+    def _get_service_status(
+        self,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        service_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> Optional[service_sql.ServiceStatus]:
+        """Return the service's top-level status, or None if it does not exist.
+
+        Args:
+            database_name: Database to scope the lookup; falls back to the client default.
+            schema_name: Schema to scope the lookup; falls back to the client default.
+            service_name: Service to look up.
+            statement_params: Optional Snowflake statement parameters.
+
+        Returns:
+            The ServiceStatus for the service, or None if the service is not visible
+            in the given schema.
+        """
+        match = self._show_service(
+            database_name=database_name,
+            schema_name=schema_name,
+            service_name=service_name,
+            statement_params=statement_params,
+        )
+        if match is None:
+            return None
+        return service_sql.ServiceStatus(match[service_sql.ServiceSQLClient.SHOW_SERVICES_STATUS_COL])
+
     def _check_if_service_exists(
         self,
         database_name: Optional[sql_identifier.SqlIdentifier],
         schema_name: Optional[sql_identifier.SqlIdentifier],
         service_name: sql_identifier.SqlIdentifier,
-        service_status_list_if_exists: Optional[list[service_sql.ServiceStatus]] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> bool:
-        if service_status_list_if_exists is None:
-            service_status_list_if_exists = [
-                service_sql.ServiceStatus.PENDING,
-                service_sql.ServiceStatus.RUNNING,
-                service_sql.ServiceStatus.SUSPENDING,
-                service_sql.ServiceStatus.SUSPENDED,
-                service_sql.ServiceStatus.DONE,
-                service_sql.ServiceStatus.FAILED,
-            ]
-        try:
-            statuses = self._service_client.get_service_container_statuses(
+        return (
+            self._show_service(
                 database_name=database_name,
                 schema_name=schema_name,
                 service_name=service_name,
-                include_message=False,
                 statement_params=statement_params,
             )
-            service_status = statuses[0].service_status
-            return any(service_status == status for status in service_status_list_if_exists)
-        except exceptions.SnowparkSQLException:
-            return False
+            is not None
+        )
 
     def invoke_batch_job_method(
         self,

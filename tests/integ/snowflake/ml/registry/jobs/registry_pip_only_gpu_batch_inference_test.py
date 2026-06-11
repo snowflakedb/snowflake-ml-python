@@ -45,8 +45,6 @@ class TestRegistryPipOnlyGpuBatchInferenceInteg(
 ):
     """Integration tests for pip-only GPU model batch inference."""
 
-    _BATCH_IMAGE_OVERRIDE_MODE = "pip_only_batch"
-
     def _get_batch_image_override_session_params(self) -> dict[str, str]:
         params = super()._get_batch_image_override_session_params()
         params.pop("SPCS_MODEL_INFERENCE_ENGINE_CONTAINER_URLS", None)
@@ -54,9 +52,6 @@ class TestRegistryPipOnlyGpuBatchInferenceInteg(
 
     def test_pip_only_pytorch_gpu_batch_inference(self) -> None:
         """E2E test: pip-only GPU batch inference with PyTorch."""
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only GPU batch inference test: image override not enabled.")
-
         model = PipOnlyPyTorchModel(custom_model.ModelContext())
         input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0, 4.0, 5.0]})
         # Placeholder output columns only; we assert batch results via ``prediction_assert_fn``
@@ -105,9 +100,6 @@ class TestRegistryPipOnlyGpuBatchInferenceInteg(
         produces correct predictions. XGBoost >= 2.0 includes GPU support natively
         via pip (no conda py-xgboost-gpu substitution needed).
         """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only GPU batch inference test: image override not enabled.")
-
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target

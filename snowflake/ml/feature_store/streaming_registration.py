@@ -36,7 +36,11 @@ from snowflake.ml.feature_store.spec.builder import (
     SnowflakeTableInfo,
 )
 from snowflake.ml.feature_store.spec.enums import FeatureViewKind, TableType
-from snowflake.ml.feature_store.spec.models import FeatureViewSpec
+from snowflake.ml.feature_store.spec.models import (
+    FeatureViewSpec,
+    _columns_from_struct_type,
+    validate_fs_columns_match,
+)
 from snowflake.ml.feature_store.stream_config import (
     _infer_structtype_from_pandas,
     _snowpark_type_to_sql,
@@ -364,6 +368,13 @@ def run_streaming_preamble(
     # Reject TZ/LTZ and unsupported types now so the failure surfaces at
     # registration time, not as an "Invalid argument types" task failure.
     validate_schema_field_types(backfill_df.schema, context="backfill_df schema")
+    validate_fs_columns_match(
+        expected=_columns_from_struct_type(stream_source.schema),
+        actual=_columns_from_struct_type(backfill_df.schema),
+        expected_label=f"StreamSource '{stream_source.name}'",
+        actual_label="backfill_df",
+        error_prefix="streaming feature view",
+    )
     sample_pdf = backfill_df.limit(10).to_pandas()
     if sample_pdf.empty:
         raise ValueError(

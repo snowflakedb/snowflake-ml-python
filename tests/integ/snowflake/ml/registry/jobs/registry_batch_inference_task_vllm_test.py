@@ -73,8 +73,6 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             self.session.sql(f"ALTER TASK IF EXISTS {task_fqn} SET {param} = '{value}'").collect()
 
     def _apply_dag_task_image_overrides(self) -> None:
-        if not self._has_image_override():
-            return
         root_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}"
         self.session.sql(f"ALTER TASK {root_task_fqn} SUSPEND").collect()
         self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
@@ -132,6 +130,7 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
 
     def test_vllm_inference_engine(self) -> None:
         """Verify batch inference with vLLM engine works through a BatchInferenceTask."""
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
         model = huggingface.TransformersPipeline(
             task="text-generation",
             model="Qwen/Qwen2.5-0.5B-Instruct",
@@ -221,6 +220,10 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         The successor task materializes parquet, parses ``choices[0].message.content``, and stores structured fields
         as columns.
         """
+        self.skipTest(
+            "Skipping test_vllm_batch_dag_response_format_extracts_output_to_table"
+            "until ray-orchestrator supports OBJECT data types"
+        )
         params_with_response_format = list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.params) + [
             signature_core.ParamGroupSpec(
                 name="response_format",

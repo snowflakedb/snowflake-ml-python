@@ -148,8 +148,6 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
             self.session.sql(f"ALTER TASK IF EXISTS {task_fqn} SET {param} = '{value}'").collect()
 
     def _apply_dag_task_image_overrides(self) -> None:
-        if not self._has_image_override():
-            return
         root_task_fqn = f"{self._test_db}.{self._test_schema}.{self._dag_name}"
         self.session.sql(f"ALTER TASK {root_task_fqn} SUSPEND").collect()
         self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
@@ -622,8 +620,7 @@ class TestBatchInferenceTaskInteg(registry_batch_inference_test_base.RegistryBat
 
         self.session.sql(f"ALTER TASK {root_task_fqn} SUSPEND").collect()
         self.session.sql(f"ALTER TASK {root_task_fqn} SET EXECUTE AS USER {current_user}").collect()
-        if self._has_image_override():
-            self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
+        self._set_task_image_overrides(f"{root_task_fqn}$BATCH_INFERENCE")
         self.session.sql(f"ALTER TASK {root_task_fqn} RESUME").collect()
 
         dag_op.run(dag)

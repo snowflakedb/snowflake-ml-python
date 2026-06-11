@@ -1063,6 +1063,9 @@ class FeatureView(lineage_node.LineageNode):
 
         self._postgres_online_query_url: Optional[str] = None
 
+        # Package version that authored this FV (populated from metadata table on reconstruction).
+        self._authoring_pkg_version: Optional[str] = None
+
         # Column aliasing for dataset generation (ephemeral, in-memory only)
         self._column_alias: Optional[str] = None
 
@@ -1565,6 +1568,11 @@ class FeatureView(lineage_node.LineageNode):
     def aggregation_specs(self) -> Optional[list[AggregationSpec]]:
         """Get the aggregation specifications (internal use)."""
         return self._aggregation_specs
+
+    @property
+    def authoring_pkg_version(self) -> Optional[str]:
+        """Get the snowml package version that authored this feature view."""
+        return self._authoring_pkg_version
 
     @property
     def aggregation_secondary_keys(self) -> Optional[list[str]]:
@@ -2354,6 +2362,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         if rollup_meta_dict is not None:
             fv._rollup_metadata = RollupMetadata.from_dict(rollup_meta_dict)
 
+        # Restore authoring package version (serialized via _to_dict). Absent for
+        # FVs serialized before this field existed -> None, which downstream treats
+        # as legacy (1.41.0) tile/merge SQL.
+        fv._authoring_pkg_version = json_dict.get("_authoring_pkg_version")
+
         return fv
 
     def _get_compact_repr(self) -> _CompactRepresentation:
@@ -2535,6 +2548,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             timestamp_col=self._timestamp_col,
             feature_granularity=self._feature_granularity,  # type: ignore[arg-type]
             features=self._aggregation_specs,  # type: ignore[arg-type]
+            authoring_pkg_version=self._authoring_pkg_version,
         )
         return generator.generate()
 

@@ -105,6 +105,86 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         udf_count = self._session.table(fq_udf).count()
         self.assertEqual(udf_count, 3, "udf_transformed table should have 3 backfill rows")
 
+    def _create_backfill_table_with_schema(self, fs, suffix: str, schema_sql: str, insert_values_sql: str) -> str:
+        """Create a backfill table with caller-supplied column DDL and INSERT values."""
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BACKFILL_{suffix}"
+        self._session.sql(f"CREATE OR REPLACE TABLE {table_name} ({schema_sql})").collect()
+        self._session.sql(f"INSERT INTO {table_name} VALUES {insert_values_sql}").collect()
+        return table_name
+
+    def test_register_streaming_fv_rejects_backfill_missing_column(self) -> None:
+        """Registration fails fast when backfill_df is missing a column declared by the stream source."""
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_FV_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table_with_schema(
+            fs,
+            s,
+            schema_sql="USER_ID VARCHAR, EVENT_TIME TIMESTAMP_NTZ",
+            insert_values_sql="('u1', '2024-01-01 00:00:00')",
+        )
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"streaming feature view: backfill_df is missing column 'AMOUNT' declared by StreamSource",
+        ):
+            fs.register_feature_view(fv, "v1")
+
+        physical_name = FeatureView._get_physical_name(SqlIdentifier(fv_name), SqlIdentifier("v1"))
+        udf_table = FeatureView._get_udf_transformed_table_name(physical_name)
+        fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
+        existed = self._session.sql(f"SHOW TABLES LIKE '{udf_table}'").collect()
+        self.assertEqual(len(existed), 0, f"udf_transformed table should not exist: {fq_udf}")
+
+    def test_register_streaming_fv_rejects_backfill_type_mismatch(self) -> None:
+        """Registration fails fast when a backfill column type disagrees with the stream source."""
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_FV_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table_with_schema(
+            fs,
+            s,
+            schema_sql="USER_ID VARCHAR, EVENT_TIME TIMESTAMP_NTZ, AMOUNT VARCHAR",
+            insert_values_sql="('u1', '2024-01-01 00:00:00', 'not-a-number')",
+        )
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            r"streaming feature view: backfill_df column 'AMOUNT' has type StringType(\(\d+\))? "
+            r"but StreamSource .* declares column 'AMOUNT' with type DoubleType",
+        ):
+            fs.register_feature_view(fv, "v1")
+
     def test_register_streaming_fv_passthrough_plus_new_column(self) -> None:
         """Regression guard: UDF whose output schema is a superset of the input must register without error."""
         s = uuid.uuid4().hex[:8]

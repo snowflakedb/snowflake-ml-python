@@ -131,7 +131,12 @@ class TestRegistryMultiModalityAudioVideoBatchInferenceInteg(
     def test_video_classification(self) -> None:
         from snowflake.ml.model.models.huggingface import TransformersPipeline
 
-        model = TransformersPipeline(task="video-classification", model="nateraw/videomae-base-finetuned-ucf101-subset")
+        # TODO: Restore remote logging via token_or_secret once HF rate limiting is resolved.
+        model = TransformersPipeline(
+            task="video-classification",
+            model="nateraw/videomae-base-finetuned-ucf101-subset",
+            compute_pool_for_log=None,
+        )
 
         (
             job_name,

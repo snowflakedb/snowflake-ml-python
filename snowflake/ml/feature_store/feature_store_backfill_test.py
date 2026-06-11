@@ -1291,13 +1291,10 @@ class DeleteFeatureViewSnapshotTest(absltest.TestCase):
         self.assertIn("FV_FQN = 'TEST_DB.TEST_SCHEMA.GUEST_SNAPSHOT_FEATURES$V1'", status_deletes[0])
 
     def test_status_delete_swallows_object_does_not_exist(self) -> None:
-        """The status DELETE is a no-op when the status table doesn't exist.
+        """Status-row DELETE failures must not block delete_feature_view.
 
-        ``SNOWML_SNAPSHOT_STATUS`` is created lazily on append_only registrations.
-        If no append_only FV has ever been registered in this schema, the DELETE
-        will fail with Snowflake error 2003 ("object does not exist").  The
-        cleanup path must swallow that specific error so non-append_only deletes
-        don't fail in schemas that never used append_only at all.
+        Legacy schemas may lack ``SNOWML_SNAPSHOT_STATUS`` (Snowflake error 2003).
+        Cleanup logs a warning and continues.
         """
         fs = _create_feature_store_with_mocks()
         fv = _make_fv()
@@ -1320,13 +1317,11 @@ class DeleteFeatureViewSnapshotTest(absltest.TestCase):
         # Should not raise.
         fs.delete_feature_view(fv)
 
-    def test_status_delete_reraises_other_sql_errors(self) -> None:
-        """SnowparkSQLExceptions other than 2003 must propagate from cleanup.
+    def test_status_delete_logs_warning_on_sql_error(self) -> None:
+        """Status-row DELETE failures must not block delete_feature_view.
 
-        The swallow is narrowly scoped to "object does not exist" (2003).  Any
-        other SQL error — permissions, syntax, transient backend issues —
-        indicates a real problem and must surface to the caller rather than
-        silently masking data-cleanup failures.
+        Permission or other SQL errors on the status table are logged and ignored so
+        the primary delete (dynamic table, metadata) still completes.
         """
         fs = _create_feature_store_with_mocks()
         fv = _make_fv()
@@ -1345,9 +1340,12 @@ class DeleteFeatureViewSnapshotTest(absltest.TestCase):
 
         fs._session.sql.side_effect = _sql_side_effect
 
-        with self.assertRaises(SnowparkSQLException) as cm:
+        with self.assertLogs("snowflake.ml.feature_store.feature_store", level="WARNING") as log_cm:
             fs.delete_feature_view(fv)
-        self.assertEqual(cm.exception.sql_error_code, 3001)
+        self.assertTrue(
+            any("could not delete snapshot status row" in message for message in log_cm.output),
+            log_cm.output,
+        )
 
 
 class ApplySnapshotClusteringTest(absltest.TestCase):

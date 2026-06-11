@@ -5202,6 +5202,103 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         task_schedule = task_results[0]["schedule"]
         self.assertIn("30 12", task_schedule, "Task should have updated schedule")
 
+    def test_delete_non_append_only_without_snapshot_status_row(self) -> None:
+        """delete_feature_view succeeds for non-append_only FVs with an empty status table.
+
+        ``SNOWML_SNAPSHOT_STATUS`` is created at feature-store init
+        (``CREATE_IF_NOT_EXIST``). A non-append_only feature view never writes status rows,
+        but cleanup must still delete cleanly (zero-row DELETE, no per-FV snapshot table).
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id FROM {self._mock_table}"
+        fv = FeatureView(
+            name="delete_non_append_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertFalse(registered_fv.append_only)
+
+        snapshot_table_name = FeatureView._get_snapshot_table_name("DELETE_NON_APPEND_FV", "V1")
+        status_results = self._session.sql(
+            f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertGreater(
+            len(status_results),
+            0,
+            "Snapshot status table should exist after feature-store creation",
+        )
+        snapshot_results = self._session.sql(
+            f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(snapshot_results, "Per-FV snapshot table should not exist for non-append_only FV")
+
+        status_table_fqn = fs._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        fv_fqn_lit = registered_fv.fully_qualified_name().replace("'", "''")
+        status_rows = self._session.sql(
+            f"SELECT FV_FQN FROM {status_table_fqn} WHERE FV_FQN = '{fv_fqn_lit}'"
+        ).collect()
+        self.assertEmpty(status_rows, "Non-append_only FV should not have a snapshot status row")
+
+        fs.delete_feature_view(registered_fv)
+
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE 'DELETE_NON_APPEND_FV$V1' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(dt_results, "Dynamic table should be dropped after delete")
+        self.assertEqual(fs.list_feature_views().count(), 0)
+
+    def test_delete_feature_view_when_snapshot_status_table_missing(self) -> None:
+        """delete_feature_view succeeds when ``SNOWML_SNAPSHOT_STATUS`` does not exist.
+
+        Legacy schemas only created the status table on the first append_only registration.
+        Batch/dynamic-table-only stores could hit Snowflake 2003 on cleanup DELETE; delete
+        must still complete after the dynamic table is dropped.
+        """
+        fs = self._create_feature_store()
+        status_table_fqn = fs._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+
+        # Feature-store init may create the table; drop it to reproduce pre-eager-create schemas.
+        self._session.sql(f"DROP TABLE IF EXISTS {status_table_fqn}").collect()
+        status_results = self._session.sql(
+            f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(status_results, "Legacy schema has no snapshot status table")
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT name, id FROM {self._mock_table}"
+        fv = FeatureView(
+            name="delete_legacy_status_fv",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1d",
+        )
+        registered_fv = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertFalse(registered_fv.append_only)
+
+        fs.delete_feature_view(registered_fv)
+
+        dt_results = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE 'DELETE_LEGACY_STATUS_FV$V1' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(dt_results, "Dynamic table should be dropped after delete")
+        self.assertEqual(fs.list_feature_views().count(), 0)
+
+        status_results_after = self._session.sql(
+            f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(
+            status_results_after,
+            "Delete cleanup must not require recreating the snapshot status table",
+        )
+
     def test_delete_append_only_cleans_up_snapshot(self) -> None:
         fs = self._create_feature_store()
         mock_table = self._create_mock_table_with_timestamp("delete_src")

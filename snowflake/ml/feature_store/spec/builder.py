@@ -52,6 +52,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.interval_utils import interval_to_seconds
 from snowflake.ml.feature_store.request_source import RequestSource
@@ -72,6 +73,7 @@ from snowflake.ml.feature_store.spec.models import (
     Source,
     Spec,
     _columns_from_struct_type,
+    _columns_from_tiled_struct_type,
     _make_fs_column,
 )
 from snowflake.ml.feature_store.stream_source import StreamSource
@@ -123,9 +125,9 @@ class BatchSource:
 
 
 # Aggregation functions supported by the Postgres (PG) online store backend.
-# List aggregations are not implemented in the PG path.
-# APPROX_COUNT_DISTINCT is supported but restricted to STRING source columns
-# (enforced by _validate_pg_source_types).
+# List aggregations are not implemented in the PG path, except DISTINCT-N. The
+# sketch aggregation APPROX_COUNT_DISTINCT is also supported, restricted to
+# STRING source columns (enforced by _validate_pg_source_types).
 _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
     {
         AggregationType.SUM,
@@ -136,6 +138,34 @@ _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
         AggregationType.STD,
         AggregationType.VAR,
         AggregationType.APPROX_COUNT_DISTINCT,
+        AggregationType.LAST_DISTINCT_N,
+        AggregationType.FIRST_DISTINCT_N,
+    }
+)
+
+# Distinct-N aggregations gated for the Postgres online path.
+_PG_DISTINCT_N_AGGREGATIONS: frozenset[AggregationType] = frozenset(
+    {
+        AggregationType.LAST_DISTINCT_N,
+        AggregationType.FIRST_DISTINCT_N,
+    }
+)
+
+# Upper bound on ``n`` for distinct-N aggregations served by the Postgres online
+# store.
+_PG_DISTINCT_N_MAX = 1000
+
+# Source column element types the Postgres online store can serve as distinct-N
+# arrays. ``BinaryType`` is a valid scalar but is intentionally
+# excluded here: Quake does not support it as an array element type.
+_PG_DISTINCT_N_SOURCE_TYPES: frozenset[str] = frozenset(
+    {
+        "StringType",
+        "LongType",
+        "DoubleType",
+        "DecimalType",
+        "BooleanType",
+        "TimestampType",
     }
 )
 
@@ -151,6 +181,71 @@ _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
     AggregationType.VAR: FSColumn(name="", type="DoubleType"),
     AggregationType.APPROX_PERCENTILE: FSColumn(name="", type="DoubleType"),
 }
+
+# Source-preserving aggregations: output type is inherited from the corresponding
+# ``_PARTIAL_<suffix>_<src>`` tile column.
+_AGG_PARTIAL_TYPE_LOOKUP: dict[AggregationType, str] = {
+    AggregationType.SUM: "SUM",
+    AggregationType.MIN: "MIN",
+    AggregationType.MAX: "MAX",
+    AggregationType.LAST_N: "LAST",
+    AggregationType.LAST_DISTINCT_N: "LAST",
+    AggregationType.FIRST_N: "FIRST",
+    AggregationType.FIRST_DISTINCT_N: "FIRST",
+}
+
+
+def _resolve_tiled_fv_output_column(
+    spec: AggregationSpec,
+    partials_by_name: dict[str, FSColumn],
+) -> FSColumn:
+    """Resolve the FSColumn an aggregation contributes when its tiled FV is an upstream source.
+
+    Args:
+        spec: The aggregation spec from the upstream FV.
+        partials_by_name: ``_PARTIAL_*`` columns from the FV's ``output_schema``,
+            keyed by name.
+
+    Returns:
+        FSColumn for the logical output of *spec*.
+
+    Raises:
+        ValueError: If the function has no resolution rule, or its expected
+            ``_PARTIAL_*`` companion column is missing from *partials_by_name*.
+    """
+    predetermined = _AGG_PREDETERMINED_OUTPUT.get(spec.function)
+    if predetermined is not None:
+        return FSColumn(
+            name=spec.output_column,
+            type=predetermined.type,
+            precision=predetermined.precision,
+            scale=predetermined.scale,
+            length=predetermined.length,
+            timezone=predetermined.timezone,
+        )
+    partial_suffix = _AGG_PARTIAL_TYPE_LOOKUP.get(spec.function)
+    if partial_suffix is None:
+        raise ValueError(
+            f"Cannot resolve output type for tiled feature view aggregation "
+            f"'{spec.output_column}' (function={spec.function.value})."
+        )
+    partial_name = spec.get_tile_column_name(partial_suffix)
+    partial = partials_by_name.get(partial_name)
+    if partial is None:
+        raise ValueError(
+            f"Cannot resolve output type for tiled feature view aggregation "
+            f"'{spec.output_column}': expected tile column '{partial_name}' was "
+            f"not found in the feature view's schema."
+        )
+    return FSColumn(
+        name=spec.output_column,
+        type=partial.type,
+        precision=partial.precision,
+        scale=partial.scale,
+        length=partial.length,
+        timezone=partial.timezone,
+    )
+
 
 # Type alias for the polymorphic source input
 SourceInput = Union[StreamSource, RequestSource, "FeatureView", "FeatureViewSlice", BatchSource]
@@ -261,7 +356,7 @@ class FeatureViewSpecBuilder:
                     database=cfg.database,
                     schema=cfg.schema,
                     table=cfg.table,
-                    columns=_columns_from_struct_type(cfg.columns),
+                    columns=_columns_from_tiled_struct_type(cfg.columns),
                 )
             )
         return self
@@ -536,6 +631,11 @@ class FeatureViewSpecBuilder:
         #     FeatureGroup sources that expose the same feature name).
         self._validate_unique_output_columns(spec_features)
 
+        # 2c. Stamp exact element types onto the distinct-N partial columns in
+        #     the offline configs. The physical tile arrays are untyped
+        #     (ARRAY_AGG), so element_type must come from the spec, not storage.
+        self._apply_distinct_partial_element_types(spec_features)
+
         # 3. Auto-populate metadata
         metadata = Metadata(
             database=self._database,
@@ -616,6 +716,10 @@ class FeatureViewSpecBuilder:
         drops the FG's superset primary key from this list before emitting
         spec features.
 
+        For tiled FVs the columns are derived from ``aggregation_specs`` because
+        ``output_schema`` exposes ``_PARTIAL_*`` tile columns, not the FV's logical
+        aggregation outputs.
+
         Args:
             fv: The FeatureView whose feature columns to extract.
 
@@ -628,6 +732,13 @@ class FeatureViewSpecBuilder:
                 _make_fs_column(f.name, f.datatype)
                 for f in fv.realtime_config.output_schema.fields
                 if f.name not in entity_names
+            ]
+        if fv.is_tiled and fv.aggregation_specs is not None:
+            partials_by_name = {f.name: _make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
+            return [
+                _resolve_tiled_fv_output_column(spec, partials_by_name)
+                for spec in fv.aggregation_specs
+                if not spec.function.is_secondary_key_array()
             ]
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
         return [_make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields if f.name in feature_name_set]
@@ -1116,6 +1227,70 @@ class FeatureViewSpecBuilder:
             )
             raise ValueError(f"Duplicate output column name(s) in resolved features: {sorted(set(duplicates))}.{hint}")
 
+    @staticmethod
+    def _distinct_partial_column_names(agg_spec: AggregationSpec) -> Optional[tuple[str, str]]:
+        """Return the (value, timestamp) partial column names for a distinct-N spec.
+
+        Mirrors the new-format tile-column naming emitted by the tile SQL generator
+        (``_PARTIAL_(LAST|FIRST)_DISTINCT_<N>[_TS]_<COL>``) so element types can be
+        stamped onto the matching offline-config columns. Returns ``None`` for
+        non-distinct aggregations.
+
+        Args:
+            agg_spec: The aggregation spec to derive partial column names for.
+
+        Returns:
+            A ``(value_column, timestamp_column)`` tuple, or ``None`` if the spec
+            is not a LAST/FIRST distinct-N aggregation.
+        """
+        if agg_spec.function == AggregationType.LAST_DISTINCT_N:
+            direction = "LAST"
+        elif agg_spec.function == AggregationType.FIRST_DISTINCT_N:
+            direction = "FIRST"
+        else:
+            return None
+        n = agg_spec.params["n"]
+        resolved_src = SqlIdentifier(agg_spec.source_column).resolved()
+        value_col = f"_PARTIAL_{direction}_DISTINCT_{n}_{resolved_src}"
+        ts_col = f"_PARTIAL_{direction}_DISTINCT_{n}_TS_{resolved_src}"
+        return value_col, ts_col
+
+    def _apply_distinct_partial_element_types(self, spec_features: list[Feature]) -> None:
+        """Set exact element types on distinct-N partial columns in offline configs.
+
+        The physical tile columns are built with ``ARRAY_AGG`` and therefore have
+        no usable element type when read back from storage. Quake's contract,
+        however, requires the value array to carry the source column's scalar type
+        and the companion timestamp array to be ``TimestampType``. We stamp those
+        here from the resolved features (mirroring how secondary-key output columns
+        derive ``element_type`` from the spec rather than from storage).
+
+        Args:
+            spec_features: Resolved spec-internal Feature models, aligned 1:1 with
+                ``self._agg_specs``.
+        """
+        if not self._agg_specs:
+            return
+
+        element_types: dict[str, str] = {}
+        for agg_spec, feat in zip(self._agg_specs, spec_features):
+            names = self._distinct_partial_column_names(agg_spec)
+            if names is None:
+                continue
+            value_col, ts_col = names
+            element_types[value_col] = feat.source_column.type
+            element_types[ts_col] = "TimestampType"
+
+        if not element_types:
+            return
+
+        for config in self._offline_configs:
+            for column in config.columns:
+                element_type = element_types.get(column.name)
+                if element_type is not None:
+                    column.type = "ArrayType"
+                    column.element_type = element_type
+
     def _validate_pg_aggregations(self) -> None:
         """Reject aggregation functions not supported by the PG online store."""
         if not self._agg_specs:
@@ -1132,18 +1307,32 @@ class FeatureViewSpecBuilder:
                 f"Unsupported aggregation(s) for Postgres online store: {names}. " f"Supported aggregations: {allowed}"
             )
 
+        for spec in self._agg_specs:
+            if spec.function in _PG_DISTINCT_N_AGGREGATIONS:
+                n = spec.params.get("n")
+                if not isinstance(n, int) or not (1 <= n <= _PG_DISTINCT_N_MAX):
+                    raise ValueError(
+                        f"{spec.function.value} on column '{spec.source_column}' has n={n}, "
+                        f"which is not supported for Postgres online store. "
+                        f"n must be between 1 and {_PG_DISTINCT_N_MAX}."
+                    )
+
     def _validate_pg_source_types(self, features: list[Feature]) -> None:
-        """Reject APPROX_COUNT_DISTINCT on non-STRING columns for PG online store.
+        """Reject source column types the PG online store cannot serve.
 
         This runs after feature resolution so that source column types are
         available.  Only fires for spec-builder invocations (Postgres OFT).
+
+        - APPROX_COUNT_DISTINCT is limited to STRING source columns.
+        - Distinct-N source columns must be one of the element types Quake can
+          store/serve as a JSONB array (see ``_PG_DISTINCT_N_SOURCE_TYPES``).
 
         Args:
             features: Resolved spec-internal Feature models.
 
         Raises:
-            ValueError: If an APPROX_COUNT_DISTINCT feature uses a non-STRING
-                source column.
+            ValueError: If a feature uses a source column type unsupported for
+                its aggregation on the Postgres online store.
         """
         for feat in features:
             if feat.function == AggregationType.APPROX_COUNT_DISTINCT.value:
@@ -1152,6 +1341,14 @@ class FeatureViewSpecBuilder:
                         f"APPROX_COUNT_DISTINCT on column '{feat.source_column.name}' "
                         f"(type {feat.source_column.type}) is not supported for Postgres "
                         f"online store. Only STRING/TEXT source columns are allowed."
+                    )
+            elif feat.function in {fn.value for fn in _PG_DISTINCT_N_AGGREGATIONS}:
+                if feat.source_column.type not in _PG_DISTINCT_N_SOURCE_TYPES:
+                    allowed = sorted(_PG_DISTINCT_N_SOURCE_TYPES)
+                    raise ValueError(
+                        f"{feat.function} on column '{feat.source_column.name}' "
+                        f"(type {feat.source_column.type}) is not supported for Postgres "
+                        f"online store. Supported source column types: {allowed}."
                     )
 
     def _validate_source_fields(self) -> None:

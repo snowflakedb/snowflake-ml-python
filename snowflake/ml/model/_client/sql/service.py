@@ -3,7 +3,8 @@ import dataclasses
 import enum
 import logging
 import textwrap
-from typing import Any, Generator, Optional, cast
+from collections.abc import Generator
+from typing import Any, Optional, cast
 
 import yaml
 
@@ -64,6 +65,8 @@ class ServiceSQLClient(_base._BaseSQLClient):
     INSTANCE_STATUS = "instance_status"
     CONTAINER_STATUS = "status"
     MESSAGE = "message"
+    SHOW_SERVICES_NAME_COL = "name"
+    SHOW_SERVICES_STATUS_COL = "status"
     DESC_SERVICE_INTERNAL_DNS_COL_NAME = "dns_name"
     DESC_SERVICE_SPEC_COL_NAME = "spec"
     DESC_SERVICE_CONTAINERS_SPEC_NAME = "containers"
@@ -257,6 +260,44 @@ class ServiceSQLClient(_base._BaseSQLClient):
                 )
             )
         return statuses
+
+    def show_services(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        starts_with: Optional[str] = None,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> list[row.Row]:
+        """Run ``SHOW SERVICES [STARTS WITH '<prefix>'] IN SCHEMA <db>.<schema>``.
+
+        Returns 0 rows when no service matches; does not raise for "service not found".
+        ``starts_with`` is a literal prefix match (no LIKE wildcards). Callers that need
+        exact-name semantics should filter the returned rows by ``SHOW_SERVICES_NAME_COL``.
+
+        Args:
+            database_name: Database to scope the schema; falls back to the client default.
+            schema_name: Schema to list services from; falls back to the client default.
+            starts_with: Optional literal prefix to filter results server-side.
+            statement_params: Optional Snowflake statement parameters.
+
+        Returns:
+            Rows returned by SHOW SERVICES (empty list when no service matches).
+        """
+        actual_database_name = database_name or self._database_name
+        actual_schema_name = schema_name or self._schema_name
+        fq_schema = f"{actual_database_name.identifier()}.{actual_schema_name.identifier()}"
+        filter_clause = ""
+        if starts_with is not None:
+            escaped = starts_with.replace("'", "''")
+            filter_clause = f" STARTS WITH '{escaped}'"
+        query = f"SHOW SERVICES IN SCHEMA {fq_schema}{filter_clause}"
+        return (
+            query_result_checker.SqlResultValidator(self._session, query, statement_params=statement_params)
+            .has_column(self.SHOW_SERVICES_NAME_COL, allow_empty=True)
+            .has_column(self.SHOW_SERVICES_STATUS_COL, allow_empty=True)
+            .validate()
+        )
 
     def describe_service(
         self,
