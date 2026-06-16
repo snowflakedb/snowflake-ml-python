@@ -487,6 +487,65 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
         )
         self.assertEqual([str(c) for c in plain_fv.feature_names], ["SPEND_24H"])
 
+    def test_load_path_presynthesized_specs_with_explicit_sk_not_rederived(self) -> None:
+        """Load path: pre-synthesized specs + explicit SK must pass through unchanged.
+
+        When both a pre-synthesized spec list (already containing
+        ``_SECONDARY_KEY_ARRAY`` entries) and an explicit
+        ``aggregation_secondary_keys`` argument are supplied together,
+        ``FeatureView.__init__`` must:
+
+        1. Return ``aggregation_secondary_keys`` from the explicit argument
+           (verbatim, normalised) — not re-derive it by scanning
+           ``spec.source_column`` values.
+        2. Leave ``aggregation_specs`` untouched — no second keys-spec block
+           must be prepended on top of the already-present one.
+
+        This is the reload path: the store persists both the full spec list
+        (synthesized key specs included) and the FV-level SK column list.
+        On reload both arrive together.  Neither the derive-from-specs branch
+        (``has_secondary_key_specs AND sk is None``) nor the
+        synthesize-from-sk branch (``sk is not None AND NOT
+        has_secondary_key_specs``) should fire.
+        """
+        pre_synthesized_specs = [
+            AggregationSpec(
+                function=AggregationType._SECONDARY_KEY_ARRAY,
+                source_column="AD_ID",
+                window="24h",
+                output_column="AD_ID_KEYS_24H",
+            ),
+            AggregationSpec(
+                function=AggregationType.SUM,
+                source_column="amount",
+                window="24h",
+                output_column="AMOUNT_SUM_24H",
+            ),
+        ]
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=self._mock_feature_df(["user_id", "event_ts", "amount", "ad_id"]),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            aggregation_secondary_keys=["ad_id"],  # explicit — not None
+            _aggregation_specs=pre_synthesized_specs,
+        )
+
+        # Explicit SK returned verbatim (normalised); not re-derived from specs.
+        self.assertEqual(fv.aggregation_secondary_keys, ["AD_ID"])
+
+        # Specs must be exactly what was passed — no extra key-spec block prepended.
+        assert fv.aggregation_specs is not None
+        self.assertEqual(
+            [s.output_column for s in fv.aggregation_specs],
+            ["AD_ID_KEYS_24H", "AMOUNT_SUM_24H"],
+        )
+        key_specs = [s for s in fv.aggregation_specs if s.function.is_secondary_key_array()]
+        self.assertEqual(len(key_specs), 1)
+
 
 class OnlineConfigTest(parameterized.TestCase):
     """Unit tests for OnlineConfig class."""
@@ -2833,6 +2892,49 @@ class FeatureViewAppendOnlyTest(absltest.TestCase):
         mock_session.sql.return_value = self._make_mock_df()
         restored = FeatureView.from_json(stripped_json, session=mock_session)
         self.assertIsNone(restored.authoring_pkg_version)
+
+
+class FeatureViewSourceRefsPropertyTest(absltest.TestCase):
+    """``FeatureView.source_refs`` reflects the list supplied at construction.
+
+    The property is read-only; the backing ``_source_refs`` attribute
+    defaults to ``None`` when no list is provided, and otherwise echoes
+    whatever the caller stamped on it.
+    """
+
+    def _make_simple_fv(self) -> FeatureView:
+        mock_df = MagicMock()
+        mock_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        mock_df.schema.__getitem__ = lambda self, key: ts_field
+        entity = Entity(name="user", join_keys=["USER_ID"])
+        return FeatureView(
+            name="test_fv",
+            entities=[entity],
+            feature_df=mock_df,
+            timestamp_col="EVENT_TIME",
+        )
+
+    def test_source_refs_default_none(self) -> None:
+        """An FV constructed without ``_source_refs`` returns ``None``."""
+        fv = self._make_simple_fv()
+        self.assertIsNone(fv.source_refs)
+
+    def test_source_refs_round_trip_via_attribute(self) -> None:
+        """Setting ``_source_refs`` surfaces the same list via the read-only property."""
+        fv = self._make_simple_fv()
+        sources = [
+            {
+                "name": "EVENTS_BATCH_DECL",
+                "source_type": "Batch",
+                "table": "DB.SCH.EVENTS",
+                "columns": [{"name": "USER_ID", "type": "VARCHAR"}],
+            }
+        ]
+        fv._source_refs = list(sources)
+        self.assertEqual(fv.source_refs, sources)
 
 
 if __name__ == "__main__":

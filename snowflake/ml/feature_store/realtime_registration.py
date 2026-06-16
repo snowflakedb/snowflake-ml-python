@@ -59,6 +59,7 @@ from snowflake.snowpark.types import DataType, StructType
 
 if TYPE_CHECKING:
     from snowflake.ml.feature_store.feature_store import FeatureStore
+    from snowflake.snowpark import Session
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,7 @@ def _build_realtime_feature_view_spec(
     target_lag: str,
     database: str,
     schema: str,
+    session: Optional[Session] = None,
 ) -> FeatureViewSpec:
     """Build a ``FeatureViewSpec`` for an RTFV (no offline configs)."""
     realtime_config = feature_view.realtime_config
@@ -103,6 +105,7 @@ def _build_realtime_feature_view_spec(
             schema=schema,
             name=feature_view.name.resolved(),
             version=version,
+            session=session,
         )
         .set_sources(sources)
         .set_udf(
@@ -695,6 +698,7 @@ def create_realtime_online_feature_table(
         target_lag=_RTFV_OFT_TARGET_LAG,
         database=feature_store._config.database.resolved(),
         schema=feature_store._config.schema.resolved(),
+        session=feature_store._session,
     )
     spec_json = spec.to_json()
     source_clause = f"FROM SPECIFICATION $${spec_json}$$"
@@ -768,6 +772,7 @@ def append_realtime_listing_row(
     rtfv_metadata: RealtimeConfigMetadata,
     oft_show_row: Optional[Row],
     output_values: list[list[Any]],
+    output_values_extra: list[list[Any]],
     fv_kind_realtime: str,
     default_storage_config_json: str,
 ) -> None:
@@ -784,7 +789,9 @@ def append_realtime_listing_row(
         rtfv_metadata: Persisted RTFV configuration row.
         oft_show_row: Optional ``SHOW ONLINE FEATURE TABLES`` row for the
             backing OFT. ``None`` means the OFT is missing.
-        output_values: Mutated by appending the new row in place.
+        output_values: Base-field rows matching ``_LIST_FEATURE_VIEW_SCHEMA``.
+        output_values_extra: Verbose-only field rows matching
+            ``_LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS``.
         fv_kind_realtime: Value emitted in the ``kind`` column (the FS
             module-level constant for the realtime kind).
         default_storage_config_json: Value emitted in the ``storage_config``
@@ -817,9 +824,13 @@ def append_realtime_listing_row(
         default_storage_config_json,
         None,  # stream_config
         fv_kind_realtime,
+        False,  # append_only
     ]
 
     output_values.append(values)
+    # RTFVs have no BatchSource/StreamSource ref-list, so source_refs is always
+    # None. backup_source is also always None for RTFVs.
+    output_values_extra.append([None, None])  # source_refs, backup_source
 
 
 def append_realtime_listing_rows(
@@ -827,6 +838,7 @@ def append_realtime_listing_rows(
     feature_store: FeatureStore,
     feature_view_name_prefix: Optional[SqlIdentifier],
     output_values: list[list[Any]],
+    output_values_extra: list[list[Any]],
     fv_kind_realtime: str,
     default_storage_config_json: str,
 ) -> None:
@@ -836,7 +848,9 @@ def append_realtime_listing_rows(
         feature_store: Calling ``FeatureStore``.
         feature_view_name_prefix: Optional ``SqlIdentifier`` to filter RTFV
             names by leading prefix. ``None`` returns every RTFV.
-        output_values: Mutated by appending one row per matching RTFV.
+        output_values: Base-field rows matching ``_LIST_FEATURE_VIEW_SCHEMA``.
+        output_values_extra: Verbose-only field rows matching
+            ``_LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS``.
         fv_kind_realtime: Value emitted in the ``kind`` column.
         default_storage_config_json: Value emitted in the ``storage_config``
             column.
@@ -863,6 +877,7 @@ def append_realtime_listing_rows(
             rtfv_metadata=meta,
             oft_show_row=oft_row_by_phys.get(oft_phys),
             output_values=output_values,
+            output_values_extra=output_values_extra,
             fv_kind_realtime=fv_kind_realtime,
             default_storage_config_json=default_storage_config_json,
         )

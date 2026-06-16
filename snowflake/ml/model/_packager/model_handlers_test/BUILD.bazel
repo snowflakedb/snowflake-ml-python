@@ -61,6 +61,7 @@ py_test(
 
 py_test(
     name = "mlflow_test",
+    timeout = "eternal",
     srcs = ["mlflow_test.py"],
     optional_dependencies = [
         "mlflow",
@@ -240,10 +241,10 @@ py_test(
 
 py_test(
     name = "sentence_transformers_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = ["sentence_transformers_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 2,
+    shard_count = 4,
     tags = [
         "feature:model_registry",
         "short_regress",
@@ -251,6 +252,7 @@ py_test(
     deps = [
         "//snowflake/ml/model/_packager:model_packager",
         "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 

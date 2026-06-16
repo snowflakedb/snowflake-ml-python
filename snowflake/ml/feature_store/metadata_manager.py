@@ -52,7 +52,14 @@ class MetadataType(str, Enum):
     # references (as ``FvSourceRef`` rows), request source schema, output
     # schema, and the captured output_columns list.
     REALTIME_CONFIG = "REALTIME_CONFIG"
+    # Append-only config (e.g. backup_source). Stored in the metadata table
+    # rather than the DT tag to avoid the 256-char tag limit.
+    APPEND_ONLY_CONFIG = "APPEND_ONLY_CONFIG"
     FEATURE_VIEW_METADATA = "FEATURE_VIEW_METADATA"
+    # Authored source-ref list captured at ``register_feature_view`` time
+    # and replayed by ``get_feature_view`` so source bindings survive the
+    # round trip without being reparsed out of the dynamic-table text.
+    FV_SOURCE_REFS = "FV_SOURCE_REFS"
 
 
 @dataclass
@@ -83,6 +90,7 @@ class AggregationMetadata:
     feature_granularity: str
     features: list[AggregationSpec]
     feature_aggregation_method: Optional[str] = None
+    aggregation_secondary_keys: Optional[list[str]] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -92,15 +100,19 @@ class AggregationMetadata:
         }
         if self.feature_aggregation_method is not None:
             d["feature_aggregation_method"] = self.feature_aggregation_method
+        if self.aggregation_secondary_keys is not None:
+            d["aggregation_secondary_keys"] = list(self.aggregation_secondary_keys)
         return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AggregationMetadata:
         """Create from dictionary."""
+        raw_secondary_keys = data.get("aggregation_secondary_keys")
         return cls(
             feature_granularity=data["feature_granularity"],
             features=[AggregationSpec.from_dict(f) for f in data["features"]],
             feature_aggregation_method=data.get("feature_aggregation_method"),
+            aggregation_secondary_keys=list(raw_secondary_keys) if raw_secondary_keys is not None else None,
         )
 
 
@@ -187,6 +199,27 @@ class StreamingMetadata:
             backfill_udtf_signature=data.get("backfill_udtf_signature"),
             backfill_state=raw_backfill_state,
         )
+
+
+@dataclass(frozen=True)
+class AppendOnlyMetadata:
+    """Append-only configuration for append-only feature views.
+
+    Stored in the metadata table (not the tag) to avoid the 256-char tag limit.
+    """
+
+    backup_source: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        if self.backup_source is None:
+            return {}
+        return {"backup_source": self.backup_source}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AppendOnlyMetadata:
+        """Create from dictionary."""
+        return cls(backup_source=data.get("backup_source"))
 
 
 @dataclass
@@ -317,6 +350,33 @@ class RealtimeConfigMetadata:
             output_columns=list(data.get("output_columns") or []),
             entity_names=list(data.get("entity_names") or []),
         )
+
+
+@dataclass
+class FvSourceRefsMetadata:
+    """Authored source-ref list for a registered FeatureView.
+
+    Each entry in :attr:`sources` is a JSON-friendly dict carrying the
+    fields a caller may set on a source binding (typically ``name``,
+    ``source_type``, and optional ``table`` / ``query`` / ``columns`` /
+    ``source_database`` / ``source_schema``). No schema is enforced —
+    the dataclass is a pass-through so additional fields ride through
+    the metadata round-trip unchanged.
+    """
+
+    sources: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-friendly dict."""
+        # Defensive copy so callers can mutate the returned dict without
+        # touching the underlying ``sources`` list.
+        return {"sources": [dict(s) for s in self.sources]}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> FvSourceRefsMetadata:
+        """Build from a dict produced by :meth:`to_dict`."""
+        raw_sources = data.get("sources") or []
+        return cls(sources=[dict(s) for s in raw_sources])
 
 
 @dataclass
@@ -681,6 +741,54 @@ class FeatureStoreMetadataManager:
         )
 
     # =========================================================================
+    # Append-Only Config
+    # =========================================================================
+
+    def save_append_only_metadata(
+        self,
+        fv_name: str,
+        version: str,
+        metadata: AppendOnlyMetadata,
+    ) -> None:
+        """Save append-only configuration for an append-only feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+            metadata: Append-only metadata to save.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.APPEND_ONLY_CONFIG,
+            metadata=metadata.to_dict(),
+        )
+
+    def get_append_only_metadata(
+        self,
+        fv_name: str,
+        version: str,
+    ) -> Optional[dict[str, Any]]:
+        """Get append-only configuration for an append-only feature view.
+
+        Args:
+            fv_name: Feature view name.
+            version: Feature view version.
+
+        Returns:
+            Dictionary suitable for AppendOnlyMetadata.from_dict() if found,
+            None otherwise.
+        """
+        return self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.APPEND_ONLY_CONFIG,
+        )
+
+    # =========================================================================
     # Cleanup
     # =========================================================================
 
@@ -709,6 +817,57 @@ class FeatureStoreMetadataManager:
             AND VERSION = '{version}'
             """
         ).collect(statement_params=self._telemetry_stmp)
+
+    # =========================================================================
+    # FV Source Refs (authored source bindings for round-trip recovery)
+    # =========================================================================
+
+    def save_feature_view_source_refs(
+        self,
+        fv_name: str,
+        version: str,
+        metadata: FvSourceRefsMetadata,
+    ) -> None:
+        """Persist the authored source-ref list for a FeatureView.
+
+        Args:
+            fv_name: Feature view name (resolved identifier, no quoting).
+            version: Feature view version (case-preserved string).
+            metadata: The source refs payload to upsert.
+        """
+        self.ensure_table_exists()
+        self._upsert_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.FV_SOURCE_REFS,
+            metadata=metadata.to_dict(),
+        )
+
+    def get_feature_view_source_refs(
+        self,
+        fv_name: str,
+        version: str,
+    ) -> Optional[FvSourceRefsMetadata]:
+        """Read the authored source-ref list for a FeatureView.
+
+        Args:
+            fv_name: Feature view name (resolved identifier, no quoting).
+            version: Feature view version (case-preserved string).
+
+        Returns:
+            ``FvSourceRefsMetadata`` if a row exists, otherwise ``None``
+            (no row was written for this FV).
+        """
+        data = self._get_metadata(
+            object_type=MetadataObjectType.FEATURE_VIEW,
+            object_name=fv_name,
+            version=version,
+            metadata_type=MetadataType.FV_SOURCE_REFS,
+        )
+        if data is None:
+            return None
+        return FvSourceRefsMetadata.from_dict(data)
 
     # =========================================================================
     # Streaming Feature View Metadata

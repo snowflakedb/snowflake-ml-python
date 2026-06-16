@@ -62,7 +62,7 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
         """
         logger.warning("HuggingFacePipelineModel is deprecated. Please use TransformersPipeline instead.")
         super().__init__(
-            task=task,  # type: ignore[arg-type]
+            task=task,
             model=model,  # type: ignore[arg-type]
             revision=revision,
             token_or_secret=token,
@@ -144,7 +144,10 @@ class HuggingFacePipelineModel(huggingface.TransformersPipeline):
             force_rebuild: Whether to force rebuild the image. Defaults to False.
             build_external_access_integrations: External access integrations for building the image. Defaults to None.
             block: Whether to block the operation. Defaults to True.
-            inference_engine_options: Options for the service creation with custom inference engine. Defaults to None.
+            inference_engine_options: Options for the service creation with custom inference engine.
+                Supports `engine` and `engine_args_override`. `engine` accepts an
+                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
+                case-insensitive string such as ``"vllm"`` or ``"python_generic"``. Defaults to None.
             experimental_options: Experimental options for the service creation. Defaults to None.
 
         Raises:

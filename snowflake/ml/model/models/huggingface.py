@@ -28,9 +28,11 @@ class _LoggingMode(enum.Enum):
 
 
 class TransformersPipeline:
+    _requires_task: bool = True
+
     def __init__(
         self,
-        task: str,
+        task: Optional[str],
         model: str,
         *,
         revision: Optional[str] = None,
@@ -51,8 +53,10 @@ class TransformersPipeline:
         https://huggingface.co/docs/transformers/en/main_classes/pipelines#transformers.pipeline
 
         Args:
-            task: The task that pipeline will be used for. Must be explicitly provided.
-                For available tasks, please refer Transformers's documentation.
+            task: The HuggingFace pipeline task name (e.g. ``"text-classification"``). Required
+                when constructing ``TransformersPipeline`` directly. Subclasses that set
+                ``_requires_task = False`` (such as ``SentenceTransformer``) may pass ``None``.
+                For available tasks, please refer to Transformers's documentation.
             model: The model that will be used by the pipeline to make predictions. This can only be a model identifier
                 currently. Must be explicitly provided.
             revision: When passing a task name or a string model identifier: The specific model version to use. It can
@@ -216,7 +220,7 @@ class TransformersPipeline:
         Raises:
             RuntimeError: If input arguments are invalid.
         """
-        if task is None:
+        if task is None and self._requires_task:
             raise RuntimeError(
                 "Impossible to instantiate a pipeline without a task being specified. "
                 "Please provide a task name explicitly."
@@ -315,7 +319,7 @@ class TransformersPipeline:
     def _has_chat_template(
         self,
         logging_mode: _LoggingMode,
-        task: str,
+        task: Optional[str],
         repo_snapshot_dir: Optional[str],
     ) -> Optional[bool]:
         """Determine whether the model has a chat template.
@@ -377,3 +381,95 @@ class TransformersPipeline:
         # If neither the file nor the config attribute is found, it likely uses a default
         # class-specific template or has none defined explicitly in the repo.
         return False
+
+
+class SentenceTransformer(TransformersPipeline):
+    """Wrapper for sentence-transformers models supporting remote and snapshot logging.
+
+    This wrapper captures the HuggingFace model identifier and optional download
+    parameters without loading the actual ``SentenceTransformer`` model into memory.
+
+    **Remote logging** (default): when ``compute_pool_for_log`` is set, the model is
+    logged via ``SYSTEM$IMPORT_MODEL`` in a SPCS job.
+
+    **Local logging**: when ``compute_pool_for_log`` is ``None``, artifacts are
+    downloaded locally via ``huggingface_hub.snapshot_download`` before registry
+    upload. Signatures are inferred from snapshot config files (no local
+    ``sentence_transformers`` import). The model environment records
+    ``sentence-transformers`` without a version pin so serve-time resolves the latest
+    compatible release. By default, these inference methods are registered:
+
+    - ``encode``
+    - ``encode_query``
+    - ``encode_document``
+
+    Legacy plural names (``encode_queries``, ``encode_documents``) are supported via
+    explicit ``target_methods``. To register a subset of the defaults, pass
+    ``target_methods`` in ``log_model`` options::
+
+        registry.log_model(
+            model=model,
+            model_name="my_st",
+            options={"target_methods": ["encode", "encode_query"]},
+        )
+
+    Example (remote logging)::
+
+        from snowflake.ml.model import SentenceTransformer
+
+        model = SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+        )
+        registry.log_model(model=model, model_name="my_st", version_name="V1")
+
+    Example (local logging)::
+
+        from snowflake.ml.model.models import huggingface
+
+        model = huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log=None,
+        )
+        registry.log_model(model=model, model_name="my_st")
+    """
+
+    _requires_task = False
+
+    def __init__(
+        self,
+        model: str,
+        *,
+        revision: Optional[str] = None,
+        token_or_secret: Optional[str] = None,
+        trust_remote_code: bool = False,
+        compute_pool_for_log: Optional[str] = DEFAULT_CPU_COMPUTE_POOL,
+        allow_patterns: Optional[Union[list[str], str]] = None,
+        ignore_patterns: Optional[Union[list[str], str]] = None,
+    ) -> None:
+        """Initialize a SentenceTransformer wrapper.
+
+        Args:
+            model: HuggingFace model identifier (e.g. ``"sentence-transformers/all-MiniLM-L6-v2"``).
+            revision: Specific model version (branch, tag, or commit id). Defaults to None.
+            token_or_secret: HuggingFace auth token or a fully qualified Snowflake secret name.
+                Defaults to None.
+            trust_remote_code: Whether to allow custom code from the Hub. Defaults to False.
+            compute_pool_for_log: Compute pool for remote logging. Defaults to
+                ``DEFAULT_CPU_COMPUTE_POOL``. Set to ``None`` for local snapshot
+                logging, which auto-registers ``encode``, ``encode_query``, and
+                ``encode_document`` unless ``options={"target_methods": [...]}`` is
+                passed to ``log_model``.
+            allow_patterns: File patterns to include when downloading. Defaults to None.
+            ignore_patterns: File patterns to exclude when downloading. Defaults to None.
+        """
+        super().__init__(
+            task=None,
+            model=model,
+            revision=revision,
+            token_or_secret=token_or_secret,
+            trust_remote_code=trust_remote_code,
+            model_kwargs=None,
+            compute_pool_for_log=compute_pool_for_log,
+            allow_patterns=allow_patterns,
+            ignore_patterns=ignore_patterns,
+        )

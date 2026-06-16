@@ -293,7 +293,15 @@ merge_gate)
     fi
     ;;
 continuous_run)
-    query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    if [[ -n "${TAG_FILTERS:-}" ]]; then
+        # Apply feature area filtering at query time so that groups with no matching
+        # targets produce an empty target file (avoiding Bazel exit code 4 false positives).
+        feature_query="attr(tags, \"${TAG_FILTERS}\", //...)"
+        query_expr='kind(".*_test rule", (//... intersect '"${feature_query}"') - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+        tag_filter="--test_tag_filters="
+    else
+        query_expr='kind(".*_test rule", //... - set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'
+    fi
     ;;
 quarantined)
     query_expr='kind(".*_test rule", set('"$(<"ci/targets/quarantine/${SF_ENV}.txt")"') - set('"$(<"ci/targets/local_only.txt")"'))'

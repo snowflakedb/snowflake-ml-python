@@ -1,20 +1,20 @@
 load(":utils.bzl", "EXECUTE_TIMEOUT", "get_arch", "get_os")
 
 # micromamba version
-MICROMAMBA_VERSION = "1.5.1-0"
+MICROMAMBA_VERSION = "2.8.1-0"
 
 MICROMAMBA_SHA = {
     "linux": {
-        "64": "056ad0be97dc540b2e321f65782384dc4e8004270c67ded1d059dc097fb86fd6",
-        "aarch64": "96128bad4b68316f2157e9f653530c7b00374c8e375e18723f6843f5fa92a3e7",
-        "ppc64le": "8875702b93730ac862895a9575f4df45633011cb969a3442381cb030641f383b",
+        "64": "9689782d863c05a1bf5d2d371ba527104e7a4eb4310c1637d8653b751aed9c82",
+        "aarch64": "e5ba23b5945aa49dfd11022e592a510d2686a8feee810e00140b73c9fdf0ba2a",
+        "ppc64le": "321c822aaf4c2922cf3e653cbe8b44a86e28cda8f81f8fac3c0804744c7baf75",
     },
     "osx": {
-        "64": "ae517b7b4a7938d74b58260c04d9f47bb00a30a79d71853245f35213114f9f30",
-        "arm64": "5a483c5c83900e8d2decd4fd06c39260e54659b3e4947ebc93796537ac805307",
+        "64": "b2bd613791c0a524883d7cb66505d630bf15badd1f492bc93ba78550a3a1a94b",
+        "arm64": "de71a646b73af92dd663e6ddc78993a6a4d47ea28b5d8908c3cc2b9c3077e528",
     },
     "win": {
-        "64": "d4acb2dafd856a6677bcd629bdcdbc2d372f6c3405288e1831d5be53ce4c557f",
+        "64": "8a51f88ec02600488ea20c3acd93fbd4da6c0f03fc499aa53fd234c6749b94b0",
     },
 }
 

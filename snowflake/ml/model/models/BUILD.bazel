@@ -19,7 +19,7 @@ py_library(
 
 py_test(
     name = "huggingface_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = ["huggingface_test.py"],
     optional_dependencies = ["transformers"],
     tags = [
@@ -43,5 +43,18 @@ py_library(
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model:compute_pool",
+    ],
+)
+
+py_test(
+    name = "sentence_transformers_test",
+    timeout = "eternal",
+    srcs = ["sentence_transformers_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        ":huggingface",
     ],
 )

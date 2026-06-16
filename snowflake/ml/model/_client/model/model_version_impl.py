@@ -676,9 +676,11 @@ class ModelVersion(lineage_node.LineageNode):
             job_spec (Optional[batch_inference_specs.JobSpec]): Optional configuration for job
                 execution parameters such as compute resources, worker counts, and job naming.
                 If None, default values will be used.
-            inference_engine_options: Options for the service creation with custom inference engine.
+            inference_engine_options: Options for batch inference with a custom inference engine.
                 Supports `engine` and `engine_args_override`.
-                `engine` is the type of the inference engine to use.
+                `engine` is the type of the inference engine to use. Accepts an
+                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
+                case-insensitive string such as ``"vllm"`` or ``"python_generic"``.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
 
         Returns:
@@ -1268,7 +1270,9 @@ class ModelVersion(lineage_node.LineageNode):
                 captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
-                `engine` is the type of the inference engine to use.
+                `engine` is the type of the inference engine to use. Accepts an
+                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
+                case-insensitive string such as ``"vllm"`` or ``"python_generic"``.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
@@ -1339,7 +1343,9 @@ class ModelVersion(lineage_node.LineageNode):
                 captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
-                `engine` is the type of the inference engine to use.
+                `engine` is the type of the inference engine to use. Accepts an
+                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
+                case-insensitive string such as ``"vllm"`` or ``"python_generic"``.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of
@@ -1427,7 +1433,9 @@ class ModelVersion(lineage_node.LineageNode):
                 captured in the model inference table.
             inference_engine_options: Options for the service creation with custom inference engine.
                 Supports `engine` and `engine_args_override`.
-                `engine` is the type of the inference engine to use.
+                `engine` is the type of the inference engine to use. Accepts an
+                :class:`~snowflake.ml.model.inference_engine.InferenceEngine` enum member or a
+                case-insensitive string such as ``"vllm"`` or ``"python_generic"``.
                 `engine_args_override` is a list of string arguments to pass to the inference engine.
             experimental_options: Experimental options for the service creation.
             feature_sources_per_function: Optional mapping from model function name (e.g. ``"predict"``) to the list of

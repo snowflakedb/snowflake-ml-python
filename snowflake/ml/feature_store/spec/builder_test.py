@@ -15,7 +15,7 @@ Covers:
 from __future__ import annotations
 
 import json
-from typing import Optional, TypedDict
+from typing import Any, Optional, TypedDict
 from unittest import mock
 
 from absl.testing import absltest, parameterized
@@ -615,7 +615,7 @@ class RealtimeBuilderTest(absltest.TestCase):
 
     @mock.patch(
         "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
-        side_effect=lambda fv: Source(
+        side_effect=lambda fv, materialized_schema=None: Source(
             name=str(fv.name),
             source_type=SourceType.FEATURES,
             columns=[FSColumn(name="SCORE", type="DoubleType")],
@@ -725,7 +725,7 @@ class SourceConversionTest(absltest.TestCase):
         src = builder._sources[0]
         self.assertEqual(src.source_type, SourceType.FEATURES)
         self.assertEqual(src.name, "upstream_fv")
-        mock_convert.assert_called_once_with(fv)
+        mock_convert.assert_called_once_with(fv, materialized_schema=None)
 
     @mock.patch(
         "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view_slice",
@@ -896,6 +896,151 @@ class FeatureViewConversionTest(absltest.TestCase):
 
         source = FeatureViewSpecBuilder._convert_feature_view_slice(fvs)
         self.assertEqual([c.name for c in source.columns], ["RISK", "SCORE"])
+
+
+# ============================================================================
+# Materialized-schema source resolution
+# ============================================================================
+
+
+class MaterializedSchemaSourceTest(absltest.TestCase):
+    """FEATURES sources read column shapes from the upstream's materialized
+    DT/View schema instead of the authoring-time ``output_schema``.
+    """
+
+    @staticmethod
+    def _make_batch_fv(
+        *,
+        name: str = "loyalty_profiles_fv",
+        version: str = "v1",
+        is_streaming: bool = False,
+        is_tiled: bool = False,
+        realtime_config: object = None,
+        output_schema: Optional[StructType] = None,
+    ) -> mock.MagicMock:
+        from snowflake.ml.feature_store.feature_view import FeatureView
+
+        fv = mock.MagicMock(spec=FeatureView)
+        fv.name = SqlIdentifier(name)
+        fv.version = version
+        fv.realtime_config = realtime_config
+        fv.is_tiled = is_tiled
+        fv.is_streaming = is_streaming
+        fv.aggregation_specs = None
+        fv.feature_names = [SqlIdentifier("CHASE_STATUS_DESC"), SqlIdentifier("SCORE")]
+        # Authoring-time schema reports an unconstrained VARCHAR length.
+        fv.output_schema = output_schema or StructType(
+            [
+                StructField("CHASE_STATUS_DESC", StringType(16777216)),
+                StructField("SCORE", DoubleType()),
+            ]
+        )
+        fv.fully_qualified_name.return_value = "DB.SCHEMA.LOYALTY_PROFILES_FV$v1"
+        return fv
+
+    def test_columns_use_materialized_schema_length(self) -> None:
+        """When materialized_schema is provided, StringType length comes from it."""
+        fv = self._make_batch_fv()
+        materialized = StructType(
+            [
+                StructField("CHASE_STATUS_DESC", StringType(64)),  # narrowed in storage
+                StructField("SCORE", DoubleType()),
+            ]
+        )
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv, materialized)
+        by_name = {c.name: c for c in cols}
+        self.assertEqual(by_name["CHASE_STATUS_DESC"].type, "StringType")
+        self.assertEqual(by_name["CHASE_STATUS_DESC"].length, 64)
+
+    def test_columns_fallback_to_output_schema_when_no_materialized(self) -> None:
+        """Without materialized_schema, authoring output_schema length is used."""
+        fv = self._make_batch_fv()
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        by_name = {c.name: c for c in cols}
+        self.assertEqual(by_name["CHASE_STATUS_DESC"].length, 16777216)
+
+    def test_materialized_schema_filtered_to_features(self) -> None:
+        """Override still filters to feature_names (entity/extra cols excluded)."""
+        fv = self._make_batch_fv()
+        materialized = StructType(
+            [
+                StructField("USER_ID", StringType(16)),  # not a feature
+                StructField("CHASE_STATUS_DESC", StringType(64)),
+                StructField("SCORE", DoubleType()),
+            ]
+        )
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv, materialized)
+        self.assertEqual(sorted(c.name for c in cols), ["CHASE_STATUS_DESC", "SCORE"])
+
+    def test_convert_feature_view_forwards_materialized_schema(self) -> None:
+        fv = self._make_batch_fv()
+        materialized = StructType(
+            [
+                StructField("CHASE_STATUS_DESC", StringType(64)),
+                StructField("SCORE", DoubleType()),
+            ]
+        )
+        source = FeatureViewSpecBuilder._convert_feature_view(fv, materialized)
+        by_name = {c.name: c for c in source.columns}
+        self.assertEqual(by_name["CHASE_STATUS_DESC"].length, 64)
+
+    def _make_builder(self, session: Any) -> FeatureViewSpecBuilder:
+        return FeatureViewSpecBuilder(
+            FeatureViewKind.FeatureGroup,
+            database="DB",
+            schema="SCHEMA",
+            name="HYATT_GUEST_FG",
+            version="V1",
+            session=session,
+        )
+
+    def test_resolve_returns_none_without_session(self) -> None:
+        builder = FeatureViewSpecBuilder(
+            FeatureViewKind.FeatureGroup, database="DB", schema="SCHEMA", name="FG", version="V1"
+        )
+        fv = self._make_batch_fv()
+        self.assertIsNone(builder._resolve_materialized_schema(fv))
+
+    def test_resolve_returns_none_for_streaming(self) -> None:
+        session = mock.MagicMock()
+        builder = self._make_builder(session)
+        fv = self._make_batch_fv(is_streaming=True)
+        self.assertIsNone(builder._resolve_materialized_schema(fv))
+        session.table.assert_not_called()
+
+    def test_resolve_returns_none_for_tiled(self) -> None:
+        session = mock.MagicMock()
+        builder = self._make_builder(session)
+        fv = self._make_batch_fv(is_tiled=True)
+        self.assertIsNone(builder._resolve_materialized_schema(fv))
+        session.table.assert_not_called()
+
+    def test_resolve_returns_none_for_rtfv(self) -> None:
+        session = mock.MagicMock()
+        builder = self._make_builder(session)
+        fv = self._make_batch_fv(realtime_config=object())
+        self.assertIsNone(builder._resolve_materialized_schema(fv))
+        session.table.assert_not_called()
+
+    def test_resolve_describes_materialized_for_batch(self) -> None:
+        materialized = StructType([StructField("CHASE_STATUS_DESC", StringType(64))])
+        session = mock.MagicMock()
+        session.table.return_value.schema = materialized
+        builder = self._make_builder(session)
+        fv = self._make_batch_fv()
+        result = builder._resolve_materialized_schema(fv)
+        self.assertIs(result, materialized)
+        session.table.assert_called_once_with("DB.SCHEMA.LOYALTY_PROFILES_FV$v1")
+
+    def test_resolve_raises_clear_error_when_not_materialized(self) -> None:
+        from snowflake.snowpark.exceptions import SnowparkSQLException
+
+        session = mock.MagicMock()
+        session.table.side_effect = SnowparkSQLException("does not exist")
+        builder = self._make_builder(session)
+        fv = self._make_batch_fv()
+        with self.assertRaisesRegex(ValueError, "materialized schema"):
+            builder._resolve_materialized_schema(fv)
 
 
 # ============================================================================
@@ -3989,7 +4134,7 @@ class FeatureGroupBuilderTest(absltest.TestCase):
 
     @mock.patch(
         "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
-        side_effect=lambda fv: Source(
+        side_effect=lambda fv, materialized_schema=None: Source(
             name=str(fv.name),
             source_type=SourceType.FEATURES,
             columns=[FSColumn(name="SCORE", type="DoubleType")],
@@ -4489,7 +4634,7 @@ class NewKindsSerializationTest(absltest.TestCase):
 
     @mock.patch(
         "snowflake.ml.feature_store.spec.builder.FeatureViewSpecBuilder._convert_feature_view",
-        side_effect=lambda fv: Source(
+        side_effect=lambda fv, materialized_schema=None: Source(
             name=str(fv.name),
             source_type=SourceType.FEATURES,
             columns=[FSColumn(name="SCORE", type="DoubleType")],

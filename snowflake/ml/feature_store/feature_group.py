@@ -71,7 +71,7 @@ if TYPE_CHECKING:
 
     from snowflake.ml.feature_store.feature_store import FeatureStore
     from snowflake.ml.feature_store.spec.models import FeatureViewSpec
-    from snowflake.snowpark import DataFrame
+    from snowflake.snowpark import DataFrame, Session
 
 
 _FEATURE_GROUP_NAME_MAX_LENGTH = 255
@@ -256,7 +256,9 @@ class FeatureGroup:
     # Spec construction
     # -----------------------------------------------------------------------
 
-    def _to_spec(self, *, database: str, schema: str, version: str) -> FeatureViewSpec:
+    def _to_spec(
+        self, *, database: str, schema: str, version: str, session: Optional[Session] = None
+    ) -> FeatureViewSpec:
         """Translate this draft FeatureGroup into a validated spec payload.
 
         Builds an internal ``(name, version)``-keyed prefix map and delegates
@@ -269,6 +271,10 @@ class FeatureGroup:
             version: User-facing FeatureGroup version (already validated by
                 :class:`FeatureGroupVersion`). Embedded in the spec metadata
                 and surfaced to the Online Service Query API at read time.
+            session: Optional Snowpark session used to read upstream
+                FeatureView column shapes from the materialized DT/View, so
+                source column shapes match the upstream's stored
+                ``OutputColumn`` for the Online Service exact-shape check.
 
         Returns:
             FeatureViewSpec: validated spec for this FeatureGroup, ready for
@@ -288,6 +294,7 @@ class FeatureGroup:
             schema=schema,
             name=self._name,
             version=version,
+            session=session,
         )
         builder.set_sources(list(self._features))
         builder.set_source_prefixes(prefix_map)
@@ -1109,6 +1116,7 @@ def register_feature_group(fs: FeatureStore, feature_group: FeatureGroup, versio
         database=fs._config.database.resolved(),
         schema=fs._config.schema.resolved(),
         version=validated_version,
+        session=fs._session,
     )
     primary_key = list(spec.spec.ordered_entity_column_names)
     assert primary_key, "FeatureGroup spec must derive at least one entity column"

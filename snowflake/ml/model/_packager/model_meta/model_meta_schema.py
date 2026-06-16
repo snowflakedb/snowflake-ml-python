@@ -82,9 +82,10 @@ class TensorflowModelBlobOptions(BaseModelBlobOptions):
 
 
 class SentenceTransformersModelBlobOptions(BaseModelBlobOptions):
-    batch_size: Required[int]
+    batch_size: NotRequired[int]
     model: NotRequired[Optional[str]]
     truncate_dim: NotRequired[int]
+    is_repo_downloaded: NotRequired[Optional[bool]]
 
 
 class ProphetModelBlobOptions(BaseModelBlobOptions):

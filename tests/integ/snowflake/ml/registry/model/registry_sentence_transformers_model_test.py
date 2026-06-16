@@ -7,24 +7,30 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml.model._signatures import snowpark_handler
+from snowflake.ml.model.models import huggingface as snowml_huggingface
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 from tests.integ.snowflake.ml.test_utils import dataframe_utils
 
 MODEL_NAMES = ["intfloat/e5-base-v2"]  # cant load models in parallel
 SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
+HF_HOME = "HF_HOME"
 
 
-class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.RegistryModelTestBase):
+class TestRegistrySentenceTransformerInteg(registry_model_test_base.RegistryModelTestBase):
     @classmethod
     def setUpClass(self) -> None:
         self.cache_dir = tempfile.TemporaryDirectory()
         self._original_cache_dir = os.getenv(SENTENCE_TRANSFORMERS_CACHE_DIR, None)
+        self._original_hf_home = os.getenv(HF_HOME, None)
         os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self.cache_dir.name
+        os.environ["HF_HOME"] = self.cache_dir.name
 
     @classmethod
     def tearDownClass(self) -> None:
         if self._original_cache_dir:
             os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self._original_cache_dir
+        if self._original_hf_home:
+            os.environ[HF_HOME] = self._original_hf_home
         self.cache_dir.cleanup()
 
     def test_sentence_transformers(
@@ -155,7 +161,9 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
         )
         sentences_sp = snowpark_handler.SnowparkDataFrameHandler.convert_from_df(self.session, sentences)
         model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
-        embeddings = pd.DataFrame({"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()})
+        embeddings = pd.DataFrame(
+            {"output_feature_0": model.encode(sentences["SENTENCES"].tolist()).tolist()},
+        )
         y_df_expected = pd.concat([sentences_sp.to_pandas(), embeddings], axis=1)
 
         self._test_registry_model(
@@ -236,6 +244,44 @@ class TestRegistrySentenceTransformerModelInteg(registry_model_test_base.Registr
                 ),
             },
             options=model_types.SentenceTransformersSaveOptions(batch_size=batch_size),
+            additional_dependencies=["datasets>=2.15"],
+        )
+
+    def test_sentence_transformer_wrapper_auto_signature(self) -> None:
+        """Test wrapper with auto-inferred signature from snapshot config files."""
+        model_name = random.choice(MODEL_NAMES)
+        wrapper = snowml_huggingface.SentenceTransformer(model=model_name, compute_pool_for_log=None)
+
+        test_sentences = pd.DataFrame(
+            {
+                "sentence": [
+                    "Why don't scientists trust atoms? Because they make up everything.",
+                    "I told my wife she should embrace her mistakes. She gave me a hug.",
+                    "Im reading a book on anti-gravity. Its impossible to put down!",
+                ]
+            }
+        )
+
+        import sentence_transformers
+
+        from snowflake.ml.model import type_hints as model_types
+
+        real_model = sentence_transformers.SentenceTransformer(model_name)
+        expected_encode = real_model.encode(test_sentences["sentence"].tolist())
+
+        def check_encode(res: pd.DataFrame) -> bool:
+            if "output" not in res.columns:
+                return False
+            actual = np.array(res["output"].tolist())
+            return np.allclose(actual, expected_encode, atol=1e-6)
+
+        self._test_registry_model(
+            model=wrapper,
+            sample_input_data=None,
+            prediction_assert_fns={
+                "encode": (test_sentences, check_encode),
+            },
+            options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
             additional_dependencies=["datasets>=2.15"],
         )
 

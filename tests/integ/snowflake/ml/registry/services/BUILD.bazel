@@ -60,6 +60,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 
@@ -73,6 +74,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_model_deployment_test_base",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 

@@ -1806,10 +1806,55 @@ class ModelOpsTest(parameterized.TestCase):
                 m_df, features=m_sig.outputs, statement_params=self.m_statement_params
             )
 
+    def test_invoke_method_snowpark_casts_columns_to_signature_types(self) -> None:
+        """Verify Snowpark DataFrame columns are cast to match model signature types."""
+        m_sig = model_signature.ModelSignature(
+            inputs=[
+                model_signature.FeatureSpec(dtype=model_signature.DataType.FLOAT, name="feat_a"),
+                model_signature.FeatureSpec(dtype=model_signature.DataType.INT64, name="feat_b"),
+            ],
+            outputs=[model_signature.FeatureSpec(name="output", dtype=model_signature.DataType.FLOAT)],
+        )
+        m_df = mock_data_frame.MockDataFrame()
+        m_df.__setattr__("columns", ["FEAT_A", "FEAT_B"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
+        with (
+            mock.patch.object(
+                model_signature,
+                "_validate_snowpark_data",
+                return_value=model_signature.SnowparkIdentifierRule.NORMALIZED,
+            ),
+            mock.patch.object(self.m_ops._model_version_client, "invoke_function_method", return_value=m_df),
+            mock.patch("snowflake.ml.model._client.ops.model_ops.F.col") as mock_col,
+        ):
+            mock_cast = mock.MagicMock()
+            mock_col.return_value.cast = mock_cast
+
+            self.m_ops.invoke_method(
+                method_name=sql_identifier.SqlIdentifier("PREDICT"),
+                method_function_type=model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value,
+                signature=m_sig,
+                X=cast(DataFrame, m_df),
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                statement_params=self.m_statement_params,
+            )
+
+            # Verify F.col was called with the correct column names
+            col_calls = [call.args[0] for call in mock_col.call_args_list]
+            self.assertEqual(col_calls, ["FEAT_A", "FEAT_B"])
+
+            # Verify .cast() was called with the correct Snowpark types
+            cast_calls = [call.args[0] for call in mock_cast.call_args_list]
+            self.assertEqual(cast_calls, [spt.FloatType(), spt.LongType()])
+
     def test_invoke_method_2(self) -> None:
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
             mock.patch.object(
@@ -1854,6 +1899,7 @@ class ModelOpsTest(parameterized.TestCase):
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
             mock.patch.object(
@@ -2021,6 +2067,7 @@ class ModelOpsTest(parameterized.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         m_df.add_mock_drop("COL1", "COL2")
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
@@ -2073,6 +2120,7 @@ class ModelOpsTest(parameterized.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         m_df.add_mock_drop("COL1", "COL2")
         partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
         with (
@@ -2129,6 +2177,7 @@ class ModelOpsTest(parameterized.TestCase):
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("_statement_params", None)
         m_df.__setattr__("columns", ["COL1", "COL2", "PARTITION_COLUMN"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         # No add_mock_drop — input cols should NOT be dropped
         partition_column = sql_identifier.SqlIdentifier("PARTITION_COLUMN")
         with (
@@ -2180,6 +2229,7 @@ class ModelOpsTest(parameterized.TestCase):
         m_sig = _DUMMY_SIG["predict"]
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
             mock.patch.object(
@@ -2235,6 +2285,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
@@ -2302,6 +2353,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(snowpark_handler.SnowparkDataFrameHandler, "convert_from_df") as mock_convert_from_df,
@@ -2362,6 +2414,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(
@@ -2400,6 +2453,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(
@@ -2436,6 +2490,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(
@@ -2474,6 +2529,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["INPUT"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(
@@ -2528,6 +2584,7 @@ class ModelOpsTest(parameterized.TestCase):
         )
         m_df = mock_data_frame.MockDataFrame()
         m_df.__setattr__("columns", ["COL1", "COL2"])
+        m_df.add_mock_with_columns(col_names=[], values=[])
 
         with (
             mock.patch.object(

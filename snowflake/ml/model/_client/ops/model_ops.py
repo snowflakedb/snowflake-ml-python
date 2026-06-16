@@ -30,7 +30,7 @@ from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_meta, model_meta_schema
 from snowflake.ml.model._packager.model_runtime import model_runtime
 from snowflake.ml.model._signatures import snowpark_handler
-from snowflake.snowpark import dataframe, row, session
+from snowflake.snowpark import dataframe, functions as F, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
@@ -1090,6 +1090,21 @@ class ModelOperator:
                 self._session, statement_params
             )
         )
+
+        # Cast Snowpark DataFrame columns to match signature types.
+        # Table functions have stricter type coercion than scalar functions,
+        # so explicit casting is needed to avoid type mismatch errors.
+        if isinstance(X, dataframe.DataFrame):
+            cast_column_names = []
+            cast_columns = []
+            for input_feature in signature.inputs:
+                col_name = identifier_rule.get_identifier_from_feature(input_feature.name)
+                if quoted_identifiers_ignore_case:
+                    col_name = col_name.upper()
+                cast_column_names.append(col_name)
+                cast_columns.append(F.col(col_name).cast(input_feature.as_snowpark_type()))
+            if cast_column_names:
+                s_df = s_df.with_columns(cast_column_names, cast_columns)
 
         input_args = []
         for input_feature in signature.inputs:

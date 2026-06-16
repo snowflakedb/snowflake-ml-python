@@ -1,14 +1,16 @@
+import gc
+import json
 import logging
 import os
-import random
 import tempfile
 import warnings
 from importlib import metadata as importlib_metadata
-from typing import cast
+from typing import Any, cast
 from unittest import mock
 
+import numpy as np
+import numpy.typing as npt
 import pandas as pd
-import sentence_transformers
 from absl.testing import absltest, parameterized
 from packaging import requirements
 from pandas.testing import assert_frame_equal
@@ -17,11 +19,14 @@ from snowflake.ml.model import model_signature, type_hints as model_types
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     _ALLOWED_TARGET_METHODS,
+    _DEFAULT_WRAPPER_TARGET_METHODS,
     SentenceTransformerHandler,
     _auto_infer_signature,
     _capture_model_truncate_dim,
     _get_available_default_methods,
+    _get_embedding_dim_from_config,
     _supports_encode_truncate_dim_param,
+    _supports_init_truncate_dim,
     _validate_sentence_transformers_signatures,
 )
 from snowflake.ml.model._packager.model_meta import model_meta_schema
@@ -33,18 +38,45 @@ SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 
 class SentenceTransformerHandlerTest(parameterized.TestCase):
     @classmethod
-    def setUpClass(self) -> None:
-        self.cache_dir = tempfile.TemporaryDirectory()
-        self._original_cache = os.getenv(SENTENCE_TRANSFORMERS_CACHE_DIR, None)
-        os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self.cache_dir.name
+    def setUpClass(cls) -> None:
+
+        cls.cache_dir = tempfile.TemporaryDirectory()
+        cls._original_cache = os.getenv(SENTENCE_TRANSFORMERS_CACHE_DIR, None)
+        cls._original_hf_home = os.getenv("HF_HOME", None)
+        cls._original_transformers_cache = os.getenv("TRANSFORMERS_CACHE", None)
+        os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = cls.cache_dir.name
+        os.environ["HF_HOME"] = cls.cache_dir.name
+        os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+
+        import sentence_transformers
+
+        cls._st_model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        cls._st_model_truncated = None
+        if _supports_init_truncate_dim():
+            cls._st_model_truncated = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+
+        cls._wrapper_snapshot_dir = os.path.join(cls.cache_dir.name, "wrapper_snapshot")
+        cls._st_model.save(cls._wrapper_snapshot_dir)
 
     @classmethod
-    def tearDownClass(self) -> None:
-        if self._original_cache:
-            os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = self._original_cache
+    def tearDownClass(cls) -> None:
+        if cls._original_cache:
+            os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR] = cls._original_cache
         else:
-            del os.environ[SENTENCE_TRANSFORMERS_CACHE_DIR]
-        self.cache_dir.cleanup()
+            os.environ.pop(SENTENCE_TRANSFORMERS_CACHE_DIR, None)
+        if cls._original_hf_home:
+            os.environ["HF_HOME"] = cls._original_hf_home
+        else:
+            os.environ.pop("HF_HOME", None)
+        if cls._original_transformers_cache:
+            os.environ["TRANSFORMERS_CACHE"] = cls._original_transformers_cache
+        else:
+            os.environ.pop("TRANSFORMERS_CACHE", None)
+        del cls._st_model
+        if cls._st_model_truncated is not None:
+            del cls._st_model_truncated
+        gc.collect()
+        cls.cache_dir.cleanup()
 
     def test_convert_as_custom_model_unsupported_method_raises(self) -> None:
         """Test that convert_as_custom_model raises ValueError for unsupported methods.
@@ -52,7 +84,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         This test verifies the fix for the missing-raise bug where unsupported methods
         would silently construct a ValueError but not raise it.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Create a mock model_meta with an unsupported method
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -97,7 +129,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_get_available_default_methods(self) -> None:
         """Test that _get_available_default_methods returns only methods that exist on the model."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         available_methods = _get_available_default_methods(model)
 
         # 'encode' should always be available
@@ -121,7 +153,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         sig = _auto_infer_signature(
             "encode",
             embedding_dim,
-            batch_size=32,
+            batch_size=None,
             include_truncate_dim_param=True,
         )
         assert sig is not None  # Type narrowing for mypy
@@ -140,13 +172,13 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         self.assertEqual(sig.params[0].name, "batch_size")
         assert isinstance(sig.params[0], model_signature.ParamSpec)
         self.assertEqual(sig.params[0]._dtype, model_signature.DataType.INT64)
-        self.assertEqual(sig.params[0].default_value, 32)
+        self.assertIsNone(sig.params[0].default_value)
         self.assertEqual(sig.params[1].name, "truncate_dim")
         assert isinstance(sig.params[1], model_signature.ParamSpec)
         self.assertEqual(sig.params[1]._dtype, model_signature.DataType.INT64)
         self.assertEqual(sig.params[1].default_value, None)
 
-        sig_batch_only = _auto_infer_signature("encode", embedding_dim, batch_size=32)
+        sig_batch_only = _auto_infer_signature("encode", embedding_dim, batch_size=None)
         assert sig_batch_only is not None
         self.assertEqual(len(sig_batch_only.params), 1)
 
@@ -166,7 +198,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             method_sig = _auto_infer_signature(
                 method,
                 embedding_dim,
-                batch_size=32,
+                batch_size=None,
                 include_truncate_dim_param=True,
             )
             self.assertIsNotNone(method_sig, f"Should infer signature for {method}")
@@ -303,7 +335,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Note: encode_queries and encode_documents may not exist in all sentence-transformers versions,
         so we test with encode only (which always exists).
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Save model - only use 'encode' which is guaranteed to exist
@@ -341,7 +373,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
         This tests the IS_AUTO_SIGNATURE = True functionality for SentenceTransformer models.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Save model WITHOUT sample_input_data or signatures - should auto-infer
@@ -378,11 +410,11 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             expected_dim = model.get_sentence_embedding_dimension()
             self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
 
-            # Verify batch_size param is present with default value
+            # Verify batch_size param is present with default value (None = system decides)
             batch_size_param = next(p for p in sig.params if p.name == "batch_size")
             assert isinstance(batch_size_param, model_signature.ParamSpec)
             self.assertEqual(batch_size_param._dtype, model_signature.DataType.INT64)
-            self.assertEqual(batch_size_param.default_value, 32)
+            self.assertIsNone(batch_size_param.default_value)
 
             if _supports_encode_truncate_dim_param():
                 self.assertEqual(len(sig.params), 2)
@@ -405,7 +437,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_auto_signature_multiple_methods(self) -> None:
         """Test auto signature inference with multiple target methods."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Only test with 'encode' since encode_queries/encode_documents may not exist in all versions
@@ -441,7 +473,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Note: sentence-transformers >= 3.0 uses singular names (encode_query)
         while older versions may use plural names (encode_queries).
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Check if encode_query method exists on this model (singular, new naming)
         if not hasattr(model, "encode_query") or not callable(getattr(model, "encode_query", None)):
@@ -510,7 +542,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Note: sentence-transformers >= 3.0 uses singular names (encode_document)
         while older versions may use plural names (encode_documents).
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Check if encode_document method exists on this model (singular, new naming)
         if not hasattr(model, "encode_document") or not callable(getattr(model, "encode_document", None)):
@@ -579,7 +611,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
         Note: sentence-transformers >= 3.0 uses singular names (encode_query, encode_document).
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Check if all methods exist (using singular names for new sentence-transformers)
         has_encode_query = hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None))
@@ -644,7 +676,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         - Accept any non-empty subset of ALLOWED_TARGET_METHODS
         - Reject methods not in ALLOWED_TARGET_METHODS with clear error
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -665,7 +697,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Per the design doc (Section 4.2), save_model should raise ValueError
         if target_methods is empty.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -685,7 +717,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Per the design doc (Section 4.2), target_methods must be a subset of
         ALLOWED_TARGET_METHODS. This test verifies that various valid subsets work.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -710,7 +742,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Per the design doc (Section 3.1), multiple methods can be specified
         as long as they are all in ALLOWED_TARGET_METHODS.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Check which methods are available on this model
         has_encode_query = hasattr(model, "encode_query") and callable(getattr(model, "encode_query", None))
@@ -749,7 +781,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         Even if a method is in ALLOWED_TARGET_METHODS, it must be callable on the
         actual model instance.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence"]})
 
         # Try to use encode_queries (plural) which may not exist on newer models
@@ -774,7 +806,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         plural (older versions) naming conventions are supported for backward compatibility.
         The _ALLOWED_TARGET_METHODS includes both naming conventions.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         # Check if plural methods exist on this model (older sentence-transformers)
         has_encode_queries = hasattr(model, "encode_queries") and callable(getattr(model, "encode_queries", None))
@@ -827,7 +859,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         This test ensures that users who only rely on encode (the original behavior)
         continue to have their code work without any changes.
         """
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence 1", "test sentence 2"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -870,7 +902,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         import tokenizers
         import transformers
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -913,7 +945,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         sentence_transformers_version: str,
     ) -> None:
         """Verify that tokenizers and transformers are pinned as a compatible pair for different version combos."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         original_distribution = importlib_metadata.distribution
 
@@ -954,6 +986,8 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             self.assertTrue(deps["sentence-transformers"].specifier.contains(sentence_transformers_version))
 
     def test_sentence_transformers(self) -> None:
+        import sentence_transformers
+
         # Sample Data
         sentences = pd.DataFrame(
             {
@@ -966,7 +1000,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
                 ]
             }
         )
-        model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
+        model = self._st_model
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(sentences["SENTENCES"].tolist()).tolist()})
 
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
@@ -1053,7 +1087,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_auto_inferred_custom_value(self) -> None:
         """Test that auto-inferred signature includes batch_size param with the logged value as default."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1080,7 +1114,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_explicit_signature_no_injection(self) -> None:
         """Test that explicit signatures do NOT get batch_size param injected."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
@@ -1103,7 +1137,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_explicit_signature_warning(self) -> None:
         """Test that a warning is emitted when explicit signatures AND batch_size option are both provided."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
@@ -1125,7 +1159,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_explicit_signature_paramspec_precedence(self) -> None:
         """Test that a ParamSpec default in explicit signatures takes precedence over blob options."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
 
@@ -1166,7 +1200,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_runtime_override(self) -> None:
         """Test that the inference method respects a non-default batch_size kwarg."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1191,7 +1225,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_batch_size_param_sample_input_data(self) -> None:
         """Test that batch_size param is added when using sample_input_data for signature inference."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"text": ["test sentence 1", "test sentence 2"]})
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1221,7 +1255,10 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_model_truncate_dim_captured_in_blob(self) -> None:
         """Test that model.truncate_dim is captured in blob metadata without a save option."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+        if self._st_model_truncated is None:
+            self.skipTest("sentence-transformers version does not support truncate_dim at init")
+
+        model = self._st_model_truncated
         self.assertEqual(_capture_model_truncate_dim(model), 128)
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1241,7 +1278,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_model_truncate_dim_not_in_blob_when_unset(self) -> None:
         """Test that blob metadata omits truncate_dim when the model has no init override."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1259,7 +1296,12 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
 
     def test_load_model_applies_blob_truncate_dim(self) -> None:
         """Test that load_model applies captured truncate_dim via SentenceTransformer __init__."""
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+        import sentence_transformers
+
+        if self._st_model_truncated is None:
+            self.skipTest("sentence-transformers version does not support truncate_dim at init")
+
+        model = self._st_model_truncated
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1282,7 +1324,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         if not _supports_encode_truncate_dim_param():
             self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1305,8 +1347,10 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         """Test runtime truncate_dim ParamSpec stays None; init truncation is blob-only."""
         if not _supports_encode_truncate_dim_param():
             self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
+        if self._st_model_truncated is None:
+            self.skipTest("sentence-transformers version does not support truncate_dim at init")
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0], truncate_dim=128)
+        model = self._st_model_truncated
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1330,7 +1374,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         if not _supports_encode_truncate_dim_param():
             self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
         sig = {"encode": model_signature.infer_signature(sentences, embeddings)}
@@ -1355,7 +1399,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         if not _supports_encode_truncate_dim_param():
             self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
         sentences = pd.DataFrame({"SENTENCES": ["test sentence"]})
         embeddings = pd.DataFrame({"EMBEDDINGS": model.encode(["test sentence"]).tolist()})
 
@@ -1400,7 +1444,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         if not _supports_encode_truncate_dim_param():
             self.skipTest("sentence-transformers version does not support encode(truncate_dim=...)")
 
-        model = sentence_transformers.SentenceTransformer(MODEL_NAMES[0])
+        model = self._st_model
 
         with tempfile.TemporaryDirectory() as tmpdir:
             model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
@@ -1422,6 +1466,650 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             self.assertIsInstance(result, pd.DataFrame)
             self.assertEqual(len(result), 2)
             self.assertEqual(len(result.iloc[0, 0]), 64)
+
+    def test_get_embedding_dim_from_config_standard(self) -> None:
+        """Test embedding dimension extraction from standard sentence-transformers config."""
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            modules = [
+                {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+            ]
+            with open(os.path.join(snapshot_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+
+            pooling_dir = os.path.join(snapshot_dir, "1_Pooling")
+            os.makedirs(pooling_dir)
+            pooling_config = {
+                "word_embedding_dimension": 384,
+                "pooling_mode_cls_token": False,
+                "pooling_mode_mean_tokens": True,
+                "pooling_mode_max_tokens": False,
+                "pooling_mode_mean_sqrt_len_tokens": False,
+            }
+            with open(os.path.join(pooling_dir, "config.json"), "w") as f:
+                json.dump(pooling_config, f)
+
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertEqual(dim, 384)
+
+    def test_get_embedding_dim_from_config_dense_module(self) -> None:
+        """Test that a downstream Dense module overrides the pooling dimension."""
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            modules = [
+                {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+                {"idx": 2, "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+            ]
+            with open(os.path.join(snapshot_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+
+            pooling_dir = os.path.join(snapshot_dir, "1_Pooling")
+            os.makedirs(pooling_dir)
+            with open(os.path.join(pooling_dir, "config.json"), "w") as f:
+                json.dump(
+                    {
+                        "word_embedding_dimension": 768,
+                        "pooling_mode_mean_tokens": True,
+                    },
+                    f,
+                )
+
+            dense_dir = os.path.join(snapshot_dir, "2_Dense")
+            os.makedirs(dense_dir)
+            with open(os.path.join(dense_dir, "config.json"), "w") as f:
+                json.dump({"in_features": 768, "out_features": 512}, f)
+
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertEqual(dim, 512)
+
+    def test_get_embedding_dim_from_config_multiple_pooling_modes(self) -> None:
+        """Test that multiple enabled pooling modes multiply the dimension."""
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            modules = [
+                {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+            ]
+            with open(os.path.join(snapshot_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+
+            pooling_dir = os.path.join(snapshot_dir, "1_Pooling")
+            os.makedirs(pooling_dir)
+            pooling_config = {
+                "word_embedding_dimension": 768,
+                "pooling_mode_cls_token": True,
+                "pooling_mode_mean_tokens": True,
+                "pooling_mode_max_tokens": False,
+            }
+            with open(os.path.join(pooling_dir, "config.json"), "w") as f:
+                json.dump(pooling_config, f)
+
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertEqual(dim, 768 * 2)
+
+    def test_get_embedding_dim_from_config_missing_modules_json(self) -> None:
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertIsNone(dim)
+
+    def test_get_embedding_dim_from_config_no_pooling_module(self) -> None:
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            modules = [{"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"}]
+            with open(os.path.join(snapshot_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertIsNone(dim)
+
+    def test_get_embedding_dim_from_config_missing_pooling_config(self) -> None:
+        with tempfile.TemporaryDirectory() as snapshot_dir:
+            modules = [
+                {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+            ]
+            with open(os.path.join(snapshot_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+
+            dim = _get_embedding_dim_from_config(snapshot_dir)
+            self.assertIsNone(dim)
+
+    def test_can_handle_wrapper(self) -> None:
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+        )
+        self.assertTrue(SentenceTransformerHandler.can_handle(wrapper))
+
+    def test_can_handle_real_model(self) -> None:
+        model = self._st_model
+        self.assertTrue(SentenceTransformerHandler.can_handle(model))
+
+    def test_cast_model_wrapper(self) -> None:
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+        )
+        result = SentenceTransformerHandler.cast_model(wrapper)
+        self.assertIs(result, wrapper)
+
+    def test_save_and_load_wrapper_with_snapshot(self) -> None:
+        """Test save/load round-trip for a SentenceTransformer wrapper with a real snapshot."""
+        import sentence_transformers
+
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.model is not None
+            assert pk.meta is not None
+
+            assert isinstance(pk.model, sentence_transformers.SentenceTransformer)
+
+            self.assertIn("encode", pk.meta.signatures)
+            sig = pk.meta.signatures["encode"]
+            self.assertEqual(len(sig.inputs), 1)
+            self.assertEqual(len(sig.outputs), 1)
+
+            test_sentences = ["Hello world", "Test sentence"]
+            embeddings = pk.model.encode(test_sentences)
+            self.assertEqual(len(embeddings), 2)
+
+    def test_save_wrapper_sets_is_repo_downloaded(self) -> None:
+        """Test that saving a local-mode wrapper with a snapshot sets is_repo_downloaded in metadata."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            blob_options = cast(
+                model_meta_schema.SentenceTransformersModelBlobOptions,
+                pk.meta.models["model"].options,
+            )
+            self.assertTrue(blob_options.get("is_repo_downloaded", False))
+            self.assertEqual(blob_options["model"], MODEL_NAMES[0])
+
+    def test_save_wrapper_without_snapshot_sets_is_repo_downloaded_false(self) -> None:
+        """Test that saving a wrapper without a snapshot sets is_repo_downloaded = False."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        expected_dim = self._st_model.get_sentence_embedding_dimension()
+        encode_sig = _auto_infer_signature("encode", expected_dim, batch_size=None)
+        assert encode_sig is not None
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log="some_pool",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                signatures={"encode": encode_sig},
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            blob_options = cast(
+                model_meta_schema.SentenceTransformersModelBlobOptions,
+                pk.meta.models["model"].options,
+            )
+            self.assertFalse(blob_options.get("is_repo_downloaded", False))
+            self.assertEqual(blob_options["model"], "sentence-transformers/all-MiniLM-L6-v2")
+
+    def test_save_wrapper_auto_infers_signature_from_config(self) -> None:
+        """Test that saving a wrapper auto-infers signature from snapshot config files."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        expected_dim = self._st_model.get_sentence_embedding_dimension()
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load()
+            assert pk.meta is not None
+
+            for method_name in _DEFAULT_WRAPPER_TARGET_METHODS:
+                self.assertIn(method_name, pk.meta.signatures)
+                sig = pk.meta.signatures[method_name]
+                assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+                self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+            for method_name in ("encode_queries", "encode_documents"):
+                self.assertNotIn(method_name, pk.meta.signatures)
+
+    def test_save_wrapper_target_methods_subset(self) -> None:
+        """Test that wrapper save honors target_methods when provided."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        expected_dim = self._st_model.get_sentence_embedding_dimension()
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            self.assertEqual(list(pk.meta.signatures.keys()), ["encode"])
+            sig = pk.meta.signatures["encode"]
+            assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.outputs[0]._shape, (expected_dim,))
+
+    def test_save_wrapper_target_methods_invalid(self) -> None:
+        """Test that wrapper save rejects unsupported target_methods."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(ValueError) as ctx:
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=wrapper,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(target_methods=["unsupported_method"]),
+                )
+            self.assertEqual(
+                ctx.exception.args[0],
+                "Unsupported model methods: ['unsupported_method']. "
+                "SentenceTransformer model methods must be one of: "
+                "['encode', 'encode_query', 'encode_document', 'encode_queries', 'encode_documents'].",
+            )
+
+    def test_save_wrapper_dependency_unpinned(self) -> None:
+        """Test that wrapper save does not pin sentence-transformers to a local version."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            deps = {
+                requirements.Requirement(dep).name: requirements.Requirement(dep)
+                for dep in pk.meta.env.conda_dependencies
+            }
+            self.assertIn("sentence-transformers", deps)
+            self.assertFalse(
+                any(spec.operator == "==" for spec in deps["sentence-transformers"].specifier),
+                "Wrapper should not pin sentence-transformers to an exact version",
+            )
+
+    def test_save_wrapper_multi_method_inference(self) -> None:
+        """Test wrapper save registers all default methods and each is callable."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log=None,
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+            assert pk.meta is not None
+
+            test_data = pd.DataFrame({"sentence": ["Test sentence"]})
+            for method_name in _DEFAULT_WRAPPER_TARGET_METHODS:
+                predict_method = getattr(pk.model, method_name, None)
+                self.assertIsNotNone(predict_method, f"Method '{method_name}' should exist")
+                assert callable(predict_method)
+                result = predict_method(test_data)
+                self.assertIsInstance(result, pd.DataFrame)
+                self.assertEqual(len(result), 1)
+
+    def test_save_wrapper_local_mode_fails_without_snapshot(self) -> None:
+        """Test that local-mode wrapper save fails when no snapshot is available."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log="some_pool",
+        )
+        wrapper.compute_pool_for_log = None
+        wrapper.repo_snapshot_dir = None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(
+                ValueError,
+                "Unable to determine the model's embedding dimension from snapshot config files. "
+                "Please provide sample_input_data or signatures explicitly.",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=wrapper,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(),
+                )
+
+    def test_save_wrapper_remote_mode_skips_signature_inference(self) -> None:
+        """Test that remote-mode wrapper save does not auto-infer signatures from snapshot.
+
+        Remote mode skips signature inference, so a save without explicit signatures fails
+        because model metadata requires at least one signature.
+        """
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log="some_pool",
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(RuntimeError, "The meta data is not ready to save."):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                    name="model",
+                    model=wrapper,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(),
+                )
+
+    def test_save_wrapper_remote_mode_skips_snapshot_copy(self) -> None:
+        """Test that remote-mode wrapper save does not copy snapshot artifacts."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        expected_dim = self._st_model.get_sentence_embedding_dimension()
+        encode_sig = _auto_infer_signature("encode", expected_dim, batch_size=None)
+        assert encode_sig is not None
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model=MODEL_NAMES[0],
+            compute_pool_for_log="some_pool",
+        )
+        wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                signatures={"encode": encode_sig},
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            blob_options = pk.meta.models["model"].options
+            self.assertFalse(blob_options.get("is_repo_downloaded", False))
+
+            model_blob_dir = os.path.join(tmpdir, "model", "models", "model", "model")
+            self.assertFalse(os.path.isfile(os.path.join(model_blob_dir, "modules.json")))
+
+    def test_batch_size_none_warehouse_omits_batch_size(self) -> None:
+        """In warehouse (stored procedure), batch_size=None should NOT be passed to model.encode."""
+        import sentence_transformers
+
+        model = self._st_model
+        embedding_dim = model.get_sentence_embedding_dimension()
+        assert embedding_dim is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            test_data = pd.DataFrame({"sentence": ["Hello world", "Test sentence"]})
+
+            def fake_encode(sentences: list[str], **kwargs: Any) -> npt.NDArray[np.float32]:
+                return np.zeros((len(sentences), embedding_dim), dtype=np.float32)
+
+            # Patch encode at the class level so the reloaded model instance is covered, and load
+            # inside the patch so the inference wrapper captures the patched method.
+            with mock.patch(
+                "snowflake.snowpark._internal.utils.is_in_stored_procedure", return_value=True
+            ), mock.patch.object(
+                sentence_transformers.SentenceTransformer, "encode", side_effect=fake_encode
+            ) as mock_encode:
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+                pk.load(as_custom_model=True)
+                assert pk.model is not None
+                encode_method = getattr(pk.model, "encode", None)
+                assert callable(encode_method)
+
+                encode_method(test_data)
+                mock_encode.assert_called_once()
+                self.assertNotIn("batch_size", mock_encode.call_args.kwargs)
+
+    def test_batch_size_none_spcs_omits_batch_size(self) -> None:
+        """Outside the warehouse (SPCS/local), batch_size=None is also NOT passed to model.encode."""
+        import sentence_transformers
+
+        model = self._st_model
+        embedding_dim = model.get_sentence_embedding_dimension()
+        assert embedding_dim is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            test_data = pd.DataFrame({"sentence": ["a", "b", "c"]})
+
+            def fake_encode(sentences: list[str], **kwargs: Any) -> npt.NDArray[np.float32]:
+                return np.zeros((len(sentences), embedding_dim), dtype=np.float32)
+
+            with mock.patch(
+                "snowflake.snowpark._internal.utils.is_in_stored_procedure", return_value=False
+            ), mock.patch.object(
+                sentence_transformers.SentenceTransformer, "encode", side_effect=fake_encode
+            ) as mock_encode:
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+                pk.load(as_custom_model=True)
+                assert pk.model is not None
+                encode_method = getattr(pk.model, "encode", None)
+                assert callable(encode_method)
+
+                encode_method(test_data)
+                mock_encode.assert_called_once()
+                self.assertNotIn("batch_size", mock_encode.call_args.kwargs)
+
+    def test_batch_size_explicit_override_always_used(self) -> None:
+        """Explicit batch_size kwarg should always be used regardless of environment."""
+        import sentence_transformers
+
+        model = self._st_model
+        embedding_dim = model.get_sentence_embedding_dimension()
+        assert embedding_dim is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=64),
+            )
+
+            test_data = pd.DataFrame({"sentence": ["Hello"]})
+
+            def fake_encode(sentences: list[str], **kwargs: Any) -> npt.NDArray[np.float32]:
+                return np.zeros((len(sentences), embedding_dim), dtype=np.float32)
+
+            # Even in the warehouse (stored procedure) the explicit batch_size must win.
+            with mock.patch(
+                "snowflake.snowpark._internal.utils.is_in_stored_procedure", return_value=True
+            ), mock.patch.object(
+                sentence_transformers.SentenceTransformer, "encode", side_effect=fake_encode
+            ) as mock_encode:
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+                pk.load(as_custom_model=True)
+                assert pk.model is not None
+                encode_method = getattr(pk.model, "encode", None)
+                assert callable(encode_method)
+
+                encode_method(test_data)
+                mock_encode.assert_called_once()
+                self.assertEqual(mock_encode.call_args.kwargs["batch_size"], 64)
+
+    def test_batch_size_none_empty_input_returns_empty(self) -> None:
+        """Empty input with batch_size=None returns an empty frame without error."""
+        model = self._st_model
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(as_custom_model=True)
+            assert pk.model is not None
+            encode_method = getattr(pk.model, "encode", None)
+            assert callable(encode_method)
+
+            result = encode_method(pd.DataFrame({"sentence": pd.Series([], dtype=object)}))
+            self.assertIsInstance(result, pd.DataFrame)
+            self.assertEqual(len(result), 0)
+
+    def test_batch_size_none_warehouse_real_encode_succeeds(self) -> None:
+        """Warehouse path omits batch_size; verify real sentence-transformers encode still works."""
+        model = self._st_model
+        embedding_dim = model.get_sentence_embedding_dimension()
+        assert embedding_dim is not None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            with mock.patch("snowflake.snowpark._internal.utils.is_in_stored_procedure", return_value=True):
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+                pk.load(as_custom_model=True)
+                assert pk.model is not None
+                encode_method = getattr(pk.model, "encode", None)
+                assert callable(encode_method)
+
+                result = encode_method(pd.DataFrame({"sentence": ["Hello world", "Test sentence"]}))
+                self.assertIsInstance(result, pd.DataFrame)
+                self.assertEqual(len(result), 2)
+                self.assertEqual(len(result.iloc[0, 0]), embedding_dim)
+
+    def test_batch_size_metadata_persistence(self) -> None:
+        """Verify blob_options key presence depends on whether batch_size was explicitly set."""
+        model = self._st_model
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # No explicit batch_size → key should be absent from blob_options
+            model_packager.ModelPackager(os.path.join(tmpdir, "model_default")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+            pk_default = model_packager.ModelPackager(os.path.join(tmpdir, "model_default"))
+            pk_default.load()
+            assert pk_default.meta is not None
+            blob_options = pk_default.meta.models["model"].options
+            self.assertNotIn("batch_size", blob_options)
+
+            # Explicit batch_size=64 → key should be present
+            model_packager.ModelPackager(os.path.join(tmpdir, "model_explicit")).save(
+                name="model",
+                model=model,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(batch_size=64),
+            )
+            pk_explicit = model_packager.ModelPackager(os.path.join(tmpdir, "model_explicit"))
+            pk_explicit.load()
+            assert pk_explicit.meta is not None
+            blob_options_explicit = pk_explicit.meta.models["model"].options
+            self.assertEqual(blob_options_explicit.get("batch_size"), 64)
 
 
 if __name__ == "__main__":

@@ -581,6 +581,7 @@ py_library(
         "//snowflake/ml/model/_packager/model_meta:model_meta_schema",
         "//snowflake/ml/model/_signatures:builtins_handler",
         "//snowflake/ml/model/_signatures:utils",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 

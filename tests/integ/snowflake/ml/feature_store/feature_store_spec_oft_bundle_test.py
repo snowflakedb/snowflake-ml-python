@@ -39,6 +39,7 @@ from fs_integ_test_base import (
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
+from snowflake.ml.feature_store.online_service import OnlineServiceAccess
 from snowflake.ml.utils import sql_client
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
@@ -108,6 +109,7 @@ def _setup_reuse_mode(reuse_db: str, reuse_schema: str) -> None:
         name=reuse_schema,
         default_warehouse=warehouse,
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        online_service_access=OnlineServiceAccess.PUBLIC,
     )
 
     # Resolve / register the user entity. Reuse mode tolerates a pre-existing
@@ -192,6 +194,7 @@ def setUpModule() -> None:
         name=test_schema,
         default_warehouse=warehouse,
         creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+        online_service_access=OnlineServiceAccess.PUBLIC,
     )
 
     user_entity = Entity(name="user_entity", join_keys=["USER_ID"], desc="User entity")

@@ -1,7 +1,9 @@
 from typing import Any, Optional
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
+from snowflake.ml.feature_store.spec.enums import FSBaseType
 from snowflake.snowpark.types import (
+    BinaryType,
     BooleanType,
     DataType,
     DecimalType,
@@ -26,13 +28,18 @@ _LIST_STREAM_SOURCE_SCHEMA = StructType(
 )
 
 # Mapping from type class name to type class for schema serialization/deserialization.
+# Keys are sourced from :class:`FSBaseType` so the imperative type vocabulary stays
+# in lock-step with the canonical :mod:`snowflake.ml.feature_store.spec.enums`
+# declaration; a trip-wire test in ``spec/enums_test.py`` asserts the two stay
+# aligned.
 _TYPE_NAME_TO_CLASS: dict[str, type] = {
-    "StringType": StringType,  # VARCHAR(<n>)
-    "LongType": LongType,  # INT / NUMBER(38,0)
-    "DoubleType": DoubleType,  # FLOAT / DOUBLE
-    "DecimalType": DecimalType,  # NUMBER(<p>,<s>)
-    "BooleanType": BooleanType,  # BOOLEAN
-    "TimestampType": TimestampType,  # TIMESTAMP_NTZ(9)
+    FSBaseType.StringType: StringType,  # VARCHAR(<n>)
+    FSBaseType.LongType: LongType,  # INT / NUMBER(38,0)
+    FSBaseType.DoubleType: DoubleType,  # FLOAT / DOUBLE
+    FSBaseType.DecimalType: DecimalType,  # NUMBER(<p>,<s>)
+    FSBaseType.BooleanType: BooleanType,  # BOOLEAN
+    FSBaseType.BinaryType: BinaryType,  # BINARY / VARBINARY
+    FSBaseType.TimestampType: TimestampType,  # TIMESTAMP_NTZ(9)
 }
 
 

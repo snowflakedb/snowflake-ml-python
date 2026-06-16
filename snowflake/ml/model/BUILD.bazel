@@ -103,6 +103,18 @@ py_library(
     deps = [],
 )
 
+py_test(
+    name = "inference_engine_test",
+    srcs = ["inference_engine_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":inference_engine",
+    ],
+)
+
 py_library(
     name = "model",
     srcs = ["__init__.py"],
@@ -112,6 +124,7 @@ py_library(
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
         "//snowflake/ml/model/batch",
+        "//snowflake/ml/model/models:huggingface",
         "//snowflake/ml/model/models:huggingface_pipeline",
     ],
 )

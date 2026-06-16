@@ -1,6 +1,60 @@
 # Release History
 
-## 1.42.0
+## 1.43.0
+
+### New Features
+
+* Registry: `inference_engine_options["engine"]` now accepts case-insensitive strings in addition to
+  `InferenceEngine` enum members. Supported values are `"vllm"` and `"python_generic"` (for example,
+  `"vLLM"`, `"VLLM"`, and `"PYTHON_GENERIC"` are all accepted). This applies to `ModelVersion.create_service()`
+  and `ModelVersion.run_batch()`.
+
+```python
+from snowflake.ml.registry import Registry
+
+registry = Registry(session)
+mv = registry.get_model("my_model").version("v1")
+
+mv.create_service(
+    service_name="my_vllm_service",
+    service_compute_pool="GPU_COMPUTE_POOL",
+    gpu_requests="1",
+    inference_engine_options={
+        "engine": "vLLM",
+        "engine_args_override": ["--max-model-len=4096"],
+    },
+)
+
+job = mv.run_batch(
+    compute_pool="GPU_COMPUTE_POOL",
+    X=input_df,
+    output_spec=output_spec,
+    inference_engine_options={
+        "engine": "python_generic",
+    },
+)
+```
+
+### Bug Fixes
+
+* Registry: Fixed `explain()` failing with type mismatch errors when passing a Snowpark DataFrame.
+  Snowpark DataFrame columns are now explicitly cast to match model signature types before SQL
+  generation. Table functions (used by `explain`) enforce stricter type coercion than scalar functions
+  (used by `predict`), so columns that were implicitly coerced for `predict` would be rejected by
+  `explain`.
+
+### Behavior Changes
+
+* Registry: `SentenceTransformers` models no longer hard-code a default inference batch size of 32.
+  When `batch_size` is not specified at `log_model` time and is not overridden at inference, the
+  `sentence-transformers` library default is used. To pin a specific size, pass `batch_size` via
+  `log_model(..., options={"batch_size": N})` or as an inference-time parameter. All
+  `SentenceTransformers` models logged with this release require a client/serving runtime on version
+  1.43.0 or later (regardless of whether `batch_size` was specified).
+
+### Deprecations
+
+## 1.42.0 (2026-06-11)
 
 ### New Features
 

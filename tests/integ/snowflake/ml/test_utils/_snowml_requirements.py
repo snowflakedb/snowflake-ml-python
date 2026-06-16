@@ -11,6 +11,7 @@ REQUIREMENTS = [
     "h2>=4.3.0,<5",
     "importlib_resources>=6.1.1, <7",
     "numpy>=1.23,<3",
+    "orjson>=3.11.6,<4",
     "packaging>=20.9,<26",
     "pandas>=2.1.4,<3",
     "platformdirs<5",

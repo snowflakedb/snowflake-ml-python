@@ -82,6 +82,7 @@ from snowflake.snowpark.types import DataType, StructType
 
 if TYPE_CHECKING:
     from snowflake.ml.feature_store.feature_view import FeatureView, FeatureViewSlice
+    from snowflake.snowpark import Session
 
 
 @dataclass(frozen=True)
@@ -288,6 +289,7 @@ class FeatureViewSpecBuilder:
         schema: str,
         name: str,
         version: str,
+        session: Optional[Session] = None,
     ) -> None:
         """Initialize the builder with feature view identity and kind.
 
@@ -297,12 +299,18 @@ class FeatureViewSpecBuilder:
             schema: Schema name.
             name: Feature view name.
             version: Feature view version.
+            session: Optional Snowpark session used to read upstream
+                FeatureView column shapes from the materialized DT/View, so
+                source column shapes match the upstream's stored
+                ``OutputColumn`` for the Online Service exact-shape check.
+                When ``None``, falls back to ``output_schema``.
         """
         self._kind = kind
         self._database = database
         self._schema = schema
         self._name = name
         self._version = version
+        self._session = session
 
         # State — set by builder methods, consumed at build()
         self._offline_configs: list[OfflineTableConfig] = []
@@ -459,13 +467,15 @@ class FeatureViewSpecBuilder:
             elif isinstance(src, RequestSource):
                 self._sources.append(self._convert_request_source(src))
             elif isinstance(src, FeatureViewSlice):
-                converted = self._convert_feature_view_slice(src)
+                materialized_schema = self._resolve_materialized_schema(src.feature_view_ref)
+                converted = self._convert_feature_view_slice(src, materialized_schema=materialized_schema)
                 self._sources.append(converted)
                 key = (converted.name, converted.source_version)
                 self._source_kinds[key] = FeatureViewSpecBuilder._kind_of_fv(src.feature_view_ref)
                 self._append_derived_entity_columns(src.feature_view_ref.ordered_entity_columns)
             elif isinstance(src, FeatureView):
-                converted = self._convert_feature_view(src)
+                materialized_schema = self._resolve_materialized_schema(src)
+                converted = self._convert_feature_view(src, materialized_schema=materialized_schema)
                 self._sources.append(converted)
                 key = (converted.name, converted.source_version)
                 self._source_kinds[key] = FeatureViewSpecBuilder._kind_of_fv(src)
@@ -473,6 +483,46 @@ class FeatureViewSpecBuilder:
             else:
                 raise ValueError(f"Unsupported source type: {type(src).__name__}")
         return self
+
+    def _resolve_materialized_schema(self, fv: FeatureView) -> Optional[StructType]:
+        """Return the upstream FeatureView's materialized DT/View schema, or None to fall back to ``fv.output_schema``.
+
+        Returns ``None`` when no session is available, or for source kinds whose
+        stored shapes do not come from a DT describe:
+
+          - RTFVs have no backing DT / View.
+          - Tiled FVs expose columns derived from aggregation specs.
+          - Streaming FVs' stored shapes come from ``feature_df`` (the
+            authoring view); a downstream source must use the same
+            ``output_schema`` to stay in lock-step.
+
+        Args:
+            fv: The upstream FeatureView source.
+
+        Returns:
+            The materialized Snowpark ``StructType``, or ``None`` to fall back.
+
+        Raises:
+            ValueError: If the upstream's materialized table cannot be read
+                (e.g. its Dynamic Table has not finished its initial refresh).
+        """
+        if self._session is None:
+            return None
+        if fv.realtime_config is not None:
+            return None
+        if fv.is_tiled or fv.is_streaming:
+            return None
+        from snowflake.snowpark.exceptions import SnowparkSQLException
+
+        try:
+            schema = self._session.table(fv.fully_qualified_name()).schema
+        except SnowparkSQLException as e:
+            raise ValueError(
+                f"feature retrieval: could not read the materialized schema of upstream feature view "
+                f"'{fv.name}' (version '{fv.version}'). Its dynamic table may not have "
+                f"completed its initial refresh yet; retry once it is ready."
+            ) from e
+        return schema if isinstance(schema, StructType) else None
 
     def _append_derived_entity_columns(self, cols: Iterable[str]) -> None:
         """Append upstream entity columns to ``self._derived_entity_columns``.
@@ -706,7 +756,7 @@ class FeatureViewSpecBuilder:
         )
 
     @staticmethod
-    def _columns_from_feature_view(fv: FeatureView) -> list[FSColumn]:
+    def _columns_from_feature_view(fv: FeatureView, materialized_schema: Optional[StructType] = None) -> list[FSColumn]:
         """Extract feature columns from a FeatureView's output schema.
 
         RTFV sources rehydrate with an empty ``_feature_desc`` (so
@@ -720,8 +770,15 @@ class FeatureViewSpecBuilder:
         ``output_schema`` exposes ``_PARTIAL_*`` tile columns, not the FV's logical
         aggregation outputs.
 
+        For non-tiled, non-RTFV sources, when ``materialized_schema`` is
+        provided, column shapes are read from it instead of the authoring-time
+        ``output_schema`` so they match the upstream FV's stored
+        ``OutputColumn`` for the Online Service exact-shape check.
+
         Args:
             fv: The FeatureView whose feature columns to extract.
+            materialized_schema: Optional materialized DT/View schema. Only
+                consulted for the non-tiled, non-RTFV branch.
 
         Returns:
             FSColumns for the source's feature columns, in declaration order.
@@ -741,20 +798,21 @@ class FeatureViewSpecBuilder:
                 if not spec.function.is_secondary_key_array()
             ]
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
-        return [_make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields if f.name in feature_name_set]
+        schema = materialized_schema if materialized_schema is not None else fv.output_schema
+        return [_make_fs_column(f.name, f.datatype) for f in schema.fields if f.name in feature_name_set]
 
     @staticmethod
-    def _convert_feature_view(fv: FeatureView) -> Source:
+    def _convert_feature_view(fv: FeatureView, materialized_schema: Optional[StructType] = None) -> Source:
         """Convert a FeatureView to a spec Source with source_type=FEATURES."""
         return Source(
             name=fv.name.resolved(),
             source_type=SourceType.FEATURES,
-            columns=FeatureViewSpecBuilder._columns_from_feature_view(fv),
+            columns=FeatureViewSpecBuilder._columns_from_feature_view(fv, materialized_schema),
             source_version=str(fv.version) if fv.version else None,
         )
 
     @staticmethod
-    def _convert_feature_view_slice(fvs: FeatureViewSlice) -> Source:
+    def _convert_feature_view_slice(fvs: FeatureViewSlice, materialized_schema: Optional[StructType] = None) -> Source:
         """Convert a FeatureViewSlice to a spec Source containing only the selected columns.
 
         The slice's caller-requested feature order is preserved in ``columns``.
@@ -763,13 +821,15 @@ class FeatureViewSpecBuilder:
 
         Args:
             fvs: The feature view slice to convert.
+            materialized_schema: Optional materialized DT/View schema,
+                forwarded to :meth:`_columns_from_feature_view`.
 
         Returns:
             A FEATURES Source whose ``columns`` are exactly the slice's selected
             columns, in the slice's requested order.
         """
         fv = fvs.feature_view_ref
-        all_cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        all_cols = FeatureViewSpecBuilder._columns_from_feature_view(fv, materialized_schema)
         col_by_name = {c.name: c for c in all_cols}
         selected_cols = [col_by_name[n.resolved()] for n in fvs.names if n.resolved() in col_by_name]
         return Source(

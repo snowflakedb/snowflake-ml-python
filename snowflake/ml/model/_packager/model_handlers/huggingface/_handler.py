@@ -75,6 +75,8 @@ class TransformersPipelineHandler(
             "transformers.Pipeline",
         ]
     ]:
+        if isinstance(model, huggingface_base.SentenceTransformer):
+            return False
         if type_utils.LazyType("transformers.Pipeline").isinstance(model):
             return True
         if isinstance(model, huggingface_pipeline.HuggingFacePipelineModel):
@@ -584,12 +586,16 @@ def _get_task_handler(
         "audio-text-to-text": audio_text_to_text.AudioTextToTextTaskHandler,
     }
 
-    handler_cls = _TASK_HANDLER_CLASSES.get(raw_model.task)
+    task = raw_model.task
+    if task is None:
+        return _default.DefaultTaskHandler()
+
+    handler_cls = _TASK_HANDLER_CLASSES.get(task)
     if handler_cls is not None:
         return handler_cls()
 
     # translation tasks have variable suffixes (e.g., translation_en_to_fr)
-    if raw_model.task.startswith("translation"):
+    if task.startswith("translation"):
         return translation.TranslationTaskHandler()
 
     return _default.DefaultTaskHandler()
