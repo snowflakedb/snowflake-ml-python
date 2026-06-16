@@ -70,8 +70,10 @@ from snowflake.ml.feature_store.feature_view import (
 )
 from snowflake.ml.feature_store.metadata_manager import (
     AggregationMetadata,
+    AppendOnlyMetadata,
     FeatureStoreMetadataManager,
     FeatureViewMetadataConfig,
+    FvSourceRefsMetadata,
     MetadataObjectType,
     MetadataType,
     RealtimeConfigMetadata,
@@ -85,6 +87,7 @@ from snowflake.ml.feature_store.spec.builder import (
     SnowflakeTableInfo,
 )
 from snowflake.ml.feature_store.spec.enums import (
+    ENTITY_TAG_PREFIX,
     FeatureAggregationMethod,
     FeatureViewKind,
     TableType,
@@ -109,6 +112,7 @@ from snowflake.snowpark._internal import utils as snowpark_utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 from snowflake.snowpark.types import (
     ArrayType,
+    BooleanType,
     DataType,
     StringType,
     StructField,
@@ -209,7 +213,10 @@ def _store_type_from_oft_show_row(row: Row) -> OnlineStoreType:
     return OnlineStoreType.HYBRID_TABLE
 
 
-_ENTITY_TAG_PREFIX = "SNOWML_FEATURE_STORE_ENTITY_"
+# Module-local alias kept so existing callers continue to reference
+# ``_ENTITY_TAG_PREFIX``; the canonical value lives in
+# :data:`snowflake.ml.feature_store.spec.enums.ENTITY_TAG_PREFIX`.
+_ENTITY_TAG_PREFIX = ENTITY_TAG_PREFIX
 _FEATURE_STORE_OBJECT_TAG = "SNOWML_FEATURE_STORE_OBJECT"
 _FEATURE_VIEW_METADATA_TAG = "SNOWML_FEATURE_VIEW_METADATA"
 _SNAPSHOT_STATUS_TABLE = "SNOWML_SNAPSHOT_STATUS"
@@ -323,29 +330,72 @@ _DT_INITIALIZE_PATTERN = re.compile(
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
 
-# _LIST_FEATURE_VIEW_SCHEMA acts as a metadata blueprint for columns in the DataFrame.
+# ``list_feature_views`` output schemas. Row builders always populate the verbose
+# schema; non-verbose callers receive _LIST_FEATURE_VIEW_SCHEMA after trimming
+# verbose-only trailing fields.
 # ``kind`` is the per-row discriminator: BATCH / STREAMING / REALTIME.
-_LIST_FEATURE_VIEW_SCHEMA = StructType(
-    [
-        StructField("name", StringType()),
-        StructField("version", StringType()),
-        StructField("database_name", StringType()),
-        StructField("schema_name", StringType()),
-        StructField("created_on", TimestampType()),
-        StructField("owner", StringType()),
-        StructField("desc", StringType()),
-        StructField("entities", ArrayType(StringType())),
-        StructField("refresh_freq", StringType()),
-        StructField("refresh_mode", StringType()),
-        StructField("scheduling_state", StringType()),
-        StructField("warehouse", StringType()),
-        StructField("cluster_by", StringType()),
-        StructField("online_config", StringType()),
-        StructField("storage_config", StringType()),
-        StructField("stream_config", StringType()),
-        StructField("kind", StringType()),
-    ]
-)
+_LIST_FEATURE_VIEW_BASE_FIELDS = [
+    StructField("name", StringType()),
+    StructField("version", StringType()),
+    StructField("database_name", StringType()),
+    StructField("schema_name", StringType()),
+    StructField("created_on", TimestampType()),
+    StructField("owner", StringType()),
+    StructField("desc", StringType()),
+    StructField("entities", ArrayType(StringType())),
+    StructField("refresh_freq", StringType()),
+    StructField("refresh_mode", StringType()),
+    StructField("scheduling_state", StringType()),
+    StructField("warehouse", StringType()),
+    StructField("cluster_by", StringType()),
+    StructField("online_config", StringType()),
+    StructField("storage_config", StringType()),
+    StructField("stream_config", StringType()),
+    StructField("kind", StringType()),
+    StructField("append_only", BooleanType()),
+]
+
+_LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS = [
+    # JSON-encoded authored source-ref list, or ``None`` when no
+    # ``FV_SOURCE_REFS`` metadata row was written for this FV.
+    StructField("source_refs", StringType()),
+    StructField("backup_source", StringType()),
+]
+
+_LIST_FEATURE_VIEW_SCHEMA = StructType(_LIST_FEATURE_VIEW_BASE_FIELDS)
+_LIST_FEATURE_VIEW_SCHEMA_VERBOSE = StructType(_LIST_FEATURE_VIEW_BASE_FIELDS + _LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS)
+
+
+def _create_list_feature_views_dataframe(
+    session: Session,
+    output_values: list[list[Any]],
+    output_values_extra: list[list[Any]],
+    *,
+    verbose: bool,
+) -> DataFrame:
+    """Build the ``list_feature_views`` result DataFrame.
+
+    ``output_values`` contains base-schema fields matching
+    ``_LIST_FEATURE_VIEW_SCHEMA``. ``output_values_extra`` contains the
+    verbose-only fields matching ``_LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS``.
+    When ``verbose=True`` the two are merged per-row to produce the verbose
+    schema; otherwise only ``output_values`` is used.
+
+    Args:
+        session: Snowpark session used to materialize the listing DataFrame.
+        output_values: Base-field rows populated by ``_extract_feature_view_info``
+            and RTFV listing helpers.
+        output_values_extra: Verbose-only field rows, one per row in
+            ``output_values``, in the same order.
+        verbose: When True, include verbose-only columns such as ``backup_source``.
+
+    Returns:
+        Snowpark DataFrame whose schema matches ``verbose``.
+    """
+    if verbose:
+        merged = [base + extra for base, extra in zip(output_values, output_values_extra)]
+        return session.create_dataframe(merged, schema=_LIST_FEATURE_VIEW_SCHEMA_VERBOSE)
+    return session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
 
 
 # Per-row kind discriminator emitted by ``list_feature_views``.
@@ -943,7 +993,7 @@ class FeatureStore:
 
         # RTFVs are OFT-only (no DT/View, no preamble/postamble).
         if feature_view.is_realtime_feature_view:
-            logger.warning("RealtimeFeatureView is in private preview since 1.38.0. Do not use in production.")
+            logger.warning("RealtimeFeatureView is in Public Preview since 1.43.0.")
             from snowflake.ml.feature_store.realtime_registration import (
                 register_realtime_feature_view,
             )
@@ -980,9 +1030,7 @@ class FeatureStore:
 
             if feature_view.online and feature_view.online_config is not None:
                 if feature_view.online_config.store_type == OnlineStoreType.POSTGRES:
-                    logger.warning(
-                        "POSTGRES online store type is in private preview since 1.33.0. " "Do not use in production."
-                    )
+                    logger.warning("POSTGRES online store type is in Public Preview since 1.43.0.")
                     online_service.assert_online_service_running_with_query_endpoint(
                         self._session,
                         self._config.database,
@@ -1068,6 +1116,13 @@ class FeatureStore:
                         if feature_view.feature_aggregation_method is not None
                         else None
                     ),
+                    # Stored in FEATURE_SPECS so ``get_feature_view``
+                    # reconstructs the exact secondary key order registered.
+                    aggregation_secondary_keys=(
+                        list(feature_view.aggregation_secondary_keys)
+                        if feature_view.aggregation_secondary_keys
+                        else None
+                    ),
                 )
                 # Convert SqlIdentifier keys to strings if descriptions exist
                 descs = None
@@ -1088,10 +1143,29 @@ class FeatureStore:
                     feature_view.name, version, agg_metadata, descs, fv_metadata_config=fv_meta_config
                 )
 
+            # Persist the authored source-ref list when the caller
+            # supplied one; callers that leave ``source_refs`` unset skip
+            # the metadata write and no ``FV_SOURCE_REFS`` row is created.
+            if feature_view.source_refs:
+                self._metadata_manager.save_feature_view_source_refs(
+                    feature_view.name,
+                    version,
+                    FvSourceRefsMetadata(sources=list(feature_view.source_refs)),
+                )
+
             # Step 4: Save rollup metadata for PIT-correct training queries
             if feature_view._rollup_metadata is not None:
                 self._metadata_manager.save_rollup_metadata(
                     feature_view.name, version, feature_view._rollup_metadata.to_dict()
+                )
+
+            # Step 4b: Persist append-only config (backup_source) in the
+            # metadata table — not the DT tag — to avoid the 256-char tag limit.
+            if feature_view.append_only and feature_view.backup_source is not None:
+                self._metadata_manager.save_append_only_metadata(
+                    feature_view.name,
+                    str(version),
+                    AppendOnlyMetadata(backup_source=feature_view.backup_source),
                 )
 
             # Step 5: Streaming postamble (metadata + ref_count + server-side backfill task graph)
@@ -1134,8 +1208,12 @@ class FeatureStore:
             # We can't rollback in case of overwrite.
             if not overwrite:
                 self._rollback_created_resources(created_resources)
-                # Cleanup metadata (covers both tiled and streaming FVs)
-                if feature_view.is_tiled or streaming_preamble is not None:
+                # Cleanup metadata (covers tiled, streaming, and append-only config)
+                if (
+                    feature_view.is_tiled
+                    or streaming_preamble is not None
+                    or (feature_view.append_only and feature_view.backup_source is not None)
+                ):
                     self._metadata_manager.delete_feature_view_metadata(str(feature_view.name), version)
                 # Only decrement ref_count if postamble successfully incremented it
                 if streaming_preamble is not None and streaming_ref_count_incremented:
@@ -1281,9 +1359,7 @@ class FeatureStore:
             SnowflakeMLException: [RuntimeError] Failed to update feature view.
         """
         if online_config is not None and online_config.store_type == OnlineStoreType.POSTGRES:
-            logger.warning(
-                "POSTGRES online store type is in private preview since 1.33.0. " "Do not use in production."
-            )
+            logger.warning("POSTGRES online store type is in Public Preview since 1.43.0.")
 
         # Step 1: Validate inputs
         feature_view = self._validate_feature_view_name_and_version_input(name, version)
@@ -1675,6 +1751,7 @@ class FeatureStore:
         *,
         entity_name: Optional[str] = None,
         feature_view_name: Optional[str] = None,
+        verbose: bool = False,
     ) -> DataFrame:
         """
         List FeatureViews in the FeatureStore.
@@ -1684,9 +1761,18 @@ class FeatureStore:
         Args:
             entity_name: Entity name.
             feature_view_name: FeatureView name.
+            verbose: When True, include the ``source_refs`` and ``backup_source`` columns
+                in the output. ``source_refs`` (string, nullable) is the JSON-encoded list
+                of authored source bindings captured at registration time (``None`` when no
+                source refs were recorded). ``backup_source`` (string, nullable) contains
+                the fully-qualified name of the historical snapshot table cloned at
+                registration time (only set for append-only feature views registered with a
+                ``backup_source``; ``None`` otherwise). Defaults to False.
 
         Returns:
-            FeatureViews information as a Snowpark DataFrame.
+            FeatureViews information as a Snowpark DataFrame. Each row always includes
+            ``append_only`` (bool). ``source_refs`` and ``backup_source`` (both string,
+            nullable) are included only when ``verbose=True``.
 
         Example::
 
@@ -1711,14 +1797,15 @@ class FeatureStore:
 
         if entity_name is not None:
             entity_name = SqlIdentifier(entity_name)
-            return self._optimized_find_feature_views(entity_name, feature_view_name)
+            return self._optimized_find_feature_views(entity_name, feature_view_name, verbose=verbose)
         else:
             fv_rows = self._get_fv_backend_representations(feature_view_name, prefix_match=True)
 
             output_values: list[list[Any]] = []
+            output_values_extra: list[list[Any]] = []
             iceberg_config_cache: dict[str, StorageConfig] = {}
             for row, _ in fv_rows:
-                self._extract_feature_view_info(row, output_values, iceberg_config_cache)
+                self._extract_feature_view_info(row, output_values, output_values_extra, iceberg_config_cache)
 
             from snowflake.ml.feature_store.realtime_registration import (
                 append_realtime_listing_rows,
@@ -1728,11 +1815,14 @@ class FeatureStore:
                 feature_store=self,
                 feature_view_name_prefix=feature_view_name,
                 output_values=output_values,
+                output_values_extra=output_values_extra,
                 fv_kind_realtime=_FV_KIND_REALTIME,
                 default_storage_config_json=_DEFAULT_STORAGE_CONFIG_JSON,
             )
 
-            return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
+            return _create_list_feature_views_dataframe(
+                self._session, output_values, output_values_extra, verbose=verbose
+            )
 
     @dispatch_decorator()
     def get_feature_view(self, name: str, version: str) -> FeatureView:
@@ -2521,7 +2611,7 @@ class FeatureStore:
 
         # noqa: DAR401
         """
-        logger.warning("FeatureGroup is in private preview since 1.38.0. Do not use in production.")
+        logger.warning("FeatureGroup is in Public Preview since 1.43.0.")
         return fg_mod.register_feature_group(self, feature_group, version)
 
     @telemetry.send_api_usage_telemetry(project=_PROJECT)
@@ -2786,7 +2876,6 @@ class FeatureStore:
     # =========================================================================
 
     @dispatch_decorator()
-    @snowpark_utils.private_preview(version="1.33.0")
     def register_stream_source(self, stream_source: StreamSource) -> StreamSource:
         """
         Register a StreamSource in the FeatureStore.
@@ -2824,6 +2913,7 @@ class FeatureStore:
             -------------------------------------------------------------------------------------...
 
         """
+        logger.warning("StreamSource is in Public Preview since 1.43.0.")
 
         if self._metadata_manager.stream_source_exists(stream_source.name.resolved()):
             warnings.warn(
@@ -7347,10 +7437,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         return self.get_feature_view(feature_view.name, feature_view.version)
 
     def _optimized_find_feature_views(
-        self, entity_name: SqlIdentifier, feature_view_name: Optional[SqlIdentifier]
+        self,
+        entity_name: SqlIdentifier,
+        feature_view_name: Optional[SqlIdentifier],
+        *,
+        verbose: bool = False,
     ) -> DataFrame:
         if not self._validate_entity_exists(entity_name):
-            return self._session.create_dataframe([], schema=_LIST_FEATURE_VIEW_SCHEMA)
+            return _create_list_feature_views_dataframe(self._session, [], [], verbose=verbose)
 
         # TODO: this can be optimized further by directly getting all possible FVs and filter by tag
         # it's easier to rewrite the code once we can remove the tag_reference path
@@ -7361,6 +7455,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         res = self._lookup_tagged_objects(self._get_entity_name(entity_name), filters)
 
         output_values: list[list[Any]] = []
+        output_values_extra: list[list[Any]] = []
         iceberg_config_cache: dict[str, StorageConfig] = {}
         rtfv_oft_entity_names: set[str] = set()
         for r in res:
@@ -7369,7 +7464,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             # ``$ONLINE`` suffix.
             key = SqlIdentifier(r["entityName"], case_sensitive=True)
             if key in fv_maps:
-                self._extract_feature_view_info(fv_maps[key], output_values, iceberg_config_cache)
+                self._extract_feature_view_info(fv_maps[key], output_values, output_values_extra, iceberg_config_cache)
             else:
                 resolved_oft_name = r["entityName"]
                 if resolved_oft_name.endswith(_ONLINE_TABLE_SUFFIX):
@@ -7400,23 +7495,27 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     rtfv_metadata=meta,
                     oft_show_row=oft_row_by_phys.get(oft_phys),
                     output_values=output_values,
+                    output_values_extra=output_values_extra,
                     fv_kind_realtime=_FV_KIND_REALTIME,
                     default_storage_config_json=_DEFAULT_STORAGE_CONFIG_JSON,
                 )
 
-        return self._session.create_dataframe(output_values, schema=_LIST_FEATURE_VIEW_SCHEMA)
+        return _create_list_feature_views_dataframe(self._session, output_values, output_values_extra, verbose=verbose)
 
     def _extract_feature_view_info(
         self,
         row: Row,
         output_values: list[list[Any]],
+        output_values_extra: list[list[Any]],
         iceberg_config_cache: dict[str, StorageConfig],
     ) -> None:
         """Extract feature view information from a backend row.
 
         Args:
             row: Row from SHOW DYNAMIC TABLES or SHOW VIEWS.
-            output_values: List to append extracted values to.
+            output_values: Base-field rows matching ``_LIST_FEATURE_VIEW_SCHEMA``.
+            output_values_extra: Verbose-only field rows matching
+                ``_LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS``.
             iceberg_config_cache: Mutable dictionary mapping table names to StorageConfig.
                 Populated lazily on first Iceberg FV encountered. Caller should pass the same
                 dictionary instance across calls to avoid repeated SHOW ICEBERG TABLES queries.
@@ -7499,7 +7598,22 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         # RTFV rows are emitted separately; this helper only sees DT/View FVs.
         values.append(_FV_KIND_STREAMING if fv_metadata.is_streaming else _FV_KIND_BATCH)
 
+        values.append(fv_metadata.is_append_only)
+
         output_values.append(values)
+
+        # Surface the authored source-ref list (JSON-encoded) when a
+        # ``FV_SOURCE_REFS`` row exists; otherwise leave the column null.
+        # Verbose-only: goes into output_values_extra alongside backup_source.
+        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
+        source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
+
+        backup_source: Optional[str] = None
+        if fv_metadata.is_append_only:
+            append_only_meta = self._metadata_manager.get_append_only_metadata(name, version)
+            if append_only_meta is not None:
+                backup_source = AppendOnlyMetadata.from_dict(append_only_meta).backup_source
+        output_values_extra.append([source_refs_json, backup_source])
 
     def _determine_online_config_from_oft(
         self, name: str, version: str, *, include_online_service_metadata: bool = False
@@ -7661,6 +7775,13 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         feature_granularity = agg_metadata.feature_granularity if agg_metadata else None
         aggregation_specs = agg_metadata.features if agg_metadata else None
         is_tiled = agg_metadata is not None
+        # Restored from the FEATURE_SPECS row; None when no tiling metadata.
+        aggregation_secondary_keys = agg_metadata.aggregation_secondary_keys if agg_metadata else None
+
+        # Rehydrate the authored source-ref list onto the reconstructed
+        # FV when a ``FV_SOURCE_REFS`` row was persisted at register time.
+        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name.identifier(), version)
+        restored_source_refs = source_refs_meta.sources if source_refs_meta is not None else None
 
         if obj_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
             df = self._session.sql(query)
@@ -7682,6 +7803,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             refresh_freq = row["target_lag"]
             if refresh_freq == "DOWNSTREAM":
                 refresh_freq = self._resolve_task_schedule(fv_name, refresh_freq)
+
+            backup_source: Optional[str] = None
+            if fv_metadata.is_append_only:
+                append_only_meta = self._metadata_manager.get_append_only_metadata(name.identifier(), version)
+                if append_only_meta is not None:
+                    backup_source = AppendOnlyMetadata.from_dict(append_only_meta).backup_source
 
             fv = FeatureView._construct_feature_view(
                 name=name,
@@ -7715,8 +7842,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 storage_config=storage_config,
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
+                aggregation_secondary_keys=aggregation_secondary_keys,
                 is_streaming=fv_metadata.is_streaming,
                 append_only=fv_metadata.is_append_only,
+                backup_source=backup_source,
+                source_refs=restored_source_refs,
             )
             self._hydrate_postgres_online_service(fv)
 
@@ -7774,8 +7904,10 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 online_config=online_config,
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
+                aggregation_secondary_keys=aggregation_secondary_keys,
                 storage_config=storage_config,
                 is_streaming=fv_metadata.is_streaming,
+                source_refs=restored_source_refs,
             )
             self._hydrate_postgres_online_service(fv)
 

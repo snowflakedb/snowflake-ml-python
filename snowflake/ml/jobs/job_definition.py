@@ -25,7 +25,6 @@ from snowflake.ml.jobs._utils import (
     type_utils,
 )
 from snowflake.snowpark import context as sp_context
-from snowflake.snowpark._internal import utils
 from snowflake.snowpark.exceptions import SnowparkSQLException
 
 _Args = ParamSpec("_Args")
@@ -349,7 +348,6 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         )
 
     @classmethod
-    @utils.private_preview(version="1.26.0")
     @telemetry.send_api_usage_telemetry(
         project=_PROJECT,
         func_params_to_log=[

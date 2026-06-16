@@ -21,10 +21,7 @@ from snowflake.ml._internal.utils.sql_identifier import (
     SqlIdentifier,
     to_sql_identifiers,
 )
-from snowflake.ml.feature_store import (
-    feature_store,
-    feature_view_append_only_validation,
-)
+from snowflake.ml.feature_store import feature_view_append_only_validation
 from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationType
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
@@ -747,7 +744,7 @@ class FeatureView(lineage_node.LineageNode):
                 ``feature_df``, and is not supported with lifetime windows or list aggregations.
 
                 .. note::
-                    This feature is currently in private preview.
+                    This feature is currently in Public Preview.
             feature_aggregation_method: The aggregation method for tiled streaming feature views.
                 Supports ``FeatureAggregationMethod.TILES`` (default) or
                 ``FeatureAggregationMethod.CONTINUOUS``.  Only applicable to streaming feature
@@ -774,7 +771,7 @@ class FeatureView(lineage_node.LineageNode):
                 ``feature_df``.  Online storage is always enabled with the ``POSTGRES`` store type.
 
                 .. note::
-                    This feature is currently in private preview.
+                    This feature is currently in Public Preview.
             realtime_config: Configuration for realtime feature views using
                 :class:`RealtimeConfig`. When provided, the feature view is request-time-computed
                 (no offline backing); ``compute_fn`` runs against per-row request data joined
@@ -786,7 +783,7 @@ class FeatureView(lineage_node.LineageNode):
                 ``POSTGRES`` store type.
 
                 .. note::
-                    This feature is currently in private preview.
+                    This feature is currently in Public Preview.
             _kwargs: Reserved kwargs for system generated args.
 
                 .. caution::
@@ -895,8 +892,7 @@ class FeatureView(lineage_node.LineageNode):
         if aggregation_secondary_keys is not None:
             snowpark_utils.warning(
                 "FeatureView.aggregation_secondary_keys",
-                "Parameter aggregation_secondary_keys is in private preview since 1.38.0. "
-                "Do not use it in production.",
+                "Parameter aggregation_secondary_keys is in Public Preview since 1.43.0.",
             )
             if len(aggregation_secondary_keys) > 1:
                 raise ValueError(
@@ -1029,6 +1025,13 @@ class FeatureView(lineage_node.LineageNode):
         self._stream_config = stream_config
         self._is_streaming_marker: bool = _kwargs.pop("_is_streaming_marker", False)
         self._transformation_fn_source: Optional[str] = None  # Populated from metadata for reconstructed FVs
+
+        # Optional authored source-ref list. When the caller passes one,
+        # ``FeatureStore.register_feature_view`` persists it under
+        # ``MetadataType.FV_SOURCE_REFS`` and ``get_feature_view``
+        # rehydrates the same list onto reconstructed FVs; callers that
+        # leave it ``None`` skip the metadata write entirely.
+        self._source_refs: Optional[list[dict[str, Any]]] = _kwargs.pop("_source_refs", None)
         if self._stream_config is not None:
             if online_config is not None and online_config.enable is False:
                 raise ValueError("Streaming feature views require online to be enabled.")
@@ -1578,6 +1581,22 @@ class FeatureView(lineage_node.LineageNode):
     def aggregation_secondary_keys(self) -> Optional[list[str]]:
         """Get the FV-level secondary aggregation keys, if any."""
         return self._aggregation_secondary_keys
+
+    @property
+    def source_refs(self) -> Optional[list[dict[str, Any]]]:
+        """Authored source-ref list, if one was supplied at construction.
+
+        When set, :meth:`FeatureStore.register_feature_view` persists
+        these entries under :attr:`MetadataType.FV_SOURCE_REFS` and
+        ``get_feature_view`` returns the same list on the reconstructed
+        FV. Callers that did not supply a list see ``None`` here and no
+        metadata row is written.
+
+        Returns:
+            The list of source-ref dicts as supplied, or ``None`` when
+            no source refs were attached to this FV.
+        """
+        return self._source_refs
 
     @property
     def feature_aggregation_method(self) -> Optional[FeatureAggregationMethod]:
@@ -2391,6 +2410,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
     @staticmethod
     def _load_from_compact_repr(session: Session, serialized_repr: str) -> Union[FeatureView, FeatureViewSlice]:
+        from snowflake.ml.feature_store import (
+            feature_store,  # lazy import — avoids circular eager load
+        )
+
         compact_repr = _CompactRepresentation.from_json(serialized_repr)
 
         fs = feature_store.FeatureStore(
@@ -2405,6 +2428,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
     @staticmethod
     def _load_from_lineage_node(session: Session, name: str, version: str) -> FeatureView:
+        from snowflake.ml.feature_store import (
+            feature_store,  # lazy import — avoids circular eager load
+        )
+
         db_name, feature_store_name, feature_view_name = identifier.parse_schema_level_object_identifier(name)
 
         session_warehouse = session.get_current_warehouse()
@@ -2442,12 +2469,14 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
         aggregation_specs: Optional[list[AggregationSpec]] = None,
+        aggregation_secondary_keys: Optional[list[str]] = None,
         storage_config: Optional[StorageConfig] = None,
         is_streaming: bool = False,
         append_only: bool = False,
         backup_source: Optional[str] = None,
         is_realtime: bool = False,
         realtime_config: Optional[RealtimeConfig] = None,
+        source_refs: Optional[list[dict[str, Any]]] = None,
     ) -> FeatureView:
         if is_realtime:
             # Realtime FVs have no feature_df, no DT/View, no schema inference.
@@ -2480,8 +2509,10 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 online_config=online_config,
                 feature_granularity=feature_granularity,
                 _aggregation_specs=aggregation_specs,
+                aggregation_secondary_keys=aggregation_secondary_keys,
                 storage_config=storage_config,
                 _is_streaming_marker=is_streaming,
+                _source_refs=source_refs,
                 append_only=append_only,
                 backup_source=backup_source,
             )

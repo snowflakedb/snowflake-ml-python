@@ -138,6 +138,7 @@ py_library(
     name = "inference_engine_utils",
     srcs = ["inference_engine_utils.py"],
     deps = [
+        "//snowflake/ml/model:inference_engine",
         "//snowflake/ml/model/_client/ops:service_ops",
     ],
 )

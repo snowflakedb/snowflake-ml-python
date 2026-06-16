@@ -16,6 +16,7 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureViewStatus,
     FeatureViewVersion,
 )
+from snowflake.ml.feature_store.metadata_manager import AppendOnlyMetadata
 
 
 def _create_feature_store_with_mocks() -> Any:
@@ -914,6 +915,16 @@ class RefreshFeatureViewSnapshotTest(absltest.TestCase):
 class ComposeFeatureViewAppendOnlyTest(absltest.TestCase):
     """Tests that _compose_feature_view correctly propagates append_only from metadata."""
 
+    def test_append_only_metadata_roundtrip(self) -> None:
+        metadata = AppendOnlyMetadata(backup_source="DB.SCH.HISTORY")
+        restored = AppendOnlyMetadata.from_dict(metadata.to_dict())
+        self.assertEqual(restored.backup_source, "DB.SCH.HISTORY")
+
+    def test_append_only_metadata_roundtrip_without_backup_source(self) -> None:
+        metadata = AppendOnlyMetadata()
+        restored = AppendOnlyMetadata.from_dict(metadata.to_dict())
+        self.assertIsNone(restored.backup_source)
+
     def test_compose_feature_view_preserves_append_only(self) -> None:
         """_compose_feature_view should set append_only=True when metadata has is_append_only=True."""
         from unittest.mock import patch
@@ -965,14 +976,17 @@ class ComposeFeatureViewAppendOnlyTest(absltest.TestCase):
         fs._lookup_feature_view_metadata = MagicMock(return_value=(metadata, "SELECT 1"))
         fs._determine_online_config_from_oft = MagicMock(return_value='{"enable": false}')
         fs._metadata_manager.get_feature_specs.return_value = None
+        fs._metadata_manager.get_append_only_metadata.return_value = {"backup_source": "DB.SCH.HISTORY"}
         fs._extract_cluster_by_columns = MagicMock(return_value=None)
 
         with patch.object(FeatureView, "_construct_feature_view", wraps=FeatureView._construct_feature_view) as mock_ct:
             fv = fs._compose_feature_view(mock_row, _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW, [entity_row])
             _, kwargs = mock_ct.call_args
             self.assertTrue(kwargs.get("append_only", False))
+            self.assertEqual(kwargs.get("backup_source"), "DB.SCH.HISTORY")
 
         self.assertTrue(fv.append_only)
+        self.assertEqual(fv.backup_source, "DB.SCH.HISTORY")
 
 
 class AppendOnlyJoinValidationTest(absltest.TestCase):

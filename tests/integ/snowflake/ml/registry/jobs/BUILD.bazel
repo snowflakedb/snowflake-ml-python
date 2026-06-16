@@ -181,6 +181,7 @@ py_test(
     tags = ["feature:model_serving"],
     deps = [
         ":registry_batch_inference_test_base",
+        "//snowflake/ml/model/models:huggingface",
     ],
 )
 

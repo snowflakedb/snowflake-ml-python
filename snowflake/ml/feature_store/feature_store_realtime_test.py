@@ -406,13 +406,27 @@ class ListRealtimeFeatureViewsTest(absltest.TestCase):
         fs.list_feature_views()
         rows: list[list[Any]] = captured["values"]
         self.assertEqual(len(rows), 1)
-        # 17 fields total in the schema; kind is the last column.
-        self.assertEqual(rows[0][-1], _FV_KIND_REALTIME)
+        # verbose=False (default): only base fields are passed to
+        # create_dataframe; verbose-only fields live in output_values_extra.
+        # BASE has 18 columns: ..., kind (16), append_only (17).
+        # source_refs is verbose-only and is not present in base rows.
+        self.assertEqual(len(rows[0]), 18)
+        self.assertEqual(rows[0][16], _FV_KIND_REALTIME)
+        self.assertFalse(rows[0][17])  # append_only — always False for RTFV
         self.assertEqual(rows[0][0], "MY_RTFV")
-        # Entity-names column is read from persisted metadata.
         self.assertEqual(rows[0][7], ["USER"])
         get_fv_spy.assert_not_called()
         self.assertEqual(rows[0][1], "v1")
+
+        captured.clear()
+        fs.list_feature_views(verbose=True)
+        verbose_rows: list[list[Any]] = captured["values"]
+        self.assertEqual(len(verbose_rows), 1)
+        # verbose=True: base + extra fields are merged (20 total).
+        # Extra fields: source_refs (18), backup_source (19).
+        self.assertEqual(len(verbose_rows[0]), 20)
+        self.assertIsNone(verbose_rows[0][18])  # source_refs — always None for RTFV
+        self.assertIsNone(verbose_rows[0][19])  # backup_source — always None for RTFV
 
 
 if __name__ == "__main__":

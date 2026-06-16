@@ -165,6 +165,9 @@
   version_requirements: '>=1.23,<3'
   tags:
     - build_essential
+- name_pypi: orjson
+  dev_version_pypi: 3.11.0
+  version_requirements_pypi: '>=3.11.0,<4'
 - name: packaging
   dev_version: '24.1'
   version_requirements: '>=20.9,<26'

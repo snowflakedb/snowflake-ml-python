@@ -18,6 +18,7 @@ import pandas as pd
 from absl.testing import absltest
 from feature_store_streaming_fv_integ_base import StreamingFeatureViewIntegTestBase
 
+from snowflake.ml.feature_store.feature_group import FeatureGroup
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     OnlineConfig,
@@ -116,6 +117,66 @@ class FeatureStoreOftVarcharLengthIntegTest(StreamingFeatureViewIntegTestBase, a
             registered_rtfv = self.fs.register_feature_view(rtfv, "v1")
             self.assertIsNotNone(registered_rtfv)
             self.assertTrue(registered_rtfv.is_realtime_feature_view)
+        finally:
+            try:
+                self._session.sql(f"DROP TABLE IF EXISTS {src_table}").collect()
+            except Exception as e:
+                logger.warning("Source table cleanup failed: %s", e)
+
+    def test_feature_group_over_non_tiled_batch_fv_with_unconstrained_varchar_registers(self) -> None:
+        """A FeatureGroup over a batch FV that exposes an unconstrained-VARCHAR
+        feature must register: the FG source column shape comes from the
+        upstream's materialized DT schema, matching the upstream's stored
+        OutputColumn for the Online Service exact-shape check.
+        """
+        suffix = uuid.uuid4().hex[:8].upper()
+        src_table = self._make_source_table(suffix)
+        batch_fv_name = f"OFT_VARCHAR_FG_BATCH_{suffix}"
+        fg_name = f"OFT_VARCHAR_FG_{suffix}"
+
+        feature_df = self._session.sql(
+            f"""
+            SELECT
+                USER_ID,
+                TO_JSON(ARRAY_AGG(DISTINCT DEVICE_ID)) AS DEVICE_LIST,
+                MAX(EVENT_TIME) AS EVENT_TIME,
+                SUM(AMOUNT) AS TOTAL_AMOUNT
+            FROM {src_table}
+            GROUP BY USER_ID
+            """
+        )
+        device_list_field = next(f for f in feature_df.schema.fields if f.name.upper().strip('"') == "DEVICE_LIST")
+        self.assertEqual(
+            device_list_field.datatype.length,
+            134217728,
+            "Precondition broken: TO_JSON(...) no longer reports an unconstrained VARCHAR length.",
+        )
+
+        batch_fv = FeatureView(
+            name=batch_fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+
+        # FV/FG cleanup is handled by the base class's per-test teardown (registration hook).
+        try:
+            registered_batch = self.fs.register_feature_view(batch_fv, "v1")
+            self.assertIsNotNone(registered_batch)
+
+            upstream = self.fs.get_feature_view(batch_fv_name, "v1")
+
+            fg = FeatureGroup(
+                name=fg_name,
+                features=[upstream],
+                desc="OFT VARCHAR length regression (FeatureGroup)",
+                auto_prefix=True,
+            )
+            registered_fg = self.fs.register_feature_group(fg, "v1")
+            self.assertIsNotNone(registered_fg)
+            self.assertEqual(registered_fg.name, fg_name)
         finally:
             try:
                 self._session.sql(f"DROP TABLE IF EXISTS {src_table}").collect()

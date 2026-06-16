@@ -186,6 +186,11 @@ def generate_user_requirements_string(req_info: RequirementInfo, env: Literal["c
     return f"{name}{specifiers}"
 
 
+def generate_user_requirements_string_conda_or_pip(req_info: RequirementInfo) -> Optional[str]:
+    """Get user requirements string, preferring conda name with pip fallback for PyPI-only packages."""
+    return generate_user_requirements_string(req_info, "conda") or generate_user_requirements_string(req_info, "pip")
+
+
 def validate_dev_version_and_user_requirements(req_info: RequirementInfo, env: Literal["conda", "pip"]) -> None:
     """Validate dev version and the user requirements version of the requirement in the given env.
     Check if dev version is within the user requirements version.
@@ -361,7 +366,7 @@ def generate_requirements(
                 filter(
                     None,
                     map(
-                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        generate_user_requirements_string_conda_or_pip,
                         filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements),
                     ),
                 ),
@@ -444,7 +449,7 @@ def generate_requirements(
                 filter(
                     None,
                     map(
-                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        generate_user_requirements_string_conda_or_pip,
                         filter(lambda req_info: filter_by_extras(req_info, "no_extras"), requirements),
                     ),
                 )
@@ -455,7 +460,7 @@ def generate_requirements(
                 filter(
                     None,
                     map(
-                        lambda req_info: generate_user_requirements_string(req_info, "conda"),
+                        generate_user_requirements_string_conda_or_pip,
                         filter(lambda req_info: filter_by_extras(req_info, "extras_only"), requirements),
                     ),
                 )

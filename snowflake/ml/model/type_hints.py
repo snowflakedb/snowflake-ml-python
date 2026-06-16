@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     import xgboost
 
     import snowflake.ml.model.custom_model
+    import snowflake.ml.model.models.huggingface
     import snowflake.ml.model.models.huggingface_pipeline
     import snowflake.snowpark
     from snowflake.ml.modeling.framework import base  # noqa: F401
@@ -105,6 +106,7 @@ SupportedNoSignatureRequirementsModelType = Union[
     "transformers.Pipeline",
     "sentence_transformers.SentenceTransformer",
     "snowflake.ml.model.models.huggingface_pipeline.HuggingFacePipelineModel",
+    "snowflake.ml.model.models.huggingface.SentenceTransformer",
 ]
 
 SupportedModelType = Union[
@@ -133,6 +135,7 @@ Here is all acceptable types of Snowflake native model packaging and its handler
 | transformers.Pipeline | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 | huggingface_pipeline.HuggingFacePipelineModel | huggingface_pipeline.py | _HuggingFacePipelineHandler |
 | sentence_transformers.SentenceTransformer | sentence_transformers.py | _SentenceTransformerHandler |
+| models.huggingface.SentenceTransformer | models/huggingface.py | _SentenceTransformerHandler |
 | keras.Model | keras.py | _KerasHandler |
 """
 

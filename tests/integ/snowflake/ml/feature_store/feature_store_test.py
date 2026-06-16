@@ -635,7 +635,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "KIND": ["BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=["CREATED_ON", "OWNER", "ONLINE_CONFIG", "STREAM_CONFIG", "APPEND_ONLY"],
         )
 
         # Validate ONLINE_CONFIG column separately: it may be None or a disabled JSON
@@ -1097,7 +1097,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "KIND": ["BATCH", "BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STREAM_CONFIG",
+                "APPEND_ONLY",
+            ],
         )
 
         # delete feature view
@@ -1124,7 +1131,14 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "KIND": ["BATCH", "BATCH"],
             },
             sort_cols=["NAME"],
-            exclude_cols=["CREATED_ON", "OWNER", "WAREHOUSE", "ONLINE_CONFIG", "STREAM_CONFIG"],
+            exclude_cols=[
+                "CREATED_ON",
+                "OWNER",
+                "WAREHOUSE",
+                "ONLINE_CONFIG",
+                "STREAM_CONFIG",
+                "APPEND_ONLY",
+            ],
         )
 
         # test get feature view obj
@@ -1765,9 +1779,15 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG": [],
                 "STREAM_CONFIG": [],
                 "KIND": [],
+                "APPEND_ONLY": [],
             },
             sort_cols=["NAME"],
         )
+
+        # Empty verbose result should include BACKUP_SOURCE column
+        empty_verbose_df = fs.list_feature_views(entity_name="FOO", verbose=True).to_pandas()
+        self.assertIn("BACKUP_SOURCE", empty_verbose_df.columns)
+        self.assertEqual(len(empty_verbose_df), 0)
 
         # 1. Right side is FeatureViewSlice
         sql1 = f"SELECT id, name, ts FROM {self._mock_table}"
@@ -1835,8 +1855,21 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG",
                 "STREAM_CONFIG",
                 "KIND",
+                "APPEND_ONLY",
             ],
         )
+
+        # Non-verbose output should not contain SOURCE_REFS or BACKUP_SOURCE
+        non_verbose_df = fs.list_feature_views().to_pandas()
+        self.assertNotIn("SOURCE_REFS", non_verbose_df.columns)
+        self.assertNotIn("BACKUP_SOURCE", non_verbose_df.columns)
+
+        # verbose=True should include BACKUP_SOURCE
+        verbose_df = fs.list_feature_views(verbose=True).to_pandas()
+        self.assertIn("BACKUP_SOURCE", verbose_df.columns)
+        self.assertEqual(len(verbose_df), 4)
+        for _, row in verbose_df.iterrows():
+            self.assertIsNone(row["BACKUP_SOURCE"])
 
         compare_dataframe(
             actual_df=fs.list_feature_views(entity_name="FOO").to_pandas(),
@@ -1861,6 +1894,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG",
                 "STREAM_CONFIG",
                 "KIND",
+                "APPEND_ONLY",
             ],
         )
 
@@ -1887,6 +1921,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG",
                 "STREAM_CONFIG",
                 "KIND",
+                "APPEND_ONLY",
             ],
         )
 
@@ -1913,6 +1948,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG",
                 "STREAM_CONFIG",
                 "KIND",
+                "APPEND_ONLY",
             ],
         )
 
@@ -1939,6 +1975,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG",
                 "STREAM_CONFIG",
                 "KIND",
+                "APPEND_ONLY",
             ],
         )
 
@@ -1985,6 +2022,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
                 "STORAGE_CONFIG": [],
                 "STREAM_CONFIG": [],
                 "KIND": [],
+                "APPEND_ONLY": [],
             },
             sort_cols=["NAME"],
         )
@@ -5004,6 +5042,7 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         # get_feature_view should return FV with append_only=True
         retrieved_fv = fs.get_feature_view("snap_fv", "v1")
         self.assertTrue(retrieved_fv.append_only)
+        self.assertIsNone(retrieved_fv.backup_source)
 
     def test_register_append_only_with_backfill(self) -> None:
         fs = self._create_feature_store()
@@ -5036,7 +5075,8 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             append_only=True,
             backup_source=backup_table,
         )
-        fs.register_feature_view(feature_view=fv, version="v1")
+        registered = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertEqual(registered.backup_source, backup_table)
 
         # Snapshot table should exist and contain the backfill data
         snapshot_table_name = FeatureView._get_snapshot_table_name("BACKFILL_FV", "v1")
@@ -5044,6 +5084,22 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         row_count = self._session.sql(f"SELECT COUNT(*) AS CNT FROM {snapshot_fqn}").collect()
         self.assertEqual(row_count[0]["CNT"], 3, "Snapshot table should contain 3 backfill rows")
+
+        # backup_source is stored in the metadata table (not the DT tag) and
+        # must survive register → get_feature_view round-trip.
+        retrieved = fs.get_feature_view("backfill_fv", "v1")
+        self.assertEqual(retrieved.backup_source, backup_table)
+
+        updated_desc_fv = fs.update_feature_view("backfill_fv", "v1", desc="updated desc")
+        self.assertEqual(updated_desc_fv.backup_source, backup_table)
+
+        updated_sql = f"SELECT name, id, age, ts, title FROM {mock_table}"
+        updated_schema_fv = fs.update_feature_view(
+            "backfill_fv",
+            "v1",
+            updated_feature_df=self._session.sql(updated_sql),
+        )
+        self.assertEqual(updated_schema_fv.backup_source, backup_table)
 
         # Clean up backup table
         self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
@@ -5386,11 +5442,114 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
         fs.register_feature_view(feature_view=append_fv, version="v1")
 
-        # list_feature_views should include both
+        # Non-verbose: append_only visible, backup_source absent
         listed = fs.list_feature_views().collect()
-        listed_names = {row["NAME"] for row in listed}
-        self.assertIn("NORMAL_FV", listed_names)
-        self.assertIn("APPEND_FV", listed_names)
+        listed_by_name = {row["NAME"]: row for row in listed}
+        self.assertIn("NORMAL_FV", listed_by_name)
+        self.assertIn("APPEND_FV", listed_by_name)
+        self.assertFalse(listed_by_name["NORMAL_FV"]["APPEND_ONLY"])
+        self.assertTrue(listed_by_name["APPEND_FV"]["APPEND_ONLY"])
+        non_verbose_cols = fs.list_feature_views().to_pandas().columns.tolist()
+        self.assertIn("APPEND_ONLY", non_verbose_cols)
+        self.assertNotIn("BACKUP_SOURCE", non_verbose_cols)
+
+        # verbose=True should also include backup_source
+        listed_verbose = fs.list_feature_views(verbose=True).collect()
+        listed_verbose_by_name = {row["NAME"]: row for row in listed_verbose}
+        self.assertIsNone(listed_verbose_by_name["NORMAL_FV"]["BACKUP_SOURCE"])
+        self.assertIsNone(listed_verbose_by_name["APPEND_FV"]["BACKUP_SOURCE"])
+
+        # Append-only FV with backup_source should surface backup_source in verbose listing
+        backup_table = f"{self.test_db}.{FS_INTEG_TEST_DATASET_SCHEMA}.LIST_BACKUP_{uuid4().hex.upper()}"
+        self._session.sql(
+            f"""CREATE TABLE {backup_table}
+                (name VARCHAR(64), id INT, age INT, ts TIMESTAMP_NTZ)"""
+        ).collect()
+        self._session.sql(
+            f"""INSERT INTO {backup_table} (name, id, age, ts) VALUES
+                ('alice', 10, 25, '2023-06-01 00:00:00')"""
+        ).collect()
+
+        backfill_sql = f"SELECT name, id, age, ts FROM {mock_table}"
+        backfill_fv = FeatureView(
+            name="backfill_list_fv",
+            entities=[e],
+            feature_df=self._session.sql(backfill_sql),
+            timestamp_col="ts",
+            refresh_mode="FULL",
+            refresh_freq="0 0 * * * UTC",
+            append_only=True,
+            backup_source=backup_table,
+        )
+        fs.register_feature_view(feature_view=backfill_fv, version="v1")
+
+        listed_with_backfill = fs.list_feature_views(verbose=True).collect()
+        backfill_row = next(row for row in listed_with_backfill if row["NAME"] == "BACKFILL_LIST_FV")
+        self.assertTrue(backfill_row["APPEND_ONLY"])
+        self.assertEqual(backfill_row["BACKUP_SOURCE"], backup_table)
+
+        self._session.sql(f"DROP TABLE IF EXISTS {backup_table}").collect()
+
+    def test_list_feature_views_source_refs_round_trip(self) -> None:
+        """``list_feature_views`` projects a JSON-encoded ``SOURCE_REFS`` cell that round-trips the stamped list.
+
+        Registers a Batch FV with ``_source_refs`` stamped before
+        ``register_feature_view`` (which causes the FS to persist an
+        ``FV_SOURCE_REFS`` metadata row), then verifies:
+
+        * ``get_feature_view`` surfaces the same list via ``FeatureView.source_refs``;
+        * ``list_feature_views`` surfaces a row whose ``SOURCE_REFS`` cell
+          JSON-decodes to the same list.
+        """
+        fs = self._create_feature_store()
+        user_entity = Entity("USER", ["USER_ID"])
+        fs.register_entity(user_entity)
+
+        suffix = uuid4().hex[:8]
+        src_table = f"{fs._config.full_schema_path}.FV_SR_RT_SRC_{suffix.upper()}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                BALANCE FLOAT
+            )
+            """
+        ).collect()
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table} VALUES
+            ('U_SR_RT', DATEADD('minute', -5, CURRENT_TIMESTAMP()::TIMESTAMP_NTZ), 42.0)
+            """
+        ).collect()
+        feature_df = self._session.table(src_table)
+        fv_name = f"FV_SR_RT_{suffix.upper()}"
+        fv = FeatureView(
+            name=fv_name,
+            entities=[user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="10 minutes",
+        )
+        stamped_sources = [
+            {
+                "name": "BAR",
+                "source_type": "table",
+                "table": "FOO",
+            }
+        ]
+        fv._source_refs = list(stamped_sources)
+
+        version = "v1"
+        fs.register_feature_view(fv, version)
+
+        fetched = fs.get_feature_view(fv_name, version)
+        self.assertEqual(fetched.source_refs, stamped_sources)
+
+        rows = fs.list_feature_views(verbose=True).collect()
+        by_name = {r["NAME"]: r for r in rows}
+        self.assertIn(fv_name, by_name, "FV missing from list_feature_views")
+        self.assertEqual(_json.loads(by_name[fv_name]["SOURCE_REFS"]), stamped_sources)
 
     def test_generate_dataset_append_only_point_in_time(self) -> None:
         """generate_dataset with spine_timestamp_col performs ASOF JOIN against the snapshot table."""
