@@ -176,15 +176,3 @@ py_library(
         "//snowflake/ml/jobs/_interop:legacy",
     ],
 )
-
-py_test(
-    name = "signal_workers_test",
-    srcs = ["scripts/signal_workers_test.py"],
-    tags = [
-        "feature:jobs",
-        "short_regress",
-    ],
-    deps = [
-        ":payload_scripts",
-    ],
-)

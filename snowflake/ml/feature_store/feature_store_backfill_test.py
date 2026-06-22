@@ -1414,5 +1414,65 @@ class RollbackSnapshotTableTest(absltest.TestCase):
         self.assertLess(snapshot_idx, dt_idx, "Snapshot should be rolled back before DT (reverse order)")
 
 
+class EnsureSnapshotStatusTableBestEffortTest(absltest.TestCase):
+    """Tests for best-effort _ensure_snapshot_status_table_exists on FAIL_IF_NOT_EXIST init."""
+
+    def test_ensure_snapshot_status_table_called_on_fail_if_not_exist(self) -> None:
+        """_ensure_snapshot_status_table_exists is called during FAIL_IF_NOT_EXIST init."""
+        from unittest.mock import patch
+
+        from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
+
+        session = MagicMock()
+        session.get_current_role.return_value = "TESTROLE"
+        session.get_current_warehouse.return_value = "TESTWH"
+
+        with patch.object(FeatureStore, "_check_database_exists_or_throw"), patch.object(
+            FeatureStore, "_check_internal_objects_exist_or_throw"
+        ), patch.object(FeatureStore, "_ensure_snapshot_status_table_exists") as mock_ensure, patch.object(
+            FeatureStore, "update_default_warehouse"
+        ), patch.object(
+            FeatureStore, "_check_feature_store_object_versions"
+        ):
+            FeatureStore(
+                session=session,
+                database="TESTDB",
+                name="TESTSCHEMA",
+                default_warehouse="TESTWH",
+                creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
+            )
+            mock_ensure.assert_called_once()
+
+    def test_ensure_snapshot_status_table_error_is_swallowed_on_fail_if_not_exist(self) -> None:
+        """_ensure_snapshot_status_table_exists exceptions are swallowed in FAIL_IF_NOT_EXIST mode."""
+        from unittest.mock import patch
+
+        from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
+
+        session = MagicMock()
+        session.get_current_role.return_value = "TESTROLE"
+        session.get_current_warehouse.return_value = "TESTWH"
+
+        with patch.object(FeatureStore, "_check_database_exists_or_throw"), patch.object(
+            FeatureStore, "_check_internal_objects_exist_or_throw"
+        ), patch.object(
+            FeatureStore,
+            "_ensure_snapshot_status_table_exists",
+            side_effect=Exception("insufficient privilege"),
+        ), patch.object(
+            FeatureStore, "update_default_warehouse"
+        ), patch.object(
+            FeatureStore, "_check_feature_store_object_versions"
+        ):
+            # Should not raise even though _ensure_snapshot_status_table_exists fails.
+            FeatureStore(
+                session=session,
+                database="TESTDB",
+                name="TESTSCHEMA",
+                default_warehouse="TESTWH",
+                creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
+            )
+
+
 if __name__ == "__main__":
     absltest.main()

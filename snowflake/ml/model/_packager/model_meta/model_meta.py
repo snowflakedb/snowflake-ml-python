@@ -265,6 +265,7 @@ class ModelMetadataTelemetryDict(TypedDict):
     model_name: Required[str]
     framework_type: Required[model_types.SupportedModelHandlerType]
     number_of_functions: Required[int]
+    is_packaged_pip_only: Required[bool]
 
 
 class ModelMetadata:
@@ -284,10 +285,14 @@ class ModelMetadata:
     """
 
     def telemetry_metadata(self) -> ModelMetadataTelemetryDict:
+        is_packaged_pip_only = self._packaged_env_dict is not None and model_meta_schema.env_dict_is_packaged_pip_only(
+            self._packaged_env_dict
+        )
         return ModelMetadataTelemetryDict(
             model_name=self.name,
             framework_type=self.model_type,
             number_of_functions=len(self.signatures.keys()),
+            is_packaged_pip_only=is_packaged_pip_only,
         )
 
     def __init__(
@@ -309,6 +314,7 @@ class ModelMetadata:
         explain_algorithm: Optional[model_meta_schema.ModelExplainAlgorithm] = None,
         method_options: Optional[dict[str, dict[str, Any]]] = None,
         sample_input_file_paths: Optional[dict[str, str]] = None,
+        packaged_env_dict: Optional[model_meta_schema.ModelEnvDict] = None,
     ) -> None:
         self.name = name
         self.signatures: dict[str, model_signature.ModelSignature] = dict()
@@ -340,6 +346,7 @@ class ModelMetadata:
         # Maps method name -> filename of the captured sample input data row,
         # written into model.yaml as the per-method ``sample_input_file_path`` field.
         self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
+        self._packaged_env_dict = packaged_env_dict
 
     @property
     def min_snowpark_ml_version(self) -> str:
@@ -378,11 +385,7 @@ class ModelMetadata:
         model_dict = model_meta_schema.ModelMetadataDict(
             {
                 "creation_timestamp": self.creation_timestamp,
-                "env": self.env.save_as_dict(
-                    pathlib.Path(model_dir_path),
-                    default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL,
-                    is_gpu=bool(self.env.cuda_version),
-                ),
+                "env": self._save_packaged_env(pathlib.Path(model_dir_path)),
                 "runtimes": {
                     runtime_name: runtime.save(pathlib.Path(model_dir_path), default_channel_override="conda-forge")
                     for runtime_name, runtime in self.runtimes.items()
@@ -409,6 +412,16 @@ class ModelMetadata:
         with open(model_yaml_path, "w", encoding="utf-8") as out:
             yaml.SafeDumper.ignore_aliases = lambda *args: True  # type: ignore[method-assign]
             yaml.safe_dump(model_dict, stream=out, default_flow_style=False)
+
+    def _save_packaged_env(self, model_dir_path: pathlib.Path) -> model_meta_schema.ModelEnvDict:
+        """Write env files and record the packaged env dict for downstream consumers."""
+        saved_env = self.env.save_as_dict(
+            model_dir_path,
+            default_channel_override=env_utils.SNOWFLAKE_CONDA_CHANNEL_URL,
+            is_gpu=bool(self.env.cuda_version),
+        )
+        self._packaged_env_dict = saved_env
+        return saved_env
 
     def _serialize_signature(self, func_name: str, sig: model_signature.ModelSignature) -> dict[str, Any]:
         """Serialize one method signature, optionally injecting ``sample_input_file_path``."""
@@ -481,8 +494,9 @@ class ModelMetadata:
             if sig.get("sample_input_file_path")
         }
         models = {name: model_blob_meta.ModelBlobMeta(**blob_meta) for name, blob_meta in model_dict["models"].items()}
+        packaged_env_dict = model_dict["env"]
         env = model_env.ModelEnv()
-        env.load_from_dict(pathlib.Path(model_dir_path), model_dict["env"])
+        env.load_from_dict(pathlib.Path(model_dir_path), packaged_env_dict)
 
         runtimes: Optional[dict[str, model_runtime.ModelRuntime]]
         if model_dict.get("runtimes", None):
@@ -514,4 +528,5 @@ class ModelMetadata:
             function_properties=model_dict.get("function_properties", {}),
             method_options=model_dict.get("method_options", {}),
             sample_input_file_paths=sample_input_file_paths,
+            packaged_env_dict=packaged_env_dict,
         )

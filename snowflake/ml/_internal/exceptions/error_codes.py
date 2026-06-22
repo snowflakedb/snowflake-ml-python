@@ -63,6 +63,8 @@ METHOD_NOT_ALLOWED = "2102"
 NOT_IMPLEMENTED = "2103"
 # User needs to opt in to use a feature.
 OPT_IN_REQUIRED = "2104"
+# Caller's current role lacks the required ownership/privilege to perform the operation.
+INSUFFICIENT_PRIVILEGES = "2105"
 
 # Calling an API with unsupported keywords/values.
 INVALID_ARGUMENT = "2110"

@@ -219,7 +219,72 @@ class SampleInputDataTest(parameterized.TestCase):
                 model_dir_path=tmpdir,
             )
 
-            self.assertEqual(_read_payload(tmpdir)["params"], {"temperature": 0.5, "max_tokens": 128})
+            self.assertEqual(_read_payload(tmpdir)["params"], {"temperature": 0.5, "max_tokens": 128, "seed": None})
+
+    def test_param_group_default_serialized(self) -> None:
+        sig_with_group_param = model_signature.ModelSignature(
+            inputs=_PREDICT_SIG.inputs,
+            outputs=_PREDICT_SIG.outputs,
+            params=[
+                core.ParamGroupSpec(
+                    name="config",
+                    specs=[
+                        model_signature.ParamSpec(
+                            name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=0.5
+                        ),
+                        model_signature.ParamSpec(
+                            name="max_tokens", dtype=model_signature.DataType.INT64, default_value=128
+                        ),
+                    ],
+                ),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta = _make_meta(tmpdir=tmpdir, signatures={"predict": sig_with_group_param})
+
+            model_sample_input_data.persist_sample_input_data(
+                sample_input_data=pd.DataFrame({"a": [0.25], "b": [7]}),
+                model_meta=meta,
+                model_dir_path=tmpdir,
+            )
+
+            self.assertEqual(_read_payload(tmpdir)["params"], {"config": {"temperature": 0.5, "max_tokens": 128}})
+
+    def test_deeply_nested_param_group_serialized(self) -> None:
+        sig = model_signature.ModelSignature(
+            inputs=_PREDICT_SIG.inputs,
+            outputs=_PREDICT_SIG.outputs,
+            params=[
+                core.ParamGroupSpec(
+                    name="outer",
+                    specs=[
+                        core.ParamGroupSpec(
+                            name="middle",
+                            specs=[
+                                core.ParamGroupSpec(
+                                    name="inner",
+                                    specs=[
+                                        model_signature.ParamSpec(
+                                            name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=0.5
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta = _make_meta(tmpdir=tmpdir, signatures={"predict": sig})
+
+            model_sample_input_data.persist_sample_input_data(
+                sample_input_data=pd.DataFrame({"a": [0.25], "b": [7]}),
+                model_meta=meta,
+                model_dir_path=tmpdir,
+            )
+
+            self.assertEqual(_read_payload(tmpdir)["params"], {"outer": {"middle": {"inner": {"temperature": 0.5}}}})
 
     def test_numpy_array_aligned_to_signature_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -261,21 +326,84 @@ class SampleInputDataTest(parameterized.TestCase):
             self.assertFalse(os.path.exists(os.path.join(tmpdir, model_sample_input_data.SAMPLE_INPUT_DATA_FILENAME)))
             self.assertEqual(meta.sample_input_file_paths, {})
 
-    def test_feature_group_method_skipped(self) -> None:
+    def test_feature_group_input_captured_with_nested_value(self) -> None:
         feature_group_sig = model_signature.ModelSignature(
             inputs=[
                 core.FeatureGroupSpec(
-                    name="group",
-                    specs=[model_signature.FeatureSpec(name="x", dtype=model_signature.DataType.FLOAT)],
+                    name="messages",
+                    specs=[
+                        model_signature.FeatureSpec(name="role", dtype=model_signature.DataType.STRING),
+                        model_signature.FeatureSpec(name="content", dtype=model_signature.DataType.STRING),
+                    ],
+                    shape=(-1,),
+                ),
+            ],
+            outputs=[model_signature.FeatureSpec(name="completion", dtype=model_signature.DataType.STRING)],
+        )
+        nested_value = [{"role": "user", "content": "Hello"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta = _make_meta(
+                tmpdir=tmpdir,
+                signatures={"predict": _PREDICT_SIG, "chat": feature_group_sig},
+            )
+
+            model_sample_input_data.persist_sample_input_data(
+                sample_input_data=pd.DataFrame({"messages": [nested_value]}),
+                model_meta=meta,
+                model_dir_path=tmpdir,
+            )
+
+            payload = _read_payload(tmpdir)
+            self.assertEqual(payload["dataframe_split"]["columns"], ["messages"])
+            self.assertEqual(payload["dataframe_split"]["data"], [[nested_value]])
+            self.assertEqual(meta.sample_input_file_paths, {"chat": "sample_input_data.json"})
+
+    def test_feature_group_large_nested_shape_skipped(self) -> None:
+        # The group's child carries the oversized shape; capture must skip even though
+        # the group itself is not a leaf FeatureSpec.
+        sig = model_signature.ModelSignature(
+            inputs=[
+                core.FeatureGroupSpec(
+                    name="embeddings",
+                    specs=[
+                        model_signature.FeatureSpec(name="vector", dtype=model_signature.DataType.FLOAT, shape=(200,)),
+                    ],
+                    shape=(-1,),
                 ),
             ],
             outputs=[model_signature.FeatureSpec(name="y", dtype=model_signature.DataType.FLOAT)],
         )
+        nested_value = [{"vector": [0.0] * 200}]
         with tempfile.TemporaryDirectory() as tmpdir:
-            meta = _make_meta(
-                tmpdir=tmpdir,
-                signatures={"predict": _PREDICT_SIG, "explain": feature_group_sig},
+            meta = _make_meta(tmpdir=tmpdir, signatures={"predict": sig})
+
+            model_sample_input_data.persist_sample_input_data(
+                sample_input_data=pd.DataFrame({"embeddings": [nested_value]}),
+                model_meta=meta,
+                model_dir_path=tmpdir,
             )
+
+            self.assertFalse(os.path.exists(os.path.join(tmpdir, model_sample_input_data.SAMPLE_INPUT_DATA_FILENAME)))
+            self.assertEqual(meta.sample_input_file_paths, {})
+
+    def test_large_param_drops_params_but_keeps_inputs(self) -> None:
+        # An oversized param drops the entire params block (all-or-nothing) but inputs are
+        # still captured; the server falls back to signature defaults for the omitted params.
+        sig = model_signature.ModelSignature(
+            inputs=_PREDICT_SIG.inputs,
+            outputs=_PREDICT_SIG.outputs,
+            params=[
+                model_signature.ParamSpec(name="temperature", dtype=model_signature.DataType.DOUBLE, default_value=0.5),
+                model_signature.ParamSpec(
+                    name="weights",
+                    dtype=model_signature.DataType.DOUBLE,
+                    default_value=[0.0] * 200,
+                    shape=(200,),
+                ),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            meta = _make_meta(tmpdir=tmpdir, signatures={"predict": sig})
 
             model_sample_input_data.persist_sample_input_data(
                 sample_input_data=pd.DataFrame({"a": [1.0], "b": [2]}),
@@ -283,6 +411,9 @@ class SampleInputDataTest(parameterized.TestCase):
                 model_dir_path=tmpdir,
             )
 
+            payload = _read_payload(tmpdir)
+            self.assertEqual(payload["dataframe_split"]["columns"], ["a", "b"])
+            self.assertNotIn("params", payload)
             self.assertEqual(meta.sample_input_file_paths, {"predict": "sample_input_data.json"})
 
     @parameterized.parameters(  # type: ignore[misc]
@@ -310,6 +441,58 @@ class SampleInputDataTest(parameterized.TestCase):
                 self.assertEqual(field, model_sample_input_data.SAMPLE_INPUT_DATA_FILENAME)
             else:
                 self.assertIsNone(field)
+
+    @parameterized.named_parameters(  # type: ignore[misc]
+        {
+            "testcase_name": "scalar_feature",
+            "spec": model_signature.FeatureSpec(name="x", dtype=model_signature.DataType.FLOAT),
+            "expected": 1,
+        },
+        {
+            "testcase_name": "shaped_feature",
+            "spec": model_signature.FeatureSpec(name="x", dtype=model_signature.DataType.FLOAT, shape=(3, 4)),
+            "expected": 12,
+        },
+        {
+            "testcase_name": "variable_dim_ignored",
+            "spec": model_signature.FeatureSpec(name="x", dtype=model_signature.DataType.FLOAT, shape=(-1, 5)),
+            "expected": 5,
+        },
+        {
+            "testcase_name": "feature_group_sums_children",
+            "spec": core.FeatureGroupSpec(
+                name="g",
+                specs=[
+                    model_signature.FeatureSpec(name="a", dtype=model_signature.DataType.STRING),
+                    model_signature.FeatureSpec(name="b", dtype=model_signature.DataType.STRING),
+                ],
+                shape=(-1,),
+            ),
+            "expected": 2,
+        },
+        {
+            "testcase_name": "feature_group_with_shaped_child",
+            "spec": core.FeatureGroupSpec(
+                name="g",
+                specs=[model_signature.FeatureSpec(name="v", dtype=model_signature.DataType.FLOAT, shape=(200,))],
+                shape=(-1,),
+            ),
+            "expected": 200,
+        },
+        {
+            "testcase_name": "param_group_sums_children",
+            "spec": core.ParamGroupSpec(
+                name="cfg",
+                specs=[
+                    model_signature.ParamSpec(name="t", dtype=model_signature.DataType.DOUBLE, default_value=0.5),
+                    model_signature.ParamSpec(name="m", dtype=model_signature.DataType.INT64, default_value=1),
+                ],
+            ),
+            "expected": 2,
+        },
+    )
+    def test_static_element_count(self, spec: Any, expected: int) -> None:
+        self.assertEqual(model_sample_input_data._static_element_count(spec), expected)
 
 
 class _SimpleAdditionModel(custom_model.CustomModel):

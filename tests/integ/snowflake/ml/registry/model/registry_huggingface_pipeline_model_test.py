@@ -288,9 +288,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
     def test_table_question_answering_pipeline(self) -> None:
         from snowflake.ml.model.models import huggingface
 
-        model_id = "microsoft/tapex-base-finetuned-wtq"
-        # TODO: Use this model after upgrading pytorch>=2.6.0
-        # model_id = "google/tapas-large-finetuned-wtq"
+        model_id = "google/tapas-base-finetuned-wtq"
         model = huggingface.TransformersPipeline(
             task="table-question-answering",
             model=model_id,
@@ -452,7 +450,8 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = transformers.pipeline(
             task="text-generation",
-            model="HuggingFaceTB/SmolLM2-135M-Instruct",
+            model="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            max_length=200,
         )
 
         x_df = pd.DataFrame(
@@ -582,7 +581,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = huggingface.TransformersPipeline(
             task="translation_en_to_ja",
-            model="Mitsua/elan-mt-tiny-en-ja",
+            model="google-t5/t5-small",
             compute_pool_for_log=None,
         )
 
@@ -1066,11 +1065,12 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_visual_question_answering_pipeline(self) -> None:
+        self.skipTest("Skipping test due to unavailable of safetensors model in artifactory")
         from snowflake.ml.model.models import huggingface
 
         model = huggingface.TransformersPipeline(
             task="visual-question-answering",
-            model="dandelin/vilt-b32-finetuned-vqa",
+            model="hf-tiny-model-private/tiny-random-ViltForQuestionAnswering",
             compute_pool_for_log=None,
         )
 
@@ -1300,7 +1300,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = huggingface.TransformersPipeline(
             task="translation_en_to_ja",
-            model="Mitsua/elan-mt-tiny-en-ja",
+            model="google-t5/t5-small",
             compute_pool_for_log=None,
         )
 
@@ -1429,7 +1429,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = huggingface.TransformersPipeline(
             task="image-to-text",
-            model="nlpconnect/vit-gpt2-image-captioning",
+            model="cnmoro/tiny-image-captioning",
             compute_pool_for_log=None,
         )
 

@@ -14,19 +14,59 @@ def dummy_function() -> None:
 
 class MultiNodeJobsTest(JobTestBase):
     def test_multinode_job_basic(self) -> None:
-        job_from_file = self._submit_func_as_file(dummy_function, target_instances=2)
+        def verify_shutdown_id_format() -> None:
+            import ray
+            from signal_workers import get_worker_node_ids
+
+            ray.init(address="auto", ignore_reinit_error=True)
+
+            # get_worker_node_ids() returns the IDs that signal_workers.py expects workers to acknowledge with
+            # worker_shutdown_listener.py acknowledges using ray.get_runtime_context().get_node_id()
+            # ray.get_runtime_context().get_node_id() == node["NodeID"] from ray.nodes()
+            # So get_worker_node_ids() must return NodeID values for the handshake to work
+            worker_ids_from_signal_workers = get_worker_node_ids()
+            print(f"signal_workers sees worker IDs: {worker_ids_from_signal_workers}")
+
+            # Get the actual NodeID values for worker nodes from ray.nodes()
+            worker_nodes = [
+                node
+                for node in ray.nodes()
+                if node.get("Alive") and node.get("Resources", {}).get("node_tag:worker", 0) > 0
+            ]
+            expected_node_ids = [node.get("NodeID") for node in worker_nodes]
+            print(f"Expected NodeID values: {expected_node_ids}")
+
+            assert set(worker_ids_from_signal_workers) == set(expected_node_ids), (
+                f"SHUTDOWN HANDSHAKE BUG: signal_workers.py returns {worker_ids_from_signal_workers} "
+                f"but workers acknowledge with NodeID values {expected_node_ids}. "
+                f"These must match for acknowledgment to succeed."
+            )
+            print("shutdown id format verified")
+
+        job_from_file = self._submit_func_as_file(
+            verify_shutdown_id_format,
+            target_instances=2,
+            min_instances=2,
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
+        )
 
         self.assertEqual(job_from_file.target_instances, 2)
-        self.assertEqual(job_from_file.min_instances, 2)  # min_instances defaults to target_instances
-        self.assertEqual(job_from_file.wait(), "DONE", file_job_logs := job_from_file.get_logs())
-        self.assertIn("hello world", file_job_logs)
+        self.assertEqual(job_from_file.min_instances, 2)
+        self.assertEqual(job_from_file.wait(), "DONE", job_from_file.get_logs(verbose=True))
+        self.assertIn("shutdown id format verified", job_from_file.get_logs())
 
-        @jobs.remote(self.compute_pool, stage_name="payload_stage", target_instances=2, session=self.session)
+        @jobs.remote(
+            self.compute_pool,
+            stage_name="payload_stage",
+            target_instances=2,
+            session=self.session,
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
+        )
         def dummy_remote_multinode() -> None:
             print("hello world")
 
         job_from_func = dummy_remote_multinode()
-        self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs())
+        self.assertEqual(job_from_func.wait(), "DONE", file_job_logs := job_from_func.get_logs(verbose=True))
         self.assertIn("hello world", file_job_logs)
 
     def test_multinode_job_ray_task(self) -> None:
@@ -70,7 +110,9 @@ class MultiNodeJobsTest(JobTestBase):
             print("num_nodes:", num_nodes)
 
         # Verify min_instances met
-        job1 = self._submit_func_as_file(get_cluster_size, target_instances=3, min_instances=2)
+        job1 = self._submit_func_as_file(
+            get_cluster_size, target_instances=3, min_instances=2, env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"}
+        )
         self.assertEqual(job1.target_instances, 3)
         self.assertEqual(job1.min_instances, 2)
         self.assertEqual(job1.wait(), "DONE", job1.get_logs(verbose=True))
@@ -88,7 +130,7 @@ class MultiNodeJobsTest(JobTestBase):
             get_cluster_size,
             target_instances=2,
             min_instances=1,
-            env_vars={"MLRS_INSTANCES_MIN_WAIT": 720},
+            env_vars={"MLRS_INSTANCES_MIN_WAIT": 720, "MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         self.assertEqual(job2.target_instances, 2)
         self.assertEqual(job2.min_instances, 1)
@@ -136,6 +178,7 @@ class MultiNodeJobsTest(JobTestBase):
             imports=[(TestAsset(import_path).path, import_name)],
             target_instances=2,
             min_instances=2,
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 

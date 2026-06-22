@@ -37,6 +37,11 @@ class ModelEnvDict(TypedDict):
     snowpark_ml_version: Required[str]
 
 
+def env_dict_is_packaged_pip_only(env_dict: ModelEnvDict) -> bool:
+    """Return True when the packaged model env omits conda.yml (pip-only layout)."""
+    return "conda" not in env_dict
+
+
 class BaseModelBlobOptions(TypedDict):
     ...
 

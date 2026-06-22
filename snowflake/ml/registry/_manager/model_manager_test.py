@@ -25,7 +25,10 @@ class ModelManagerTest(parameterized.TestCase):
         "subproject": "UnitTest",
     }
     model_md_telemetry = model_meta.ModelMetadataTelemetryDict(
-        model_name="ModelManagerTest", framework_type="snowml", number_of_functions=2
+        model_name="ModelManagerTest",
+        framework_type="snowml",
+        number_of_functions=2,
+        is_packaged_pip_only=False,
     )
 
     def _build_expected_create_model_statement_params(self, model_version_name: str) -> dict[str, Any]:

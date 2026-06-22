@@ -61,6 +61,7 @@ py_library(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/dataset",
         "//snowflake/ml/lineage",
+        "//snowflake/ml/utils:authentication",
         "//snowflake/ml/utils:sql_client",
     ],
 )

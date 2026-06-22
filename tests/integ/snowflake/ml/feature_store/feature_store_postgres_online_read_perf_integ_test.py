@@ -9,7 +9,6 @@ import logging
 import os
 import statistics
 import time
-import unittest
 import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -208,10 +207,6 @@ class PostgresOnlineReadPerfIntegTest(StreamingFeatureViewIntegTestBase, absltes
             f"Online read for {fv_name}/{version} did not return rows within " f"{timeout}s; last_err={last_err!r}"
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for Postgres online read (Online Service Query API).",
-    )
     def test_postgres_online_read_latency_breakdown(self) -> None:
         iterations = _env_int("PERF_ITERATIONS", _ITERATIONS_DEFAULT)
         warmup = _env_int("PERF_WARMUP", _WARMUP_DEFAULT)

@@ -18,6 +18,8 @@ py_library(
         "lineage_node.py",
     ],
     deps = [
+        "//snowflake/ml/_internal:telemetry",
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:mixins",
     ],
 )

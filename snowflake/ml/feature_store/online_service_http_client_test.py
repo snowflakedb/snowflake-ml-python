@@ -4,7 +4,7 @@ import json
 import logging
 import os
 from typing import Any, Optional
-from unittest.mock import create_autospec, patch
+from unittest.mock import MagicMock, create_autospec, patch
 
 import httpx
 from absl.testing import absltest
@@ -83,6 +83,44 @@ class UrlAndAuthHelpersTest(absltest.TestCase):
         self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
         self.assertIn("SNOWFLAKE_PAT", str(ctx.exception.original_exception))
 
+    def test_auth_headers_falls_back_to_session_pat_when_no_private_key(self) -> None:
+        """authenticator=PROGRAMMATIC_ACCESS_TOKEN exposes the PAT via AuthByPAT.assertion_content."""
+        from snowflake.connector.auth.pat import AuthByPAT
+
+        auth_cls = MagicMock(spec=AuthByPAT)
+        auth_cls.assertion_content = "pat-from-session-pat-auth"
+        session = MagicMock()
+        session.connection.auth_class = auth_cls
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": "env-pat-should-be-ignored"}, clear=False):
+            headers = online_service_http_client.auth_headers(session)
+        self.assertEqual(headers["Authorization"], 'Snowflake Token="pat-from-session-pat-auth"')
+
+    def test_auth_headers_session_pat_ignores_password_auth(self) -> None:
+        """Plain password auth (AuthByDefault) is not treated as a PAT — falls through to env."""
+        session = MagicMock()
+        session.connection.auth_class = MagicMock()
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": "env-pat-wins"}, clear=False):
+            headers = online_service_http_client.auth_headers(session)
+        self.assertEqual(headers["Authorization"], 'Snowflake Token="env-pat-wins"')
+
+    def test_auth_headers_raises_when_no_credentials_anywhere(self) -> None:
+        """Error message names the supported resolution paths."""
+        session = MagicMock()
+        session.connection.auth_class = None
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(snowml_exceptions.SnowflakeMLException) as ctx:
+                online_service_http_client.auth_headers(session)
+        self.assertEqual(ctx.exception.error_code, error_codes.INVALID_ARGUMENT)
+        msg = str(ctx.exception.original_exception)
+        self.assertIn("Snowpark Session", msg)
+        self.assertIn("SNOWFLAKE_PAT", msg)
+
+    def test_auth_headers_no_session_falls_through_to_env(self) -> None:
+        """When session is None, only the env-var path is tried (back-compat with current callers)."""
+        with patch.dict(os.environ, {"SNOWFLAKE_PAT": "env-pat-only"}, clear=False):
+            headers = online_service_http_client.auth_headers()
+        self.assertEqual(headers["Authorization"], 'Snowflake Token="env-pat-only"')
+
 
 class OnlineServiceHttpClientTest(absltest.TestCase):
     """Unit tests for :class:`online_service_http_client.OnlineServiceHttpClient`."""
@@ -160,9 +198,9 @@ class OnlineServiceHttpClientTest(absltest.TestCase):
 
         with patch.dict(os.environ, {"SNOWFLAKE_PAT": _UNITTEST_SNOWFLAKE_PAT}, clear=False):
             with patch.object(
-                online_service_http_client,
-                "auth_headers",
-                wraps=online_service_http_client.auth_headers,
+                client,
+                "_build_auth_headers",
+                wraps=client._build_auth_headers,
             ) as spy:
                 for _ in range(3):
                     client.post_json("https://q/", {"k": 1}, timeout=1.0)

@@ -29,9 +29,7 @@ Set ``SNOWML_STREAMING_FV_TEST_REUSE_ONLINE_SERVICE=0`` to force the same epheme
 """
 
 import json
-import os
 import time
-import unittest
 import uuid
 
 from absl.testing import absltest, parameterized
@@ -601,6 +599,111 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
                 f"Column {col} has null values: {result_pd[col].tolist()}",
             )
 
+    def test_streaming_continuous_fv_sub_granularity_window(self) -> None:
+        """CONTINUOUS aggregation allows a lookback window below/not a multiple of granularity."""
+        from datetime import datetime
+
+        from snowflake.ml.feature_store.feature import Feature
+        from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
+
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+
+        table_name = f"{self.test_db}.{fs._config.schema.identifier()}.CONT_SUBGRAN_{s}"
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {table_name} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AMOUNT FLOAT
+            )
+        """
+        ).collect()
+
+        self._session.sql(
+            f"""
+            INSERT INTO {table_name} VALUES
+            ('u1', '2024-01-01 01:00:00', 10.0),
+            ('u1', '2024-01-02 01:00:00', 20.0),
+            ('u1', '2024-01-03 01:00:00', 30.0),
+            ('u2', '2024-01-01 01:00:00', 100.0),
+            ('u2', '2024-01-02 01:00:00', 200.0)
+        """
+        ).collect()
+
+        backfill_df = self._session.table(table_name)
+
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+
+        # Granularity is the minimum (1m); the lookback window is below it (30s).
+        # Previously this was rejected at validation; CONTINUOUS now allows it.
+        features = [
+            Feature.sum("AMOUNT", "30s").alias("AMOUNT_SUM_30S"),
+            Feature.count("AMOUNT", "30s").alias("TXN_COUNT_30S"),
+        ]
+
+        fv = FeatureView(
+            name=f"STREAM_CONT_SUBGRAN_{s}",
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            feature_granularity="1m",
+            features=features,
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+        )
+
+        registered_fv = fs.register_feature_view(fv, "v1")
+
+        self.assertTrue(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.is_tiled)
+        self.assertEqual(registered_fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+        # Verify round-trip through get_feature_view
+        retrieved_fv = fs.get_feature_view(f"STREAM_CONT_SUBGRAN_{s}", "v1")
+        self.assertEqual(retrieved_fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+        max_wait = 120
+        start = time.time()
+        while time.time() - start < max_wait:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        spine_df = self._session.create_dataframe(
+            [
+                ("u1", datetime(2024, 1, 3, 1, 0, 0)),
+                ("u2", datetime(2024, 1, 2, 1, 0, 0)),
+            ],
+            schema=["USER_ID", "QUERY_TS"],
+        )
+
+        result_df = fs.generate_training_set(
+            spine_df=spine_df,
+            features=[registered_fv],
+            spine_timestamp_col="QUERY_TS",
+            join_method="cte",
+        )
+
+        result_pd = result_df.to_pandas()
+
+        self.assertEqual(len(result_pd), 2)
+        self.assertIn("AMOUNT_SUM_30S", result_pd.columns)
+        self.assertIn("TXN_COUNT_30S", result_pd.columns)
+
+        for col in ["AMOUNT_SUM_30S", "TXN_COUNT_30S"]:
+            self.assertTrue(
+                result_pd[col].notna().all(),
+                f"Column {col} has null values: {result_pd[col].tolist()}",
+            )
+
     # =========================================================================
     # Streaming + Untiled (passthrough) + Dataset Generation
     # =========================================================================
@@ -1091,10 +1194,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
             time.sleep(5)
         self.assertGreater(len(result), 0, "OFT should exist after streaming FV registration")
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for Postgres online read (Online Service Query API).",
-    )
     def test_streaming_fv_spec_oft_online_read_e2e(self) -> None:
         """After backfill, online read via Query API returns rows for a registered entity key."""
         s = uuid.uuid4().hex[:8]
@@ -1142,10 +1241,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     # is the SFV-side counterpart to the batch SK online-read test.
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_streaming_tiled_fv_spec_oft_secondary_key_online_read_by_key(self) -> None:
         """Streaming tiled FV with SKs: backfill rows sharing entity+ts but differing on AD_ID survive GS dedup."""
         from snowflake.ml.feature_store.feature import Feature
@@ -1216,10 +1311,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
     # E2E: streaming FV — all supported column types
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_streaming_fv_spec_oft_all_supported_types(self) -> None:
         """Verify all 6 supported types (String, Long, Double, Decimal, Boolean, TimestampNTZ) round-trip."""
         s = uuid.uuid4().hex[:8]

@@ -1148,6 +1148,54 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
             self.assertEqual(col.precision, 38)
             self.assertEqual(col.scale, 4)
 
+    def test_last_distinct_n_tiled_source_succeeds(self) -> None:
+        """LAST_DISTINCT_N tiled FV used as upstream source: ArrayType partial columns are accepted."""
+        spec = AggregationSpec(
+            function=AggregationType.LAST_DISTINCT_N,
+            source_column="PERSONUUID",
+            window="10h",
+            output_column="PERSONUUID_LAST_DISTINCT_10",
+            params={"n": 10},
+        )
+        schema = StructType(
+            [
+                StructField("DEVICE_ID", StringType()),
+                StructField("_PARTIAL_LAST_DISTINCT_10_PERSONUUID", ArrayType()),
+                StructField("_PARTIAL_LAST_DISTINCT_10_TS_PERSONUUID", ArrayType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=schema)
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual(len(cols), 1)
+        self.assertEqual(cols[0].name, "PERSONUUID_LAST_DISTINCT_10")
+        self.assertEqual(cols[0].type, "ArrayType")
+
+    def test_first_distinct_n_tiled_source_succeeds(self) -> None:
+        """FIRST_DISTINCT_N tiled FV used as upstream source: ArrayType partial columns are accepted."""
+        spec = AggregationSpec(
+            function=AggregationType.FIRST_DISTINCT_N,
+            source_column="CATEGORY",
+            window="24h",
+            output_column="CATEGORY_FIRST_DISTINCT_5",
+            params={"n": 5},
+        )
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_FIRST_DISTINCT_5_CATEGORY", ArrayType()),
+                StructField("_PARTIAL_FIRST_DISTINCT_5_TS_CATEGORY", ArrayType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=schema)
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual(len(cols), 1)
+        self.assertEqual(cols[0].name, "CATEGORY_FIRST_DISTINCT_5")
+        self.assertEqual(cols[0].type, "ArrayType")
+
     def test_secondary_key_array_filtered_out(self) -> None:
         """``_SECONDARY_KEY_ARRAY`` aggs are internal-only and excluded from the output columns."""
         specs = [

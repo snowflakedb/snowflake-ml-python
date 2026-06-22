@@ -168,12 +168,12 @@ class RegistryModelPrivilegeTest(registry_model_test_base.RegistryModelTestBase)
         self._run_as_role(self._usage_role, _test)
 
     def test_usage_cannot_load(self) -> None:
-        """USAGE privilege cannot load model (requires READ for STAGE$GET)."""
+        """Non-owner roles (regardless of privileges) cannot load a model."""
 
         def _test() -> None:
             reg = registry.Registry(self.session)
             mv = reg.get_model(self._model_name).version(self._version_name)
-            with self.assertRaisesRegex(Exception, r"Insufficient privileges"):
+            with self.assertRaisesRegex(Exception, r"only the model's owner role is permitted"):
                 mv.load(force=True)
 
         self._run_as_role(self._usage_role, _test)

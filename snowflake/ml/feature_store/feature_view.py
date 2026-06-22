@@ -971,6 +971,10 @@ class FeatureView(lineage_node.LineageNode):
         else:
             if feature_aggregation_method is not None:
                 raise ValueError("feature_aggregation_method is only supported for streaming feature views.")
+            # Reconstructed streaming FVs come through this batch path (via _is_streaming_marker)
+            # and carry their persisted aggregation method so that validation (e.g. window/offset
+            # alignment, which is relaxed for CONTINUOUS) matches the original registration.
+            self._feature_aggregation_method = _kwargs.pop("_feature_aggregation_method", None)
             self._timestamp_col = SqlIdentifier(timestamp_col) if timestamp_col is not None else None
             self._feature_granularity = feature_granularity
             self._aggregation_specs = _kwargs.pop("_aggregation_specs", None)
@@ -2073,10 +2077,17 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
 
         This ensures clean tile boundaries for aggregations.
         Lifetime windows are exempt from this validation as they aggregate all tiles.
+        CONTINUOUS aggregations are also exempt: feature_granularity is only an internal
+        tile size there, so any lookback window and offset are allowed.
 
         Raises:
             ValueError: If window or offset is not a multiple of feature_granularity.
         """
+        # Window/offset alignment only matters for TILES, where features are assembled
+        # from whole tiles. CONTINUOUS aggregation allows any lookback window/offset.
+        if self._feature_aggregation_method == FeatureAggregationMethod.CONTINUOUS:
+            return
+
         from snowflake.ml.feature_store.interval_utils import interval_to_seconds
 
         granularity_seconds = interval_to_seconds(self._feature_granularity)  # type: ignore[arg-type]
@@ -2345,6 +2356,11 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         if json_dict.get("_aggregation_specs"):
             aggregation_specs = [AggregationSpec.from_dict(s) for s in json_dict["_aggregation_specs"]]
 
+        # Restore the aggregation method before reconstruction so validation (e.g. window/offset
+        # alignment, relaxed for CONTINUOUS) matches the original registration.
+        agg_method_raw = json_dict.get("_feature_aggregation_method")
+        feature_aggregation_method = FeatureAggregationMethod(agg_method_raw) if agg_method_raw else None
+
         fv = FeatureView._construct_feature_view(
             name=json_dict["_name"],
             entities=entities,
@@ -2369,6 +2385,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             ),
             feature_granularity=json_dict.get("_feature_granularity"),
             aggregation_specs=aggregation_specs,
+            feature_aggregation_method=feature_aggregation_method,
             storage_config=(
                 StorageConfig.from_json(json_dict["_storage_config"]) if json_dict.get("_storage_config") else None
             ),
@@ -2470,6 +2487,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         feature_granularity: Optional[str] = None,
         aggregation_specs: Optional[list[AggregationSpec]] = None,
         aggregation_secondary_keys: Optional[list[str]] = None,
+        feature_aggregation_method: Optional[FeatureAggregationMethod] = None,
         storage_config: Optional[StorageConfig] = None,
         is_streaming: bool = False,
         append_only: bool = False,
@@ -2510,6 +2528,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 feature_granularity=feature_granularity,
                 _aggregation_specs=aggregation_specs,
                 aggregation_secondary_keys=aggregation_secondary_keys,
+                _feature_aggregation_method=feature_aggregation_method,
                 storage_config=storage_config,
                 _is_streaming_marker=is_streaming,
                 _source_refs=source_refs,

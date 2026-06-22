@@ -656,7 +656,6 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch a Python script and save the result")
     parser.add_argument("entrypoint", help="The job payload entrypoint to execute")
-    parser.add_argument("script_args", nargs="*", help="Arguments to pass to the script")
     parser.add_argument(
         "--script_main_func", required=False, help="The name of the main function to call in the script"
     )
@@ -665,7 +664,12 @@ if __name__ == "__main__":
         required=False,
         help="Serialized function arguments or path to serialized function arguments file",
     )
-    args, unknown_args = parser.parse_known_args()
+    # Do not use a nargs="*" positional for script args. In Python 3.12, argparse
+    # changed how parse_known_args handles intermixed positional and optional arguments:
+    # an unsatisfied nargs="*" positional will consume non-flag tokens from after
+    # unrecognized flags, reordering the arguments. Instead, all unrecognized arguments
+    # are returned in script_args with their original ordering preserved.
+    args, script_args = parser.parse_known_args()
 
     try:
         from snowflake.ml._internal.utils.connection_params import SnowflakeLoginOptions
@@ -680,11 +684,11 @@ if __name__ == "__main__":
     session = snowflake.snowpark.Session.builder.configs(config).create()  # noqa: F841
 
     if args.function_args:
-        if args.script_args or unknown_args:
+        if script_args:
             raise ValueError("Only one of function_args and script_args can be provided")
         payload_args, payload_kwargs = _load_function_args(session, args.function_args)
     else:
-        payload_args, payload_kwargs = (args.script_args + unknown_args), {}
+        payload_args, payload_kwargs = tuple(script_args), {}
 
     main(
         args.entrypoint,

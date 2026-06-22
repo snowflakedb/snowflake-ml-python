@@ -443,7 +443,7 @@ def _validate_sentence_transformers_signatures(
 class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.SentenceTransformer"]):
     HANDLER_TYPE = "sentence_transformers"
     HANDLER_VERSION = "2024-03-15"
-    _MIN_SNOWPARK_ML_VERSION = "1.42.0"
+    _MIN_SNOWPARK_ML_VERSION = "1.43.0"
     _HANDLER_MIGRATOR_PLANS: dict[str, type[base_migrator.BaseModelHandlerMigrator]] = {}
 
     MODEL_PICKLE_FILE = "snowml_sentence_transformer.pkl"

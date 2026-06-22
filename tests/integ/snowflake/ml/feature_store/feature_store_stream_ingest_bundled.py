@@ -18,8 +18,6 @@ Requires ``SNOWFLAKE_PAT`` (same token as the Online Service Query API), e.g.
 """
 
 import datetime
-import os
-import unittest
 import uuid
 
 import pandas as pd
@@ -89,10 +87,6 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
         ).collect()
         return table_name
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_then_spec_oft_online_read_new_key(self) -> None:
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
@@ -144,10 +138,6 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             fs, fv_name, "v1", keys=[[ingested_key]], validate_fn=_validate, desc="stream ingest passthrough"
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_tiled_fv_spec_oft_online_read(self) -> None:
         """Tiled streaming FV: ingest multiple raw rows; online read returns tile aggregates for that key."""
         fs = self._create_feature_store()
@@ -216,10 +206,6 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             fs, fv_name, "v1", keys=[[ingested_key]], validate_fn=_validate_tiled, desc="stream ingest tiled"
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_tiled_continuous_fv_spec_oft_online_read(self) -> None:
         """Tiled streaming FV with CONTINUOUS aggregation: ingest rows; online read returns aggregates."""
         from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
@@ -297,10 +283,6 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             desc="stream ingest continuous tiled",
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_tiled_approx_count_distinct_online_read(self) -> None:
         """Tiled streaming FV with approx_count_distinct: ingest rows; online read returns HLL estimate."""
         fs = self._create_feature_store()
@@ -383,10 +365,6 @@ class FeatureStoreStreamIngestIntegTest(StreamingFeatureViewIntegTestBase, abslt
             fs, fv_name, "v1", keys=[[key_a]], validate_fn=_validate, desc="stream ingest approx_count_distinct"
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_multi_entity_sfv(self) -> None:
         """Multi-entity streaming FV: composite key (USER_ID + DEVICE_ID), ingest + online read."""
         fs = self._create_feature_store()
@@ -518,10 +496,6 @@ class FeatureStoreAppendOnlyOFTIntegTest(StreamingFeatureViewIntegTestBase, absl
         self.addCleanup(lambda: self._session.sql(f"DROP TABLE IF EXISTS {table_name}").collect())
         return table_name
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_append_only_fv_spec_oft_online_read_by_key(self) -> None:
         """Append-only FV with a Postgres OFT: snapshot table populated by manual refresh,
         OFT serves latest-per-key online reads alongside the snapshot table.
@@ -570,10 +544,6 @@ class FeatureStoreAppendOnlyOFTIntegTest(StreamingFeatureViewIntegTestBase, absl
 
         self._poll_online_read(fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate, desc="append-only OFT u1")
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_append_only_fv_pit_training_set_unchanged_by_oft(self) -> None:
         """Enabling a Postgres OFT on an append-only FV must not change the offline PIT path.
 
@@ -656,10 +626,6 @@ class FeatureStoreAppendOnlyOFTIntegTest(StreamingFeatureViewIntegTestBase, absl
             fs, fv_name, "v1", keys=[["u1"]], validate_fn=_validate_online, desc="append-only PIT + OFT latest"
         )
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_append_only_fv_with_backup_source_spec_oft_online_read(self) -> None:
         """Append-only FV with ``backup_source`` + Postgres OFT.
 

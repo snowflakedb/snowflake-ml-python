@@ -158,7 +158,7 @@ def setUpModule() -> None:
     dbm = db_manager.DBManager(session)
     evm = external_volume_manager.ExternalVolumeManager(session)
 
-    dbm.cleanup_databases(expire_hours=6)
+    dbm.cleanup_databases(expire_hours=2)
     cleanup_spec_oft_e2e_databases(dbm)
     dbm.cleanup_warehouses(expire_hours=6)
     dbm.cleanup_roles(expire_hours=6)

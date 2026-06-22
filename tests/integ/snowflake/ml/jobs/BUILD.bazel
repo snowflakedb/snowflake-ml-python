@@ -80,7 +80,6 @@ py_test(
     shard_count = 8,
     tags = [
         "feature:jobs",
-        "short_regress",
     ],
     deps = [
         ":job_test_base",

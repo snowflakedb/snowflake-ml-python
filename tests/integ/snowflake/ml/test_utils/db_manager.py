@@ -53,12 +53,15 @@ class DBManager:
         if_exists_sql = " IF EXISTS" if if_exists else ""
         self._session.sql(f"DROP DATABASE{if_exists_sql} {actual_db_name}").collect()
 
-    def cleanup_databases(self, prefix: str = _COMMON_PREFIX, expire_hours: int = 72) -> None:
+    def cleanup_databases(self, prefix: str = _COMMON_PREFIX, expire_hours: float = 72) -> None:
         """Clean up stale databases owned by the current role."""
         current_role = self._session.get_current_role()
 
         # Get the database resolved form of role name to match owner column
         resolved_current_role = identifier.get_unescaped_names(current_role)
+
+        # Use minute granularity so callers can pass fractional hours (e.g. 0.5 = 30 min).
+        expire_minutes = int(expire_hours * 60)
 
         # Use pipe operator to filter databases by owner and creation time in SQL
         # https://docs.snowflake.com/en/sql-reference/operators-flow
@@ -66,7 +69,7 @@ class DBManager:
             SHOW DATABASES LIKE '{prefix}%'
             ->> SELECT "name"
                 FROM $1
-                WHERE "created_on" < DATEADD('hour', {-expire_hours}, CURRENT_TIMESTAMP())
+                WHERE "created_on" < DATEADD('minute', {-expire_minutes}, CURRENT_TIMESTAMP())
                   AND "owner" = '{resolved_current_role}'
         """
 

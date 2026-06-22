@@ -11,7 +11,7 @@ import logging
 import math
 import os
 from functools import reduce
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -64,10 +64,12 @@ def persist_sample_input_data(
             return
 
         reference_signature = model_meta.signatures[reference_method]
-        if _has_large_tensor_input(reference_signature):
+        if _has_large_tensor_spec(reference_signature.inputs):
             logger.info(
-                "Sample input shape is too large to capture (method '%s' exceeds the size threshold).",
+                "Sample input shape is too large to capture (method '%s' exceeds the size threshold "
+                "of %d elements).",
                 reference_method,
+                _LARGE_TENSOR_ELEMENT_THRESHOLD,
             )
             return
 
@@ -82,7 +84,7 @@ def persist_sample_input_data(
                 "data": [data_row],
             }
         }
-        params_dict = _extract_default_params(reference_signature)
+        params_dict = _extract_default_params(reference_signature, reference_method)
         if params_dict:
             payload["params"] = params_dict
 
@@ -121,41 +123,47 @@ def _select_representative_row(df: pd.DataFrame) -> list[Any]:
     return [_to_json_serializable(value) for value in df.iloc[best_idx].tolist()]
 
 
-def _has_large_tensor_input(sig: model_signature.ModelSignature) -> bool:
-    """Return True if any input feature's static shape product exceeds the size threshold."""
-    for spec in sig.inputs:
-        if not isinstance(spec, core.FeatureSpec):
-            continue
-        shape = spec._shape
-        if not shape:
-            continue
-        # ``-1`` means variable length and is bounded by the user's data, not
-        # the schema, so it does not count toward the static-shape product.
-        static_dims = [dim for dim in shape if dim != -1]
-        if not static_dims:
-            continue
-        if reduce(lambda a, b: a * b, static_dims, 1) > _LARGE_TENSOR_ELEMENT_THRESHOLD:
-            return True
-    return False
+def _static_element_count(spec: Any) -> int:
+    """Count the fixed-shape scalar elements a spec contributes to a single captured row.
+
+    A leaf spec contributes the product of its shape's fixed dimensions (a scalar counts as 1).
+    A FeatureGroupSpec/ParamGroupSpec multiplies its own shape by the summed counts of its
+    children. ``-1`` dimensions are variable-length (not bounded by the schema) and are ignored.
+
+    Args:
+        spec: A feature or param spec (FeatureSpec, FeatureGroupSpec, ParamSpec, or ParamGroupSpec).
+
+    Returns:
+        The number of fixed-shape elements the spec adds to one captured row.
+    """
+    shape = getattr(spec, "_shape", None) or ()
+    element_count = reduce(lambda a, b: a * b, (dim for dim in shape if dim != -1), 1)
+    child_specs = getattr(spec, "_specs", None)
+    if child_specs:
+        return element_count * sum(_static_element_count(child) for child in child_specs)
+    return element_count
+
+
+def _has_large_tensor_spec(specs: Sequence[Any]) -> bool:
+    """Return True if any spec (input or param) exceeds the size threshold."""
+    return any(_static_element_count(spec) > _LARGE_TENSOR_ELEMENT_THRESHOLD for spec in specs)
 
 
 def _find_reference_method(
     df: pd.DataFrame,
     signatures: dict[str, model_signature.ModelSignature],
 ) -> tuple[Optional[str], list[str]]:
-    """Pick a method whose flat input feature list aligns with the captured DataFrame."""
+    """Pick a method whose input feature list aligns with the captured DataFrame."""
     # Preference order:
-    #   1. A method whose input feature names exactly match the DataFrame's
+    #   1. A method whose top-level input names exactly match the DataFrame's
     #      columns (set equality, same count).
-    #   2. The first method with the same number of flat FeatureSpec inputs.
-    # Methods with FeatureGroupSpec inputs are skipped; their nested column
-    # layout cannot be expressed in a flat row.
+    #   2. The first method with the same number of top-level inputs.
     df_column_count = len(df.columns)
     df_columns_set = {str(c) for c in df.columns}
     fallback: tuple[Optional[str], list[str]] = (None, [])
 
     for method, sig in signatures.items():
-        feature_names = _flat_feature_names(sig)
+        feature_names = _input_feature_names(sig)
         if feature_names is None:
             continue
         if len(feature_names) != df_column_count:
@@ -172,12 +180,12 @@ def _find_matching_methods(
     reference_columns: list[str],
     signatures: dict[str, model_signature.ModelSignature],
 ) -> list[str]:
-    """Return every method whose input signature has the same flat feature schema."""
+    """Return every method whose input signature has the same top-level feature schema."""
     matching: list[str] = []
     reference_set = set(reference_columns)
     reference_count = len(reference_columns)
     for method, sig in signatures.items():
-        feature_names = _flat_feature_names(sig)
+        feature_names = _input_feature_names(sig)
         if feature_names is None:
             continue
         if len(feature_names) == reference_count and set(feature_names) == reference_set:
@@ -185,28 +193,43 @@ def _find_matching_methods(
     return matching
 
 
-def _flat_feature_names(sig: model_signature.ModelSignature) -> Optional[list[str]]:
-    """Return ordered feature names if ``sig.inputs`` is a flat list of FeatureSpecs."""
+def _input_feature_names(sig: model_signature.ModelSignature) -> Optional[list[str]]:
+    """Return ordered top-level input names (FeatureSpec or FeatureGroupSpec), or None if unrecognized."""
     feature_names: list[str] = []
     for spec in sig.inputs:
-        if not isinstance(spec, core.FeatureSpec):
+        if not isinstance(spec, (core.FeatureSpec, core.FeatureGroupSpec)):
             return None
         feature_names.append(spec.name)
     return feature_names
 
 
-def _extract_default_params(sig: model_signature.ModelSignature) -> dict[str, Any]:
-    """Materialize a ``{name: default_value}`` dict for each ParamSpec with a default."""
+def _extract_default_params(sig: model_signature.ModelSignature, method_name: str) -> dict[str, Any]:
+    """Collect each param's default as a ``{name: default_value}`` mapping for the captured file.
+
+    Capture is all-or-nothing: if any param's default exceeds the size threshold, the whole params
+    block is dropped and the server rebuilds omitted params from the same signature defaults.
+
+    Args:
+        sig: Signature of the reference method whose params are being captured.
+        method_name: Name of the reference method, used only for the diagnostic log message.
+
+    Returns:
+        A mapping of param name to JSON-serializable default value, or ``{}`` when params are dropped.
+    """
+    if _has_large_tensor_spec(sig.params):
+        logger.info(
+            "Skipping params in sample input data capture for method '%s': a param default exceeds "
+            "the size threshold of %d elements.",
+            method_name,
+            _LARGE_TENSOR_ELEMENT_THRESHOLD,
+        )
+        return {}
     params: dict[str, Any] = {}
     for spec in sig.params:
-        if not isinstance(spec, core.ParamSpec):
-            continue
-        if spec.default_value is None:
-            continue
         try:
             params[spec.name] = _to_json_serializable(spec.default_value)
         except Exception as exc:
-            logger.debug("Skipping param '%s' in sample input data capture: %s", spec.name, exc)
+            logger.info("Skipping param '%s' in sample input data capture: %s", spec.name, exc)
             continue
     return params
 

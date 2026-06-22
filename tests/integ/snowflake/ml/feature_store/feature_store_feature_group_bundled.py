@@ -32,9 +32,7 @@ supported (no separate opt-out env).
 from __future__ import annotations
 
 import logging
-import os
 import time
-import unittest
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -61,8 +59,6 @@ from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
-
-_HAS_SNOWFLAKE_PAT = bool(os.environ.get("SNOWFLAKE_PAT", "").strip())
 
 
 def _rtfv_weighted_balance(request_df: pd.DataFrame, balance_df: pd.DataFrame) -> pd.DataFrame:
@@ -337,7 +333,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
 
         return fv_name, seeded_user_id
 
-    def _wait_until_fg_read_returns_rows(self, fg_live: FeatureGroup, key: str, timeout: float = 300.0) -> None:
+    def _wait_until_fg_read_returns_rows(self, fg_live: FeatureGroup, key: str, timeout: float = 600.0) -> None:
         """Poll ``read_feature_group`` until at least one row is returned."""
         deadline = time.time() + timeout
         last_err: Optional[str] = None
@@ -354,7 +350,7 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                     fg_live.version,
                     last_err,
                 )
-            time.sleep(10)
+            time.sleep(5)
         self.fail(
             f"read_feature_group({fg_live.name}/{fg_live.version}) returned no rows within "
             f"{timeout}s; last_err={last_err!r}"
@@ -505,10 +501,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         rows = self.fs.list_feature_groups().collect()
         self.assertFalse(any(r["NAME"] == fg_name for r in rows))
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for FG online read (Online Service Query API).",
-    )
     def test_read_feature_group_round_trip(self) -> None:
         """``read_feature_group`` returns pandas with the FG's predetermined output columns."""
         fv1_name, _src1, entity_key = self._register_postgres_fv(suffix="RA")
@@ -637,10 +629,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         registered = self.fs.register_feature_view(rtfv, "v1")
         return rtfv_name, registered
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
-    )
     def test_register_and_read_mixed_fg_round_trip(self) -> None:
         """FG over one BFV + one RTFV: read returns BFV column and RTFV-computed column on the same row.
 
@@ -756,10 +744,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.fs.delete_feature_view(rtfv_name, "v1")
             self.fs.delete_feature_view(bfv_name, "v1")
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
-    )
     def test_register_and_read_fg_with_no_request_source_rtfv_round_trip(self) -> None:
         """FG over a no-RequestSource RTFV: read with ``request_context=None`` returns the doubled BFV column.
 
@@ -847,10 +831,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.fs.delete_feature_view(rtfv_name, "v1")
             self.fs.delete_feature_view(bfv_name, "v1")
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "FG+RTFV register-time tests require SNOWFLAKE_PAT for the bundled OFS setUp.",
-    )
     def test_read_fg_missing_request_context_rejected(self) -> None:
         """``read_feature_group`` on an FG with an RTFV source rejects ``request_context=None`` client-side.
 
@@ -875,10 +855,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.fs.delete_feature_view(rtfv_name, "v1")
             self.fs.delete_feature_view(bfv_name, "v1")
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
-    )
     def test_read_fg_request_context_extras_dropped(self) -> None:
         """Extra ``request_context`` columns emit a ``UserWarning`` and are dropped before the HTTP call."""
         bfv_name, _src, user_id = self._register_postgres_fv(suffix="MX")
@@ -998,10 +974,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             finally:
                 self.fs.delete_feature_view(rtfv_name, "v1")
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
-    )
     def test_feature_group_with_tiled_sfv_online_read(self) -> None:
         """A FG over a tiled SFV upstream registers and ``read_feature_group`` returns its schema."""
         sfx = "TS"
@@ -1037,10 +1009,6 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         finally:
             self.fs.delete_feature_group(fg_name, fg_version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_group (Online Service query API).",
-    )
     def test_feature_group_with_tiled_bfv_online_read(self) -> None:
         """A FG over a tiled BFV upstream registers and ``read_feature_group`` returns its schema."""
         sfx = "TB"

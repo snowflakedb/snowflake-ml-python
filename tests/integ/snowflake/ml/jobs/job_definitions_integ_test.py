@@ -53,10 +53,10 @@ class JobDefinitionsTest(JobTestBase):
         )
 
     def test_job_definition_multiple_invocations(self) -> None:
-        job_def = self._register_definition(overwrite=False)
+        job_def = self._register_definition(overwrite=False, env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"})
         try:
-            first_job = job_def("foo", "--delay", "1")
-            second_job = job_def("foo", "--delay", "1")
+            first_job = job_def("--delay", "1", "foo")
+            second_job = job_def("--delay", "1", "bar")
             self.assertEqual(first_job.wait(), "DONE", first_job.get_logs(verbose=True))
             self.assertEqual(second_job.wait(), "DONE", second_job.get_logs(verbose=True))
 
@@ -80,6 +80,7 @@ class JobDefinitionsTest(JobTestBase):
             stage_name="payload_stage",
             session=self.session,
             imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")] if import_utils else [],
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         def job_fn(arg1: str, arg2: int = 1) -> str:
             return f"Hello from remote function! {arg1} {arg2}"
@@ -110,6 +111,7 @@ class JobDefinitionsTest(JobTestBase):
             stage_name="payload_stage",
             session=self.session,
             imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")] if import_utils else [],
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         def job_fn(arg1: str, arg2: int = 1) -> str:
             return f"Hello from remote function! {arg1} {arg2}"
@@ -138,6 +140,7 @@ class JobDefinitionsTest(JobTestBase):
             stage_name="payload_stage",
             session=self.session,
             imports=[(os.path.dirname(jobs.__file__), "snowflake.ml.jobs")] if import_utils else [],
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         def job_fn(arg1: str, arg2: int) -> str:
             return f"Hello from remote function! {arg1} {arg2}"
@@ -148,7 +151,9 @@ class JobDefinitionsTest(JobTestBase):
 
     def test_arg_protocol_cli(self) -> None:
         job_def = self._register_definition(
-            default_args=["--delay", "1", "--flag", "NotNoneValue"], arg_protocol=arg_protocol.ArgProtocol.CLI
+            default_args=["--delay", "1", "--flag", "NotNoneValue"],
+            arg_protocol=arg_protocol.ArgProtocol.CLI,
+            env_vars={"MLRS_USE_EMBEDDED_SCRIPTS": "false"},
         )
         test_cases: list[tuple[tuple[Any, ...], dict[str, Any]]] = [
             (("foo",), {"delay": 3, "flag": None}),
