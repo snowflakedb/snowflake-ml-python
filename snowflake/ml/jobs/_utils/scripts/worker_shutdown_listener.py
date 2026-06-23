@@ -160,9 +160,8 @@ def monitor_shutdown_signal(check_interval: int, max_consecutive_failures: int) 
     Raises:
         ConnectionError: If Ray connection failures exceed threshold
     """
-    # CRITICAL: Use Ray NodeName to match what the head node expects from ray.nodes()
-    # The head node gets worker IDs via node.get("NodeName"), so we must use the same format.
-    # Using IP address (e.g., from get_instance_ip.get_self_ip()) causes ID mismatch and timeout.
+    # The head node identifies workers via node.get("NodeID") from ray.nodes().
+    # get_node_id() returns the same NodeID hex hash, so the acknowledgment matches.
     worker_id = ray.get_runtime_context().get_node_id()
     actor_check_count = 0
     consecutive_connection_failures = 0

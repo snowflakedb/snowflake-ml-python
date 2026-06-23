@@ -35,6 +35,17 @@ def get_available_session() -> session.Session:
     if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
         return session._get_active_session()
     opts: dict[str, Union[str, bytes]] = dict(connection_params.SnowflakeLoginOptions())
+    # Snowpark wipes ``password`` from the connection's parameters during ``Session.create()``,
+    # so promote a PAT-in-password to ``SNOWFLAKE_PAT`` before the session is built. Only do this
+    # when the session actually authenticates with a PAT (``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``);
+    # otherwise we'd shove a plain password into ``SNOWFLAKE_PAT`` and send an invalid token to the
+    # Online Service. The connection profile is authoritative: overwrite any pre-existing env value
+    # so a stale external export can't shadow the PAT actually configured for this session.
+    authenticator = opts.get("authenticator")
+    is_pat_auth = isinstance(authenticator, str) and authenticator.upper() == "PROGRAMMATIC_ACCESS_TOKEN"
+    pat_candidate = opts.get("password")
+    if is_pat_auth and isinstance(pat_candidate, str) and pat_candidate.strip():
+        os.environ["SNOWFLAKE_PAT"] = pat_candidate.strip()
     sess = session.Session.builder.configs(opts).create()
     _ensure_session_has_warehouse(sess, opts)
     return sess

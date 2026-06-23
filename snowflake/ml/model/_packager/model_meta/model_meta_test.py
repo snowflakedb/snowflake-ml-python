@@ -548,6 +548,26 @@ class ModelMetaEnvTest(absltest.TestCase):
 
         self.assertTrue(meta.env.prefer_pip_for_automatic_dependencies)
 
+    def test_telemetry_metadata_reports_pip_only_packaging(self) -> None:
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=True):
+            with mock.patch.object(env_utils, "is_local_conda_environment", return_value=False):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    with model_meta.create_model_metadata(
+                        model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                    ) as meta:
+                        meta.models["model1"] = _DUMMY_BLOB
+
+                    self.assertTrue(meta.telemetry_metadata()["is_packaged_pip_only"])
+
+        with mock.patch.object(model_env, "is_pip_only_packaging_enabled", return_value=False):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                with model_meta.create_model_metadata(
+                    model_dir_path=tmpdir, name="model1", model_type="custom", signatures=_DUMMY_SIG
+                ) as meta:
+                    meta.models["model1"] = _DUMMY_BLOB
+
+                self.assertFalse(meta.telemetry_metadata()["is_packaged_pip_only"])
+
     def test_model_meta_sample_input_file_paths_omitted_when_unpopulated(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             with model_meta.create_model_metadata(

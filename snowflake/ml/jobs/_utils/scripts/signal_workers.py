@@ -70,7 +70,7 @@ def get_worker_node_ids() -> list[str]:
         node for node in ray.nodes() if node.get("Alive") and node.get("Resources", {}).get("node_tag:worker", 0) > 0
     ]
 
-    worker_node_ids = [node.get("NodeName") for node in worker_nodes]
+    worker_node_ids = [node.get("NodeID") for node in worker_nodes]
 
     if worker_node_ids:
         logging.info(f"Found {len(worker_node_ids)} worker nodes")
@@ -178,27 +178,19 @@ def signal_workers(wait_time: int = 10) -> int:
     Returns:
         0 for success, 1 for failure
     """
-    try:
-        ray.init(address="auto", ignore_reinit_error=True)
+    ray.init(address="auto", ignore_reinit_error=True)
 
-        worker_node_ids = get_worker_node_ids()
+    worker_node_ids = get_worker_node_ids()
 
-        if worker_node_ids:
-            shutdown_signal = get_or_create_shutdown_signal()
-            request_shutdown(shutdown_signal)
-            verify_shutdown(shutdown_signal)
-            wait_for_acknowledgments(shutdown_signal, worker_node_ids, wait_time)
-        else:
-            logging.info("No active worker nodes found to signal.")
+    if worker_node_ids:
+        shutdown_signal = get_or_create_shutdown_signal()
+        request_shutdown(shutdown_signal)
+        verify_shutdown(shutdown_signal)
+        wait_for_acknowledgments(shutdown_signal, worker_node_ids, wait_time)
+    else:
+        logging.info("No active worker nodes found to signal.")
 
-        return 0
-    except TimeoutError as e:
-        # Log the timeout but return success - workers will be cleaned up by SPCS anyway
-        logging.warning(f"Failed to signal workers: {e}")
-        return 0  # Return success to avoid failing the job
-    except Exception as e:
-        logging.error(f"Error signaling workers: {e}")
-        return 1
+    return 0
 
 
 if __name__ == "__main__":

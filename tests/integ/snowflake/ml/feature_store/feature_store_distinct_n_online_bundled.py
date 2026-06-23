@@ -18,8 +18,6 @@ Service. Requires ``SNOWFLAKE_PAT`` for the Online Service ingest / Query API, e
 
 import datetime
 import json
-import os
-import unittest
 import uuid
 from typing import Any, Optional
 
@@ -115,10 +113,6 @@ class FeatureStoreDistinctNStreamingIntegTest(StreamingFeatureViewIntegTestBase,
         ).collect()
         return table_name
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for stream_ingest and Postgres online read.",
-    )
     def test_stream_ingest_distinct_n_online_read(self) -> None:
         """Tiled streaming FV with first/last distinct-N: ingest events; online read returns distinct arrays."""
         from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
@@ -229,10 +223,6 @@ class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, abs
         ).collect()
         return table_name
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for Postgres online read (Online Service Query API).",
-    )
     def test_batch_tiled_distinct_n_offline_and_online_read(self) -> None:
         """Tiled batch FV with first/last distinct-N: validate offline merge + Postgres online read."""
         fs = self._create_feature_store()

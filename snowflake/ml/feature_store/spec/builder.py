@@ -75,6 +75,7 @@ from snowflake.ml.feature_store.spec.models import (
     _columns_from_struct_type,
     _columns_from_tiled_struct_type,
     _make_fs_column,
+    _make_tiled_fs_column,
 )
 from snowflake.ml.feature_store.stream_source import StreamSource
 from snowflake.ml.version import VERSION
@@ -232,6 +233,15 @@ def _resolve_tiled_fv_output_column(
         )
     partial_name = spec.get_tile_column_name(partial_suffix)
     partial = partials_by_name.get(partial_name)
+    # LAST_DISTINCT_N / FIRST_DISTINCT_N use per-N tile column names in the new
+    # tile format: _PARTIAL_{LAST|FIRST}_DISTINCT_{n}_{col}. Fall back to that
+    # name when the old-format name (_PARTIAL_{LAST|FIRST}_{col}) is absent.
+    if partial is None and spec.function in (AggregationType.LAST_DISTINCT_N, AggregationType.FIRST_DISTINCT_N):
+        n = spec.params.get("n")
+        new_partial_name = spec.get_tile_column_name(f"{partial_suffix}_DISTINCT_{n}")
+        partial = partials_by_name.get(new_partial_name)
+        if partial is not None:
+            partial_name = new_partial_name
     if partial is None:
         raise ValueError(
             f"Cannot resolve output type for tiled feature view aggregation "
@@ -245,6 +255,7 @@ def _resolve_tiled_fv_output_column(
         scale=partial.scale,
         length=partial.length,
         timezone=partial.timezone,
+        element_type=partial.element_type,
     )
 
 
@@ -791,7 +802,7 @@ class FeatureViewSpecBuilder:
                 if f.name not in entity_names
             ]
         if fv.is_tiled and fv.aggregation_specs is not None:
-            partials_by_name = {f.name: _make_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
+            partials_by_name = {f.name: _make_tiled_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
             return [
                 _resolve_tiled_fv_output_column(spec, partials_by_name)
                 for spec in fv.aggregation_specs

@@ -22,9 +22,7 @@ Requires ``SNOWFLAKE_PAT`` for spec OFT online read, e.g.
 import json
 import logging
 import math
-import os
 import time
-import unittest
 import uuid
 
 from absl.testing import absltest
@@ -170,10 +168,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch non-tiled (timeseries) — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_fv_spec_oft_online_read_by_key(self) -> None:
         """Register batch FV over a small table; assert Query API returns AMOUNT for the keyed row."""
         fs = self._create_feature_store()
@@ -209,10 +203,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate, desc="batch non-tiled")
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_fv_online_read_negotiates_http2(self) -> None:
         """Soft assertion: confirm the Online Service negotiates HTTP/2.
 
@@ -286,10 +276,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled (timeseries) — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_tiled_fv_spec_oft_full_online_read_by_key(self) -> None:
         """Tiled batch FV: multiple source rows per key; online read returns tile aggregates."""
         fs = self._create_feature_store()
@@ -363,10 +349,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._poll_online_read(fs, fv_name, "v1", keys=[[batch_key]], validate_fn=_validate_tiled, desc="batch tiled")
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_tiled_fv_spec_oft_incremental_online_read_by_key(self) -> None:
         """Tiled batch FV: multiple source rows per key; online read returns tile aggregates."""
         fs = self._create_feature_store()
@@ -444,10 +426,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled approx_count_distinct — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_tiled_approx_count_distinct_online_read(self) -> None:
         """Tiled batch FV with approx_count_distinct on a STRING column: online read returns HLL estimate."""
         fs = self._create_feature_store()
@@ -509,10 +487,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch tiled (timeseries) + secondary key — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_tiled_fv_spec_oft_secondary_key_online_read_by_key(self) -> None:
         """Tiled batch FV with secondary keys: per-key SUM/COUNT arrays compose across multiple tiles in the window."""
         fs = self._create_feature_store()
@@ -595,10 +569,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch non-timeseries (with refresh_freq) — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_non_timeseries_fv_spec_oft_online_read_by_key(self) -> None:
         """Batch FV without timestamp_col: register -> DT materialization -> online read."""
         fs = self._create_feature_store()
@@ -642,10 +612,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Batch static (no refresh_freq, no timestamp) — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_static_fv_spec_oft_online_read_by_key(self) -> None:
         """Static batch FV (no refresh_freq, no timestamp): register -> VIEW -> online read."""
         fs = self._create_feature_store()
@@ -688,10 +654,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # E2E: Multi-entity batch FV — registration -> online read
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_multi_entity_fv_spec_oft_online_read(self) -> None:
         """Multi-entity batch FV: register with composite keys -> online read."""
         fs = self._create_feature_store()
@@ -1095,10 +1057,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
     # Schema validation: all supported column types
     # =========================================================================
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_batch_fv_spec_oft_all_supported_types(self) -> None:
         """Verify all 6 supported types (String, Long, Double, Decimal, Boolean, TimestampNTZ) round-trip."""
         fs = self._create_feature_store()
@@ -1179,10 +1137,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.assertIn("as_pandas=True", str(ctx.exception))
         self.assertIn("OFFLINE", str(ctx.exception))
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_as_pandas_postgres_online_reuses_http_client(self) -> None:
         """Two consecutive Postgres online reads must reuse the same ``fs._online_http_client`` instance."""
         fs = self._create_feature_store()
@@ -1222,10 +1176,6 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self.assertIsInstance(pdf2, pd.DataFrame)
 
-    @unittest.skipUnless(
-        os.environ.get("SNOWFLAKE_PAT", "").strip(),
-        "SNOWFLAKE_PAT must be set for spec OFT online read (Online Service Query API).",
-    )
     def test_as_pandas_parity_all_supported_types(self) -> None:
         """``as_pandas=True`` must match ``.to_pandas()`` on the Snowpark path (column order + dtypes)."""
         import pandas as pd

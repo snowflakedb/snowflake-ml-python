@@ -6,6 +6,7 @@ py_library(
     name = "authentication",
     srcs = ["authentication.py"],
     deps = [
+        "//snowflake/ml/_internal/utils:identifier",
         "//snowflake/ml/_internal/utils:jwt_generator",
     ],
 )

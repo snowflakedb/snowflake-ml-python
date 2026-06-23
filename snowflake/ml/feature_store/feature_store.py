@@ -692,6 +692,18 @@ class FeatureStore:
         self._check_database_exists_or_throw()
         if creation_mode == CreationMode.FAIL_IF_NOT_EXIST:
             self._check_internal_objects_exist_or_throw()
+            # Best-effort: ensure the snapshot status table exists even in connect-only mode.
+            # The table is an internal implementation object (not user-visible) that must be
+            # present for scheduled snapshot tasks to succeed. Swallow any error — the caller
+            # may lack CREATE TABLE privilege, and the absence of the table does not prevent
+            # non-append_only feature store operations from working.
+            try:
+                self._ensure_snapshot_status_table_exists()
+            except Exception:
+                logger.debug(
+                    "feature store: could not ensure snapshot status table exists "
+                    "(insufficient privilege or schema not writable); skipping."
+                )
 
         else:
             try:
@@ -720,7 +732,7 @@ class FeatureStore:
     ) -> online_service_http_client.OnlineServiceHttpClient:
         """Return the FeatureStore-scoped HTTP client, creating it on first use."""
         if self._online_http_client is None:
-            self._online_http_client = online_service_http_client.OnlineServiceHttpClient()
+            self._online_http_client = online_service_http_client.OnlineServiceHttpClient(session=self._session)
         return self._online_http_client
 
     def close(self) -> None:
@@ -7777,6 +7789,14 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         is_tiled = agg_metadata is not None
         # Restored from the FEATURE_SPECS row; None when no tiling metadata.
         aggregation_secondary_keys = agg_metadata.aggregation_secondary_keys if agg_metadata else None
+        # The persisted aggregation method must be known before _construct_feature_view runs
+        # validation: reconstruction routes through the batch path, where window/offset alignment
+        # is enforced for TILES but relaxed for CONTINUOUS. Setting it afterward would be too late.
+        feature_aggregation_method = (
+            FeatureAggregationMethod(agg_metadata.feature_aggregation_method)
+            if agg_metadata and agg_metadata.feature_aggregation_method
+            else (FeatureAggregationMethod.TILES if is_tiled else None)
+        )
 
         # Rehydrate the authored source-ref list onto the reconstructed
         # FV when a ``FV_SOURCE_REFS`` row was persisted at register time.
@@ -7843,6 +7863,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
                 aggregation_secondary_keys=aggregation_secondary_keys,
+                feature_aggregation_method=feature_aggregation_method,
                 is_streaming=fv_metadata.is_streaming,
                 append_only=fv_metadata.is_append_only,
                 backup_source=backup_source,
@@ -7855,11 +7876,6 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             if is_tiled:
                 fv_meta_config = self._metadata_manager.get_feature_view_metadata_config(name.identifier(), version)
                 fv._authoring_pkg_version = fv_meta_config.authoring_pkg_version if fv_meta_config else None
-
-            if agg_metadata and agg_metadata.feature_aggregation_method:
-                fv._feature_aggregation_method = FeatureAggregationMethod(agg_metadata.feature_aggregation_method)
-            elif is_tiled:
-                fv._feature_aggregation_method = FeatureAggregationMethod.TILES
 
             # For streaming FVs, attach the function source from metadata
             if fv_metadata.is_streaming:
@@ -7905,6 +7921,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 feature_granularity=feature_granularity,
                 aggregation_specs=aggregation_specs,
                 aggregation_secondary_keys=aggregation_secondary_keys,
+                feature_aggregation_method=feature_aggregation_method,
                 storage_config=storage_config,
                 is_streaming=fv_metadata.is_streaming,
                 source_refs=restored_source_refs,

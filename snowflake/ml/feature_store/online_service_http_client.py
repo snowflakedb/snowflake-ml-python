@@ -1,15 +1,14 @@
 """HTTP client for the Online Service REST APIs (Query + Ingest).
 
-Wraps ``httpx`` with HTTP/2 enabled. One ``httpx.Client`` is cached per
-``(scheme://host, proxy)`` so concurrent reads share a single multiplexed
-connection per origin. Auth headers are rebuilt per request so a rotated
-``SNOWFLAKE_PAT`` takes effect immediately.
+HTTP/2 ``httpx`` client cached per ``(scheme://host, proxy)``. Auth resolution order:
+in-session PAT (``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``) → ``SNOWFLAKE_PAT`` env var → raise.
 
-This module owns the entire HTTP surface for the Online Service: URL
-building, PAT lookup, header construction, proxy resolution, and the
-client itself. Callers in ``online_service.py`` get a typed
-``(status_code, body_bytes)`` tuple from :meth:`OnlineServiceHttpClient.post_json`
-and never touch ``httpx`` directly.
+NOTE: We intentionally do NOT issue a session token from the Snowpark connection.
+A session token reuses the caller's existing GS session; when that session was created
+by the Python connector (``clientAppId=PythonSnowpark``), GS encodes the
+``system$snowservices_resolve_ingress`` result in ARROW format, which the SPCS ingress
+proxy cannot parse (it only reads ``rowset``, null for ARROW) → "empty data" → HTTP 500.
+A real PAT forces a fresh GS session (``clientAppId=SnowServices Ingress``) → JSON → works.
 """
 
 from __future__ import annotations
@@ -46,15 +45,13 @@ def ingest_api_url(ingest_base_url: str) -> str:
 
 
 def online_service_pat_from_env() -> str:
-    """PAT for ``Authorization: Snowflake Token="..."`` on the Online Service REST APIs.
-
-    Only ``SNOWFLAKE_PAT`` is supported so behavior is explicit; create a PAT in Snowflake and set this env var.
+    """Read PAT from ``SNOWFLAKE_PAT``; legacy lookup used by the env-var fallback path.
 
     Returns:
-        Programmatic access token from ``SNOWFLAKE_PAT``.
+        PAT string from ``SNOWFLAKE_PAT``.
 
     Raises:
-        SnowflakeMLException: If ``SNOWFLAKE_PAT`` is unset or empty.
+        SnowflakeMLException: When ``SNOWFLAKE_PAT`` is unset or empty.
     """
     pat = os.environ.get("SNOWFLAKE_PAT", "").strip()
     if pat:
@@ -69,10 +66,67 @@ def online_service_pat_from_env() -> str:
     )
 
 
+def _pat_token_from_session(session: Session) -> Optional[str]:
+    """Pull a PAT from the session when ``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``.
+
+    Args:
+        session: Snowpark session.
+
+    Returns:
+        PAT string, or ``None`` if the session isn't PAT-authed.
+    """
+    try:
+        from snowflake.connector.auth.pat import AuthByPAT
+
+        auth_cls = session.connection.auth_class
+        if not isinstance(auth_cls, AuthByPAT):
+            return None
+        pat = auth_cls.assertion_content
+        if isinstance(pat, str) and pat.strip():
+            return pat.strip()
+    except Exception:
+        logger.debug("PAT extraction from session failed", exc_info=True)
+    return None
+
+
+_NO_AUTH_MESSAGE = (
+    "Online Service requires a Programmatic Access Token (PAT). Either create the "
+    "Snowpark Session with authenticator='PROGRAMMATIC_ACCESS_TOKEN' (PAT in password), "
+    "or set the SNOWFLAKE_PAT environment variable. A session token cannot be used: it "
+    "reuses the caller's GS session and triggers an ARROW response the ingress proxy "
+    "cannot parse."
+)
+
+
 def auth_headers(session: Optional[Session] = None) -> dict[str, str]:
-    """Build HTTP headers for the Online Service REST APIs (Query + Ingest); ``session`` is unused."""
-    _ = session
-    token = online_service_pat_from_env()
+    """Build HTTP headers via a one-shot auth resolution; per-request and not cached.
+
+    Prefer :class:`OnlineServiceHttpClient` for the hot path — it captures the session
+    once at construction time and reuses it. This standalone helper is for callers
+    that need a quick auth-validation pre-flight.
+
+    Resolution: in-session PAT (if ``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``) \u2192
+    ``SNOWFLAKE_PAT`` env var. A session token is intentionally never used (see module docstring).
+
+    Args:
+        session: Snowpark session for the resolution chain; ``None`` falls through to env var.
+
+    Returns:
+        Dict with ``Authorization``, ``Content-Type``, and ``Accept`` headers.
+
+    Raises:
+        SnowflakeMLException: When no auth path resolves a token.
+    """
+    token: Optional[str] = None
+    if session is not None:
+        token = _pat_token_from_session(session)
+    if not token:
+        token = os.environ.get("SNOWFLAKE_PAT", "").strip() or None
+    if not token:
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=RuntimeError(_NO_AUTH_MESSAGE),
+        )
     return {
         "Authorization": f'Snowflake Token="{token}"',
         "Content-Type": "application/json",
@@ -93,16 +147,22 @@ def _proxy_for_url(url: str) -> Optional[str]:
 class OnlineServiceHttpClient:
     """HTTP/2-enabled httpx client for the Online Service, cached per origin+proxy.
 
-    Caches one ``httpx.Client(http2=True)`` per ``(scheme://host, proxy)`` so concurrent reads share a
-    single multiplexed connection per origin. Falls back to HTTP/1.1 transparently if the server's
-    ALPN does not advertise h2. Honors ``HTTPS_PROXY`` / ``HTTP_PROXY`` / ``NO_PROXY`` via
-    :func:`_proxy_for_url`. Auth headers are rebuilt per request so a rotated PAT is picked up
-    without re-init.
+    Caches one ``httpx.Client(http2=True)`` per ``(scheme://host, proxy)`` so concurrent reads
+    share a single multiplexed connection per origin. Falls back to HTTP/1.1 transparently if
+    the server's ALPN does not advertise h2. Honors ``HTTPS_PROXY`` / ``HTTP_PROXY`` /
+    ``NO_PROXY`` via :func:`_proxy_for_url`.
+
+    When ``session`` is provided and was created with
+    ``authenticator='PROGRAMMATIC_ACCESS_TOKEN'``, the in-session PAT is used. Otherwise
+    falls back to the ``SNOWFLAKE_PAT`` env var. A session token is intentionally never
+    used — it reuses the caller's GS session and triggers an ARROW response the ingress
+    proxy cannot parse (see module docstring).
     """
 
     def __init__(
         self,
         *,
+        session: Optional[Session] = None,
         max_connections: int = 8,
         _transport_factory: Optional[Callable[..., Any]] = None,
     ) -> None:
@@ -111,6 +171,43 @@ class OnlineServiceHttpClient:
         self._http2_logged_for_origin: set[str] = set()
         self._transport_factory = _transport_factory
         self._closed = False
+        self._session: Optional[Session] = session
+        self._session_pat: Optional[str] = _pat_token_from_session(session) if session is not None else None
+
+    def _resolve_token(self, url: str) -> str:
+        """Resolve the bearer token: in-session PAT → ``SNOWFLAKE_PAT`` env var.
+
+        A session token is intentionally never used — it reuses the caller's GS session
+        and triggers an ARROW response the ingress proxy cannot parse (see module docstring).
+
+        Args:
+            url: Online Service URL (unused; kept for signature symmetry).
+
+        Returns:
+            Token string for the ``Authorization`` header.
+
+        Raises:
+            SnowflakeMLException: when no auth path can produce a token.
+        """
+        del url
+        if self._session_pat:
+            logger.info("Online Service auth: resolved via session PAT (len=%d)", len(self._session_pat))
+            return self._session_pat
+        env_pat = os.environ.get("SNOWFLAKE_PAT", "").strip()
+        if env_pat:
+            logger.info("Online Service auth: resolved via SNOWFLAKE_PAT env var (len=%d)", len(env_pat))
+            return env_pat
+        raise snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INVALID_ARGUMENT,
+            original_exception=RuntimeError(_NO_AUTH_MESSAGE),
+        )
+
+    def _build_auth_headers(self, url: str) -> dict[str, str]:
+        return {
+            "Authorization": f'Snowflake Token="{self._resolve_token(url)}"',
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
 
     def _client_for_url(self, url: str) -> Any:
         """Cached ``httpx.Client(http2=True)`` keyed by (scheme://host, proxy)."""
@@ -141,15 +238,33 @@ class OnlineServiceHttpClient:
         self._clients_by_key[key] = client
         return client
 
-    def post_json(self, url: str, body: dict[str, Any], timeout: float) -> tuple[int, bytes]:
-        """POST ``body`` as JSON and return ``(status_code, body_bytes)``; only network errors raise."""
+    def post_json(
+        self,
+        url: str,
+        body: dict[str, Any],
+        timeout: float,
+    ) -> tuple[int, bytes]:
+        """POST ``body`` as JSON and return ``(status_code, body_bytes)``; only network errors raise.
+
+        Args:
+            url: Online Service endpoint URL.
+            body: JSON-serializable payload.
+            timeout: Per-request timeout in seconds.
+
+        Returns:
+            ``(status_code, body_bytes)`` from the server response.
+
+        Raises:
+            RuntimeError: When the client has been closed.
+            SnowflakeMLException: On transport errors or unresolvable authentication.
+        """
         if self._closed:
             raise RuntimeError("OnlineServiceHttpClient is closed")
 
         import httpx
 
         payload = json.dumps(body).encode("utf-8")
-        headers = auth_headers()
+        headers = self._build_auth_headers(url)
         client = self._client_for_url(url)
 
         try:
@@ -160,7 +275,6 @@ class OnlineServiceHttpClient:
                 original_exception=RuntimeError(f"Online Service is unreachable: {e}"),
             ) from e
 
-        # Confirm h2 negotiation in production by logging once per origin.
         parsed = urllib.parse.urlparse(url)
         origin = f"{parsed.scheme}://{parsed.hostname or ''}"
         if origin not in self._http2_logged_for_origin:

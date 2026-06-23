@@ -8,6 +8,7 @@ import pandas as pd
 from absl.testing import absltest
 
 from snowflake.ml._internal import platform_capabilities as pc
+from snowflake.ml._internal.exceptions import error_codes
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.jobs import job
 from snowflake.ml.model import (
@@ -807,6 +808,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         m_options = type_hints.SKLModelLoadOptions()
         with (
+            mock.patch.object(self.m_mv, "_enforce_owner_only"),
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(
                 model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
@@ -859,6 +861,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         m_options = type_hints.SKLModelLoadOptions()
         with (
+            mock.patch.object(self.m_mv, "_enforce_owner_only"),
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(
                 model_composer.ModelComposer, "load", side_effect=[m_pk_for_validation, m_pk]
@@ -897,6 +900,7 @@ class ModelVersionImplTest(absltest.TestCase):
 
         m_options = type_hints.SKLModelLoadOptions()
         with (
+            mock.patch.object(self.m_mv, "_enforce_owner_only"),
             mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
             mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]) as mock_load,
         ):
@@ -919,6 +923,56 @@ class ModelVersionImplTest(absltest.TestCase):
                     mock.call(mock.ANY, meta_only=False, options=m_options),
                 ]
             )
+
+    def test_load_blocked_for_non_owner(self) -> None:
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"CONSUMER"'),
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, rf"\({error_codes.INSUFFICIENT_PRIVILEGES}\).*only the model's owner role is permitted"
+            ):
+                self.m_mv.load()
+            mock_download_files.assert_not_called()
+
+    def test_load_owner_match_case_insensitive(self) -> None:
+        m_model = mock.MagicMock()
+        m_pk = mock.MagicMock()
+        m_pk.meta = mock.MagicMock()
+        m_pk.model = m_model
+
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier("prod_owner", case_sensitive=False),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value='"PROD_OWNER"'),
+            mock.patch.object(self.m_mv._model_ops, "download_files"),
+            mock.patch.object(model_composer.ModelComposer, "load", side_effect=[m_pk]),
+        ):
+            self.assertEqual(self.m_mv.load(force=True), m_model)
+
+    def test_load_blocked_when_no_active_role(self) -> None:
+        with (
+            mock.patch.object(
+                self.m_mv._model_ops,
+                "get_model_owner",
+                return_value=sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False),
+            ),
+            mock.patch.object(self.m_mv._model_ops._session, "get_current_role", return_value=None),
+            mock.patch.object(self.m_mv._model_ops, "download_files") as mock_download_files,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, rf"\({error_codes.INSUFFICIENT_PRIVILEGES}\).*no active role on the session"
+            ):
+                self.m_mv.load()
+            mock_download_files.assert_not_called()
 
     def test_set_alias(self) -> None:
         with mock.patch.object(self.m_mv._model_ops, "set_alias") as mock_set_alias:

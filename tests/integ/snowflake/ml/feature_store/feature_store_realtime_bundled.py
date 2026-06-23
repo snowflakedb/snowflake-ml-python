@@ -17,9 +17,7 @@ Run via the bundled runner::
 from __future__ import annotations
 
 import logging
-import os
 import time
-import unittest
 import uuid
 from typing import Optional
 
@@ -45,8 +43,6 @@ from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.snowpark.types import DoubleType, StringType, StructField, StructType
 
 logger = logging.getLogger(__name__)
-
-_HAS_SNOWFLAKE_PAT = bool(os.environ.get("SNOWFLAKE_PAT", "").strip())
 
 
 def _rtfv_compute_fn(request_df: pd.DataFrame, balance_df: pd.DataFrame) -> pd.DataFrame:
@@ -421,7 +417,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         *,
         keys: list[list[str]],
         request_context: Optional[pd.DataFrame] = None,
-        timeout: float = 300.0,
+        timeout: float = 600.0,
     ) -> pd.DataFrame:
         """Poll ``read_feature_view`` until the RTFV's OFT-backed upstream is ingested.
 
@@ -453,7 +449,7 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
                 # read API may unwrap SnowflakeMLException to ValueError.
                 last_err = f"{type(e).__name__}: {e}"
                 logger.info("RTFV read not yet ready: %s", last_err)
-            time.sleep(10)
+            time.sleep(5)
         self.fail(
             f"read_feature_view({rtfv_live.name}/{rtfv_live.version}) returned no rows within "
             f"{timeout}s; last_err={last_err!r}"
@@ -564,12 +560,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    # ----- read-path round-trip (skipped unless SNOWFLAKE_PAT is set) -------------
-
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_round_trip(self) -> None:
         """``read_feature_view(rtfv, keys, request_context=...)`` returns the computed value.
 
@@ -616,10 +606,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_no_request_source_round_trip(self) -> None:
         """``read_feature_view(rtfv, keys)`` works for an RTFV without a RequestSource.
 
@@ -661,10 +647,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_multi_row(self) -> None:
         """Per-row alignment between ``keys`` and ``request_context`` is preserved end-to-end."""
         s = uuid.uuid4().hex[:8].upper()
@@ -718,10 +700,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_two_upstreams_round_trip(self) -> None:
         """End-to-end read against an RTFV with two Postgres upstreams that share ``USER_ID``.
 
@@ -778,10 +756,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_key_miss(self) -> None:
         """Read with a key absent from upstream; left-join + fillna -> ``WEIGHTED_BALANCE = 0.0``."""
         s = uuid.uuid4().hex[:8].upper()
@@ -882,10 +856,6 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
 
-    @unittest.skipUnless(
-        _HAS_SNOWFLAKE_PAT,
-        "SNOWFLAKE_PAT must be set for read_feature_view (Online Service query API).",
-    )
     def test_read_feature_view_realtime_with_tiled_sfv_upstream(self) -> None:
         """``read_feature_view(rtfv, ...)`` works when the RTFV's upstream is a tiled SFV."""
         upstream_name, user_id = self._register_postgres_tiled_sfv(suffix="RTRD")

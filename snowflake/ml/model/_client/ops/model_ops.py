@@ -504,6 +504,24 @@ class ModelOperator:
             res[self._model_client.MODEL_DEFAULT_VERSION_NAME_COL_NAME], case_sensitive=True
         )
 
+    def get_model_owner(
+        self,
+        *,
+        database_name: Optional[sql_identifier.SqlIdentifier],
+        schema_name: Optional[sql_identifier.SqlIdentifier],
+        model_name: sql_identifier.SqlIdentifier,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> sql_identifier.SqlIdentifier:
+        res = self._model_client.show_models(
+            database_name=database_name,
+            schema_name=schema_name,
+            model_name=model_name,
+            statement_params=statement_params,
+        )
+        if len(res) != 1:
+            raise ValueError(f"Model {model_name} does not exist or has been dropped.")
+        return sql_identifier.SqlIdentifier(res[0][self._model_client.MODEL_OWNER_COL_NAME], case_sensitive=False)
+
     def get_version_by_alias(
         self,
         *,

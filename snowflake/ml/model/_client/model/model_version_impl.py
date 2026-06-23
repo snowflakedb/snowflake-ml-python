@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional, Union, overload
 import pandas as pd
 
 from snowflake.ml._internal import telemetry
+from snowflake.ml._internal.exceptions import error_codes, exceptions
 from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.feature_store import feature_view
 from snowflake.ml.jobs import job
@@ -980,6 +981,7 @@ class ModelVersion(lineage_node.LineageNode):
             project=_TELEMETRY_PROJECT,
             subproject=_TELEMETRY_SUBPROJECT,
         )
+        self._enforce_owner_only("load", statement_params=statement_params)
         if not force:
             with tempfile.TemporaryDirectory() as tmp_workspace_for_validation:
                 ws_path_for_validation = pathlib.Path(tmp_workspace_for_validation)
@@ -1031,12 +1033,41 @@ class ModelVersion(lineage_node.LineageNode):
             mode="model",
             statement_params=statement_params,
         )
+        warnings.warn(
+            "Loading the model into memory. It will execute node in the model files.",
+            category=RuntimeWarning,
+            stacklevel=2,
+        )
         pk = model_composer.ModelComposer.load(workspace, meta_only=False, options=options)
         assert pk.model, (
             "Unable to load model. "
             f"model_name={self._model_name}, version_name={self._version_name}, metadata={pk.meta}"
         )
         return pk.model
+
+    def _enforce_owner_only(self, operation: str, *, statement_params: Optional[dict[str, Any]] = None) -> None:
+        owner = self._model_ops.get_model_owner(
+            database_name=None,
+            schema_name=None,
+            model_name=self._model_name,
+            statement_params=statement_params,
+        )
+        current_role_raw = self._model_ops._session.get_current_role()
+        if not current_role_raw:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INSUFFICIENT_PRIVILEGES,
+                original_exception=RuntimeError(
+                    f"model registry: cannot {operation} this model — no active role on the session."
+                ),
+            )
+        current_role = sql_identifier.SqlIdentifier(current_role_raw.strip('"'), case_sensitive=False)
+        if current_role != owner:
+            raise exceptions.SnowflakeMLException(
+                error_code=error_codes.INSUFFICIENT_PRIVILEGES,
+                original_exception=RuntimeError(
+                    f"model registry: cannot {operation} this model — only the model's owner role is permitted."
+                ),
+            )
 
     @staticmethod
     def _load_from_lineage_node(session: Session, name: str, version: str) -> "ModelVersion":

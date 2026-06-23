@@ -362,7 +362,9 @@ py_library(
 py_library(
     name = "mixins",
     srcs = ["mixins.py"],
-    deps = [],
+    deps = [
+        ":identifier",
+    ],
 )
 
 py_library(

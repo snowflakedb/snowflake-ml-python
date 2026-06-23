@@ -1968,6 +1968,121 @@ class FeatureAggregationMethodTest(parameterized.TestCase):
         fv._validate()
         self.assertEqual(fv.feature_granularity, "60s")
 
+    def _initialize_tiled_fv(self, fv: FeatureView) -> None:
+        """Attach a mock feature DataFrame so the FV can be validated."""
+        mock_udf_df = MagicMock()
+        mock_udf_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_udf_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        fv._initialize_from_feature_df(mock_udf_df)
+
+    def test_streaming_continuous_non_aligned_window_and_offset_accepted(self) -> None:
+        """CONTINUOUS FV: window/offset need not be multiples of feature_granularity."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",
+            features=[
+                Feature.sum("AMOUNT", "90s").alias("AMOUNT_SUM_90S"),
+                Feature.sum("AMOUNT", "5m", offset="90s").alias("AMOUNT_SUM_5M_OFF_90S"),
+            ],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1m",
+        )
+        self._initialize_tiled_fv(fv)
+        fv._validate()  # must not raise
+        self.assertTrue(fv.is_tiled)
+
+    def test_streaming_continuous_sub_granularity_window_accepted(self) -> None:
+        """CONTINUOUS FV: a lookback window smaller than feature_granularity is allowed."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",  # the minimum granularity
+            features=[Feature.sum("AMOUNT", "30s")],  # window below the granularity
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            refresh_freq="1m",
+        )
+        self._initialize_tiled_fv(fv)
+        fv._validate()  # must not raise
+        self.assertTrue(fv.is_tiled)
+
+    def test_streaming_tiles_sub_granularity_window_rejected(self) -> None:
+        """TILES FV: a window below/not a multiple of feature_granularity still raises."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        fv = FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            stream_config=self._make_stream_config(),
+            timestamp_col="EVENT_TIME",
+            feature_granularity="1m",
+            features=[Feature.sum("AMOUNT", "30s")],
+            feature_aggregation_method=FeatureAggregationMethod.TILES,
+            refresh_freq="1m",
+        )
+        self._initialize_tiled_fv(fv)
+        with self.assertRaisesRegex(ValueError, "must be a multiple of"):
+            fv._validate()
+
+    def _construct_reconstructed_fv(
+        self, *, feature_aggregation_method: FeatureAggregationMethod, window: str
+    ) -> FeatureView:
+        """Reconstruct a tiled streaming FV the way get_feature_view / from_json do."""
+        from snowflake.ml.feature_store.feature import Feature
+
+        mock_df = MagicMock()
+        mock_df.queries = {"queries": ["SELECT * FROM TBL"]}
+        mock_df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        return FeatureView._construct_feature_view(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=mock_df,
+            timestamp_col="EVENT_TIME",
+            desc="",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="1 minute",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            feature_granularity="1m",
+            aggregation_specs=[Feature.sum("AMOUNT", window).to_spec()],
+            feature_aggregation_method=feature_aggregation_method,
+            is_streaming=True,
+        )
+
+    def test_construct_feature_view_continuous_sub_granularity_window_validates(self) -> None:
+        """Reconstruction threads CONTINUOUS through before _validate, so a sub-granularity window passes.
+
+        Guards the actual production bug: get_feature_view rebuilds via the batch __init__ path,
+        which validates before the aggregation method was set.
+        """
+        fv = self._construct_reconstructed_fv(
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS, window="30s"
+        )
+        self.assertEqual(fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+        self.assertTrue(fv.is_tiled)
+
+    def test_construct_feature_view_tiles_misaligned_window_still_raises(self) -> None:
+        """Reconstruction still enforces tile alignment for TILES (guards against over-relaxation)."""
+        with self.assertRaisesRegex(ValueError, "must be a multiple of"):
+            self._construct_reconstructed_fv(feature_aggregation_method=FeatureAggregationMethod.TILES, window="30s")
+
     def test_streaming_tiled_tiles_explicit(self) -> None:
         """Tiled streaming FV with explicit TILES."""
         from snowflake.ml.feature_store.feature import Feature

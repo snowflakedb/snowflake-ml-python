@@ -21,6 +21,7 @@ from typing import Any, Callable, Optional
 import pandas as pd
 
 from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
+from snowflake.connector.errors import DatabaseError
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -30,6 +31,7 @@ from snowflake.ml.feature_store.feature_view import (
     StoreType,
 )
 from snowflake.ml.feature_store.online_service import (
+    OnlineServiceAccess,
     endpoint_url,
     fetch_online_service_status,
 )
@@ -197,7 +199,10 @@ def wait_online_service_running_with_query_endpoint(
                     logger.warning("drop_online_service failed; continuing.", exc_info=True)
                 if on_recreate is not None:
                     on_recreate()
-                fs.create_online_service(producer_role, consumer_role)
+                try:
+                    fs.create_online_service(producer_role, consumer_role)
+                except DatabaseError as e:
+                    logger.warning("create_online_service (recreate) raised: %s; will poll for RUNNING.", e)
                 break
             time.sleep(poll_interval_s)
         else:
@@ -263,7 +268,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
             cls._dbm = db_manager.DBManager(cls._session)
             cls._evm = external_volume_manager.ExternalVolumeManager(cls._session)
 
-            cls._dbm.cleanup_databases(expire_hours=6)
+            cls._dbm.cleanup_databases(expire_hours=2)
             cleanup_spec_oft_e2e_databases(cls._dbm)
             cls._dbm.cleanup_warehouses(expire_hours=6)
             cls._dbm.cleanup_roles(expire_hours=6)
@@ -296,6 +301,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                 name=cls.test_schema,
                 default_warehouse=cls.warehouse,
                 creation_mode=CreationMode.CREATE_IF_NOT_EXIST,
+                online_service_access=OnlineServiceAccess.PUBLIC,
             )
 
             cls.user_entity = Entity(name="user_entity", join_keys=["USER_ID"], desc="User entity for streaming SFV")
@@ -474,7 +480,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         version: str,
         keys: list,
         validate_fn=None,
-        timeout: float = 300.0,
+        timeout: float = 600.0,
         desc: str = "",
     ) -> None:
         """Poll spec OFT online read until rows appear and optional validation passes.
@@ -505,7 +511,7 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
                     return
             except Exception as e:
                 last_err = str(e)
-            time.sleep(10)
+            time.sleep(5)
         label = f" ({desc})" if desc else ""
         self.fail(f"Online read for {fv_name}/{version}{label} timed out; last_err={last_err!r}")
 

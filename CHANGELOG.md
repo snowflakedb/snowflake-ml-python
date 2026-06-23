@@ -1,6 +1,16 @@
 # Release History
 
-## 1.43.0
+## 1.44.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.43.0 (2026-06-16)
 
 ### New Features
 

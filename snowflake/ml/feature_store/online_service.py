@@ -697,20 +697,12 @@ def stream_ingest_records(
             original_exception=ValueError("records must be non-empty for stream ingest."),
         )
     resolved = online_service_http_client.ingest_api_url(ingest_base_url)
-    logger.debug(
-        "Ingest API: url=%r stream_source=%r num_records=%d",
-        resolved,
-        stream_source_name,
-        len(records),
-    )
     serializable = [{k: _json_serialize_value(v) for k, v in row.items()} for row in records]
     body: dict[str, Any] = {"records": {stream_source_name: serializable}}
-    # PAT is validated up-front (caller may not have a pooled client yet).
-    _ = online_service_http_client.auth_headers(session)
     owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
     client = http_client
     if client is None:
-        owned_client = online_service_http_client.OnlineServiceHttpClient()
+        owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
         client = owned_client
     try:
         status, raw = client.post_json(resolved, body, timeout_sec)
@@ -1376,14 +1368,11 @@ def read_postgres_online_features(
             )
 
     resolved_query_url = online_service_http_client.query_api_url(query_url)
-    logger.debug("Query API url=%r", resolved_query_url)
     url = resolved_query_url
-    # PAT is validated eagerly so callers fail fast even with an empty key batch.
-    _ = online_service_http_client.auth_headers()
     owned_client: Optional[online_service_http_client.OnlineServiceHttpClient] = None
     client = http_client
     if client is None:
-        owned_client = online_service_http_client.OnlineServiceHttpClient()
+        owned_client = online_service_http_client.OnlineServiceHttpClient(session=session)
         client = owned_client
 
     out: list[dict[str, Any]] = []

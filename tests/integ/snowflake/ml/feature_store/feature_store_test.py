@@ -283,6 +283,34 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
         self.assertIsNotNone(fs)
 
+        # Verify FAIL_IF_NOT_EXIST also recovers a missing snapshot status table.
+        # Simulates a post-provisioning drop (e.g. schema reset in a shared environment).
+        status_table_fqn = fs._get_fully_qualified_name(SqlIdentifier(_SNAPSHOT_STATUS_TABLE))
+        self._session.sql(f"DROP TABLE IF EXISTS {status_table_fqn}").collect()
+        self.assertEmpty(
+            self._session.sql(
+                f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+            ).collect()
+        )
+
+        FeatureStore(
+            session=self._session,
+            database=FS_INTEG_TEST_DB,
+            name=name,
+            default_warehouse=self._test_warehouse_name,
+            creation_mode=CreationMode.FAIL_IF_NOT_EXIST,
+        )
+
+        self.assertGreater(
+            len(
+                self._session.sql(
+                    f"SHOW TABLES LIKE '{_SNAPSHOT_STATUS_TABLE}' IN SCHEMA {fs._config.full_schema_path}"
+                ).collect()
+            ),
+            0,
+            "FAIL_IF_NOT_EXIST init should recreate a missing snapshot status table",
+        )
+
     def test_invalid_warehouse(self) -> None:
         schema_name = f"TEST_INVALID_WAREHOUSE_{uuid4().hex.upper()}"
         with self.assertRaisesRegex(ValueError, "Cannot find warehouse.*"):

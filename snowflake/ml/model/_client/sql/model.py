@@ -9,6 +9,7 @@ class ModelSQLClient(_base._BaseSQLClient):
     MODEL_NAME_COL_NAME = "name"
     MODEL_COMMENT_COL_NAME = "comment"
     MODEL_DEFAULT_VERSION_NAME_COL_NAME = "default_version_name"
+    MODEL_OWNER_COL_NAME = "owner"
 
     MODEL_VERSION_NAME_COL_NAME = "name"
     MODEL_VERSION_COMMENT_COL_NAME = "comment"

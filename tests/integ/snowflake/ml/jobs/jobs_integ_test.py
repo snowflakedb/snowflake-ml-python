@@ -287,7 +287,7 @@ class JobManagerTest(JobTestBase):
             )
 
             # Wait for job to finish
-            self.assertEqual(job.wait(), "DONE", job.get_logs())
+            self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
             self.assertEqual(job.status, "DONE")
             self.assertIn("Job complete", job.get_logs())
             self.assertIsNone(job.result())
@@ -298,6 +298,24 @@ class JobManagerTest(JobTestBase):
             self.assertIn("Job start", loaded_job.get_logs())
             self.assertIn("Job complete", loaded_job.get_logs())
             self.assertIsNone(loaded_job.result())
+
+    def test_job_execution_with_args(self) -> None:
+        env_vars = {"MLRS_USE_EMBEDDED_SCRIPTS": "false"}
+
+        payload = TestAsset("src/main.py")
+
+        # Create a job
+        job = jobs.submit_file(
+            payload.path,
+            self.compute_pool,
+            stage_name="payload_stage",
+            args=["--delay", "1", "foo"],
+            session=self.session,
+            env_vars=env_vars,
+        )
+
+        # Wait for job to finish
+        self.assertEqual(job.wait(), "DONE", job.get_logs(verbose=True))
 
     def test_job_execution_system_compute_pool(self) -> None:
         payload = TestAsset("src/main.py")

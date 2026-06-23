@@ -360,7 +360,7 @@ py_test(
         "feature_store_streaming_fv_bundled.py",
     ],
     imports = ["."],
-    shard_count = 4,
+    shard_count = 2,
     tags = [
         "feature:feature_store",
     ],

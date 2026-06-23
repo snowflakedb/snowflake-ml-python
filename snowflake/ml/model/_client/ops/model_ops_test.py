@@ -2729,6 +2729,34 @@ class ModelOpsTest(parameterized.TestCase):
                 statement_params=self.m_statement_params,
             )
 
+    def test_get_model_owner(self) -> None:
+        m_list_res = [
+            Row(
+                created_on="06/01",
+                name="MODEL",
+                comment="This is a comment",
+                model_name="MODEL",
+                database_name="TEMP",
+                schema_name="test",
+                default_version_name="v1",
+                owner="PROD_OWNER",
+            ),
+        ]
+        with mock.patch.object(self.m_ops._model_client, "show_models", return_value=m_list_res) as mock_show_models:
+            res = self.m_ops.get_model_owner(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+            self.assertEqual(res, sql_identifier.SqlIdentifier("PROD_OWNER", case_sensitive=False))
+            mock_show_models.assert_called_once_with(
+                database_name=sql_identifier.SqlIdentifier("TEMP"),
+                schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                statement_params=self.m_statement_params,
+            )
+
     def test_system_aliases(self) -> None:
         m_list_res = [
             Row(

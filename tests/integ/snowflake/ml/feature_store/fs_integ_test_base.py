@@ -36,7 +36,7 @@ def cleanup_spec_oft_e2e_databases(dbm: db_manager.DBManager) -> None:
         dbm: DBManager bound to the test session.
     """
     for prefix in (SPEC_OFT_E2E_DB_PREFIX, SPEC_OFT_E2E_DUMMY_DB_PREFIX, *_LEGACY_SPEC_OFT_E2E_DB_PREFIXES):
-        dbm.cleanup_databases(prefix=prefix.lower(), expire_hours=3)
+        dbm.cleanup_databases(prefix=prefix.lower(), expire_hours=2)
 
 
 class FeatureStoreIntegTestBase(absltest.TestCase):
@@ -81,7 +81,7 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
         self._evm = external_volume_manager.ExternalVolumeManager(self._session)
 
         # Stale-resource cleanup (startup-only; see ``cleanup_spec_oft_e2e_databases``).
-        self._dbm.cleanup_databases(expire_hours=6)
+        self._dbm.cleanup_databases(expire_hours=2)
         cleanup_spec_oft_e2e_databases(self._dbm)
         self._dbm.cleanup_warehouses(expire_hours=6)
         self._dbm.cleanup_roles(expire_hours=6)
