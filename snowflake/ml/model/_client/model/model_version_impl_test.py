@@ -3192,6 +3192,98 @@ class ModelVersionImplTest(absltest.TestCase):
         _, kwargs = mock_create_service.call_args
         self.assertIs(kwargs["feature_sources_per_function"], sentinel_feature_sources)
 
+    def test_run_batch_v2_forwards_specs_and_resolved_function(self) -> None:
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+
+        output_spec = batch_inference_specs.Output(stage_location="@output_stage")
+        input_spec = batch_inference_specs.Input(params={"k": "v"})
+        resources_spec = batch_inference_specs.Resources(cpu_requests="1")
+        inference_spec = batch_inference_specs.Inference(num_workers=2)
+        image_build_spec = batch_inference_specs.ImageBuild(image_repo="DB.SCHEMA.REPO")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            result = self.m_mv._run_batch_v2(
+                input_df,
+                compute_pool="POOL",
+                output_spec=output_spec,
+                input_spec=input_spec,
+                resources_spec=resources_spec,
+                inference_spec=inference_spec,
+                image_build_spec=image_build_spec,
+                function_name="predict",
+                job_name="JOB",
+                replicas=2,
+                async_=False,
+            )
+
+        mock_execute.assert_called_once_with(
+            X=input_df,
+            model_name=sql_identifier.SqlIdentifier("MODEL"),
+            version_name=sql_identifier.SqlIdentifier("v1", case_sensitive=True),
+            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+            input_spec=input_spec,
+            output_spec=output_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+            function_name="predict",
+            job_name="JOB",
+            replicas=2,
+            async_=False,
+            statement_params=mock.ANY,
+        )
+        self.assertEqual(result, mock_job)
+
+    def test_run_batch_v2_minimal(self) -> None:
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+
+        output_spec = batch_inference_specs.Output(stage_location="@output_stage/")
+        mock_job = mock.MagicMock(spec=job.MLJob)
+
+        with (
+            mock.patch.object(
+                self.m_mv,
+                "_get_function_info",
+                return_value={
+                    "target_method": "predict",
+                    "target_method_function_type": "FUNCTION",
+                    "signature": _DUMMY_SIG["predict"],
+                    "is_partitioned": False,
+                },
+            ),
+            mock.patch.object(
+                self.m_mv._service_ops, "execute_inference_job_service", return_value=mock_job
+            ) as mock_execute,
+        ):
+            self.m_mv._run_batch_v2(input_df, compute_pool="POOL", output_spec=output_spec)
+
+        kwargs = mock_execute.call_args.kwargs
+        self.assertIs(kwargs["X"], input_df)
+        self.assertIs(kwargs["output_spec"], output_spec)
+        self.assertTrue(kwargs["async_"])
+        self.assertIsNone(kwargs["input_spec"])
+        self.assertIsNone(kwargs["resources_spec"])
+        self.assertIsNone(kwargs["inference_spec"])
+        self.assertIsNone(kwargs["image_build_spec"])
+        self.assertIsNone(kwargs["job_name"])
+        self.assertIsNone(kwargs["replicas"])
+        self.assertEqual(kwargs["function_name"], "predict")
+
 
 if __name__ == "__main__":
     absltest.main()

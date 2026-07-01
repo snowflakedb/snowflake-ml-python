@@ -12,7 +12,7 @@ from sklearn import linear_model
 
 from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.model import type_hints as model_types
-from snowflake.ml.model._model_composer import model_composer
+from snowflake.ml.model._model_composer import huggingface_lazy_uploader, model_composer
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.modeling.linear_model import (  # type:ignore[attr-defined]
     LinearRegression,
@@ -37,6 +37,7 @@ class ModelInterfaceTest(parameterized.TestCase):
         mock_pk = mock.MagicMock()
         mock_pk.meta = mock.MagicMock()
         mock_pk.meta.signatures = mock.MagicMock()
+        mock_pk.meta._lazy_hf_upload = None
         if params["use_save_location"]:
             temp_dir = tempfile.mkdtemp()
         else:
@@ -130,6 +131,45 @@ class ModelInterfaceTest(parameterized.TestCase):
             )
             mock_save.assert_called_once()
             mock_manifest_save.assert_called_once()
+
+    def test_save_calls_stream_upload_when_lazy_hf_upload_set(self) -> None:
+        m_session = mock_session.MockSession(conn=None, test_case=self)
+        c_session = cast(Session, m_session)
+        stage_path = '@"db"."schema"."stage"'
+
+        lazy_upload = huggingface_lazy_uploader.LazyHFUpload(
+            download_kwargs={"repo_id": "org/model", "revision": None},
+            files=["config.json"],
+            file_sizes={"config.json": 100},
+            relative_stage_dir=pathlib.PurePosixPath("model", "models", "model1", "model"),
+        )
+
+        mock_pk = mock.MagicMock()
+        mock_pk.meta = mock.MagicMock()
+        mock_pk.meta.signatures = mock.MagicMock()
+        mock_pk.meta._lazy_hf_upload = lazy_upload
+
+        m = model_composer.ModelComposer(session=c_session, stage_path=stage_path)
+        with open(os.path.join(m.packager_workspace_path, "model.yaml"), "w", encoding="utf-8") as f:
+            f.write("")
+        m.packager = mock_pk
+
+        with mock.patch.object(m.packager, "save", return_value=mock_pk.meta), mock.patch.object(
+            m.manifest, "save"
+        ), mock.patch.object(file_utils, "upload_directory_to_stage"), mock.patch.object(
+            huggingface_lazy_uploader, "stream_upload"
+        ) as mock_stream_upload, mock.patch.object(
+            env_utils,
+            "get_matched_package_versions_in_information_schema",
+            return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+        ):
+            m.save(name="model1", model=LinearRegression())
+            mock_stream_upload.assert_called_once_with(
+                c_session,
+                pathlib.PurePosixPath(stage_path),
+                lazy_upload,
+                statement_params=None,
+            )
 
     def test_load(self) -> None:
         m_options = model_types.PyTorchLoadOptions(use_gpu=False)

@@ -169,6 +169,38 @@ class ExperimentTrackingSQLClientTest(absltest.TestCase):
         )
         self.client.add_run(experiment_name=experiment_name, run_name=run_name)
 
+    def test_add_run_with_source_info(self) -> None:
+        # The caller passes an already-serialized JSON string; the client embeds it verbatim.
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        payload = '{"entry_point": "train/main.py", "git": {"commit_hash": "abc"}}'
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD RUN TEST_RUN"
+            f" WITH (SOURCE_INFO = $${payload}$$)",
+            self._create_mock_df(),
+        )
+        self.client.add_run(experiment_name=experiment_name, run_name=run_name, source_info=payload)
+
+    def test_add_run_with_none_source_info_omits_clause(self) -> None:
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD RUN TEST_RUN", self._create_mock_df()
+        )
+        self.client.add_run(experiment_name=experiment_name, run_name=run_name, source_info=None)
+
+    def test_add_run_with_empty_source_info_omits_clause(self) -> None:
+        # An empty string is falsy and must be treated like "nothing to send".
+        experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")
+        run_name = sql_identifier.SqlIdentifier("TEST_RUN")
+
+        self.m_session.add_mock_sql(
+            "ALTER EXPERIMENT TEST_DB.TEST_SCHEMA.TEST_EXPERIMENT ADD RUN TEST_RUN", self._create_mock_df()
+        )
+        self.client.add_run(experiment_name=experiment_name, run_name=run_name, source_info="")
+
     def test_commit_run(self) -> None:
         # Test committing a run
         experiment_name = sql_identifier.SqlIdentifier("TEST_EXPERIMENT")

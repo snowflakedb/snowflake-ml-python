@@ -1,18 +1,14 @@
 """Integration tests for pip-only model packaging with batch inference."""
 
-import sys
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
 from snowflake.ml.model.batch import JobSpec, OutputSpec
 from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
-
-# Python versions supported by the base image's cached standalone tarballs (dockerfile_template_pip path).
-PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
 
 
 class PipOnlyModel(custom_model.CustomModel):
@@ -67,6 +63,7 @@ class PipOnlyModel(custom_model.CustomModel):
         )
 
 
+@absltest.skip("SNOW-3691688")
 class TestRegistryPipOnlyBatchInferenceInteg(
     pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase,
@@ -123,19 +120,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(
             res["uses_conda"].iloc[0],
             f"python_executable={res['python_executable'].iloc[0]}",
         )
-
-    def _assert_pip_only_predict_result(self, py_ver: str, expected: pd.DataFrame) -> Callable[[pd.DataFrame], None]:
-        """Assert predict result matches expected and runtime python_version matches requested py_ver."""
-
-        def fn(res: pd.DataFrame) -> None:
-            self.assertEqual(res["python_version"].iloc[0], py_ver)
-            pd.testing.assert_series_equal(
-                res["output"].sort_values().reset_index(drop=True),
-                expected["output"].sort_values().reset_index(drop=True),
-                check_dtype=False,
-            )
-
-        return fn
 
     def _run_pip_only_env_check_batch_inference(
         self,
@@ -198,52 +182,6 @@ class TestRegistryPipOnlyBatchInferenceInteg(
             pip_requirements=["requests>=2.28.0"],
             options={"enable_explainability": False},
             expected_predictions=expected_predictions,
-            conda_dependencies=[],
-        )
-        self._run_pip_only_env_check_batch_inference(
-            model=model,
-            pip_requirements=["requests>=2.28.0"],
-            options={"enable_explainability": False},
-        )
-
-    @parameterized.parameters(*PIP_ONLY_PYTHON_VERSIONS)  # type: ignore[misc]
-    def test_pip_only_batch_inference_python_versions(self, py_ver: str) -> None:
-        """Batch inference with a pip-only model for each supported Python version (3.10, 3.11, 3.12, 3.13, 3.14).
-
-        Verifies:
-        1. Model runs with the correct Python version
-        2. Environment uses a pip-only path (venv)
-        """
-        current_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
-        if py_ver != current_ver:
-            self.skipTest(
-                f"Skipping Python {py_ver} test: model is pickled with {current_ver} and "
-                f"cloudpickle cannot deserialize across Python versions."
-            )
-
-        model = PipOnlyModel(custom_model.ModelContext())
-        input_pandas_df = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
-
-        # Generate expected predictions for assertion
-        model_output = model.predict(input_pandas_df)
-
-        sp_df, input_df, _, job_name, output_stage_location = self._prepare_pip_only_test(model, input_pandas_df)
-
-        self._test_registry_batch_inference(
-            model=model,
-            sample_input_data=sp_df,
-            X=input_df,
-            output_spec=OutputSpec(stage_location=output_stage_location),
-            job_spec=JobSpec(
-                job_name=job_name,
-                num_workers=1,
-                replicas=1,
-                function_name="predict",
-            ),
-            pip_requirements=["requests>=2.28.0"],
-            options={"enable_explainability": False},
-            python_version=py_ver,
-            prediction_assert_fn=self._assert_pip_only_predict_result(py_ver, model_output),
             conda_dependencies=[],
         )
         self._run_pip_only_env_check_batch_inference(

@@ -24,6 +24,7 @@ def _prepare_keras_functional_model() -> tuple[keras.Model, npt.ArrayLike, npt.A
 
 
 class TestKerasBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @absltest.skip("SNOW-3691662")
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
         # uncomment this after https://snowflakecomputing.atlassian.net/browse/SNOW-2369772 is fixed

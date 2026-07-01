@@ -1,6 +1,78 @@
 # Release History
 
-## 1.44.0
+## 1.45.0
+
+### New Features
+
+* Feature Store: `FeatureView` now supports an `initialization_warehouse` that is used for the initial build and any
+  subsequent reinitializations of the backing dynamic table (a full scan of the source data), while `warehouse`
+  continues to drive the lighter incremental refreshes. This mirrors the dynamic table `INITIALIZATION_WAREHOUSE`
+  knob, lets you pair a larger warehouse for initialization with a smaller one for steady-state refresh, and is also
+  used for the one-time backfill of streaming feature views. It can be set at registration, changed via
+  `update_feature_view(initialization_warehouse=...)`, and is surfaced by `list_feature_views(verbose=True)`.
+
+```python
+draft_fv = FeatureView(
+    name="F_TRIP",
+    entities=[entity],
+    feature_df=feature_df,
+    refresh_freq="1d",
+    warehouse="SMALL_WH",            # incremental refreshes
+    initialization_warehouse="LARGE_WH",  # initial build / reinitialization
+)
+fv = fs.register_feature_view(draft_fv, version="1.0")
+```
+
+* Registry: LLM models deployed with the OpenAI chat signatures now support structured outputs
+  through an optional `response_format` param matching the OpenAI Chat Completions API
+  (`{"type": "json_schema", "json_schema": {"name": "...", "schema": {...}}}`), letting callers
+  constrain model output to a JSON Schema.
+
+```python
+from pydantic import BaseModel
+import pandas as pd
+
+class CityCountry(BaseModel):
+    city: str
+    country: str
+
+response_format = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "city_country",
+        "schema": CityCountry.model_json_schema(),
+    },
+}
+
+x_df = pd.DataFrame.from_records(
+    [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "What is the capital of France?"},
+                    ],
+                },
+            ],
+        }
+    ]
+)
+
+mv.run(
+    X=x_df,
+    params={"response_format": response_format},
+    service_name=...,
+)
+```
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.44.0 (2026-06-23)
 
 ### New Features
 

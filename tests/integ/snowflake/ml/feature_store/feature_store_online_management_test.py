@@ -3,9 +3,10 @@ import uuid
 
 import common_utils
 from absl.testing import absltest, parameterized
-from fs_integ_test_base import FeatureStoreIntegTestBase
 
+from fs_integ_test_base import FeatureStoreIntegTestBase
 from snowflake.ml.feature_store import entity, feature_store, feature_view
+from snowflake.ml.feature_store.feature import Feature
 
 
 class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
@@ -198,6 +199,58 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertTrue(updated_fv.online)
         self.assertIsNotNone(updated_fv.online_config)
         self.assertEqual(updated_fv.online_config.target_lag, "15 seconds")
+
+    def test_update_enable_hybrid_online_on_tiled_fv_rejected(self) -> None:
+        """Enabling HYBRID_TABLE online on a tiled FV is unsupported and rejected with a clear error.
+
+        The rejection fires fast during update_feature_view input validation, before any planning
+        or resource work.
+        """
+        fv_name = "test_enable_hybrid_online_tiled_fv"
+
+        # Offline-only tiled feature view.
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="15m",
+            feature_granularity="1h",
+            features=[Feature.sum("purchase_amount", "2h").alias("amount_sum_2h")],
+            desc="Test enable online on tiled FV",
+            online_config=feature_view.OnlineConfig(enable=False),
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertFalse(registered_fv.online)
+        self.assertTrue(registered_fv.is_tiled)
+
+        # Enabling HYBRID_TABLE (the default) online on a tiled FV must be rejected clearly.
+        with self.assertRaisesRegex(Exception, "not supported for aggregation"):
+            self.fs.update_feature_view(
+                name=fv_name,
+                version="v1",
+                online_config=feature_view.OnlineConfig(enable=True),
+            )
+
+    def test_register_tiled_fv_with_hybrid_online_rejected(self) -> None:
+        """A tiled FV with HYBRID_TABLE online is unsupported and rejected with a clear error.
+
+        The rejection is a feature-view invariant, so it fires at construction (before register).
+        """
+        with self.assertRaisesRegex(Exception, "not supported for aggregation"):
+            fv = feature_view.FeatureView(
+                name="test_register_hybrid_online_tiled_fv",
+                entities=[self.user_entity],
+                feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+                timestamp_col="purchase_time",
+                refresh_freq="15m",
+                feature_granularity="1h",
+                features=[Feature.sum("purchase_amount", "2h").alias("amount_sum_2h")],
+                desc="Test register tiled FV with HYBRID online",
+                online_config=feature_view.OnlineConfig(enable=True),  # default HYBRID_TABLE
+            )
+            self.fs.register_feature_view(fv, "v1")
 
     def test_update_feature_view_disable_online(self) -> None:
         """Test disabling online storage for existing feature view."""

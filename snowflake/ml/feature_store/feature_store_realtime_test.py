@@ -422,11 +422,12 @@ class ListRealtimeFeatureViewsTest(absltest.TestCase):
         fs.list_feature_views(verbose=True)
         verbose_rows: list[list[Any]] = captured["values"]
         self.assertEqual(len(verbose_rows), 1)
-        # verbose=True: base + extra fields are merged (20 total).
-        # Extra fields: source_refs (18), backup_source (19).
-        self.assertEqual(len(verbose_rows[0]), 20)
-        self.assertIsNone(verbose_rows[0][18])  # source_refs — always None for RTFV
-        self.assertIsNone(verbose_rows[0][19])  # backup_source — always None for RTFV
+        # verbose=True: base + extra fields are merged (21 total).
+        # Extra fields: initialization_warehouse (18), source_refs (19), backup_source (20).
+        self.assertEqual(len(verbose_rows[0]), 21)
+        self.assertIsNone(verbose_rows[0][18])  # initialization_warehouse — always None for RTFV
+        self.assertIsNone(verbose_rows[0][19])  # source_refs — always None for RTFV
+        self.assertIsNone(verbose_rows[0][20])  # backup_source — always None for RTFV
 
 
 if __name__ == "__main__":

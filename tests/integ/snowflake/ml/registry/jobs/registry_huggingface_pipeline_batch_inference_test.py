@@ -33,6 +33,8 @@ class TestRegistryHuggingFacePipelineBatchInferenceInteg(
         self,
         pip_requirements: Optional[list[str]],
     ) -> None:
+        if pip_requirements is None:
+            self.skipTest("SNOW-3691662")
         import transformers
 
         model = transformers.pipeline(

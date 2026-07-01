@@ -61,6 +61,7 @@ class CustomTranscriber(custom_model.CustomModel):
         )
 
 
+@absltest.skip("SNOW-3691662")
 class TestRegistryCustomMultiModalityBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):

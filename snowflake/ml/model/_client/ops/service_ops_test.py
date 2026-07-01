@@ -24,7 +24,7 @@ from snowflake.ml.model._client.sql import service as service_sql
 from snowflake.ml.model._signatures import core
 from snowflake.ml.test_utils import mock_data_frame, mock_session
 from snowflake.ml.test_utils.mock_progress import create_mock_progress_status
-from snowflake.snowpark import Session, row
+from snowflake.snowpark import Session, dataframe, row
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 _DUMMY_SIG = {
@@ -2757,6 +2757,196 @@ class ServiceOpsTest(parameterized.TestCase):
                 statement_params=None,
             )
         self.assertFalse(exists)
+
+    def test_execute_inference_job_service_with_explicit_job_name(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job IGNORED with model ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                return_value=("query_id", m_async_job),
+            ) as mock_execute,
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+        ):
+            result = self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=batch_inference_specs.Input(params={"k": "v"}),
+                output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name="predict",
+                job_name="JOB",
+                replicas=2,
+                async_=False,
+                statement_params={"test": "1"},
+            )
+        expected_input_stage = f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/"
+        input_df.write.copy_into_location.assert_called_once_with(
+            location=expected_input_stage, file_format_type="parquet", header=True, overwrite=True
+        )
+        mock_execute.assert_called_once()
+        call_kwargs = mock_execute.call_args.kwargs
+        self.assertIn("input:", call_kwargs["yaml_body"])
+        # output_spec.stage_location is normalized to add trailing / before being emitted.
+        self.assertIn("stage_location: '@DB.SCHEMA.STAGE/out/'", call_kwargs["yaml_body"])
+        self.assertEqual(call_kwargs["model_fqn"], 'TEMP."test".MODEL')
+        self.assertEqual(call_kwargs["version"], sql_identifier.SqlIdentifier("V1"))
+        self.assertEqual(call_kwargs["function_name"], "predict")
+        self.assertEqual(call_kwargs["job_fqn"], 'TEMP."test".JOB')
+        self.assertEqual(call_kwargs["replicas"], 2)
+        self.assertFalse(call_kwargs["async_"])
+        self.assertEqual(call_kwargs["from_stage_path"], expected_input_stage)
+        self.assertEqual(result.id, 'TEMP."test".JOB')
+
+    def test_execute_inference_job_service_parses_server_generated_name(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("Batch inference job DB.SCHEMA.SRV_GEN with model M ...")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+            return_value=("query_id", m_async_job),
+        ):
+            result = self.m_ops.execute_inference_job_service(
+                X=input_df,
+                model_name=sql_identifier.SqlIdentifier("MODEL"),
+                version_name=sql_identifier.SqlIdentifier("V1"),
+                compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                input_spec=None,
+                output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                resources_spec=None,
+                inference_spec=None,
+                image_build_spec=None,
+                function_name=None,
+                job_name=None,
+                replicas=None,
+                async_=True,
+                statement_params=None,
+            )
+        self.assertEqual(result.id, "DB.SCHEMA.SRV_GEN")
+
+    def test_execute_inference_job_service_unparsable_response_raises(self) -> None:
+        m_async_job = self._create_mock_async_job()
+        m_async_job.result.return_value = [row.Row("not the expected format")]
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+            return_value=("query_id", m_async_job),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "failed to parse job name"):
+                self.m_ops.execute_inference_job_service(
+                    X=input_df,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name=None,
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+
+    def test_execute_inference_job_service_raises_when_copy_into_fails(self) -> None:
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        input_df.write.copy_into_location.side_effect = Exception("staging boom")
+        with mock.patch.object(
+            self.m_ops._service_client,
+            "execute_inference_job_service",
+        ) as mock_execute:
+            with self.assertRaisesRegex(RuntimeError, "Failed to process input data"):
+                self.m_ops.execute_inference_job_service(
+                    X=input_df,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name=None,
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+        mock_execute.assert_not_called()
+
+    def test_execute_inference_job_service_cleans_up_staged_input_on_sql_failure(self) -> None:
+        """When the SQL call raises, the orphaned staged input must be REMOVED."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        fake_uuid = uuid.UUID("abcdef0123456789abcdef0123456789")
+        expected_stage = f"@DB.SCHEMA.STAGE/out/_snowflake_temporary/{fake_uuid.hex}/"
+        with (
+            mock.patch.object(
+                self.m_ops._service_client,
+                "execute_inference_job_service",
+                side_effect=RuntimeError("server rejected"),
+            ),
+            mock.patch("snowflake.ml.model._client.ops.service_ops.uuid.uuid4", return_value=fake_uuid),
+            mock.patch.object(self.m_ops._session, "sql") as mock_sql,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "server rejected"):
+                self.m_ops.execute_inference_job_service(
+                    X=input_df,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name=None,
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+        mock_sql.assert_called_once_with(f"REMOVE {expected_stage}")
+
+    def test_execute_inference_job_service_validates_job_name_before_staging(self) -> None:
+        """An invalid job_name must raise before COPY INTO so nothing orphans."""
+        input_df = mock.MagicMock(spec=dataframe.DataFrame)
+        with (
+            mock.patch(
+                "snowflake.ml.model._client.ops.service_ops.sql_identifier.parse_fully_qualified_name",
+                side_effect=ValueError("bad job_name"),
+            ),
+            mock.patch.object(self.m_ops._service_client, "execute_inference_job_service") as mock_execute,
+        ):
+            with self.assertRaisesRegex(ValueError, "bad job_name"):
+                self.m_ops.execute_inference_job_service(
+                    X=input_df,
+                    model_name=sql_identifier.SqlIdentifier("MODEL"),
+                    version_name=sql_identifier.SqlIdentifier("V1"),
+                    compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+                    input_spec=None,
+                    output_spec=batch_inference_specs.Output(stage_location="@DB.SCHEMA.STAGE/out/"),
+                    resources_spec=None,
+                    inference_spec=None,
+                    image_build_spec=None,
+                    function_name=None,
+                    job_name="malformed",
+                    replicas=None,
+                    async_=True,
+                    statement_params=None,
+                )
+        input_df.write.copy_into_location.assert_not_called()
+        mock_execute.assert_not_called()
 
 
 if __name__ == "__main__":

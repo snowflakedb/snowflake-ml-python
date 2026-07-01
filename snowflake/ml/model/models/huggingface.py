@@ -1,7 +1,10 @@
 import enum
+import fnmatch
 import json
 import logging
 import os
+import pathlib
+import tempfile
 import warnings
 from typing import Any, Optional, Union
 
@@ -29,6 +32,7 @@ class _LoggingMode(enum.Enum):
 
 class TransformersPipeline:
     _requires_task: bool = True
+    _CHAT_TEMPLATE_METADATA_FILES = ("tokenizer_config.json", "chat_template.jinja")
 
     def __init__(
         self,
@@ -43,6 +47,7 @@ class TransformersPipeline:
         # repo snapshot download args
         allow_patterns: Optional[Union[list[str], str]] = None,
         ignore_patterns: Optional[Union[list[str], str]] = None,
+        lazy_upload: bool = True,
         **kwargs: Any,
     ) -> None:
         """
@@ -77,6 +82,9 @@ class TransformersPipeline:
                 downloaded from the HuggingFace repository.
             allow_patterns: If provided, only files matching at least one pattern are downloaded.
             ignore_patterns: If provided, files matching any of the patterns are not downloaded.
+            lazy_upload: When ``compute_pool_for_log`` is None, list HuggingFace repository files at construction time
+                and stream each file to Snowflake during ``log_model`` instead of downloading the full snapshot locally.
+                Defaults to True. Set to False to download the entire repository before logging.
             kwargs: Additional keyword arguments passed along to the specific pipeline init (see the documentation for
                 the corresponding pipeline class for possible values).
 
@@ -96,6 +104,10 @@ class TransformersPipeline:
 
         self._validate_device_map(kwargs, model_kwargs)
 
+        self._lazy_repo_files: Optional[list[str]] = None
+        self._lazy_file_sizes: Optional[dict[str, int]] = None
+        self._lazy_download_kwargs: Optional[dict[str, Any]] = None
+
         repo_snapshot_dir = self._download_snapshot_if_needed(
             logging_mode=logging_mode,
             uses_secret=uses_secret,
@@ -104,6 +116,8 @@ class TransformersPipeline:
             token_or_secret=token_or_secret,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            lazy_upload=lazy_upload,
+            task=task,
         )
 
         self.has_chat_template = self._has_chat_template(
@@ -260,7 +274,29 @@ class TransformersPipeline:
                 )
 
     @staticmethod
+    def _filter_repo_files(
+        repo_files: list[str],
+        *,
+        allow_patterns: Optional[Union[list[str], str]] = None,
+        ignore_patterns: Optional[Union[list[str], str]] = None,
+    ) -> list[str]:
+        """Filter repo file paths using the same glob semantics as ``snapshot_download``."""
+        filtered_files = repo_files
+        if allow_patterns is not None:
+            allow = [allow_patterns] if isinstance(allow_patterns, str) else allow_patterns
+            filtered_files = [
+                filename for filename in filtered_files if any(fnmatch.fnmatch(filename, p) for p in allow)
+            ]
+        if ignore_patterns is not None:
+            ignore = [ignore_patterns] if isinstance(ignore_patterns, str) else ignore_patterns
+            filtered_files = [
+                filename for filename in filtered_files if not any(fnmatch.fnmatch(filename, p) for p in ignore)
+            ]
+        return filtered_files
+
     def _download_snapshot_if_needed(
+        self,
+        *,
         logging_mode: _LoggingMode,
         uses_secret: bool,
         model: Optional[str],
@@ -268,6 +304,8 @@ class TransformersPipeline:
         token_or_secret: Optional[str],
         allow_patterns: Optional[Union[list[str], str]],
         ignore_patterns: Optional[Union[list[str], str]],
+        lazy_upload: bool,
+        task: Optional[str],
     ) -> Optional[str]:
         """Download the model snapshot if in SNAPSHOT_DOWNLOAD mode.
 
@@ -279,6 +317,8 @@ class TransformersPipeline:
             token_or_secret: The auth token or secret.
             allow_patterns: Patterns of files to include.
             ignore_patterns: Patterns of files to exclude.
+            lazy_upload: Whether to list repo files and defer weight downloads until log time.
+            task: The pipeline task.
 
         Returns:
             The path to the downloaded snapshot directory, or None if not downloaded.
@@ -295,17 +335,161 @@ class TransformersPipeline:
 
         try:
             import huggingface_hub as hf_hub
-
-            return hf_hub.snapshot_download(
-                repo_id=model,
-                revision=revision,
-                token=token_or_secret,
-                allow_patterns=allow_patterns,
-                ignore_patterns=ignore_patterns,
-            )
         except ImportError:
             logger.info("huggingface_hub package is not installed, skipping snapshot download")
             return None
+
+        if lazy_upload:
+            return self._prepare_lazy_repo_upload(
+                hf_hub=hf_hub,
+                model=model,
+                revision=revision,
+                token_or_secret=token_or_secret,
+                allow_patterns=allow_patterns,
+                ignore_patterns=ignore_patterns,
+                task=task,
+            )
+
+        return hf_hub.snapshot_download(
+            repo_id=model,
+            revision=revision,
+            token=token_or_secret,
+            allow_patterns=allow_patterns,
+            ignore_patterns=ignore_patterns,
+        )
+
+    def _lazy_metadata_seed_files(
+        self,
+        *,
+        task: Optional[str],
+        filtered_files: list[str],
+    ) -> list[str]:
+        """Return repo-relative paths to download before follow-up metadata resolution."""
+        if task in self._CHAT_TEMPLATE_TASKS:
+            return [filename for filename in self._CHAT_TEMPLATE_METADATA_FILES if filename in filtered_files]
+        return []
+
+    def _lazy_metadata_followup_files(
+        self,
+        *,
+        metadata_dir: str,
+        filtered_files: list[str],
+    ) -> list[str]:
+        """Return additional repo-relative metadata paths after seed files are downloaded."""
+        return []
+
+    @staticmethod
+    def _download_lazy_metadata_file(
+        *,
+        hf_hub: Any,
+        model: str,
+        filename: str,
+        revision: Optional[str],
+        token_or_secret: Optional[str],
+        metadata_dir: str,
+    ) -> None:
+        """Download one HuggingFace metadata file into the lazy-upload staging directory."""
+        try:
+            hf_hub.hf_hub_download(
+                repo_id=model,
+                filename=filename,
+                revision=revision,
+                token=token_or_secret,
+                local_dir=metadata_dir,
+            )
+        except hf_hub.errors.EntryNotFoundError:
+            logger.error(
+                "HuggingFace metadata file %s was listed but not found during download.",
+                filename,
+            )
+            raise
+
+    def _download_lazy_metadata_files(
+        self,
+        *,
+        hf_hub: Any,
+        model: str,
+        revision: Optional[str],
+        token_or_secret: Optional[str],
+        metadata_dir: str,
+        filtered_files: list[str],
+        task: Optional[str],
+    ) -> None:
+        """Download metadata files needed for local inference before log_model."""
+        seed_files = self._lazy_metadata_seed_files(task=task, filtered_files=filtered_files)
+        for filename in seed_files:
+            self._download_lazy_metadata_file(
+                hf_hub=hf_hub,
+                model=model,
+                filename=filename,
+                revision=revision,
+                token_or_secret=token_or_secret,
+                metadata_dir=metadata_dir,
+            )
+
+        followup_files = self._lazy_metadata_followup_files(
+            metadata_dir=metadata_dir,
+            filtered_files=filtered_files,
+        )
+        for filename in followup_files:
+            self._download_lazy_metadata_file(
+                hf_hub=hf_hub,
+                model=model,
+                filename=filename,
+                revision=revision,
+                token_or_secret=token_or_secret,
+                metadata_dir=metadata_dir,
+            )
+
+    def _prepare_lazy_repo_upload(
+        self,
+        *,
+        hf_hub: Any,
+        model: str,
+        revision: Optional[str],
+        token_or_secret: Optional[str],
+        allow_patterns: Optional[Union[list[str], str]],
+        ignore_patterns: Optional[Union[list[str], str]],
+        task: Optional[str],
+    ) -> str:
+        """List repo files and download only metadata needed before log_model."""
+        api = hf_hub.HfApi()
+        repo_info = api.model_info(
+            repo_id=model,
+            revision=revision,
+            token=token_or_secret,
+            files_metadata=True,
+        )
+        repo_files = [sibling.rfilename for sibling in repo_info.siblings]
+        size_by_file = {sibling.rfilename: sibling.size for sibling in repo_info.siblings if sibling.size is not None}
+        filtered_files = self._filter_repo_files(
+            repo_files,
+            allow_patterns=allow_patterns,
+            ignore_patterns=ignore_patterns,
+        )
+        filtered_file_sizes = {filename: size_by_file.get(filename, 0) for filename in filtered_files}
+        for filename in filtered_files:
+            if filename not in size_by_file:
+                logger.warning("HuggingFace file %s has no known size; disk checks may be incomplete.", filename)
+
+        metadata_dir = tempfile.mkdtemp(prefix="snowml_hf_lazy_")
+        self._download_lazy_metadata_files(
+            hf_hub=hf_hub,
+            model=model,
+            revision=revision,
+            token_or_secret=token_or_secret,
+            metadata_dir=metadata_dir,
+            filtered_files=filtered_files,
+            task=task,
+        )
+
+        self._lazy_repo_files = filtered_files
+        self._lazy_file_sizes = filtered_file_sizes
+        self._lazy_download_kwargs = {
+            "repo_id": model,
+            "revision": revision,
+        }
+        return metadata_dir
 
     _CHAT_TEMPLATE_TASKS = frozenset(
         {
@@ -393,8 +577,10 @@ class SentenceTransformer(TransformersPipeline):
     logged via ``SYSTEM$IMPORT_MODEL`` in a SPCS job.
 
     **Local logging**: when ``compute_pool_for_log`` is ``None``, artifacts are
-    downloaded locally via ``huggingface_hub.snapshot_download`` before registry
-    upload. Signatures are inferred from snapshot config files (no local
+    streamed to Snowflake during ``log_model`` by default (``lazy_upload=True``),
+    or downloaded locally via ``huggingface_hub.snapshot_download`` when
+    ``lazy_upload=False``. Signatures are inferred from metadata or snapshot
+    config files (no local
     ``sentence_transformers`` import). The model environment records
     ``sentence-transformers`` without a version pin so serve-time resolves the latest
     compatible release. By default, these inference methods are registered:
@@ -434,6 +620,68 @@ class SentenceTransformer(TransformersPipeline):
     """
 
     _requires_task = False
+    _SIGNATURE_METADATA_SEED_FILES = ("modules.json",)
+
+    @staticmethod
+    def _module_config_relative_paths(modules: list[dict[str, Any]]) -> list[str]:
+        """Return HuggingFace repo-relative paths to each module's config.json."""
+        config_paths: list[str] = []
+        for module_entry in modules:
+            module_path = module_entry.get("path", "")
+            if module_path:
+                config_paths.append(f"{module_path}/config.json")
+            else:
+                config_paths.append("config.json")
+        return config_paths
+
+    def _lazy_metadata_seed_files(
+        self,
+        *,
+        task: Optional[str],
+        filtered_files: list[str],
+    ) -> list[str]:
+        del task
+        return [filename for filename in self._SIGNATURE_METADATA_SEED_FILES if filename in filtered_files]
+
+    def _lazy_metadata_followup_files(
+        self,
+        *,
+        metadata_dir: str,
+        filtered_files: list[str],
+    ) -> list[str]:
+        """Download module config files needed for embedding-dimension inference."""
+        modules_json_path = os.path.join(metadata_dir, "modules.json")
+        if not os.path.isfile(modules_json_path):
+            return []
+
+        try:
+            with open(modules_json_path, encoding="utf-8") as f:
+                modules = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return []
+
+        if not isinstance(modules, list):
+            return []
+
+        followup_files: list[str] = []
+        for config_rel_path in self._module_config_relative_paths(modules):
+            if config_rel_path not in filtered_files:
+                continue
+            module_path = os.path.dirname(config_rel_path)
+            if module_path and (".." in pathlib.PurePosixPath(module_path).parts or module_path.startswith("/")):
+                logger.warning(
+                    "Skipping HuggingFace module config with an invalid path: %s",
+                    config_rel_path,
+                )
+                continue
+            if module_path:
+                local_config_path = os.path.join(metadata_dir, module_path, "config.json")
+            else:
+                local_config_path = os.path.join(metadata_dir, "config.json")
+            if os.path.isfile(local_config_path):
+                continue
+            followup_files.append(config_rel_path)
+        return followup_files
 
     def __init__(
         self,
@@ -445,6 +693,7 @@ class SentenceTransformer(TransformersPipeline):
         compute_pool_for_log: Optional[str] = DEFAULT_CPU_COMPUTE_POOL,
         allow_patterns: Optional[Union[list[str], str]] = None,
         ignore_patterns: Optional[Union[list[str], str]] = None,
+        lazy_upload: bool = True,
     ) -> None:
         """Initialize a SentenceTransformer wrapper.
 
@@ -461,6 +710,10 @@ class SentenceTransformer(TransformersPipeline):
                 passed to ``log_model``.
             allow_patterns: File patterns to include when downloading. Defaults to None.
             ignore_patterns: File patterns to exclude when downloading. Defaults to None.
+            lazy_upload: When ``compute_pool_for_log`` is None, list HuggingFace repository
+                files at construction time and stream each file to Snowflake during
+                ``log_model`` instead of downloading the full snapshot locally.
+                Defaults to True. Set to False to download the entire repository before logging.
         """
         super().__init__(
             task=None,
@@ -472,4 +725,5 @@ class SentenceTransformer(TransformersPipeline):
             compute_pool_for_log=compute_pool_for_log,
             allow_patterns=allow_patterns,
             ignore_patterns=ignore_patterns,
+            lazy_upload=lazy_upload,
         )

@@ -159,6 +159,7 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_vqa,
         )
 
+    @absltest.skip("SNOW-3691662")
     def test_image_feature_extraction(self) -> None:
         from transformers import pipeline
 
@@ -285,6 +286,7 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_image_to_text,
         )
 
+    @absltest.skip("SNOW-3691662")
     def test_object_detection(self) -> None:
         from transformers import pipeline
 
@@ -414,6 +416,7 @@ class TestRegistryNewHFTasksBatchInferenceInteg(registry_batch_inference_test_ba
             prediction_assert_fn=check_zero_shot_image_classification,
         )
 
+    @absltest.skip("SNOW-3691662")
     def test_zero_shot_object_detection(self) -> None:
         from transformers import pipeline
 

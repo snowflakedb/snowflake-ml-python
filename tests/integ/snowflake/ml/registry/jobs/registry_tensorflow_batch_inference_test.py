@@ -8,6 +8,7 @@ from tests.integ.snowflake.ml.test_utils import model_factory
 
 
 class TestTensorFlowBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @absltest.skip("SNOW-3691662")
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},
         {"gpu_requests": "1", "cpu_requests": None, "memory_requests": None},

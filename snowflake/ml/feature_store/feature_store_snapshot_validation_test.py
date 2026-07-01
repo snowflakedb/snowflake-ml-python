@@ -9,7 +9,10 @@ from unittest.mock import MagicMock
 from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
-from snowflake.ml.feature_store import feature_view_append_only_validation
+from snowflake.ml.feature_store import (
+    feature_store as fs_mod,
+    feature_view_append_only_validation,
+)
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
@@ -480,7 +483,8 @@ class UpdateFeatureViewSnapshotValidationTest(absltest.TestCase):
         # new desc — confirming the validation_fv branch was not taken.
         plan_args, _ = fs._plan_feature_view_update_operations.call_args
         self.assertIsNone(plan_args[1], "actual_refresh_freq must be None when caller omits refresh_freq")
-        self.assertEqual(plan_args[3], "new description")
+        # desc is at index 4 (initialization_warehouse occupies index 3).
+        self.assertEqual(plan_args[4], "new description")
 
         # Caller's FV is untouched — the existing cron schedule is preserved.
         self.assertEqual(fv.refresh_freq, original_refresh_freq)
@@ -778,7 +782,7 @@ class BuildOfflineUpdateQueriesRollbackTest(parameterized.TestCase):
         new_cron = "30 6 * * * UTC"
 
         operations, rollback_ops = fs._build_offline_update_queries(
-            fv, refresh_freq=new_cron, warehouse=None, desc="new desc"
+            fv, refresh_freq=new_cron, warehouse=None, initialization_warehouse=fs_mod._KEEP_CURRENT, desc="new desc"
         )
 
         # Forward operations apply the new cron to the companion Task.
@@ -815,7 +819,7 @@ class BuildOfflineUpdateQueriesRollbackTest(parameterized.TestCase):
         fv._desc = "original desc"
 
         operations, rollback_ops = fs._build_offline_update_queries(
-            fv, refresh_freq=new_freq, warehouse=None, desc="new desc"
+            fv, refresh_freq=new_freq, warehouse=None, initialization_warehouse=fs_mod._KEEP_CURRENT, desc="new desc"
         )
 
         forward_sqls = [sql for _, sql in operations]
@@ -856,7 +860,7 @@ class BuildOfflineUpdateQueriesRollbackTest(parameterized.TestCase):
 
         new_cron = "30 6 * * * UTC"
         operations, _rollback_ops = fs._build_offline_update_queries(
-            fv, refresh_freq=new_cron, warehouse=None, desc="new desc"
+            fv, refresh_freq=new_cron, warehouse=None, initialization_warehouse=fs_mod._KEEP_CURRENT, desc="new desc"
         )
         forward_sqls = [sql for _, sql in operations]
 

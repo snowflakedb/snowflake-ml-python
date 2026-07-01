@@ -81,6 +81,13 @@ class OnlineStoreType(Enum):
     POSTGRES = "postgres"
 
 
+# Online store types that can back an aggregation (tiled) feature view. POSTGRES is spec-backed
+# and tile-aware; HYBRID_TABLE builds the online table directly over the tile output (which exposes
+# tile columns rather than the raw timestamp column) and cannot. New store types must opt in here
+# explicitly so an unsupported store is rejected by default for tiled feature views.
+_TILE_CAPABLE_ONLINE_STORES = frozenset({OnlineStoreType.POSTGRES})
+
+
 class _FeatureViewSchemaNotReadyWarning(UserWarning):
     """Issued when feature view schema is unavailable because the backing
     dynamic table has not completed its initial refresh yet."""
@@ -670,6 +677,7 @@ class FeatureView(lineage_node.LineageNode):
         refresh_freq: Optional[str] = None,
         desc: str = "",
         warehouse: Optional[str] = None,
+        initialization_warehouse: Optional[str] = None,
         initialize: str = "ON_CREATE",
         refresh_mode: Optional[str] = "AUTO",
         cluster_by: Optional[list[str]] = None,
@@ -712,6 +720,11 @@ class FeatureView(lineage_node.LineageNode):
             warehouse: The warehouse used to refresh this feature view. Not needed when ``refresh_freq`` is ``None``.
                 This warehouse will overwrite the default warehouse of Feature Store if specified, otherwise the default
                 warehouse will be used.
+            initialization_warehouse: The warehouse used for the initial build and any subsequent reinitializations of
+                this feature view, which perform a full scan of the source data and are typically more resource
+                intensive than incremental refreshes. Maps to ``INITIALIZATION_WAREHOUSE`` on the backing dynamic
+                table. When unset, ``warehouse`` is used for all refresh operations. For streaming feature views, this
+                warehouse is also used for the one-time backfill. Not effective for static feature views.
             initialize: Specifies the behavior of the initial refresh of feature view. This property cannot be altered
                 after you register the feature view. It supports ON_CREATE (default) or ON_SCHEDULE. ON_CREATE refreshes
                 the feature view synchronously at creation. ON_SCHEDULE refreshes the feature view at the next scheduled
@@ -1019,6 +1032,9 @@ class FeatureView(lineage_node.LineageNode):
         self._schema: Optional[SqlIdentifier] = None
         self._initialize: str = initialize
         self._warehouse: Optional[SqlIdentifier] = SqlIdentifier(warehouse) if warehouse is not None else None
+        self._initialization_warehouse: Optional[SqlIdentifier] = (
+            SqlIdentifier(initialization_warehouse) if initialization_warehouse is not None else None
+        )
         self._refresh_mode: Optional[str] = refresh_mode
         self._refresh_mode_reason: Optional[str] = None
         self._owner: Optional[str] = None
@@ -1823,6 +1839,42 @@ class FeatureView(lineage_node.LineageNode):
         self._warehouse = SqlIdentifier(new_value)
 
     @property
+    def initialization_warehouse(self) -> Optional[SqlIdentifier]:
+        return self._initialization_warehouse
+
+    @initialization_warehouse.setter
+    def initialization_warehouse(self, new_value: str) -> None:
+        """Set the initialization warehouse of feature view.
+
+        Args:
+            new_value: The new value of initialization warehouse.
+
+        Example::
+
+            >>> fs = FeatureStore(...)
+            >>> e = fs.get_entity('TRIP_ID')
+            >>> draft_fv = FeatureView(
+            ...     name='F_TRIP',
+            ...     entities=[e],
+            ...     feature_df=feature_df,
+            ...     refresh_freq='1d',
+            ...     warehouse='SMALL_WH',
+            ...     initialization_warehouse='LARGE_WH',
+            ... )
+            >>> fv_1 = fs.register_feature_view(draft_fv, version='1.0')
+            >>> print(fv_1.initialization_warehouse)
+            LARGE_WH
+
+        """
+        warnings.warn(
+            "You must call register_feature_view() to make it effective. "
+            "Or use update_feature_view(initialization_warehouse=<new_value>).",
+            stacklevel=2,
+            category=UserWarning,
+        )
+        self._initialization_warehouse = SqlIdentifier(new_value)
+
+    @property
     def initialize(self) -> str:
         return self._initialize
 
@@ -2072,6 +2124,33 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             if self._refresh_freq is None:
                 raise ValueError("Iceberg storage requires refresh_freq.")
 
+        # Validate the online store type can back this feature view (e.g. a tiled FV cannot use a
+        # HYBRID_TABLE online store).
+        self._validate_online_store_supported()
+
+    def _validate_online_store_supported(self) -> None:
+        """Reject online store types that cannot back this feature view.
+
+        An aggregation (tiled) feature view's online table is created over its tile output, which
+        only tile-aware (spec-backed) stores support. This is an invariant of the feature view, so
+        it is enforced here at validation time (construction / reconstruction) and re-checked before
+        creating the online table.
+
+        Raises:
+            ValueError: If the configured online store cannot back a tiled feature view.
+        """
+        if (
+            self._online_config is not None
+            and self._online_config.enable
+            and self.is_tiled
+            and self._online_config.store_type not in _TILE_CAPABLE_ONLINE_STORES
+        ):
+            raise ValueError(
+                f"{self._online_config.store_type.name} online store is not supported for "
+                f"aggregation (tiled) feature views. Use "
+                f"OnlineConfig(store_type=OnlineStoreType.POSTGRES) to enable online storage."
+            )
+
     def _validate_window_offset_alignment(self) -> None:
         """Validate that window and offset are multiples of feature_granularity.
 
@@ -2236,6 +2315,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             and str(self.status) == str(other.status)
             and self.database == other.database
             and self.warehouse == other.warehouse
+            and self.initialization_warehouse == other.initialization_warehouse
             and self.refresh_mode == other.refresh_mode
             and self.refresh_mode_reason == other.refresh_mode_reason
             and self._owner == other._owner
@@ -2256,6 +2336,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv_dict["_database"] = str(self._database) if self._database is not None else None
         fv_dict["_schema"] = str(self._schema) if self._schema is not None else None
         fv_dict["_warehouse"] = str(self._warehouse) if self._warehouse is not None else None
+        fv_dict["_initialization_warehouse"] = (
+            str(self._initialization_warehouse) if self._initialization_warehouse is not None else None
+        )
         fv_dict["_timestamp_col"] = str(self._timestamp_col) if self._timestamp_col is not None else None
         fv_dict["_initialize"] = str(self._initialize)
 
@@ -2374,6 +2457,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             database=json_dict["_database"],
             schema=json_dict["_schema"],
             warehouse=json_dict["_warehouse"],
+            initialization_warehouse=json_dict.get("_initialization_warehouse"),
             refresh_mode=json_dict["_refresh_mode"],
             refresh_mode_reason=json_dict["_refresh_mode_reason"],
             initialize=json_dict["_initialize"],
@@ -2482,6 +2566,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         owner: Optional[str],
         infer_schema_df: Optional[DataFrame],
         session: Session,
+        initialization_warehouse: Optional[str] = None,
         cluster_by: Optional[list[str]] = None,
         online_config: Optional[OnlineConfig] = None,
         feature_granularity: Optional[str] = None,
@@ -2540,6 +2625,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         fv._database = SqlIdentifier(database) if database is not None else None
         fv._schema = SqlIdentifier(schema) if schema is not None else None
         fv._warehouse = SqlIdentifier(warehouse) if warehouse is not None else None
+        fv._initialization_warehouse = (
+            SqlIdentifier(initialization_warehouse) if initialization_warehouse is not None else None
+        )
         fv._refresh_mode_reason = refresh_mode_reason
         fv._initialize = initialize
         fv._owner = owner

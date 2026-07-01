@@ -30,6 +30,7 @@ py_library(
         "//snowflake/ml/model:code_path",
         "//snowflake/ml/model:model_signature",
         "//snowflake/ml/model:type_hints",
+        "//snowflake/ml/model/_model_composer:huggingface_lazy_uploader",
         "//snowflake/ml/model/_packager/model_env",
         "//snowflake/ml/model/_packager/model_meta_migrator:migrator_plans",
         "//snowflake/ml/model/_packager/model_runtime",

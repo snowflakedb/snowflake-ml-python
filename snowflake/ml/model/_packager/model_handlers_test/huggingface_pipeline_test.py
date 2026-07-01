@@ -404,6 +404,51 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertEqual(blob_options["task"], "fill-mask")
             self.assertEqual(blob_options["model"], expected_model_name)
 
+    @mock.patch("huggingface_hub.hf_hub_download")
+    @mock.patch("huggingface_hub.HfApi")
+    def test_save_model_lazy_upload_skips_copytree(
+        self,
+        mock_hf_api: mock.Mock,
+        mock_hf_hub_download: mock.Mock,
+    ) -> None:
+        """Lazy HuggingFace wrapper logging should defer weight copies and attach upload metadata."""
+        mock_hf_api.return_value.model_info.return_value.siblings = [
+            mock.Mock(rfilename="config.json", size=570),
+            mock.Mock(rfilename="model.safetensors", size=1000),
+        ]
+
+        wrapper_model = hf_base.TransformersPipeline(
+            task="text-generation",
+            model="facebook/opt-125m",
+            compute_pool_for_log=None,
+            lazy_upload=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            packager = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            with mock.patch("shutil.copytree") as mock_copytree:
+                packager.save(
+                    name="model",
+                    model=wrapper_model,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.HuggingFaceSaveOptions(),
+                )
+                mock_copytree.assert_not_called()
+
+            assert packager.meta is not None
+            lazy_hf_upload = getattr(packager.meta, "_lazy_hf_upload", None)
+            self.assertIsNotNone(lazy_hf_upload)
+            assert lazy_hf_upload is not None
+            self.assertEqual(lazy_hf_upload.files, ["config.json", "model.safetensors"])
+            self.assertEqual(
+                lazy_hf_upload.file_sizes,
+                {"config.json": 570, "model.safetensors": 1000},
+            )
+            self.assertEqual(
+                lazy_hf_upload.download_kwargs,
+                {"repo_id": "facebook/opt-125m", "revision": None},
+            )
+
     @parameterized.parameters(  # type: ignore[misc]
         {"transformers_version": "4.41.2", "tokenizers_version": "0.19.1"},
         {"transformers_version": "5.3.0", "tokenizers_version": "0.22.2"},

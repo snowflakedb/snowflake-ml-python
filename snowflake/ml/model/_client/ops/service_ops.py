@@ -5,6 +5,7 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 import warnings
 from collections.abc import Sequence
 from typing import Any, Optional, Union, cast
@@ -20,10 +21,13 @@ from snowflake.ml.model._client.model import (
     batch_inference_specs,
 )
 from snowflake.ml.model._client.ops import deployment_step, param_utils
-from snowflake.ml.model._client.service import model_deployment_spec
+from snowflake.ml.model._client.service import (
+    inference_job_service_spec,
+    model_deployment_spec,
+)
 from snowflake.ml.model._client.sql import service as service_sql, stage as stage_sql
 from snowflake.ml.model._signatures import core
-from snowflake.snowpark import async_job, exceptions, row, session
+from snowflake.snowpark import async_job, dataframe, exceptions, row, session
 from snowflake.snowpark._internal import utils as snowpark_utils
 
 module_logger = service_logger.get_logger(__name__, service_logger.LogColor.GREY)
@@ -33,6 +37,13 @@ STOP_WAIT_SECONDS = 1
 module_logger.propagate = False
 
 _UTF8_ENCODING = "utf-8"
+
+# Reserved subdirectory under the output stage where input parquet is materialized.
+# Must stay in sync with ``InferenceJobServiceSpecWrapper.RESERVED_INPUT_SUBDIR`` on
+# the server side: the server treats files under this subdir as managed and
+# excludes them from the output-mode preflight scan, and the SPCS container uses the
+# same convention to decide whether to clean up the input stage after the job runs.
+_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR = "_snowflake_temporary"
 
 
 @dataclasses.dataclass
@@ -1165,3 +1176,146 @@ class ServiceOperator:
             statement_params=statement_params,
         )
         return self._stage_client.fully_qualified_object_name(database_name, schema_name, stage_name)  # stage path
+
+    def execute_inference_job_service(
+        self,
+        *,
+        X: dataframe.DataFrame,
+        model_name: sql_identifier.SqlIdentifier,
+        version_name: sql_identifier.SqlIdentifier,
+        compute_pool_name: sql_identifier.SqlIdentifier,
+        input_spec: Optional[batch_inference_specs.Input],
+        output_spec: batch_inference_specs.Output,
+        resources_spec: Optional[batch_inference_specs.Resources],
+        inference_spec: Optional[batch_inference_specs.Inference],
+        image_build_spec: Optional[batch_inference_specs.ImageBuild],
+        function_name: Optional[str],
+        job_name: Optional[str],
+        replicas: Optional[int],
+        async_: bool,
+        statement_params: Optional[dict[str, Any]] = None,
+    ) -> job.MLJob[Any]:
+        """Materialize ``X``, build the YAML body, and run ``EXECUTE INFERENCE JOB SERVICE``.
+
+        Args:
+            X: Input DataFrame. Materialized as parquet under
+                ``<output_spec.stage_location>/_snowflake_temporary/<uuid>/``
+                before the SQL command is issued.
+            model_name: Model identifier; combined with this operator's database
+                and schema to form the ``MODEL`` clause FQN.
+            version_name: Model version identifier for the ``VERSION`` clause.
+            compute_pool_name: Compute pool for ``IN COMPUTE POOL``.
+            input_spec: Optional input block of the YAML body.
+            output_spec: Required output block of the YAML body. ``stage_location``
+                is normalized to end with ``/`` before being emitted.
+            resources_spec: Optional resources block of the YAML body.
+            inference_spec: Optional inference block of the YAML body.
+            image_build_spec: Optional image build block of the YAML body.
+            function_name: Optional model function name for ``FUNCTION``.
+            job_name: Optional fully qualified job name for ``NAME``. When
+                ``None`` the server generates a name and this method parses it
+                from the response.
+            replicas: Optional integer for ``REPLICAS``.
+            async_: ``ASYNC`` clause value.
+            statement_params: Optional statement params for telemetry.
+
+        Returns:
+            MLJob for the launched batch inference job.
+
+        Raises:
+            Exception: Any exception raised by the underlying SQL call. The
+                staged input is best-effort removed before re-raising so
+                rejected launches do not orphan files in the reserved subdir.
+            RuntimeError: If staging ``X`` fails, or if the server response does
+                not contain a parseable job name and ``job_name`` was not
+                provided.
+        """
+        # All pure argument transformations happen before any I/O so a malformed
+        # input (e.g. an invalid job_name) fails with no side effects to clean up.
+        output_stage_location = output_spec.stage_location
+        if not output_stage_location.endswith("/"):
+            output_stage_location += "/"
+        # Stage the materialized input under the reserved subdirectory so the server-side
+        # preflight skips it and the SPCS container cleans it up after the job. The UUID
+        # avoids collisions between concurrent calls into the same output stage.
+        input_stage_location = f"{output_stage_location}{_BATCH_INFERENCE_RESERVED_INPUT_SUBDIR}/{uuid.uuid4().hex}/"
+        normalized_output_spec = output_spec.model_copy(update={"stage_location": output_stage_location})
+
+        spec_builder = inference_job_service_spec.InferenceJobServiceSpec()
+        if input_spec is not None:
+            spec_builder.add_input_spec(input_spec)
+        spec_builder.add_output_spec(normalized_output_spec)
+        if resources_spec is not None:
+            spec_builder.add_resources_spec(resources_spec)
+        if inference_spec is not None:
+            spec_builder.add_inference_spec(inference_spec)
+        if image_build_spec is not None:
+            spec_builder.add_image_build_spec(image_build_spec)
+        yaml_body = spec_builder.save()
+
+        model_fqn = identifier.get_schema_level_object_identifier(
+            self._database_name.identifier(), self._schema_name.identifier(), model_name.identifier()
+        )
+
+        job_fqn: Optional[str] = None
+        job_database_name: Optional[sql_identifier.SqlIdentifier] = None
+        job_schema_name: Optional[sql_identifier.SqlIdentifier] = None
+        parsed_job_name: Optional[sql_identifier.SqlIdentifier] = None
+        if job_name is not None:
+            job_database_name, job_schema_name, parsed_job_name = sql_identifier.parse_fully_qualified_name(job_name)
+            job_database_name = job_database_name or self._database_name
+            job_schema_name = job_schema_name or self._schema_name
+            assert parsed_job_name is not None
+            job_fqn = identifier.get_schema_level_object_identifier(
+                job_database_name.identifier(), job_schema_name.identifier(), parsed_job_name.identifier()
+            )
+
+        # I/O starts here.
+        try:
+            X.write.copy_into_location(  # type:ignore[call-overload]
+                location=input_stage_location, file_format_type="parquet", header=True, overwrite=True
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to process input data: {e}")
+
+        try:
+            _, async_job_handle = self._service_client.execute_inference_job_service(
+                yaml_body=yaml_body,
+                compute_pool_name=compute_pool_name,
+                model_fqn=model_fqn,
+                version=version_name,
+                function_name=function_name,
+                job_fqn=job_fqn,
+                async_=async_,
+                replicas=replicas,
+                from_stage_path=input_stage_location,
+                statement_params=statement_params,
+            )
+            result = async_job_handle.result()
+        except Exception:
+            # Server-side rejection leaves the staged input orphaned. Best-effort remove
+            # so files don't accumulate across failed launches.
+            try:
+                self._session.sql(f"REMOVE {input_stage_location}").collect(statement_params=statement_params)
+            except Exception as cleanup_err:
+                module_logger.warning(f"Failed to clean up staged input at {input_stage_location}: {cleanup_err}")
+            raise
+
+        if job_name is not None:
+            assert parsed_job_name is not None
+            assert job_database_name is not None
+            assert job_schema_name is not None
+            fq_job_name = sql_identifier.get_fully_qualified_name(job_database_name, job_schema_name, parsed_job_name)
+        else:
+            response_msg = cast(str, cast(list[row.Row], result)[0][0])
+            match = re.search(r"Batch inference job (\S+)", response_msg)
+            if match is None:
+                raise RuntimeError(
+                    "batch inference job: failed to parse job name from server response. " f"Response: {response_msg}"
+                )
+            fq_job_name = match.group(1)
+
+        return job.MLJob(
+            id=fq_job_name,
+            session=self._session,
+        )

@@ -4,6 +4,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, model_validator
 from typing_extensions import TypedDict
 
+from snowflake.ml.model import inference_engine as inference_engine_module
+
 
 class SaveMode(str, Enum):
     """Save mode options for batch inference output.
@@ -183,3 +185,60 @@ class JobSpec(BaseModel):
         if self.job_name is not None and self.job_name_prefix is not None:
             raise ValueError("job_name and job_name_prefix are mutually exclusive. Please specify only one or neither.")
         return self
+
+
+# ----------------------------------------------------------------------------
+# Spec types for EXECUTE INFERENCE JOB SERVICE.
+#
+# These types mirror the YAML body 1:1 (`input` / `output` / `resources`
+# / `inference` / `image_build`).
+# ----------------------------------------------------------------------------
+
+
+class Input(BaseModel):
+    """Input block of the batch inference YAML body."""
+
+    params: Optional[dict[str, Any]] = None
+    column_handling: Optional[dict[str, ColumnHandlingOptions]] = None
+    partition_column: Optional[str] = None
+
+
+class Output(BaseModel):
+    """Output block of the batch inference YAML body.
+
+    ``stage_location`` is required. ``base_stage_location`` is not part of the
+    YAML schema and is intentionally omitted.
+    """
+
+    stage_location: str
+    mode: SaveMode = SaveMode.ERROR
+
+
+class Resources(BaseModel):
+    """Resources block of the batch inference YAML body."""
+
+    cpu_requests: Optional[str] = None
+    memory_requests: Optional[str] = None
+    gpu_requests: Optional[str] = None
+
+
+class EngineOptions(BaseModel):
+    """``inference.engine_options`` sub-block of the YAML body."""
+
+    engine: Optional[inference_engine_module.InferenceEngine] = None
+    engine_args_override: Optional[list[str]] = None
+
+
+class Inference(BaseModel):
+    """Inference block of the batch inference YAML body."""
+
+    num_workers: Optional[int] = None
+    max_batch_rows: Optional[int] = None
+    engine_options: Optional[EngineOptions] = None
+
+
+class ImageBuild(BaseModel):
+    """Image-build block of the batch inference YAML body."""
+
+    image_repo: Optional[str] = None
+    force_rebuild: bool = False

@@ -193,11 +193,16 @@ class SnowparkModelTrainer:
                     args["sample_weight"] = df[sample_weight_col].squeeze()
 
                 X = np.ascontiguousarray(args["X"].to_numpy(), dtype=np.float64)
-                if ArgKmin.is_usable_for(X, X, "euclidean"):
-                    estimator.fit(**args)
-                else:
+                # Birch's internal clustering routes through scikit-learn's _parallel_pairwise, which on
+                # the pinned scikit-learn (<1.9) slices Y but not Y_norm_squared when effective_n_jobs > 1,
+                # raising a dimension mismatch (scikit-learn #33877). It takes that path regardless of
+                # ArgKmin usability on the training data, so force a single-job backend for it. Remove this
+                # carve-out once scikit-learn is bumped past 1.9.0. (SNOW-952252)
+                if type(estimator).__name__ == "Birch" or not ArgKmin.is_usable_for(X, X, "euclidean"):
                     with joblib.parallel_backend("threading", n_jobs=1):
                         estimator.fit(**args)
+                else:
+                    estimator.fit(**args)
 
                 local_result_file_name = temp_file_utils.get_temp_file_path()
 
@@ -313,11 +318,13 @@ class SnowparkModelTrainer:
                 estimator = cp.load(local_transform_file_obj)
 
             X = np.ascontiguousarray(df[input_cols].to_numpy(), dtype=np.float64)
-            if ArgKmin.is_usable_for(X, X, "euclidean"):
-                fit_predict_result = estimator.fit_predict(X=df[input_cols])
-            else:
+            # Force a single-job backend for Birch to avoid scikit-learn #33877 (see fit_wrapper_function
+            # for the full explanation). (SNOW-952252)
+            if type(estimator).__name__ == "Birch" or not ArgKmin.is_usable_for(X, X, "euclidean"):
                 with joblib.parallel_backend("threading", n_jobs=1):
                     fit_predict_result = estimator.fit_predict(X=df[input_cols])
+            else:
+                fit_predict_result = estimator.fit_predict(X=df[input_cols])
 
             local_result_file_name = temp_file_utils.get_temp_file_path()
 
@@ -451,11 +458,13 @@ class SnowparkModelTrainer:
                 args["sample_weight"] = df[sample_weight_col].squeeze()
 
             X = np.ascontiguousarray(args["X"].to_numpy(), dtype=np.float64)
-            if ArgKmin.is_usable_for(X, X, "euclidean"):
-                fit_transform_result = estimator.fit_transform(**args)
-            else:
+            # Force a single-job backend for Birch to avoid scikit-learn #33877 (see fit_wrapper_function
+            # for the full explanation). (SNOW-952252)
+            if type(estimator).__name__ == "Birch" or not ArgKmin.is_usable_for(X, X, "euclidean"):
                 with joblib.parallel_backend("threading", n_jobs=1):
                     fit_transform_result = estimator.fit_transform(**args)
+            else:
+                fit_transform_result = estimator.fit_transform(**args)
 
             local_result_file_name = temp_file_utils.get_temp_file_path()
 

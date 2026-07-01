@@ -100,6 +100,115 @@ class TransformersPipelineTest(absltest.TestCase):
                 device=0,
             )
 
+    def test_lazy_upload_lists_repo_files_without_snapshot_download(self) -> None:
+        """Lazy upload lists repo files and avoids downloading the full snapshot."""
+        repo_files = ["config.json", "model.safetensors", "tokenizer_config.json"]
+        repo_file_sizes = {
+            "config.json": 570,
+            "model.safetensors": 1000,
+            "tokenizer_config.json": 48,
+        }
+
+        with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download, absltest.mock.patch(
+            "huggingface_hub.hf_hub_download"
+        ) as mock_hf_hub_download, absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.siblings = [
+                absltest.mock.Mock(rfilename=filename, size=repo_file_sizes[filename]) for filename in repo_files
+            ]
+
+            pipeline = huggingface.TransformersPipeline(
+                task="text-generation",
+                model="facebook/opt-125m",
+                compute_pool_for_log=None,
+                lazy_upload=True,
+            )
+
+            mock_snapshot_download.assert_not_called()
+            mock_hf_api.return_value.model_info.assert_called_once_with(
+                repo_id="facebook/opt-125m",
+                revision=None,
+                token=None,
+                files_metadata=True,
+            )
+            self.assertEqual(pipeline._lazy_repo_files, repo_files)
+            self.assertEqual(pipeline._lazy_file_sizes, repo_file_sizes)
+            self.assertEqual(
+                pipeline._lazy_download_kwargs,
+                {"repo_id": "facebook/opt-125m", "revision": None},
+            )
+            downloaded_filenames = {call.kwargs["filename"] for call in mock_hf_hub_download.call_args_list}
+            self.assertEqual(downloaded_filenames, {"tokenizer_config.json"})
+
+    def test_lazy_upload_skips_chat_template_metadata_for_non_chat_tasks(self) -> None:
+        """Lazy upload should not download chat-template metadata for unrelated tasks."""
+        repo_files = ["config.json", "model.safetensors", "tokenizer_config.json"]
+
+        with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download, absltest.mock.patch(
+            "huggingface_hub.hf_hub_download"
+        ) as mock_hf_hub_download, absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.siblings = [
+                absltest.mock.Mock(rfilename=filename, size=100) for filename in repo_files
+            ]
+
+            huggingface.TransformersPipeline(
+                task="text-classification",
+                model="distilbert-base-uncased-finetuned-sst-2-english",
+                compute_pool_for_log=None,
+                lazy_upload=True,
+            )
+
+            mock_snapshot_download.assert_not_called()
+            mock_hf_hub_download.assert_not_called()
+
+    def test_lazy_upload_detects_chat_template_from_metadata_download(self) -> None:
+        """Lazy upload still detects chat templates from metadata files."""
+        with tempfile.TemporaryDirectory() as repo_dir:
+            config_path = os.path.join(repo_dir, "tokenizer_config.json")
+            with open(config_path, "w") as f:
+                json.dump({"chat_template": "{% for msg in messages %}{{ msg }}{% endfor %}"}, f)
+
+            with absltest.mock.patch(
+                "huggingface_hub.snapshot_download"
+            ) as mock_snapshot_download, absltest.mock.patch(
+                "huggingface_hub.hf_hub_download",
+                return_value=config_path,
+            ), absltest.mock.patch(
+                "huggingface_hub.HfApi"
+            ) as mock_hf_api, absltest.mock.patch(
+                "snowflake.ml.model.models.huggingface.tempfile.mkdtemp",
+                return_value=repo_dir,
+            ):
+                mock_hf_api.return_value.model_info.return_value.siblings = [
+                    absltest.mock.Mock(rfilename="config.json", size=100),
+                    absltest.mock.Mock(rfilename="tokenizer_config.json", size=200),
+                ]
+
+                pipeline = huggingface.TransformersPipeline(
+                    task="text-generation",
+                    model="some-model/with-chat-template",
+                    compute_pool_for_log=None,
+                    lazy_upload=True,
+                )
+
+                mock_snapshot_download.assert_not_called()
+                self.assertTrue(pipeline.has_chat_template)
+
+    def test_lazy_upload_false_uses_snapshot_download(self) -> None:
+        """Opting out of lazy upload restores eager snapshot download."""
+        with absltest.mock.patch(
+            "huggingface_hub.snapshot_download", return_value="/some/path"
+        ) as mock_snapshot_download:
+            pipeline = huggingface.TransformersPipeline(
+                task="text-generation",
+                model="facebook/opt-125m",
+                compute_pool_for_log=None,
+                lazy_upload=False,
+            )
+
+            mock_snapshot_download.assert_called_once()
+            self.assertIsNone(pipeline._lazy_repo_files)
+            self.assertEqual(pipeline.repo_snapshot_dir, "/some/path")
+
     def test_remote_logging_skips_snapshot_download(self) -> None:
         """Test that when compute_pool_for_log is set, we don't download from huggingface_hub."""
         with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download:
@@ -195,6 +304,7 @@ class TransformersPipelineTest(absltest.TestCase):
                     task="text-generation",
                     model="some-model/with-chat-template",
                     compute_pool_for_log=None,
+                    lazy_upload=False,
                 )
                 self.assertTrue(pipeline.has_chat_template)
 
@@ -205,6 +315,7 @@ class TransformersPipelineTest(absltest.TestCase):
                 task="fill-mask",
                 model="some-model/fill-mask",
                 compute_pool_for_log=None,
+                lazy_upload=False,
             )
             self.assertFalse(pipeline.has_chat_template)
 
@@ -229,6 +340,7 @@ class TransformersPipelineTest(absltest.TestCase):
                     task="image-text-to-text",
                     model="some-model/vision-llm",
                     compute_pool_for_log=None,
+                    lazy_upload=False,
                 )
                 self.assertTrue(pipeline.has_chat_template)
 
@@ -244,6 +356,7 @@ class TransformersPipelineTest(absltest.TestCase):
                     task="video-text-to-text",
                     model="some-model/video-llm",
                     compute_pool_for_log=None,
+                    lazy_upload=False,
                 )
                 self.assertTrue(pipeline.has_chat_template)
 
@@ -259,6 +372,7 @@ class TransformersPipelineTest(absltest.TestCase):
                     task="audio-text-to-text",
                     model="some-model/audio-llm",
                     compute_pool_for_log=None,
+                    lazy_upload=False,
                 )
                 self.assertTrue(pipeline.has_chat_template)
 
@@ -274,6 +388,7 @@ class TransformersPipelineTest(absltest.TestCase):
                     task="image-text-to-text",
                     model="some-model/vision-no-template",
                     compute_pool_for_log=None,
+                    lazy_upload=False,
                 )
                 self.assertFalse(pipeline.has_chat_template)
 

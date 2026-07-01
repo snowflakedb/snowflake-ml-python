@@ -892,6 +892,111 @@ class ModelVersion(lineage_node.LineageNode):
             inference_engine_args=inference_engine_args,
         )
 
+    def _run_batch_v2(
+        self,
+        X: dataframe.DataFrame,
+        *,
+        compute_pool: str,
+        output_spec: batch_inference_specs.Output,
+        input_spec: Optional[batch_inference_specs.Input] = None,
+        resources_spec: Optional[batch_inference_specs.Resources] = None,
+        inference_spec: Optional[batch_inference_specs.Inference] = None,
+        image_build_spec: Optional[batch_inference_specs.ImageBuild] = None,
+        function_name: Optional[str] = None,
+        job_name: Optional[str] = None,
+        replicas: Optional[int] = None,
+        async_: bool = True,
+    ) -> job.MLJob[Any]:
+        """Run batch inference via ``EXECUTE INFERENCE JOB SERVICE`` (private).
+
+        This is a private preview API. Prefer :meth:`run_batch` until this path
+        is generally available.
+
+        Args:
+            X: Snowpark DataFrame with the input rows.
+            compute_pool: Compute pool used by the SPCS job and image build.
+            output_spec: Output block.
+            input_spec: Input block.
+            resources_spec: Resources block.
+            inference_spec: Inference block.
+            image_build_spec: Image build block.
+            function_name: Model function name. Resolved against the model's
+                function list when omitted.
+            job_name: Optional fully qualified job name. When omitted the
+                server generates a name.
+            replicas: Optional ``REPLICAS`` value.
+            async_: ``ASYNC`` clause value. Defaults to ``True``.
+
+        Returns:
+            MLJob handle for the launched batch inference job.
+
+        Raises:
+            ValueError: If ``input_spec.partition_column`` is supplied for a
+                HuggingFace pipeline model or a FUNCTION-type method, or if
+                the partition column collides with a partitioned model output.
+        """
+        statement_params = telemetry.get_statement_params(
+            project=_TELEMETRY_PROJECT,
+            subproject=_TELEMETRY_SUBPROJECT,
+        )
+
+        effective_input_spec = input_spec if input_spec is not None else batch_inference_specs.Input()
+        partition_columns = (
+            [effective_input_spec.partition_column] if effective_input_spec.partition_column is not None else None
+        )
+
+        if partition_columns is not None:
+            model_spec = self._get_model_spec(statement_params)
+            if model_spec.get("model_type") == huggingface.TransformersPipelineHandler.HANDLER_TYPE:
+                raise ValueError(
+                    "partition_column is not supported for HuggingFace pipeline models in batch inference jobs. "
+                    "Please remove the partition_column from input_spec."
+                )
+
+        gpu_requests = resources_spec.gpu_requests if resources_spec is not None else None
+        self._throw_error_if_gpu_is_not_supported(gpu_requests, statement_params)
+
+        target_function_info = self._get_function_info(function_name=function_name)
+
+        if (
+            partition_columns is not None
+            and target_function_info["target_method_function_type"]
+            == model_manifest_schema.ModelMethodFunctionTypes.FUNCTION.value
+        ):
+            raise ValueError(
+                "partition_column is not supported for FUNCTION type methods in batch inference jobs. "
+                "Only TABLE_FUNCTION type methods support partitioning."
+            )
+
+        if partition_columns is not None and target_function_info["is_partitioned"]:
+            output_cols_upper = {spec.name.upper() for spec in target_function_info["signature"].outputs}
+            partition_cols_upper = {p.upper() for p in partition_columns}
+            collisions = sorted(partition_cols_upper & output_cols_upper)
+            if collisions:
+                raise ValueError(
+                    f"Partitioned model output includes the partition column(s) {collisions}. "
+                    f"Batch inference automatically appends the partition column to the output of "
+                    f"partitioned models; please remove {collisions} from the model output "
+                    f"and re-register the model."
+                )
+
+        return self._service_ops.execute_inference_job_service(
+            X=X,
+            model_name=self._model_name,
+            version_name=self._version_name,
+            compute_pool_name=sql_identifier.SqlIdentifier(compute_pool),
+            input_spec=input_spec,
+            output_spec=output_spec,
+            resources_spec=resources_spec,
+            inference_spec=inference_spec,
+            image_build_spec=image_build_spec,
+            function_name=target_function_info["target_method"],
+            job_name=job_name,
+            replicas=replicas,
+            async_=async_,
+            statement_params=statement_params,
+        )
+
     def _get_function_info(self, function_name: Optional[str]) -> model_manifest_schema.ModelFunctionInfo:
         functions: list[model_manifest_schema.ModelFunctionInfo] = self._functions
 

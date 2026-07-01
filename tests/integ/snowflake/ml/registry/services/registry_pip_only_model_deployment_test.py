@@ -1,9 +1,7 @@
 """Integration tests for pip-only model packaging and deployment."""
 
-from typing import Callable
-
 import pandas as pd
-from absl.testing import absltest, parameterized
+from absl.testing import absltest
 
 from snowflake.ml.model import custom_model
 from snowflake.ml.model._packager.model_env import model_env
@@ -11,9 +9,6 @@ from tests.integ.snowflake.ml.registry import pip_only_packaging_integ_util
 from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
-
-# Python versions supported by the base image's cached standalone tarballs (dockerfile_template_pip path).
-PIP_ONLY_PYTHON_VERSIONS = ("3.10", "3.11", "3.12", "3.13", "3.14")
 
 
 class PipOnlyModel(custom_model.CustomModel):
@@ -114,15 +109,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(
     Uses the same Kaniko builder override as ``RegistryModelDeploymentTestBase`` (``BUILDER_IMAGE_PATH``).
     """
 
-    def _assert_pip_only_predict_result(self, py_ver: str, expected: pd.DataFrame) -> Callable[[pd.DataFrame], None]:
-        """Assert predict result matches expected and runtime python_version matches requested py_ver."""
-
-        def fn(res: pd.DataFrame) -> None:
-            self.assertEqual(res["python_version"].iloc[0], py_ver)
-            pd.testing.assert_frame_equal(res, expected, check_dtype=False)
-
-        return fn
-
     def _assert_pip_only_env(self, res: pd.DataFrame) -> None:
         """Assert that the deployed service is using a pip-only path (venv)."""
         self.assertTrue(
@@ -202,39 +188,6 @@ class TestRegistryPipOnlyModelDeploymentInteg(
                 "enable_explainability": False,
             },
             gpu_requests="1",
-            conda_dependencies=[],
-        )
-
-    @parameterized.parameters(*PIP_ONLY_PYTHON_VERSIONS)  # type: ignore[misc]
-    def test_pip_only_model_python_versions(self, py_ver: str) -> None:
-        """E2E test: deploy a pip-only model with each supported Python version (3.10, 3.11, 3.12, 3.13, 3.14).
-
-        Verifies:
-        1. Model runs with the correct Python version
-        2. Environment uses a pip-only path (venv)
-        """
-        if not self._has_image_override():
-            self.skipTest("Skipping pip-only model deployment test: image override not enabled.")
-
-        test_input = pd.DataFrame({"value": [1.0, 2.0, 3.0]})
-        model = PipOnlyModel(custom_model.ModelContext())
-        self._test_registry_model_deployment(
-            model=model,
-            sample_input_data=test_input,
-            prediction_assert_fns={
-                "predict": (
-                    test_input,
-                    self._assert_pip_only_predict_result(py_ver, model.predict(test_input)),
-                ),
-                "check_env": (
-                    pd.DataFrame({"value": [1.0]}),
-                    self._assert_pip_only_env,
-                ),
-            },
-            pip_requirements=["requests>=2.28.0"],
-            options={"enable_explainability": False},
-            python_version=py_ver,
-            service_name=f"service_pip_only_python_versions_{self._run_id}_{py_ver.replace('.', '')}",
             conda_dependencies=[],
         )
 

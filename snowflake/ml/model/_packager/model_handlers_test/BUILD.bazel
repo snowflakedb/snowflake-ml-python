@@ -240,6 +240,18 @@ py_test(
 )
 
 py_test(
+    name = "huggingface_utils_test",
+    srcs = ["huggingface_utils_test.py"],
+    tags = [
+        "feature:model_registry",
+        "short_regress",
+    ],
+    deps = [
+        "//snowflake/ml/model/_packager/model_handlers:huggingface_utils",
+    ],
+)
+
+py_test(
     name = "sentence_transformers_test",
     timeout = "eternal",
     srcs = ["sentence_transformers_test.py"],

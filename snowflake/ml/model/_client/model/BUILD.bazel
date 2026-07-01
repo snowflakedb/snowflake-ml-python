@@ -5,7 +5,9 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "batch_inference_specs",
     srcs = ["batch_inference_specs.py"],
-    deps = [],
+    deps = [
+        "//snowflake/ml/model:inference_engine",
+    ],
 )
 
 py_library(
@@ -50,6 +52,7 @@ py_test(
     ],
     deps = [
         ":batch_inference_specs",
+        "//snowflake/ml/model:inference_engine",
     ],
 )
 
