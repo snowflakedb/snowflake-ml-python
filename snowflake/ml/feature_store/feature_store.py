@@ -330,6 +330,27 @@ _DT_INITIALIZE_PATTERN = re.compile(
     flags=re.DOTALL | re.IGNORECASE | re.X,
 )
 
+# Sentinel for update_feature_view: distinguishes "leave unchanged" (default)
+# from an explicit None, which clears (UNSETs) the initialization warehouse.
+_KEEP_CURRENT: Any = object()
+
+
+def _initialization_warehouse_clause(feature_view: FeatureView) -> str:
+    """Build the trailing ``INITIALIZATION_WAREHOUSE = ...`` fragment for CREATE DYNAMIC TABLE.
+
+    Returns an empty string when the feature view has no initialization
+    warehouse, leaving the DDL identical to the single-warehouse behavior.
+
+    Args:
+        feature_view: The feature view being materialized.
+
+    Returns:
+        ``\\n  INITIALIZATION_WAREHOUSE=<wh>`` or an empty string.
+    """
+    iw = feature_view.initialization_warehouse
+    return f"\n                INITIALIZATION_WAREHOUSE = {iw}" if iw is not None else ""
+
+
 # ``list_feature_views`` output schemas. Row builders always populate the verbose
 # schema; non-verbose callers receive _LIST_FEATURE_VIEW_SCHEMA after trimming
 # verbose-only trailing fields.
@@ -356,6 +377,9 @@ _LIST_FEATURE_VIEW_BASE_FIELDS = [
 ]
 
 _LIST_FEATURE_VIEW_VERBOSE_EXTRA_FIELDS = [
+    # Initialization warehouse used for the initial build / reinitialization of a
+    # managed FV's dynamic table. Verbose-only: ``None`` for FVs without one.
+    StructField("initialization_warehouse", StringType()),
     # JSON-encoded authored source-ref list, or ``None`` when no
     # ``FV_SOURCE_REFS`` metadata row was written for this FV.
     StructField("source_refs", StringType()),
@@ -1261,6 +1285,7 @@ class FeatureStore:
         *,
         refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
+        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
         updated_feature_df: Optional[DataFrame] = None,
@@ -1275,6 +1300,7 @@ class FeatureStore:
         *,
         refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
+        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
         updated_feature_df: Optional[DataFrame] = None,
@@ -1289,6 +1315,7 @@ class FeatureStore:
         *,
         refresh_freq: Optional[str] = _UNSET,
         warehouse: Optional[str] = None,
+        initialization_warehouse: Optional[str] = _KEEP_CURRENT,
         desc: Optional[str] = None,
         online_config: Optional[fv_mod.OnlineConfig] = None,
         updated_feature_df: Optional[DataFrame] = None,
@@ -1301,6 +1328,10 @@ class FeatureStore:
             version: Optional version of feature view. Must set when argument feature_view is a str.
             refresh_freq: updated refresh frequency.
             warehouse: updated warehouse.
+            initialization_warehouse: updated initialization warehouse, used for the initial build and
+                reinitializations of the backing dynamic table. Pass a warehouse name to set it, or ``None`` to clear
+                it (all refreshes then run on ``warehouse``). When omitted, the existing value is left unchanged.
+                Not supported for static feature views.
             desc: description of feature view.
             online_config: updated online configuration for the online feature table.
                 If provided with enable=True, creates online feature table if absent.
@@ -1380,6 +1411,8 @@ class FeatureStore:
         actual_refresh_freq: Optional[str] = refresh_freq if refresh_freq is not _UNSET else None
         new_desc = desc if desc is not None else feature_view.desc
 
+        init_wh_changed = initialization_warehouse is not _KEEP_CURRENT
+
         if refresh_freq is not _UNSET:
             # Validate the prospective refresh_freq against the snapshot-config contract
             # without mutating the registered FV. Shallow copy is sufficient: the update
@@ -1392,14 +1425,30 @@ class FeatureStore:
             feature_view_append_only_validation.validate_snapshot_config_for_update(validation_fv)
 
         # Validate static feature view constraints
-        if feature_view.status == FeatureViewStatus.STATIC and (actual_refresh_freq or warehouse):
+        if feature_view.status == FeatureViewStatus.STATIC and (actual_refresh_freq or warehouse or init_wh_changed):
             full_name = f"{feature_view.name}/{feature_view.version}"
             raise snowml_exceptions.SnowflakeMLException(
                 error_code=error_codes.INVALID_ARGUMENT,
                 original_exception=RuntimeError(
-                    f"Static feature view '{full_name}' does not support refresh_freq and warehouse."
+                    f"Static feature view '{full_name}' does not support refresh_freq, warehouse, "
+                    "and initialization_warehouse."
                 ),
             )
+
+        # Fail fast on an online store type that cannot back this feature view (e.g. HYBRID_TABLE
+        # for a tiled FV) before any planning/resource work, so it surfaces as a clean
+        # INVALID_ARGUMENT rather than being wrapped by the update-failure rollback handler. The
+        # rule is a feature-view invariant; check the target config on a copy since the live rebuild
+        # path does not re-run __init__ validation.
+        if online_config is not None:
+            probe_fv = feature_view.copy()
+            probe_fv._online_config = online_config
+            try:
+                probe_fv._validate_online_store_supported()
+            except ValueError as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT, original_exception=e
+                ) from e
 
         if updated_feature_df is not None:
             if not feature_view.append_only:
@@ -1482,7 +1531,12 @@ class FeatureStore:
         rollback_operations: list[Any] = []
         try:
             operations, rollback_operations = self._plan_feature_view_update_operations(
-                feature_view, actual_refresh_freq, warehouse, new_desc, online_config
+                feature_view,
+                actual_refresh_freq,
+                warehouse,
+                initialization_warehouse,
+                new_desc,
+                online_config,
             )
 
             # Step 3: Execute atomically
@@ -1773,18 +1827,20 @@ class FeatureStore:
         Args:
             entity_name: Entity name.
             feature_view_name: FeatureView name.
-            verbose: When True, include the ``source_refs`` and ``backup_source`` columns
-                in the output. ``source_refs`` (string, nullable) is the JSON-encoded list
-                of authored source bindings captured at registration time (``None`` when no
-                source refs were recorded). ``backup_source`` (string, nullable) contains
-                the fully-qualified name of the historical snapshot table cloned at
+            verbose: When True, include the ``initialization_warehouse``, ``source_refs`` and
+                ``backup_source`` columns in the output. ``initialization_warehouse`` (string,
+                nullable) is the warehouse used for the initial build / reinitialization of the
+                backing dynamic table (``None`` when unset). ``source_refs`` (string, nullable) is
+                the JSON-encoded list of authored source bindings captured at registration time
+                (``None`` when no source refs were recorded). ``backup_source`` (string, nullable)
+                contains the fully-qualified name of the historical snapshot table cloned at
                 registration time (only set for append-only feature views registered with a
                 ``backup_source``; ``None`` otherwise). Defaults to False.
 
         Returns:
             FeatureViews information as a Snowpark DataFrame. Each row always includes
-            ``append_only`` (bool). ``source_refs`` and ``backup_source`` (both string,
-            nullable) are included only when ``verbose=True``.
+            ``append_only`` (bool). ``initialization_warehouse``, ``source_refs`` and
+            ``backup_source`` (all string, nullable) are included only when ``verbose=True``.
 
         Example::
 
@@ -3825,48 +3881,31 @@ class FeatureStore:
     def _create_updated_feature_view(
         self, base_fv: FeatureView, online_config: Optional[fv_mod.OnlineConfig] = None
     ) -> FeatureView:
-        """Create an updated FeatureView with new online configuration."""
-        assert base_fv.version is not None
-        assert base_fv.database is not None
-        assert base_fv.schema is not None
-        assert base_fv.feature_df is not None
+        """Return a copy of ``base_fv`` with a new online configuration applied.
 
-        feature_descs_str: Optional[dict[str, str]] = (
-            {k.identifier(): v for k, v in base_fv.feature_descs.items()} if base_fv.feature_descs is not None else None
-        )
-        cluster_by_str: Optional[list[str]] = (
-            [col.identifier() for col in base_fv.cluster_by] if base_fv.cluster_by is not None else None
-        )
+        A shallow copy preserves the full feature-view identity (tiled / streaming / realtime /
+        append-only / source-refs) automatically, so only the online config changes. Hand-copying
+        individual fields here would silently drop any field not listed and drift as new fields are
+        added (the same class of bug this avoids). Mirrors the ``copy() + _online_config`` pattern
+        used elsewhere in ``update_feature_view``.
 
-        return FeatureView._construct_feature_view(
-            name=base_fv.name.identifier(),
-            entities=base_fv.entities,
-            feature_df=base_fv.feature_df,
-            timestamp_col=(base_fv.timestamp_col.identifier() if base_fv.timestamp_col is not None else None),
-            desc=base_fv.desc,
-            version=str(base_fv.version),
-            status=base_fv.status,
-            feature_descs=feature_descs_str or {},
-            refresh_freq=base_fv.refresh_freq,
-            database=base_fv.database.identifier(),
-            schema=base_fv.schema.identifier(),
-            warehouse=(base_fv.warehouse.identifier() if base_fv.warehouse is not None else None),
-            refresh_mode=base_fv.refresh_mode,
-            refresh_mode_reason=base_fv.refresh_mode_reason,
-            initialize=base_fv.initialize,
-            owner=base_fv.owner,
-            infer_schema_df=base_fv._infer_schema_df,
-            session=self._session,
-            cluster_by=cluster_by_str,
-            online_config=online_config,
-            storage_config=base_fv.storage_config,
-        )
+        Args:
+            base_fv: The feature view to copy.
+            online_config: The online configuration to apply to the copy.
+
+        Returns:
+            A shallow copy of ``base_fv`` with ``online_config`` applied.
+        """
+        fv = base_fv.copy()
+        fv._online_config = online_config
+        return fv
 
     def _build_offline_update_queries(
         self,
         feature_view: FeatureView,
         refresh_freq: Optional[str],
         warehouse: Optional[str],
+        initialization_warehouse: Optional[str],
         desc: str,
     ) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """Build offline update operations and their rollback operations.
@@ -3897,6 +3936,9 @@ class FeatureStore:
                 ``None`` to keep the existing value.
             warehouse: New warehouse identifier requested by the caller, or
                 ``None`` to keep the existing value.
+            initialization_warehouse: New initialization warehouse. ``_KEEP_CURRENT``
+                leaves it unchanged; ``None`` clears it (``UNSET``); any other
+                value sets it (``SET``).
             desc: New description to set on the DT/view.
 
         Returns:
@@ -3992,6 +4034,20 @@ class FeatureStore:
         elif not old_is_cron and new_is_cron:
             rollback_ops.append(drop_task_op("OFFLINE_ROLLBACK"))
 
+        # INITIALIZATION_WAREHOUSE is a standalone SET/UNSET. _KEEP_CURRENT means
+        # the caller didn't pass the argument; an explicit None clears it.
+        if initialization_warehouse is not _KEEP_CURRENT:
+            old_init_wh = feature_view.initialization_warehouse
+
+            def set_or_unset_init_wh(op_type: str, value: Optional[SqlIdentifier]) -> tuple[str, str]:
+                if value is None:
+                    return (op_type, f"ALTER DYNAMIC TABLE {fqn} UNSET INITIALIZATION_WAREHOUSE")
+                return (op_type, f"ALTER DYNAMIC TABLE {fqn} SET INITIALIZATION_WAREHOUSE = {value}")
+
+            new_init_wh = SqlIdentifier(initialization_warehouse) if initialization_warehouse is not None else None
+            operations.append(set_or_unset_init_wh("OFFLINE_UPDATE", new_init_wh))
+            rollback_ops.append(set_or_unset_init_wh("OFFLINE_ROLLBACK", old_init_wh))
+
         return operations, rollback_ops
 
     @dataclass(frozen=True)
@@ -4063,6 +4119,7 @@ class FeatureStore:
         final_config = fv_mod.OnlineConfig(
             enable=True,
             target_lag=(online_config.target_lag if online_config.target_lag is not None else default_target_lag),
+            store_type=online_config.store_type,
         )
 
         temp_fv = self._create_updated_feature_view(feature_view, final_config)
@@ -4120,6 +4177,7 @@ class FeatureStore:
         feature_view: FeatureView,
         refresh_freq: Optional[str],
         warehouse: Optional[str],
+        initialization_warehouse: Optional[str],
         desc: str,
         online_config: Optional[fv_mod.OnlineConfig],
     ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
@@ -4129,7 +4187,7 @@ class FeatureStore:
 
         # Plan offline updates
         offline_ops, offline_rollback_ops = self._build_offline_update_queries(
-            feature_view, refresh_freq, warehouse, desc
+            feature_view, refresh_freq, warehouse, initialization_warehouse, desc
         )
         operations.extend(offline_ops)
         rollback_operations.extend(offline_rollback_ops)
@@ -5360,6 +5418,7 @@ class FeatureStore:
         # Include column definitions only if provided (skip for tiled feature views)
         column_clause = f" ({column_descs})" if column_descs else ""
 
+        init_wh_clause = _initialization_warehouse_clause(feature_view)
         storage_config = feature_view.storage_config
         if storage_config is not None and storage_config.format == StorageFormat.ICEBERG:
             # These should be validated by FeatureView constructor and _resolve_storage_config
@@ -5371,7 +5430,7 @@ class FeatureStore:
                 TAG (
                     {tagging_clause}
                 )
-                WAREHOUSE = {warehouse}
+                WAREHOUSE = {warehouse}{init_wh_clause}
                 REFRESH_MODE = {feature_view.refresh_mode}
                 INITIALIZE = {feature_view.initialize}
                 CATALOG = 'SNOWFLAKE'
@@ -5385,7 +5444,7 @@ class FeatureStore:
                 TAG (
                     {tagging_clause}
                 )
-                WAREHOUSE = {warehouse}
+                WAREHOUSE = {warehouse}{init_wh_clause}
                 REFRESH_MODE = {feature_view.refresh_mode}
                 INITIALIZE = {feature_view.initialize}
             """
@@ -6025,7 +6084,7 @@ END;"""
                 TAG (
                     {tagging_clause_str}
                 )
-                WAREHOUSE = {warehouse}
+                WAREHOUSE = {warehouse}{_initialization_warehouse_clause(feature_view)}
                 REFRESH_MODE = {feature_view.refresh_mode}
                 INITIALIZE = {feature_view.initialize}
             """
@@ -7556,6 +7615,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         values.append(row["scheduling_state"] if "scheduling_state" in row else None)
         values.append(row["warehouse"] if "warehouse" in row else None)
         values.append(json.dumps(self._extract_cluster_by_columns(row["cluster_by"])) if "cluster_by" in row else None)
+        # Verbose-only field, emitted into output_values_extra below.
+        initialization_warehouse = row["initialization_warehouse"] if "initialization_warehouse" in row else None
 
         online_config_json = self._determine_online_config_from_oft(name, version, include_online_service_metadata=True)
         values.append(online_config_json)
@@ -7625,7 +7686,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             append_only_meta = self._metadata_manager.get_append_only_metadata(name, version)
             if append_only_meta is not None:
                 backup_source = AppendOnlyMetadata.from_dict(append_only_meta).backup_source
-        output_values_extra.append([source_refs_json, backup_source])
+        output_values_extra.append([initialization_warehouse, source_refs_json, backup_source])
 
     def _determine_online_config_from_oft(
         self, name: str, version: str, *, include_online_service_metadata: bool = False
@@ -7810,6 +7871,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             timestamp_col = ts_col if ts_col not in _LEGACY_TIMESTAMP_COL_PLACEHOLDER_VALS else None
             re_initialize = re.match(_DT_INITIALIZE_PATTERN, row["text"])
             initialize = re_initialize.group("initialize") if re_initialize is not None else "ON_CREATE"
+            # INITIALIZATION_WAREHOUSE is surfaced as a dedicated SHOW column (like WAREHOUSE),
+            # not echoed in the DDL text, so read it from the column.
+            init_wh_value = row["initialization_warehouse"] if "initialization_warehouse" in row else None
+            initialization_warehouse = (
+                SqlIdentifier(init_wh_value, case_sensitive=True).identifier() if init_wh_value else None
+            )
 
             # For tiled FVs, get descriptions from metadata table; otherwise from DT columns
             if is_tiled:
@@ -7851,6 +7918,7 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                     if len(row["warehouse"]) > 0
                     else None
                 ),
+                initialization_warehouse=initialization_warehouse,
                 refresh_mode=row["refresh_mode"],
                 refresh_mode_reason=row["refresh_mode_reason"],
                 initialize=initialize,
@@ -8050,6 +8118,15 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             SnowflakeMLException: [ValueError] If OnlineConfig is required but not provided.
             SnowflakeMLException: If creating the online feature table fails.
         """
+        # Defense-in-depth: also covers the registration path. Rejects store types that cannot back
+        # a tiled feature view before any DDL is issued. The rule lives on FeatureView.
+        try:
+            feature_view._validate_online_store_supported()
+        except ValueError as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT, original_exception=e
+            ) from e
+
         online_table_name = FeatureView._get_online_table_name(feature_view_name)
 
         fully_qualified_online_name = self._get_fully_qualified_name(online_table_name)

@@ -1058,6 +1058,7 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         output_schema: StructType,
         name: str = "tiled_fv",
         version: str = "v1",
+        aggregation_secondary_keys: Optional[list[str]] = None,
     ) -> mock.MagicMock:
         """Build a mock tiled FeatureView with the given agg specs and tile schema."""
         from snowflake.ml.feature_store.feature_view import FeatureView
@@ -1070,6 +1071,7 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         fv.aggregation_specs = aggregation_specs
         fv.output_schema = output_schema
         fv.feature_names = [SqlIdentifier(s.output_column) for s in aggregation_specs]
+        fv.aggregation_secondary_keys = aggregation_secondary_keys
         return fv
 
     @staticmethod
@@ -1214,11 +1216,58 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
                 StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
             ]
         )
-        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema)
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
 
         cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
 
         self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D"])
+
+    def test_secondary_key_fv_value_outputs_wrapped_as_arrays(self) -> None:
+        """A FeatureGroup source over a secondary-key FV must mirror the FV's stored ArrayType<scalar> shape."""
+        specs = [
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+            AggregationSpec(AggregationType.COUNT, "AMOUNT", "1d", "AMOUNT_COUNT_1D"),
+            AggregationSpec(
+                function=AggregationType._SECONDARY_KEY_ARRAY,
+                source_column="MERCHANT",
+                window="1d",
+                output_column="_INTERNAL_MERCHANT_ARR",
+            ),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(10, 2)),
+                StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D", "AMOUNT_COUNT_1D"])
+        sum_col, count_col = cols
+        # SUM inherits the source scalar's precision/scale as the array element.
+        self.assertEqual(sum_col.type, "ArrayType")
+        self.assertEqual(sum_col.element_type, "DecimalType")
+        self.assertEqual(sum_col.precision, 10)
+        self.assertEqual(sum_col.scale, 2)
+        # COUNT's predetermined DecimalType(18, 0) becomes the array element.
+        self.assertEqual(count_col.type, "ArrayType")
+        self.assertEqual(count_col.element_type, "DecimalType")
+        self.assertEqual(count_col.precision, 18)
+        self.assertEqual(count_col.scale, 0)
+
+    def test_non_secondary_key_fv_outputs_stay_scalar(self) -> None:
+        """Without a secondary key, value aggregations stay scalar (no array wrapping)."""
+        spec = AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D")
+        fv = self._make_tiled_fv(aggregation_specs=[spec], output_schema=self._tile_schema_for_amount())
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+        self.assertEqual(len(cols), 1)
+        self.assertEqual(cols[0].type, "DecimalType")
+        self.assertIsNone(cols[0].element_type)
 
     def test_slice_over_tiled_feature_view(self) -> None:
         """``_convert_feature_view_slice`` selects logical agg outputs in slice order."""

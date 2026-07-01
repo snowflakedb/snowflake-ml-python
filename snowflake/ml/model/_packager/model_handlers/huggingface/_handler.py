@@ -1,5 +1,6 @@
 import logging
 import os
+import pathlib
 import shutil
 import warnings
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
@@ -11,6 +12,7 @@ from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer import huggingface_lazy_uploader
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
 from snowflake.ml.model._packager.model_handlers.huggingface import _utils as _hf_utils
@@ -241,7 +243,26 @@ class TransformersPipelineHandler(
                 "wb",
             ) as f:
                 cloudpickle.dump(model, f)
-            if model.repo_snapshot_dir:
+            lazy_repo_files = getattr(model, "_lazy_repo_files", None)
+            if lazy_repo_files is not None:
+                lazy_download_kwargs = getattr(model, "_lazy_download_kwargs", None)
+                if lazy_download_kwargs is None:
+                    raise ValueError("HuggingFace model metadata is incomplete; cannot determine download parameters.")
+                lazy_file_sizes = getattr(model, "_lazy_file_sizes", None) or {}
+                model_meta._lazy_hf_upload = huggingface_lazy_uploader.LazyHFUpload(
+                    download_kwargs=lazy_download_kwargs,
+                    files=lazy_repo_files,
+                    file_sizes=lazy_file_sizes,
+                    relative_stage_dir=pathlib.PurePosixPath(
+                        "model",
+                        "models",
+                        name,
+                        cls.MODEL_BLOB_FILE_OR_DIR,
+                    ),
+                    download_token=_hf_utils.download_token_for_lazy_upload(model),
+                )
+                is_repo_downloaded = True
+            elif model.repo_snapshot_dir:
                 logger.info("model's repo_snapshot_dir is available, copying snapshot")
                 shutil.copytree(
                     model.repo_snapshot_dir,
@@ -392,7 +413,7 @@ class TransformersPipelineHandler(
             m = transformers.pipeline(
                 model_blob_options["task"],
                 model=model_blob_file_or_dir_path,
-                trust_remote_code=True,
+                trust_remote_code=False,
                 torch_dtype="auto",
                 **additional_pipeline_params,
                 **device_config,

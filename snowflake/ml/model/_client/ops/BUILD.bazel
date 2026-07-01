@@ -145,6 +145,7 @@ py_library(
         "//snowflake/ml/model/_client/model:batch_inference_serialization",
         "//snowflake/ml/model/_client/model:batch_inference_specs",
         "//snowflake/ml/model/_client/ops:deployment_step",
+        "//snowflake/ml/model/_client/service:inference_job_service_spec",
         "//snowflake/ml/model/_client/service:model_deployment_spec",
         "//snowflake/ml/model/_client/sql:service",
         "//snowflake/ml/model/_client/sql:stage",

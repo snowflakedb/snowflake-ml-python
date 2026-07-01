@@ -16,6 +16,7 @@ from typing_extensions import Required
 from snowflake.ml import version as snowml_version
 from snowflake.ml._internal import env_utils, file_utils
 from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer import huggingface_lazy_uploader
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_meta import model_blob_meta, model_meta_schema
 from snowflake.ml.model._packager.model_meta_migrator import migrator_plans
@@ -347,6 +348,8 @@ class ModelMetadata:
         # written into model.yaml as the per-method ``sample_input_file_path`` field.
         self.sample_input_file_paths: dict[str, str] = sample_input_file_paths or {}
         self._packaged_env_dict = packaged_env_dict
+
+        self._lazy_hf_upload: Optional[huggingface_lazy_uploader.LazyHFUpload] = None
 
     @property
     def min_snowpark_ml_version(self) -> str:

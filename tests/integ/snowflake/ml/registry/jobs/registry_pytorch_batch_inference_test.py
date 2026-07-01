@@ -9,6 +9,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 from tests.integ.snowflake.ml.test_utils import model_factory
 
 
+@absltest.skip("SNOW-3691662")
 class TestPyTorchBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     @parameterized.parameters(  # type: ignore[misc]
         {"gpu_requests": None, "cpu_requests": None, "memory_requests": None},

@@ -313,6 +313,38 @@ def _resolve_stage_dir_path(
         return str((stage_path / relative_path).parent)
 
 
+def upload_file_to_stage(
+    session: snowpark.Session,
+    local_file_path: Union[str, pathlib.Path],
+    stage_dir_path: str,
+    *,
+    statement_params: Optional[dict[str, Any]] = None,
+) -> None:
+    """Upload a single local file to a stage directory.
+
+    Args:
+        session: Snowpark Session.
+        local_file_path: Local path of the file to upload.
+        stage_dir_path: Destination directory path in the stage.
+        statement_params: Statement Params.
+    """
+    import retrying
+
+    file_operation = snowpark.FileOperation(session=session)
+    retrying.retry(
+        retry_on_exception=_retry_on_sql_error,
+        stop_max_attempt_number=5,
+        wait_exponential_multiplier=100,
+        wait_exponential_max=10000,
+    )(file_operation.put)(
+        str(local_file_path),
+        str(stage_dir_path),
+        auto_compress=False,
+        overwrite=False,
+        statement_params=statement_params,
+    )
+
+
 def upload_directory_to_stage(
     session: snowpark.Session,
     local_path: pathlib.Path,
@@ -328,27 +360,16 @@ def upload_directory_to_stage(
         stage_path: Base path in the stage.
         statement_params: Statement Params.
     """
-    import retrying
-
-    file_operation = snowpark.FileOperation(session=session)
-
     for root, _, filenames in os.walk(local_path):
         root_path = pathlib.Path(root)
         for filename in filenames:
             local_file_path = root_path / filename
             relative_path = pathlib.PurePosixPath(local_file_path.relative_to(local_path).as_posix())
             stage_dir_path = _resolve_stage_dir_path(stage_path, relative_path)
-
-            retrying.retry(
-                retry_on_exception=_retry_on_sql_error,
-                stop_max_attempt_number=5,
-                wait_exponential_multiplier=100,
-                wait_exponential_max=10000,
-            )(file_operation.put)(
-                str(local_file_path),
-                str(stage_dir_path),
-                auto_compress=False,
-                overwrite=False,
+            upload_file_to_stage(
+                session,
+                local_file_path,
+                stage_dir_path,
                 statement_params=statement_params,
             )
 

@@ -11,6 +11,7 @@ from common_utils import FS_INTEG_TEST_DATASET_SCHEMA, create_random_schema
 
 import snowflake.ml.version as snowml_version
 from fs_integ_test_base import FeatureStoreIntegTestBase
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import Feature, RollupConfig
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -167,6 +168,54 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         self.assertEqual(registered_subscriber.status, FeatureViewStatus.ACTIVE)
         self.assertEqual(registered_subscriber.name, "SUBSCRIBER_EVENTS")
         self.assertEqual(registered_subscriber.version, "v1")
+
+    def test_rollup_fv_initialization_warehouse(self) -> None:
+        """A rollup FV's dynamic table carries INITIALIZATION_WAREHOUSE when set."""
+        fs = self._create_feature_store()
+
+        visitor_entity = self._create_visitor_entity()
+        subscriber_entity = self._create_subscriber_entity()
+        fs.register_entity(visitor_entity)
+        fs.register_entity(subscriber_entity)
+
+        visitor_fv = FeatureView(
+            name="visitor_events",
+            entities=[visitor_entity],
+            feature_df=self._get_events_df(),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[Feature.count("visitor_id", "24h").alias("event_count")],
+        )
+        registered_visitor = fs.register_feature_view(visitor_fv, "v1")
+
+        subscriber_fv = FeatureView(
+            name="subscriber_events",
+            entities=[subscriber_entity],
+            rollup_config=RollupConfig(
+                source=registered_visitor,
+                mapping_df=self._get_mapping_df(),
+            ),
+            initialization_warehouse=self._alt_warehouse_name,
+        )
+        registered_subscriber = fs.register_feature_view(subscriber_fv, "v1")
+        self.assertEqual(
+            registered_subscriber.initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+
+        self.assertEqual(
+            fs.get_feature_view("subscriber_events", "v1").initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+        fv_name = FeatureView._get_physical_name(SqlIdentifier("SUBSCRIBER_EVENTS"), "v1")
+        dt_row = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()[0]
+        self.assertEqual(
+            SqlIdentifier(dt_row["initialization_warehouse"], case_sensitive=True),
+            SqlIdentifier(self._alt_warehouse_name),
+        )
 
     def test_rollup_fv_is_tiled(self) -> None:
         """Test that rollup FV has is_tiled=True."""

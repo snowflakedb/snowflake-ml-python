@@ -5,7 +5,7 @@ import os
 import tempfile
 import warnings
 from importlib import metadata as importlib_metadata
-from typing import Any, cast
+from typing import Any, Mapping, Optional, cast
 from unittest import mock
 
 import numpy as np
@@ -23,8 +23,10 @@ from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
     SentenceTransformerHandler,
     _auto_infer_signature,
     _capture_model_truncate_dim,
+    _encode_sentences_with_nulls,
     _get_available_default_methods,
     _get_embedding_dim_from_config,
+    _is_null_sentence,
     _supports_encode_truncate_dim_param,
     _supports_init_truncate_dim,
     _validate_sentence_transformers_signatures,
@@ -246,6 +248,83 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             ),
         }
         _validate_sentence_transformers_signatures(valid_all_methods)
+
+    def test_is_null_sentence(self) -> None:
+        self.assertTrue(_is_null_sentence(None))
+        self.assertTrue(_is_null_sentence(pd.NA))
+        self.assertTrue(_is_null_sentence(float("nan")))
+        self.assertFalse(_is_null_sentence("hello"))
+        self.assertFalse(_is_null_sentence(""))
+        self.assertFalse(_is_null_sentence(["hello"]))
+
+    def test_encode_sentences_with_nulls(self) -> None:
+        def fake_encode(sentences: list[str], **kwargs: Any) -> npt.NDArray[Any]:
+            del kwargs
+            return np.array([[float(index), float(index + 1)] for index, _ in enumerate(sentences)])
+
+        outputs = _encode_sentences_with_nulls(
+            ["a", None, pd.NA, "b"],
+            fake_encode,
+            {},
+        )
+        self.assertEqual(outputs[0], [0.0, 1.0])
+        self.assertIsNone(outputs[1])
+        self.assertIsNone(outputs[2])
+        self.assertEqual(outputs[3], [1.0, 2.0])
+
+        all_valid_outputs = _encode_sentences_with_nulls(["a", "b"], fake_encode, {})
+        self.assertEqual(all_valid_outputs, [[0.0, 1.0], [1.0, 2.0]])
+
+        all_null_outputs = _encode_sentences_with_nulls([None, pd.NA], fake_encode, {})
+        self.assertEqual(all_null_outputs, [None, None])
+
+    def test_null_sentence_custom_model_returns_none_embedding(self) -> None:
+        model = self._st_model
+        sentences = pd.DataFrame(
+            {
+                "sentence": [
+                    "Why don't scientists trust atoms? Because they make up everything.",
+                    None,
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
+                ]
+            }
+        )
+        expected_embeddings = model.encode(
+            [sentences.iloc[0, 0], sentences.iloc[2, 0]],
+        ).tolist()
+        expected = pd.DataFrame(
+            {
+                "output": [
+                    expected_embeddings[0],
+                    None,
+                    expected_embeddings[1],
+                ]
+            }
+        )
+
+        sig = {"encode": model_signature.infer_signature(sentences.iloc[[0, 2]], expected.iloc[[0, 2]])}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=model,
+                signatures=sig,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+                pk.load(as_custom_model=True)
+                assert pk.model
+                predict_method = getattr(pk.model, "encode", None)
+                assert callable(predict_method)
+                embeddings_load = predict_method(sentences)
+                embeddings_load.columns = expected.columns
+                self.assertIsNone(embeddings_load.iloc[1, 0])
+                assert_frame_equal(embeddings_load.iloc[[0, 2]], expected.iloc[[0, 2]])
+                assert_frame_equal(embeddings_load.iloc[[1]], expected.iloc[[1]])
 
     def test_validate_sentence_transformers_signatures_empty(self) -> None:
         """Test that empty signatures raise ValueError."""
@@ -1572,6 +1651,240 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
             dim = _get_embedding_dim_from_config(snapshot_dir)
             self.assertIsNone(dim)
 
+    def _mock_lazy_st_repo_download(
+        self,
+        *,
+        local_dir: str,
+        filename: str,
+        modules: list[dict[str, object]],
+        pooling_config: Optional[Mapping[str, Any]] = None,
+        dense_config: Optional[Mapping[str, Any]] = None,
+    ) -> str:
+        if filename == "modules.json":
+            with open(os.path.join(local_dir, "modules.json"), "w") as f:
+                json.dump(modules, f)
+            return os.path.join(local_dir, "modules.json")
+        if filename == "1_Pooling/config.json" and pooling_config is not None:
+            pooling_dir = os.path.join(local_dir, "1_Pooling")
+            os.makedirs(pooling_dir, exist_ok=True)
+            config_path = os.path.join(pooling_dir, "config.json")
+            with open(config_path, "w") as f:
+                json.dump(pooling_config, f)
+            return config_path
+        if filename == "2_Dense/config.json" and dense_config is not None:
+            dense_dir = os.path.join(local_dir, "2_Dense")
+            os.makedirs(dense_dir, exist_ok=True)
+            config_path = os.path.join(dense_dir, "config.json")
+            with open(config_path, "w") as f:
+                json.dump(dense_config, f)
+            return config_path
+        raise AssertionError(f"Unexpected download: {filename}")
+
+    @mock.patch("huggingface_hub.hf_hub_download")
+    @mock.patch("huggingface_hub.HfApi")
+    def test_save_wrapper_lazy_upload_skips_copytree_and_sets_lazy_hf_upload(
+        self,
+        mock_hf_api: mock.Mock,
+        mock_hf_hub_download: mock.Mock,
+    ) -> None:
+        """Lazy ST wrapper logging should defer weight copies and attach upload metadata."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        modules = [
+            {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+            {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+        ]
+        pooling_config = {"word_embedding_dimension": 384, "pooling_mode_mean_tokens": True}
+
+        def fake_download(
+            *,
+            repo_id: str,
+            filename: str,
+            revision: object,
+            token: object,
+            local_dir: str,
+            **kwargs: object,
+        ) -> str:
+            del repo_id, revision, token, kwargs
+            return self._mock_lazy_st_repo_download(
+                local_dir=local_dir,
+                filename=filename,
+                modules=modules,
+                pooling_config=pooling_config,
+            )
+
+        mock_hf_hub_download.side_effect = fake_download
+        mock_hf_api.return_value.model_info.return_value.siblings = [
+            mock.Mock(rfilename="modules.json", size=120),
+            mock.Mock(rfilename="1_Pooling/config.json", size=200),
+            mock.Mock(rfilename="model.safetensors", size=1000),
+        ]
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log=None,
+            lazy_upload=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            packager = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            with mock.patch("shutil.copytree") as mock_copytree:
+                packager.save(
+                    name="model",
+                    model=wrapper,
+                    metadata={"author": "test", "version": "1"},
+                    options=model_types.SentenceTransformersSaveOptions(),
+                )
+                mock_copytree.assert_not_called()
+
+            assert packager.meta is not None
+            lazy_hf_upload = getattr(packager.meta, "_lazy_hf_upload", None)
+            self.assertIsNotNone(lazy_hf_upload)
+            assert lazy_hf_upload is not None
+            self.assertEqual(
+                lazy_hf_upload.files,
+                ["modules.json", "1_Pooling/config.json", "model.safetensors"],
+            )
+            self.assertEqual(
+                lazy_hf_upload.file_sizes,
+                {"modules.json": 120, "1_Pooling/config.json": 200, "model.safetensors": 1000},
+            )
+            blob_options = cast(
+                model_meta_schema.SentenceTransformersModelBlobOptions,
+                packager.meta.models["model"].options,
+            )
+            self.assertTrue(blob_options.get("is_repo_downloaded", False))
+
+    @mock.patch("huggingface_hub.hf_hub_download")
+    @mock.patch("huggingface_hub.HfApi")
+    def test_save_wrapper_lazy_upload_auto_infers_signature(
+        self,
+        mock_hf_api: mock.Mock,
+        mock_hf_hub_download: mock.Mock,
+    ) -> None:
+        """Lazy ST wrapper save should auto-infer signatures after config download."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        modules = [
+            {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+            {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+        ]
+        pooling_config = {"word_embedding_dimension": 384, "pooling_mode_mean_tokens": True}
+
+        def fake_download(
+            *,
+            repo_id: str,
+            filename: str,
+            revision: object,
+            token: object,
+            local_dir: str,
+            **kwargs: object,
+        ) -> str:
+            del repo_id, revision, token, kwargs
+            return self._mock_lazy_st_repo_download(
+                local_dir=local_dir,
+                filename=filename,
+                modules=modules,
+                pooling_config=pooling_config,
+            )
+
+        mock_hf_hub_download.side_effect = fake_download
+        mock_hf_api.return_value.model_info.return_value.siblings = [
+            mock.Mock(rfilename="modules.json", size=120),
+            mock.Mock(rfilename="1_Pooling/config.json", size=200),
+            mock.Mock(rfilename="model.safetensors", size=1000),
+        ]
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log=None,
+            lazy_upload=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            for method_name in _DEFAULT_WRAPPER_TARGET_METHODS:
+                self.assertIn(method_name, pk.meta.signatures)
+                sig = pk.meta.signatures[method_name]
+                assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+                self.assertEqual(sig.outputs[0]._shape, (384,))
+
+    @mock.patch("huggingface_hub.hf_hub_download")
+    @mock.patch("huggingface_hub.HfApi")
+    def test_save_wrapper_lazy_upload_dense_module_dim(
+        self,
+        mock_hf_api: mock.Mock,
+        mock_hf_hub_download: mock.Mock,
+    ) -> None:
+        """Lazy ST wrapper save should prefer Dense out_features when present."""
+        from snowflake.ml.model.models import huggingface as snowml_huggingface
+
+        modules = [
+            {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+            {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+            {"idx": 2, "path": "2_Dense", "type": "sentence_transformers.models.Dense"},
+        ]
+        pooling_config = {"word_embedding_dimension": 768, "pooling_mode_mean_tokens": True}
+        dense_config = {"out_features": 256}
+
+        def fake_download(
+            *,
+            repo_id: str,
+            filename: str,
+            revision: object,
+            token: object,
+            local_dir: str,
+            **kwargs: object,
+        ) -> str:
+            del repo_id, revision, token, kwargs
+            return self._mock_lazy_st_repo_download(
+                local_dir=local_dir,
+                filename=filename,
+                modules=modules,
+                pooling_config=pooling_config,
+                dense_config=dense_config,
+            )
+
+        mock_hf_hub_download.side_effect = fake_download
+        mock_hf_api.return_value.model_info.return_value.siblings = [
+            mock.Mock(rfilename="modules.json", size=120),
+            mock.Mock(rfilename="1_Pooling/config.json", size=200),
+            mock.Mock(rfilename="2_Dense/config.json", size=150),
+            mock.Mock(rfilename="model.safetensors", size=1000),
+        ]
+
+        wrapper = snowml_huggingface.SentenceTransformer(
+            model="sentence-transformers/all-MiniLM-L6-v2",
+            compute_pool_for_log=None,
+            lazy_upload=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper,
+                metadata={"author": "test", "version": "1"},
+                options=model_types.SentenceTransformersSaveOptions(target_methods=["encode"]),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            sig = pk.meta.signatures["encode"]
+            assert isinstance(sig.outputs[0], model_signature.FeatureSpec)
+            self.assertEqual(sig.outputs[0]._shape, (256,))
+
     def test_can_handle_wrapper(self) -> None:
         from snowflake.ml.model.models import huggingface as snowml_huggingface
 
@@ -1602,6 +1915,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1636,6 +1950,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1700,6 +2015,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1732,6 +2048,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1759,6 +2076,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1784,6 +2102,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 
@@ -1816,6 +2135,7 @@ class SentenceTransformerHandlerTest(parameterized.TestCase):
         wrapper = snowml_huggingface.SentenceTransformer(
             model=MODEL_NAMES[0],
             compute_pool_for_log=None,
+            lazy_upload=False,
         )
         wrapper.repo_snapshot_dir = self._wrapper_snapshot_dir
 

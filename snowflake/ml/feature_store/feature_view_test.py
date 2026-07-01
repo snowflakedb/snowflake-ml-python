@@ -153,6 +153,52 @@ class FeatureViewValidationTest(parameterized.TestCase):
         self.assertIn("Duplicate feature alias", str(cm.exception))
 
 
+class InitializationWarehouseTest(absltest.TestCase):
+    """Unit tests for the ``initialization_warehouse`` knob on FeatureView."""
+
+    def _make_fv(self, **kwargs: Any) -> FeatureView:
+        mock_df = MagicMock()
+        mock_df.columns = ["user_id", "amount"]
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        return FeatureView(
+            name="test_fv",
+            entities=[Entity(name="user", join_keys=["user_id"])],
+            feature_df=mock_df,
+            refresh_freq="1d",
+            **kwargs,
+        )
+
+    def test_defaults_to_none(self) -> None:
+        fv = self._make_fv()
+        self.assertIsNone(fv.initialization_warehouse)
+
+    def test_stores_value_as_sql_identifier(self) -> None:
+        fv = self._make_fv(warehouse="small_wh", initialization_warehouse="large_wh")
+        self.assertEqual(fv.initialization_warehouse, SqlIdentifier("large_wh"))
+        self.assertEqual(fv.warehouse, SqlIdentifier("small_wh"))
+
+    def test_setter_warns_and_sets(self) -> None:
+        fv = self._make_fv()
+        with self.assertWarnsRegex(UserWarning, "register_feature_view"):
+            fv.initialization_warehouse = "large_wh"
+        self.assertEqual(fv.initialization_warehouse, SqlIdentifier("large_wh"))
+
+    def test_to_dict_includes_value(self) -> None:
+        fv = self._make_fv(initialization_warehouse="large_wh")
+        self.assertEqual(fv._to_dict()["_initialization_warehouse"], "LARGE_WH")
+
+    def test_to_dict_none_when_unset(self) -> None:
+        fv = self._make_fv()
+        self.assertIsNone(fv._to_dict()["_initialization_warehouse"])
+
+    def test_equality_distinguishes_initialization_warehouse(self) -> None:
+        fv_a = self._make_fv(initialization_warehouse="large_wh")
+        fv_b = self._make_fv(initialization_warehouse="other_wh")
+        fv_c = self._make_fv(initialization_warehouse="large_wh")
+        self.assertNotEqual(fv_a, fv_b)
+        self.assertEqual(fv_a, fv_c)
+
+
 class SecondaryKeyFeatureViewTest(parameterized.TestCase):
     """Unit tests for FV-level ``aggregation_secondary_keys``."""
 
@@ -1481,26 +1527,23 @@ class CreateOnlineFeatureTableTest(absltest.TestCase):
         parsed = json.loads(query[start:end])
         self.assertEqual(parsed["spec"]["ordered_entity_column_names"], ["USER_ID", "AD_ID"])
 
-    def test_hybrid_pk_excludes_secondary_keys(self) -> None:
-        """HYBRID_TABLE path: no spec JSON is sent and the DDL PK is unchanged when SKs are set."""
-        fv = self._make_feature_view(
-            entity_keys=["USER_ID"],
-            columns=["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"],
-            column_types=[StringType(), TimestampType(TimestampTimeZone.NTZ), DoubleType(), StringType()],
-            timestamp_col="EVENT_TS",
-            store_type=OnlineStoreType.HYBRID_TABLE,
-            feature_granularity="1h",
-            aggregation_secondary_keys=["AD_ID"],
-            features=[Feature.sum("AMOUNT", "24h").alias("AMOUNT_SUM_24H")],
-        )
-        fs = self._make_mock_feature_store()
+    def test_hybrid_online_rejected_for_tiled_fv(self) -> None:
+        """HYBRID_TABLE online is unsupported for aggregation (tiled) feature views.
 
-        fs._create_online_feature_table(fv, SqlIdentifier("DT_NAME"), version="v1")
-
-        query = fs._session.sql.call_args_list[0][0][0]
-        self.assertIn('PRIMARY KEY ("USER_ID")', query)
-        self.assertNotIn("AD_ID", query)
-        self.assertNotIn("FROM SPECIFICATION", query)
+        Tiles and aggregation secondary keys require the spec-backed POSTGRES store; this is a
+        feature-view invariant, so construction is rejected.
+        """
+        with self.assertRaisesRegex(ValueError, "not supported for aggregation"):
+            self._make_feature_view(
+                entity_keys=["USER_ID"],
+                columns=["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"],
+                column_types=[StringType(), TimestampType(TimestampTimeZone.NTZ), DoubleType(), StringType()],
+                timestamp_col="EVENT_TS",
+                store_type=OnlineStoreType.HYBRID_TABLE,
+                feature_granularity="1h",
+                aggregation_secondary_keys=["AD_ID"],
+                features=[Feature.sum("AMOUNT", "24h").alias("AMOUNT_SUM_24H")],
+            )
 
 
 class PostgresOnlineLocalRowCoercionTest(absltest.TestCase):

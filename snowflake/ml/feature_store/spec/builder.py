@@ -259,6 +259,27 @@ def _resolve_tiled_fv_output_column(
     )
 
 
+def _as_secondary_key_array_column(col: FSColumn) -> FSColumn:
+    """Wrap a scalar aggregation output column as the ``ArrayType<scalar>`` a secondary-key FV materializes.
+
+    Args:
+        col: The scalar FSColumn resolved for the aggregation's logical output.
+
+    Returns:
+        An ``ArrayType`` FSColumn carrying ``col``'s scalar type as
+        ``element_type`` and preserving precision/scale/length/timezone.
+    """
+    return FSColumn(
+        name=col.name,
+        type="ArrayType",
+        element_type=col.type,
+        precision=col.precision,
+        scale=col.scale,
+        length=col.length,
+        timezone=col.timezone,
+    )
+
+
 # Type alias for the polymorphic source input
 SourceInput = Union[StreamSource, RequestSource, "FeatureView", "FeatureViewSlice", BatchSource]
 
@@ -779,7 +800,10 @@ class FeatureViewSpecBuilder:
 
         For tiled FVs the columns are derived from ``aggregation_specs`` because
         ``output_schema`` exposes ``_PARTIAL_*`` tile columns, not the FV's logical
-        aggregation outputs.
+        aggregation outputs. A secondary-key FV (``aggregation_secondary_keys``)
+        additionally wraps each value aggregation as ``ArrayType<scalar>`` so the
+        column matches the upstream FV's stored ``OutputColumn`` for the Online
+        Service exact-shape check.
 
         For non-tiled, non-RTFV sources, when ``materialized_schema`` is
         provided, column shapes are read from it instead of the authoring-time
@@ -803,11 +827,16 @@ class FeatureViewSpecBuilder:
             ]
         if fv.is_tiled and fv.aggregation_specs is not None:
             partials_by_name = {f.name: _make_tiled_fs_column(f.name, f.datatype) for f in fv.output_schema.fields}
-            return [
-                _resolve_tiled_fv_output_column(spec, partials_by_name)
-                for spec in fv.aggregation_specs
-                if not spec.function.is_secondary_key_array()
-            ]
+            has_secondary_key = bool(fv.aggregation_secondary_keys)
+            columns: list[FSColumn] = []
+            for spec in fv.aggregation_specs:
+                if spec.function.is_secondary_key_array():
+                    continue
+                resolved = _resolve_tiled_fv_output_column(spec, partials_by_name)
+                if has_secondary_key:
+                    resolved = _as_secondary_key_array_column(resolved)
+                columns.append(resolved)
+            return columns
         feature_name_set = {fn.resolved() for fn in fv.feature_names}
         schema = materialized_schema if materialized_schema is not None else fv.output_schema
         return [_make_fs_column(f.name, f.datatype) for f in schema.fields if f.name in feature_name_set]

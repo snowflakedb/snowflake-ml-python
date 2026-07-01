@@ -1,10 +1,35 @@
 import logging
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+_LAZY_UPLOAD_SECRET_ERROR = (
+    "model upload: HuggingFace lazy upload cannot resolve auth from a Snowflake secret during local logging. "
+    "Set the HF_TOKEN environment variable or pass a HuggingFace token when constructing the model."
+)
+
+
+def download_token_for_lazy_upload(model: object) -> Optional[str]:
+    """Return the HuggingFace token to use for lazy upload from a wrapper model.
+
+    Args:
+        model: A HuggingFace wrapper with optional ``token_or_secret`` and ``secret_identifier`` attributes.
+
+    Returns:
+        The HuggingFace auth token when the wrapper was constructed with a plain token, otherwise None.
+
+    Raises:
+        ValueError: If the wrapper was constructed with a Snowflake secret reference.
+    """
+    if getattr(model, "secret_identifier", None) is not None:
+        raise ValueError(_LAZY_UPLOAD_SECRET_ERROR)
+    token_or_secret = getattr(model, "token_or_secret", None)
+    if isinstance(token_or_secret, str):
+        return token_or_secret
+    return None
 
 
 def _resolve_chat_params(row: pd.Series, kwargs: dict[str, Any]) -> dict[str, Any]:

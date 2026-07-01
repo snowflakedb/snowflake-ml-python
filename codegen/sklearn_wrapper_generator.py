@@ -292,6 +292,7 @@ class WrapperGeneratorFactory:
             WrapperGeneratorFactory._is_class_of_type(class_object[1], "LinearDiscriminantAnalysis")
             or WrapperGeneratorFactory._is_class_of_type(class_object[1], "BernoulliRBM")
             or WrapperGeneratorFactory._is_class_of_type(class_object[1], "TSNE")
+            or WrapperGeneratorFactory._is_class_of_type(class_object[1], "MDS")
         )
 
     @staticmethod

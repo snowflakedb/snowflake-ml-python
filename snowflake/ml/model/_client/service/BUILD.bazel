@@ -47,3 +47,25 @@ py_library(
         ":model_deployment_spec_schema",
     ],
 )
+
+py_library(
+    name = "inference_job_service_spec",
+    srcs = ["inference_job_service_spec.py"],
+    deps = [
+        "//snowflake/ml/model/_client/model:batch_inference_specs",
+    ],
+)
+
+py_test(
+    name = "inference_job_service_spec_test",
+    srcs = ["inference_job_service_spec_test.py"],
+    tags = [
+        "feature:model_serving",
+        "short_regress",
+    ],
+    deps = [
+        ":inference_job_service_spec",
+        "//snowflake/ml/model:inference_engine",
+        "//snowflake/ml/model/_client/model:batch_inference_specs",
+    ],
+)

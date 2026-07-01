@@ -571,6 +571,108 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
             self._alt_warehouse_name,
         )
 
+    def test_register_feature_view_with_initialization_warehouse(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("foo", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, title, ts FROM {self._mock_table}"
+
+        # init-WH set: round-trips on the object and the list view, and the
+        # backing dynamic table reports it via the SHOW initialization_warehouse column.
+        d1 = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            warehouse=self._test_warehouse_name,
+            initialization_warehouse=self._alt_warehouse_name,
+        )
+        r1 = fs.register_feature_view(feature_view=d1, version="1.0")
+        self.assertEqual(r1.warehouse, self._test_warehouse_name)
+        self.assertEqual(r1.initialization_warehouse, SqlIdentifier(self._alt_warehouse_name))
+
+        # Full read-back round-trip recovers the value from the DT definition.
+        self.assertEqual(
+            fs.get_feature_view("fv1", "1.0").initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+        self.assertEqual(
+            fs.list_feature_views(verbose=True)
+            .select("initialization_warehouse")
+            .filter(col("version") == "1.0")
+            .collect()[0]["INITIALIZATION_WAREHOUSE"],
+            self._alt_warehouse_name,
+        )
+        fv_name = FeatureView._get_physical_name(SqlIdentifier("FV1"), "1.0")
+        dt_row = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()[0]
+        self.assertEqual(
+            SqlIdentifier(dt_row["initialization_warehouse"], case_sensitive=True),
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+
+        # init-WH unset: the clause is omitted, behaving like single-warehouse FVs.
+        d2 = FeatureView(
+            name="fv2",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="ts",
+            refresh_freq="1d",
+            warehouse=self._test_warehouse_name,
+        )
+        r2 = fs.register_feature_view(feature_view=d2, version="1.0")
+        self.assertIsNone(r2.initialization_warehouse)
+        self.assertIsNone(fs.get_feature_view("fv2", "1.0").initialization_warehouse)
+        fv2_name = FeatureView._get_physical_name(SqlIdentifier("FV2"), "1.0")
+        dt2_row = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv2_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()[0]
+        self.assertFalse(dt2_row["initialization_warehouse"])
+
+    def test_update_initialization_warehouse(self) -> None:
+        fs = self._create_feature_store()
+
+        e = Entity("FOO", ["id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT id, name, title FROM {self._mock_table}"
+        fv = FeatureView(
+            name="fv1",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            refresh_freq="1 minute",
+            warehouse=self._test_warehouse_name,
+        )
+        fv = fs.register_feature_view(feature_view=fv, version="v1")
+        self.assertIsNone(fv.initialization_warehouse)
+
+        # SET via update.
+        fs.update_feature_view("fv1", "v1", initialization_warehouse=self._alt_warehouse_name)
+        self.assertEqual(
+            fs.get_feature_view("fv1", "v1").initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+
+        # Omitting the argument leaves it unchanged.
+        fs.update_feature_view("fv1", "v1", refresh_freq="2 minute")
+        self.assertEqual(
+            fs.get_feature_view("fv1", "v1").initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+
+        # UNSET via explicit None.
+        fs.update_feature_view("fv1", "v1", initialization_warehouse=None)
+        self.assertIsNone(fs.get_feature_view("fv1", "v1").initialization_warehouse)
+        fv_name = FeatureView._get_physical_name(SqlIdentifier("FV1"), "v1")
+        dt_text = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{fv_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()[0]["text"]
+        self.assertNotIn("INITIALIZATION_WAREHOUSE", dt_text.upper())
+
     def test_register_feature_view_with_unregistered_entity(self) -> None:
         fs = self._create_feature_store()
 
@@ -2747,14 +2849,19 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         )
         fv = fs.register_feature_view(feature_view=fv, version="v1")
         with self.assertRaisesRegex(
-            RuntimeError, "Static feature view '.*' does not support refresh_freq and warehouse."
+            RuntimeError, "Static feature view '.*' does not support refresh_freq, warehouse, "
         ):
             fs.update_feature_view("fv1", "v1", refresh_freq="1 minute")
 
         with self.assertRaisesRegex(
-            RuntimeError, "Static feature view '.*' does not support refresh_freq and warehouse."
+            RuntimeError, "Static feature view '.*' does not support refresh_freq, warehouse, "
         ):
             fs.update_feature_view("fv1", "v1", warehouse=self._session.get_current_warehouse())
+
+        with self.assertRaisesRegex(
+            RuntimeError, "Static feature view '.*' does not support refresh_freq, warehouse, "
+        ):
+            fs.update_feature_view("fv1", "v1", initialization_warehouse=self._session.get_current_warehouse())
 
         updated_fv = fs.update_feature_view(fv, desc="")
         self.assertEqual(updated_fv.desc, "")

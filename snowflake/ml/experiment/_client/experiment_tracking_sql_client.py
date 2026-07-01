@@ -118,11 +118,20 @@ class ExperimentTrackingSQLClient(_base._BaseSQLClient):
         ).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
-    def add_run(self, *, experiment_name: sql_identifier.SqlIdentifier, run_name: sql_identifier.SqlIdentifier) -> None:
+    def add_run(
+        self,
+        *,
+        experiment_name: sql_identifier.SqlIdentifier,
+        run_name: sql_identifier.SqlIdentifier,
+        source_info: Optional[str] = None,
+    ) -> None:
         experiment_fqn = self.fully_qualified_object_name(self._database_name, self._schema_name, experiment_name)
-        query_result_checker.SqlResultValidator(
-            self._session, f"ALTER EXPERIMENT {experiment_fqn} ADD RUN {run_name}"
-        ).has_dimensions(expected_rows=1, expected_cols=1).validate()
+        query = f"ALTER EXPERIMENT {experiment_fqn} ADD RUN {run_name}"
+        if source_info:
+            query += f" WITH (SOURCE_INFO = $${source_info}$$)"
+        query_result_checker.SqlResultValidator(self._session, query).has_dimensions(
+            expected_rows=1, expected_cols=1
+        ).validate()
 
     @telemetry.send_api_usage_telemetry(project=telemetry.TelemetryProject.EXPERIMENT_TRACKING.value)
     def commit_run(

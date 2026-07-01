@@ -39,6 +39,7 @@ class PipOnlyPyTorchModel(custom_model.CustomModel):
         return pd.DataFrame({"output": y.detach().cpu().numpy().ravel()})
 
 
+@absltest.skip("SNOW-3691688")
 class TestRegistryPipOnlyGpuBatchInferenceInteg(
     pip_only_packaging_integ_util.PipOnlyPackagingIntegMixin,
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase,

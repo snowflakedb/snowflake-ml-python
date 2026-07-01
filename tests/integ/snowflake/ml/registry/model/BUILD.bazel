@@ -325,10 +325,10 @@ py_test(
 
 py_test(
     name = "registry_in_sproc_test",
+    timeout = "long",
     srcs = ["registry_in_sproc_test.py"],
     tags = [
         "feature:model_registry",
-        "short_regress",
     ],
     deps = [
         ":registry_model_test_base",

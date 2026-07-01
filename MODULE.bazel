@@ -73,6 +73,7 @@ use_repo(
     "com_github_apache_arrow_go_v18",
     "com_github_buger_jsonparser",
     "com_github_caarlos0_env_v11",
+    "com_github_goccy_go_json",
     "com_github_snowflakedb_gosnowflake",
     "in_gopkg_natefinch_lumberjack_v2",
     "in_gopkg_yaml_v2",

@@ -10,6 +10,7 @@ from snowflake.ml._internal import file_utils
 from snowflake.ml._internal.lineage import lineage_utils
 from snowflake.ml.data import data_source
 from snowflake.ml.model import model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer import huggingface_lazy_uploader
 from snowflake.ml.model._model_composer.model_manifest import model_manifest
 from snowflake.ml.model._packager import model_packager
 from snowflake.ml.model._packager.model_meta import model_meta
@@ -159,6 +160,13 @@ class ModelComposer:
             stage_path=self.stage_path,
             statement_params=self._statement_params,
         )
+        if model_metadata._lazy_hf_upload is not None:
+            huggingface_lazy_uploader.stream_upload(
+                self.session,
+                self.stage_path,
+                model_metadata._lazy_hf_upload,
+                statement_params=self._statement_params,
+            )
         return model_metadata
 
     @staticmethod

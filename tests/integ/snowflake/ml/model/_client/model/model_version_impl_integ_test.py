@@ -17,6 +17,51 @@ from tests.integ.snowflake.ml.test_utils import db_manager, model_factory
 MODEL_NAME = "TEST_MODEL"
 VERSION_NAME = "V1"
 
+_MODEL_EXPORT_FILES = [
+    "model",
+    "model/model.yaml",
+    "model/runtimes",
+    "model/models",
+    "model/env",
+    "model/runtimes/cpu",
+    "model/runtimes/cpu/env",
+    "model/runtimes/cpu/env/requirements.txt",
+    "model/models/explain_artifacts",
+    "model/models/TEST_MODEL",
+    "model/models/explain_artifacts/TEST_MODEL_background_data.pqt",
+    "model/models/TEST_MODEL/model.pkl",
+    "model/env/requirements.txt",
+    "model/sample_input_data.json",
+]
+
+_FULL_EXPORT_FILES = [
+    "runtimes",
+    "model",
+    "MANIFEST.yml",
+    "functions",
+    "runtimes/python_runtime",
+    "runtimes/python_runtime/env",
+    "runtimes/python_runtime/env/requirements.txt",
+    "model/model.yaml",
+    "model/runtimes",
+    "model/models",
+    "model/env",
+    "model/runtimes/cpu",
+    "model/runtimes/cpu/env",
+    "model/runtimes/cpu/env/requirements.txt",
+    "model/models/explain_artifacts",
+    "model/models/TEST_MODEL",
+    "model/models/explain_artifacts/TEST_MODEL_background_data.pqt",
+    "model/models/TEST_MODEL/model.pkl",
+    "model/env/requirements.txt",
+    "functions/decision_function.py",
+    "functions/predict_log_proba.py",
+    "functions/predict_proba.py",
+    "functions/predict.py",
+    "functions/explain.py",
+    "model/sample_input_data.json",
+]
+
 
 class TestModelVersionImplInteg(parameterized.TestCase):
     @classmethod
@@ -76,70 +121,29 @@ class TestModelVersionImplInteg(parameterized.TestCase):
         with self.assertRaises(KeyError):
             self._mv.get_metric("b")
 
+    def _assert_export_file_list(
+        self,
+        tmpdir: str,
+        export_mode: ExportMode,
+        actual_file_list: list[str],
+    ) -> None:
+        base_files = _FULL_EXPORT_FILES if export_mode == ExportMode.FULL else _MODEL_EXPORT_FILES
+        expected_file_list = [os.path.join(tmpdir, rel_path) for rel_path in base_files]
+        expected_file_list.extend(path for path in actual_file_list if path.endswith("conda.yml"))
+        self.assertSameElements(expected_file_list, actual_file_list)
+
     def test_export(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             self._mv.export(tmpdir)
-            expected_file_list = [
-                "model",
-                "model/model.yaml",
-                "model/runtimes",
-                "model/models",
-                "model/env",
-                "model/runtimes/cpu",
-                "model/runtimes/cpu/env",
-                "model/runtimes/cpu/env/requirements.txt",
-                "model/runtimes/cpu/env/conda.yml",
-                "model/models/explain_artifacts",
-                "model/models/TEST_MODEL",
-                "model/models/explain_artifacts/TEST_MODEL_background_data.pqt",
-                "model/models/TEST_MODEL/model.pkl",
-                "model/env/requirements.txt",
-                "model/env/conda.yml",
-                "model/sample_input_data.json",
-            ]
-            expected_file_list = [os.path.join(tmpdir, expected_file) for expected_file in expected_file_list]
             actual_file_list = list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True))
-            # remove "snowflake-ml-python.zip" from the actual file list
             actual_file_list = [file for file in actual_file_list if not file.endswith("snowflake-ml-python.zip")]
-            self.assertSameElements(actual_file_list, expected_file_list)
+            self._assert_export_file_list(tmpdir, ExportMode.MODEL, actual_file_list)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             self._mv.export(tmpdir, export_mode=ExportMode.FULL)
-            expected_file_list = [
-                "runtimes",
-                "model",
-                "MANIFEST.yml",
-                "functions",
-                "runtimes/python_runtime",
-                "runtimes/python_runtime/env",
-                "runtimes/python_runtime/env/requirements.txt",
-                "runtimes/python_runtime/env/conda.yml",
-                "model/model.yaml",
-                "model/runtimes",
-                "model/models",
-                "model/env",
-                "model/runtimes/cpu",
-                "model/runtimes/cpu/env",
-                "model/runtimes/cpu/env/requirements.txt",
-                "model/runtimes/cpu/env/conda.yml",
-                "model/models/explain_artifacts",
-                "model/models/TEST_MODEL",
-                "model/models/explain_artifacts/TEST_MODEL_background_data.pqt",
-                "model/models/TEST_MODEL/model.pkl",
-                "model/env/requirements.txt",
-                "model/env/conda.yml",
-                "functions/decision_function.py",
-                "functions/predict_log_proba.py",
-                "functions/predict_proba.py",
-                "functions/predict.py",
-                "functions/explain.py",
-                "model/sample_input_data.json",
-            ]
-            expected_file_list = [os.path.join(tmpdir, expected_file) for expected_file in expected_file_list]
             actual_file_list = list(glob.iglob(os.path.join(tmpdir, "**", "*"), recursive=True))
-            # remove "snowflake-ml-python.zip" from the actual file list
             actual_file_list = [file for file in actual_file_list if not file.endswith("snowflake-ml-python.zip")]
-            self.assertSameElements(actual_file_list, expected_file_list)
+            self._assert_export_file_list(tmpdir, ExportMode.FULL, actual_file_list)
 
     def test_load(self) -> None:
         loaded_model = self._mv.load(force=True)

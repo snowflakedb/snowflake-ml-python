@@ -16,6 +16,7 @@ from snowflake.ml.model.batch import (
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
 
 
+@absltest.skip("SNOW-3691662")
 class TestRegistryBatchInferenceCSEStageInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
     """Test batch inference with CSE (SNOWFLAKE_FULL) encrypted stage."""
 

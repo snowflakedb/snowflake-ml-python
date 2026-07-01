@@ -2,19 +2,23 @@ import inspect
 import json
 import logging
 import os
+import pathlib
 import shutil
 from importlib import metadata as importlib_metadata
 from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Union, cast, final
 
 import cloudpickle
+import numpy as np
 import pandas as pd
 from packaging import version
 from typing_extensions import TypeGuard, Unpack
 
 from snowflake.ml._internal import type_utils
 from snowflake.ml.model import custom_model, model_signature, type_hints as model_types
+from snowflake.ml.model._model_composer import huggingface_lazy_uploader
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model._packager.model_handlers import _base, _utils as handlers_utils
+from snowflake.ml.model._packager.model_handlers.huggingface import _utils as _hf_utils
 from snowflake.ml.model._packager.model_handlers_migrator import base_migrator
 from snowflake.ml.model._packager.model_meta import (
     model_blob_meta,
@@ -127,6 +131,47 @@ def _capture_pretrained_model_name(model: "sentence_transformers.SentenceTransfo
             return name_or_path
 
     return None
+
+
+def _is_null_sentence(value: Any) -> bool:
+    """Return True when a sentence input should produce a null embedding output."""
+    if value is None:
+        return True
+    if isinstance(value, (list, dict, np.ndarray)):
+        return False
+    return bool(pd.isna(value))
+
+
+def _encode_sentences_with_nulls(
+    sentences: Sequence[Any],
+    method_to_call: Callable[..., Any],
+    encode_kwargs: dict[str, Any],
+) -> list[Any]:
+    """Encode non-null sentences and return None for null sentence inputs."""
+    if not sentences:
+        return []
+
+    null_indices: list[int] = []
+    non_null_indices: list[int] = []
+    non_null_sentences: list[Any] = []
+    for index, sentence in enumerate(sentences):
+        if _is_null_sentence(sentence):
+            null_indices.append(index)
+        else:
+            non_null_indices.append(index)
+            non_null_sentences.append(sentence)
+
+    if not null_indices:
+        return cast(list[Any], method_to_call(list(sentences), **encode_kwargs).tolist())
+
+    if len(null_indices) == len(sentences):
+        return [None] * len(sentences)
+
+    outputs: list[Any] = [None] * len(sentences)
+    encoded = method_to_call(non_null_sentences, **encode_kwargs).tolist()
+    for index, embedding in zip(non_null_indices, encoded):
+        outputs[index] = embedding
+    return outputs
 
 
 def _auto_infer_signature(
@@ -507,6 +552,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         if is_wrapper:
             assert isinstance(model, snowml_huggingface.SentenceTransformer)
             cls._save_wrapper_model(
+                name=name,
                 model=model,
                 model_meta=model_meta,
                 model_blob_path=model_blob_path,
@@ -515,7 +561,9 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                 target_methods=target_methods,
             )
             blob_options["model"] = model.model
-            if model.compute_pool_for_log is None and model.repo_snapshot_dir is not None:
+            if model.compute_pool_for_log is None and (
+                getattr(model, "_lazy_repo_files", None) is not None or model.repo_snapshot_dir is not None
+            ):
                 blob_options["is_repo_downloaded"] = True
             if batch_size is not None:
                 blob_options["batch_size"] = batch_size
@@ -574,6 +622,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     @classmethod
     def _save_wrapper_model(
         cls,
+        name: str,
         model: snowml_huggingface.SentenceTransformer,
         model_meta: model_meta_api.ModelMetadata,
         model_blob_path: str,
@@ -582,15 +631,19 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         is_sub_model: Optional[bool] = False,
         target_methods: Optional[Sequence[str]] = None,
     ) -> None:
-        """Save a SentenceTransformer wrapper using pickle + copytree.
+        """Save a SentenceTransformer wrapper using pickle and optional snapshot copy.
 
         Args:
+            name: Model blob name used for lazy-upload stage paths.
             model: The wrapper instance.
             model_meta: Model metadata to update with signatures.
             model_blob_path: Base path for model blobs.
             batch_size: Batch size for inference.
             is_sub_model: Whether this is a sub-model.
             target_methods: Optional list of target methods for signature inference.
+
+        Raises:
+            ValueError: If lazy-upload metadata on the wrapper is incomplete.
         """
         model_blob_file_or_dir = os.path.join(model_blob_path, cls.MODEL_BLOB_FILE_OR_DIR)
         os.makedirs(model_blob_file_or_dir, exist_ok=True)
@@ -599,13 +652,32 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
         with open(pickle_file, "wb") as f:
             cloudpickle.dump(model, f)
 
-        if model.compute_pool_for_log is None and model.repo_snapshot_dir:
-            logger.info("Wrapper repo_snapshot_dir is available, copying snapshot")
-            shutil.copytree(
-                model.repo_snapshot_dir,
-                model_blob_file_or_dir,
-                dirs_exist_ok=True,
-            )
+        if model.compute_pool_for_log is None:
+            lazy_repo_files = getattr(model, "_lazy_repo_files", None)
+            if lazy_repo_files is not None:
+                lazy_download_kwargs = getattr(model, "_lazy_download_kwargs", None)
+                if lazy_download_kwargs is None:
+                    raise ValueError("HuggingFace model metadata is incomplete; cannot determine download parameters.")
+                lazy_file_sizes = getattr(model, "_lazy_file_sizes", None) or {}
+                model_meta._lazy_hf_upload = huggingface_lazy_uploader.LazyHFUpload(
+                    download_kwargs=lazy_download_kwargs,
+                    files=lazy_repo_files,
+                    file_sizes=lazy_file_sizes,
+                    relative_stage_dir=pathlib.PurePosixPath(
+                        "model",
+                        "models",
+                        name,
+                        cls.MODEL_BLOB_FILE_OR_DIR,
+                    ),
+                    download_token=_hf_utils.download_token_for_lazy_upload(model),
+                )
+            elif model.repo_snapshot_dir:
+                logger.info("Wrapper repo_snapshot_dir is available, copying snapshot")
+                shutil.copytree(
+                    model.repo_snapshot_dir,
+                    model_blob_file_or_dir,
+                    dirs_exist_ok=True,
+                )
 
         if not is_sub_model and model.compute_pool_for_log is None:
             cls._set_signatures_from_config(
@@ -740,7 +812,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
             encode_kwargs: dict[str, Any] = {}
             if batch_size is not None:
                 encode_kwargs["batch_size"] = batch_size
-            return pd.DataFrame({0: method_to_call(X_list, **encode_kwargs).tolist()})
+            return pd.DataFrame({0: _encode_sentences_with_nulls(X_list, method_to_call, encode_kwargs)})
 
         # Case 1: User provided explicit signatures
         if model_meta.signatures:
@@ -957,7 +1029,9 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
                         if truncate_dim is not None:
                             encode_kwargs["truncate_dim"] = truncate_dim
 
-                    return pd.DataFrame({output_name: method_to_call(X_list, **encode_kwargs).tolist()})
+                    return pd.DataFrame(
+                        {output_name: _encode_sentences_with_nulls(X_list, method_to_call, encode_kwargs)}
+                    )
 
                 return fn
 

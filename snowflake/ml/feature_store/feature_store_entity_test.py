@@ -214,7 +214,11 @@ class BuildOfflineUpdateQueriesDescEscapingTest(absltest.TestCase):
         fv = _make_feature_view_mock(desc="ignored", status=FeatureViewStatus.STATIC, refresh_freq=None)
 
         ops, _rollback = fs._build_offline_update_queries(
-            feature_view=fv, refresh_freq=None, warehouse=None, desc=_EXPLOIT_DESC
+            feature_view=fv,
+            refresh_freq=None,
+            warehouse=None,
+            initialization_warehouse=fs_mod._KEEP_CURRENT,
+            desc=_EXPLOIT_DESC,
         )
 
         self.assertEqual(len(ops), 1)
@@ -228,7 +232,11 @@ class BuildOfflineUpdateQueriesDescEscapingTest(absltest.TestCase):
         fv = _make_feature_view_mock(desc=_EXPLOIT_DESC, refresh_freq="1 minute")
 
         ops, rollback = fs._build_offline_update_queries(
-            feature_view=fv, refresh_freq=None, warehouse=None, desc=_EXPLOIT_DESC
+            feature_view=fv,
+            refresh_freq=None,
+            warehouse=None,
+            initialization_warehouse=fs_mod._KEEP_CURRENT,
+            desc=_EXPLOIT_DESC,
         )
 
         alter_dt_sqls = [sql for _op, sql in ops + rollback if "ALTER DYNAMIC TABLE" in sql]

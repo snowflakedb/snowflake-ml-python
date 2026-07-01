@@ -684,7 +684,8 @@ class JobManagerTest(JobTestBase):
             return job.get_logs()
 
         result = job_sproc(self.session)
-        self.assertEqual("Hello from remote function!", result)
+        # Use containment since get_logs() can include framework footer markers around the user output.
+        self.assertIn("Hello from remote function!", result)
 
     def test_job_decorator_negative_result(self) -> None:
         @jobs.remote(self.compute_pool, stage_name="payload_stage", session=self.session)

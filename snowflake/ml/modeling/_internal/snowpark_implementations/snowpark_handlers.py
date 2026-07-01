@@ -154,6 +154,7 @@ class SnowparkTransformHandlers:
             imports=imports,  # type: ignore[arg-type]
         )
         def vec_batch_infer(input_df: pd.DataFrame) -> T.PandasSeries[dict]:  # type: ignore[type-arg]
+            import joblib
             import numpy as np  # noqa: F401
             import pandas as pd
 
@@ -164,7 +165,16 @@ class SnowparkTransformHandlers:
             if hasattr(estimator, "n_jobs"):
                 # Vectorized UDF cannot handle joblib multiprocessing right now, deactivate the n_jobs
                 estimator.n_jobs = 1
-            inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
+
+            # Birch exposes no n_jobs param, so the guard above does not reach it. Its internal pairwise
+            # distance computation hits scikit-learn #33877 (_parallel_pairwise slices Y but not
+            # Y_norm_squared when effective_n_jobs > 1) on the pinned scikit-learn (<1.9). Pin a single-job
+            # backend for it. Remove this carve-out once scikit-learn is bumped past 1.9.0. (SNOW-952252)
+            if type(estimator).__name__ == "Birch":
+                with joblib.parallel_backend("threading", n_jobs=1):
+                    inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
+            else:
+                inference_res = getattr(estimator, inference_method)(input_df, *args, **kwargs)
 
             transformed_numpy_array, _ = handle_inference_result(
                 inference_res=inference_res,

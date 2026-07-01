@@ -103,6 +103,52 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         udf_count = self._session.table(fq_udf).count()
         self.assertEqual(udf_count, 3, "udf_transformed table should have 3 backfill rows")
 
+    def test_streaming_fv_initialization_warehouse(self) -> None:
+        """A streaming FV's offline dynamic table carries INITIALIZATION_WAREHOUSE when set.
+
+        The backfill task graph's use of the initialization warehouse is covered
+        deterministically by the streaming_registration unit tests; the graph
+        self-drops on completion, so it is not asserted here.
+        """
+        s = uuid.uuid4().hex[:8]
+        stream = f"TXN_{s}"
+        fv_name = f"STREAM_FV_{s}"
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table(fs, s)
+        backfill_df = self._session.table(backfill_table)
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            warehouse=self._test_warehouse_name,
+            initialization_warehouse=self._alt_warehouse_name,
+        )
+
+        registered_fv = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.is_streaming)
+        self.assertEqual(registered_fv.initialization_warehouse, SqlIdentifier(self._alt_warehouse_name))
+
+        self.assertEqual(
+            fs.get_feature_view(fv_name, "v1").initialization_warehouse,
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+        physical_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        dt_row = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{physical_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()[0]
+        self.assertEqual(
+            SqlIdentifier(dt_row["initialization_warehouse"], case_sensitive=True),
+            SqlIdentifier(self._alt_warehouse_name),
+        )
+
     def _create_backfill_table_with_schema(self, fs, suffix: str, schema_sql: str, insert_values_sql: str) -> str:
         """Create a backfill table with caller-supplied column DDL and INSERT values."""
         table_name = f"{self.test_db}.{fs._config.schema.identifier()}.BACKFILL_{suffix}"

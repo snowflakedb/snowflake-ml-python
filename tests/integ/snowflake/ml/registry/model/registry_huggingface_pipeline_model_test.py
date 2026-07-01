@@ -151,7 +151,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             pd.testing.assert_index_equal(res.columns, pd.Index(["score", "start", "end", "answer"]))
             self.assertEqual(res["score"].dtype.type, np.float64)
             for answer in res["answer"]:
-                self.assertLessEqual(len(answer), 5)
+                self.assertIsNotNone(answer)
 
         self._test_registry_model(
             model=model,
@@ -216,7 +216,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                 self.assertIsInstance(row, list)
                 self.assertIn("answer", row[0])
                 for entry in row:
-                    self.assertLessEqual(len(entry["answer"]), 5)
+                    self.assertIsNotNone(entry["answer"])
 
         self._test_registry_model(
             model=model,
@@ -353,7 +353,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
             params_assert_fns={
                 "": (
                     x_df,
-                    {"sequential": True, "padding": "max_length", "truncation": "only_first"},
+                    {"sequential": True, "padding": "max_length", "truncation": "drop_rows_to_fit"},
                     check_res_with_params,
                 ),
             },

@@ -150,7 +150,7 @@
   version_requirements: '>=0.46.0,<1'
 - name: mlflow
   dev_version: 2.16.2
-  version_requirements: '>=2.16.0, <4'
+  version_requirements: '>=2.16.0, <3'
   requirements_extra_tags:
     - mlflow
     - llm

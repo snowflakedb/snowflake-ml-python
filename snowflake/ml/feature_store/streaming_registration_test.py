@@ -1548,6 +1548,56 @@ class RunStreamingPostambleTest(absltest.TestCase):
             if sql.startswith("CREATE OR REPLACE TASK"):
                 self.assertIn("WAREHOUSE = DEFAULT_WH", sql)
 
+    def test_postamble_prefers_initialization_warehouse_for_backfill(self) -> None:
+        """The backfill task graph runs on the initialization warehouse when set,
+        since the backfill is the streaming FV's one-time, full-scan initialization."""
+        backfill_df = _make_mock_backfill_df()
+        entity = _make_entity()
+        stream_config = StreamConfig(
+            stream_source="txn_events",
+            transformation_fn=_sample_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name="test_fv",
+            entities=[entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            warehouse="small_wh",
+            initialization_warehouse="large_wh",
+        )
+
+        session = self._make_session_with_udf_schema()
+        metadata_manager = self._make_metadata_manager()
+
+        from snowflake.ml.feature_store.streaming_registration import (
+            StreamingPreambleResult,
+        )
+
+        preamble = StreamingPreambleResult(
+            fq_udf_table="DB.SCH.UDF_TABLE",
+            fq_backfill_table="DB.SCH.UDF_TABLE$BACKFILL",
+            resolved_source_name="TXN_EVENTS",
+        )
+
+        run_streaming_postamble(
+            session=session,
+            feature_view=fv,
+            version=FeatureViewVersion("v1"),
+            feature_view_name=FeatureView._get_physical_name(SqlIdentifier("test_fv"), FeatureViewVersion("v1")),
+            preamble=preamble,
+            metadata_manager=metadata_manager,
+            default_warehouse=SqlIdentifier("default_wh"),
+            get_fully_qualified_name_fn=self._fq,
+            telemetry_stmp={},
+        )
+
+        sql_calls = [str(c.args[0]) for c in session.sql.call_args_list]
+        for sql in sql_calls:
+            if sql.startswith("CREATE OR REPLACE TASK"):
+                self.assertIn("WAREHOUSE = LARGE_WH", sql)
+                self.assertNotIn("WAREHOUSE = SMALL_WH", sql)
+
     def test_postamble_no_warehouse_raises(self) -> None:
         """Postamble raises if neither the FV nor the FS provides a warehouse."""
         backfill_df = _make_mock_backfill_df()

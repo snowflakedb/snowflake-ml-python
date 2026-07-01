@@ -275,6 +275,18 @@ py_test(
 )
 
 py_test(
+    name = "feature_store_initialization_warehouse_test",
+    srcs = ["feature_store_initialization_warehouse_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)
+
+py_test(
     name = "realtime_config_test",
     srcs = ["realtime_config_test.py"],
     tags = [

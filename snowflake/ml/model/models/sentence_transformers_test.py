@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 
@@ -46,9 +47,91 @@ class SentenceTransformerTest(absltest.TestCase):
             model = huggingface.SentenceTransformer(
                 model="sentence-transformers/all-MiniLM-L6-v2",
                 compute_pool_for_log=None,
+                lazy_upload=False,
             )
             mock_snapshot.assert_called_once()
             self.assertEqual(model.repo_snapshot_dir, fake_snapshot_dir)
+
+    def test_lazy_upload_lists_repo_files_without_snapshot_download(self) -> None:
+        """Lazy upload lists repo files and avoids downloading the full snapshot."""
+        repo_files = ["modules.json", "1_Pooling/config.json", "model.safetensors"]
+        repo_file_sizes = {
+            "modules.json": 120,
+            "1_Pooling/config.json": 200,
+            "model.safetensors": 1000,
+        }
+        modules = [
+            {"idx": 0, "path": "", "type": "sentence_transformers.models.Transformer"},
+            {"idx": 1, "path": "1_Pooling", "type": "sentence_transformers.models.Pooling"},
+        ]
+
+        def fake_download(
+            *,
+            repo_id: str,
+            filename: str,
+            revision: object,
+            token: object,
+            local_dir: str,
+            **kwargs: object,
+        ) -> str:
+            del repo_id, revision, token, kwargs
+            if filename == "modules.json":
+                with open(os.path.join(local_dir, "modules.json"), "w") as f:
+                    json.dump(modules, f)
+                return os.path.join(local_dir, "modules.json")
+            if filename == "1_Pooling/config.json":
+                pooling_dir = os.path.join(local_dir, "1_Pooling")
+                os.makedirs(pooling_dir, exist_ok=True)
+                config_path = os.path.join(pooling_dir, "config.json")
+                with open(config_path, "w") as f:
+                    json.dump({"word_embedding_dimension": 384}, f)
+                return config_path
+            raise AssertionError(f"Unexpected download: {filename}")
+
+        with absltest.mock.patch("huggingface_hub.snapshot_download") as mock_snapshot_download, absltest.mock.patch(
+            "huggingface_hub.hf_hub_download",
+            side_effect=fake_download,
+        ) as mock_hf_hub_download, absltest.mock.patch("huggingface_hub.HfApi") as mock_hf_api:
+            mock_hf_api.return_value.model_info.return_value.siblings = [
+                absltest.mock.Mock(rfilename=filename, size=repo_file_sizes[filename]) for filename in repo_files
+            ]
+
+            model = huggingface.SentenceTransformer(
+                model="sentence-transformers/all-MiniLM-L6-v2",
+                compute_pool_for_log=None,
+                lazy_upload=True,
+            )
+
+            mock_snapshot_download.assert_not_called()
+            mock_hf_api.return_value.model_info.assert_called_once_with(
+                repo_id="sentence-transformers/all-MiniLM-L6-v2",
+                revision=None,
+                token=None,
+                files_metadata=True,
+            )
+            self.assertEqual(model._lazy_repo_files, repo_files)
+            self.assertEqual(model._lazy_file_sizes, repo_file_sizes)
+            self.assertEqual(
+                model._lazy_download_kwargs,
+                {"repo_id": "sentence-transformers/all-MiniLM-L6-v2", "revision": None},
+            )
+            downloaded_filenames = {call.kwargs["filename"] for call in mock_hf_hub_download.call_args_list}
+            self.assertEqual(downloaded_filenames, {"modules.json", "1_Pooling/config.json"})
+
+    def test_lazy_upload_false_uses_snapshot_download(self) -> None:
+        """Opting out of lazy upload restores eager snapshot download."""
+        with absltest.mock.patch(
+            "huggingface_hub.snapshot_download", return_value="/some/path"
+        ) as mock_snapshot_download:
+            model = huggingface.SentenceTransformer(
+                model="sentence-transformers/all-MiniLM-L6-v2",
+                compute_pool_for_log=None,
+                lazy_upload=False,
+            )
+
+            mock_snapshot_download.assert_called_once()
+            self.assertIsNone(model._lazy_repo_files)
+            self.assertEqual(model.repo_snapshot_dir, "/some/path")
 
     def test_requires_task_is_false(self) -> None:
         self.assertFalse(huggingface.SentenceTransformer._requires_task)

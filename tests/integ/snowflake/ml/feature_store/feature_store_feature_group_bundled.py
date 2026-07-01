@@ -31,6 +31,7 @@ supported (no separate opt-out env).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -323,6 +324,74 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         registered_fv = self.fs.register_feature_view(fv, "v1")
         self.assertFalse(registered_fv.is_streaming)
         self.assertTrue(registered_fv.is_tiled)
+
+        deadline = time.time() + 180.0
+        while time.time() < deadline:
+            count = self._session.table(registered_fv.fully_qualified_name()).count()
+            if count > 0:
+                break
+            time.sleep(5)
+
+        return fv_name, seeded_user_id
+
+    def _register_postgres_secondary_key_bfv(self, *, suffix: str) -> tuple[str, str]:
+        """Create + register a tiled batch FV on Postgres with an aggregation secondary key.
+
+        Args:
+            suffix: Short label embedded in the FV / source-table names.
+
+        Returns:
+            Tuple of ``(fv_name, seeded_user_id)``. ``seeded_user_id`` matches a
+            seeded row so downstream reads return non-empty data.
+        """
+        s = uuid.uuid4().hex[:8]
+        fv_name = f"FG_INTEG_SK_BFV_{suffix}_{s}"
+        seeded_user_id = f"U_SK_{suffix}_{s}"
+        src_table = f"{self.test_db}.{self.fs._config.schema.identifier()}.FG_SK_SRC_{suffix}_{s}"
+
+        self._session.sql(
+            f"""
+            CREATE OR REPLACE TABLE {src_table} (
+                USER_ID VARCHAR,
+                EVENT_TIME TIMESTAMP_NTZ,
+                AD_ID VARCHAR,
+                AMOUNT FLOAT
+            )
+            """
+        ).collect()
+        yesterday = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        self._session.sql(
+            f"""
+            INSERT INTO {src_table}
+            SELECT column1, column2, column3, column4
+            FROM VALUES
+                ({seeded_user_id!r}, DATEADD('hour', 1, {yesterday}), 'ad_a', 10.0),
+                ({seeded_user_id!r}, DATEADD('hour', 2, {yesterday}), 'ad_a', 20.0),
+                ({seeded_user_id!r}, DATEADD('hour', 3, {yesterday}), 'ad_b', 70.0)
+            """
+        ).collect()
+        feature_df = self._session.table(src_table)
+
+        # Secondary keys reject list aggregations; SUM/COUNT are supported.
+        features = [
+            Feature.sum("AMOUNT", "3d").alias(f"AMOUNT_SUM_3D_{suffix}"),
+            Feature.count("AMOUNT", "3d").alias(f"TXN_COUNT_3D_{suffix}"),
+        ]
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=feature_df,
+            timestamp_col="EVENT_TIME",
+            refresh_mode="FULL",
+            refresh_freq="1 minute",
+            feature_granularity="1d",
+            features=features,
+            aggregation_secondary_keys=["AD_ID"],
+            online_config=OnlineConfig(enable=True, target_lag="10s", store_type=OnlineStoreType.POSTGRES),
+        )
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.is_tiled)
+        self.assertEqual(registered_fv.aggregation_secondary_keys, ["AD_ID"])
 
         deadline = time.time() + 180.0
         while time.time() < deadline:
@@ -1041,6 +1110,69 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                     any(agg in c for c in pdf_cols),
                     f"expected agg '{agg}' in read columns; got {sorted(pdf_cols)}",
                 )
+        finally:
+            self.fs.delete_feature_group(fg_name, fg_version)
+
+    def test_feature_group_with_secondary_key_bfv_online_read(self) -> None:
+        """A FG over a secondary-key tiled BFV registers and reads back array-shaped agg outputs."""
+        sfx = "SK"
+        fv_sk_name, seeded_user_id = self._register_postgres_secondary_key_bfv(suffix=sfx)
+        fv_sk = self.fs.get_feature_view(fv_sk_name, "v1")
+
+        fg_name = f"FG_INTEG_SK_BFV_{uuid.uuid4().hex[:8].upper()}"
+        fg_version = "v1"
+        fg = FeatureGroup(name=fg_name, features=[fv_sk], auto_prefix=False)
+
+        try:
+            # This call regressed before the secondary-key array-wrapping fix.
+            registered = self.fs.register_feature_group(fg, fg_version)
+            normalized_outputs = {_normalize_column_name(c) for c in registered.output_columns}
+            for agg in (f"AMOUNT_SUM_3D_{sfx}", f"TXN_COUNT_3D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in normalized_outputs),
+                    f"expected agg '{agg}' in FG output_columns; got {sorted(normalized_outputs)}",
+                )
+
+            fg_live = self.fs.get_feature_group(fg_name, fg_version)
+
+            sum_col_token = f"AMOUNT_SUM_3D_{sfx}"
+            deadline = time.time() + 600.0
+            pdf: Optional[pd.DataFrame] = None
+            value = None
+            while time.time() < deadline:
+                pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
+                if len(pdf) > 0:
+                    sum_col = next((c for c in pdf.columns if sum_col_token in _normalize_column_name(c)), None)
+                    candidate = pdf.iloc[0][sum_col] if sum_col is not None else None
+                    # ``x != x`` detects float NaN without importing math; arrays
+                    # are object-dtype so this only trips on a scalar-null cell.
+                    is_nan = isinstance(candidate, float) and candidate != candidate
+                    if candidate is not None and not is_nan:
+                        value = candidate
+                        break
+                time.sleep(5)
+
+            self.assertIsNotNone(pdf, "read_feature_group never returned a DataFrame for the secondary-key FG.")
+            assert pdf is not None
+            # Output columns are structural, present regardless of data lag.
+            pdf_cols = {_normalize_column_name(c) for c in pdf.columns}
+            for agg in (f"AMOUNT_SUM_3D_{sfx}", f"TXN_COUNT_3D_{sfx}"):
+                self.assertTrue(
+                    any(agg in c for c in pdf_cols),
+                    f"expected agg '{agg}' in read columns; got {sorted(pdf_cols)}",
+                )
+
+            self.assertIsNotNone(
+                value,
+                f"secondary-key value column '{sum_col_token}' did not materialize a non-null value "
+                f"within 600s; cannot verify the array-shape regression guard.",
+            )
+            # The secondary-key value columns come back as arrays (one element per
+            # AD_ID bucket), never bare scalars. ``list(...)`` accepts
+            # list/tuple/ndarray and raises on a scalar, so this fails loudly if
+            # the array wrapping regresses.
+            coerced = json.loads(value) if isinstance(value, str) else value
+            self.assertIsInstance(list(coerced), list)
         finally:
             self.fs.delete_feature_group(fg_name, fg_version)
 

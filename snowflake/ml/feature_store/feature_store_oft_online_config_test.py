@@ -5,12 +5,56 @@ import logging
 from typing import Optional
 from unittest.mock import MagicMock
 
+import pandas as pd
 from absl.testing import absltest, parameterized
 
+from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import feature_store as fs_mod
+from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_store import FeatureStore
-from snowflake.ml.feature_store.feature_view import OnlineConfig, OnlineStoreType
+from snowflake.ml.feature_store.feature_view import (
+    FeatureView,
+    FeatureViewStatus,
+    FeatureViewVersion,
+    OnlineConfig,
+    OnlineStoreType,
+)
+from snowflake.ml.feature_store.realtime_config import RealtimeConfig
+from snowflake.ml.feature_store.spec.enums import FeatureAggregationMethod
 from snowflake.snowpark import Row
+from snowflake.snowpark.types import (
+    DoubleType,
+    StringType,
+    StructField,
+    StructType,
+    TimestampType,
+)
+
+_RTFV_OUTPUT_SCHEMA = StructType([StructField("risk_score", DoubleType())])
+
+
+def _rtfv_compute_fn(txn: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({"risk_score": txn["avg_amount"]})
+
+
+def _build_rtfv_upstream_fv() -> FeatureView:
+    """Build a registered-looking FV to use as an RTFV source."""
+    schema = StructType([StructField("USER_ID", StringType()), StructField("avg_amount", DoubleType())])
+    mock_df = MagicMock()
+    mock_df.columns = [f.name for f in schema.fields]
+    mock_df.schema = schema
+    mock_df.queries = {"queries": ["SELECT * FROM TXN_FV"]}
+    fv = FeatureView(
+        name="TXN_FV",
+        entities=[Entity(name="USER", join_keys=["USER_ID"])],
+        feature_df=mock_df,
+        online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+    )
+    fv._version = FeatureViewVersion("v1")
+    fv._infer_schema_df = mock_df
+    fv._status = FeatureViewStatus.ACTIVE
+    return fv
 
 
 class StoreTypeFromOftShowRowTest(parameterized.TestCase):
@@ -127,6 +171,188 @@ class CaseSensitiveNameOftLookupTest(parameterized.TestCase):
 
         self.assertTrue(cfg.enable)
         self.assertEqual(cfg.store_type, OnlineStoreType.POSTGRES)
+
+
+class UpdateFeatureViewPreservesTiledIdentityTest(absltest.TestCase):
+    """``_create_updated_feature_view`` must preserve the tiled/streaming aggregation identity.
+
+    ``update_feature_view`` (online enable/disable) rebuilds the FV via
+    ``_create_updated_feature_view`` and uses the result to create the Online Feature Table.
+    If the rebuild drops the aggregation config, the OFT is built from a non-tiled view of a
+    tiled FV.
+    """
+
+    def _make_mock_df(self) -> MagicMock:
+        df = MagicMock()
+        df.queries = {"queries": ["SELECT * FROM TBL"]}
+        df.columns = ["USER_ID", "EVENT_TIME", "AMOUNT"]
+        ts_field = MagicMock()
+        ts_field.datatype = TimestampType()
+        df.schema.__getitem__ = lambda _self, key: ts_field
+        return df
+
+    def _make_tiled_streaming_base_fv(self) -> FeatureView:
+        """Build a reconstructed tiled streaming CONTINUOUS FV, as get_feature_view would."""
+        return FeatureView._construct_feature_view(
+            name="TILED_FV",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=self._make_mock_df(),
+            timestamp_col="EVENT_TIME",
+            desc="",
+            version="v1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="1 minute",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            feature_granularity="1m",
+            aggregation_specs=[Feature.sum("AMOUNT", "30s").to_spec()],
+            feature_aggregation_method=FeatureAggregationMethod.CONTINUOUS,
+            is_streaming=True,
+        )
+
+    def test_create_updated_feature_view_preserves_tiled_streaming_identity(self) -> None:
+        base_fv = self._make_tiled_streaming_base_fv()
+        # Sanity: the base FV is tiled/streaming CONTINUOUS to begin with.
+        self.assertTrue(base_fv.is_tiled)
+        self.assertTrue(base_fv.is_streaming)
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        updated_fv = fs._create_updated_feature_view(base_fv, OnlineConfig(enable=True))
+
+        self.assertTrue(updated_fv.is_tiled, "updated FV lost tiled identity")
+        self.assertTrue(updated_fv.is_streaming, "updated FV lost streaming identity")
+        self.assertEqual(updated_fv.feature_granularity, "1m")
+        self.assertEqual(updated_fv.feature_aggregation_method, FeatureAggregationMethod.CONTINUOUS)
+
+    def test_create_updated_feature_view_preserves_append_only(self) -> None:
+        base_fv = FeatureView._construct_feature_view(
+            name="APPEND_FV",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=self._make_mock_df(),
+            timestamp_col="EVENT_TIME",
+            desc="",
+            version="v1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="0 0 * * * UTC",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_SCHEDULE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            append_only=True,
+            backup_source="DB.SCH.HISTORY",
+        )
+        self.assertTrue(base_fv.append_only)
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        updated_fv = fs._create_updated_feature_view(base_fv, OnlineConfig(enable=True))
+
+        self.assertTrue(updated_fv.append_only, "updated FV lost append_only identity")
+        self.assertEqual(updated_fv.backup_source, "DB.SCH.HISTORY")
+
+    def test_create_updated_feature_view_preserves_realtime(self) -> None:
+        rtc = RealtimeConfig(
+            compute_fn=_rtfv_compute_fn,
+            sources=[_build_rtfv_upstream_fv()],
+            output_schema=_RTFV_OUTPUT_SCHEMA,
+        )
+        base_fv = FeatureView._construct_feature_view(
+            name="RTFV",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=None,
+            timestamp_col=None,
+            desc="",
+            version="v1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq=None,
+            database="DB",
+            schema="SCH",
+            warehouse=None,
+            refresh_mode=None,
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            is_realtime=True,
+            realtime_config=rtc,
+        )
+        self.assertTrue(base_fv.is_realtime_feature_view)
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        updated_fv = fs._create_updated_feature_view(base_fv, OnlineConfig(enable=True))
+
+        self.assertTrue(updated_fv.is_realtime_feature_view, "updated FV lost realtime identity")
+        self.assertIsNotNone(updated_fv.realtime_config)
+
+    def test_create_online_feature_table_rejects_hybrid_for_tiled(self) -> None:
+        """A HYBRID_TABLE OFT is not supported for a tiled FV and must be rejected clearly."""
+        base_fv = self._make_tiled_streaming_base_fv()
+        base_fv._online_config = OnlineConfig(enable=True, store_type=OnlineStoreType.HYBRID_TABLE)
+        self.assertTrue(base_fv.is_tiled)
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        with self.assertRaisesRegex(Exception, "not supported for aggregation"):
+            fs._create_online_feature_table(base_fv, SqlIdentifier("TILED_FV"), "v1")
+
+    def test_construct_tiled_fv_with_hybrid_online_rejected(self) -> None:
+        """The HYBRID-on-tiled rule is a feature-view invariant: rejected at construction time."""
+        with self.assertRaisesRegex(ValueError, "not supported for aggregation"):
+            FeatureView(
+                name="TILED_FV",
+                entities=[Entity(name="user", join_keys=["USER_ID"])],
+                feature_df=self._make_mock_df(),
+                timestamp_col="EVENT_TIME",
+                refresh_freq="1h",
+                feature_granularity="1h",
+                features=[Feature.sum("AMOUNT", "2h")],
+                online_config=OnlineConfig(enable=True),  # default HYBRID_TABLE
+            )
+
+    def test_plan_online_enable_forwards_store_type_for_tiled(self) -> None:
+        """_plan_online_enable must forward the requested store_type and rebuild a still-tiled FV.
+
+        Regression: it previously dropped store_type (defaulting to HYBRID_TABLE), which combined
+        with the tiled guard left no way to enable POSTGRES online on a tiled FV.
+        """
+        base_fv = self._make_tiled_streaming_base_fv()
+        self.assertTrue(base_fv.is_tiled)
+
+        fs = object.__new__(FeatureStore)
+        object.__setattr__(fs, "_session", MagicMock())
+
+        strategy = fs._plan_online_enable(base_fv, OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES))
+
+        assert strategy.final_config is not None
+        self.assertEqual(strategy.final_config.store_type, OnlineStoreType.POSTGRES)
+        op_type, temp_fv = strategy.operations[0]
+        self.assertEqual(op_type, "CREATE_ONLINE")
+        assert isinstance(temp_fv, FeatureView)
+        self.assertTrue(temp_fv.is_tiled, "rebuilt FV must remain tiled")
+        assert temp_fv.online_config is not None
+        self.assertEqual(temp_fv.online_config.store_type, OnlineStoreType.POSTGRES)
 
 
 if __name__ == "__main__":

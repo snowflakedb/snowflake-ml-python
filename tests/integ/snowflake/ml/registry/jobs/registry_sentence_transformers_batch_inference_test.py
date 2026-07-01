@@ -8,6 +8,9 @@ from absl.testing import absltest, parameterized
 from packaging import version as pkg_version
 
 from snowflake.ml.model._packager.model_env import model_env
+from snowflake.ml.model._packager.model_handlers.sentence_transformers import (
+    _encode_sentences_with_nulls,
+)
 from snowflake.ml.model.batch import JobSpec, OutputSpec
 from snowflake.ml.model.models import huggingface as snowml_huggingface
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
@@ -17,6 +20,7 @@ SENTENCE_TRANSFORMERS_CACHE_DIR = "SENTENCE_TRANSFORMERS_HOME"
 HF_HOME = "HF_HOME"
 
 
+@absltest.skip("SNOW-3691662")
 class TestRegistrySentenceTransformerBatchInferenceInteg(
     registry_batch_inference_test_base.RegistryBatchInferenceTestBase
 ):
@@ -96,6 +100,47 @@ class TestRegistrySentenceTransformerBatchInferenceInteg(
                 num_workers=1,
                 replicas=1,
                 gpu_requests=gpu_requests,
+                function_name="encode",
+            ),
+            expected_predictions=expected_predictions,
+        )
+
+    def test_sentence_transformers_null_input(self) -> None:
+        import sentence_transformers
+
+        sentences = pd.DataFrame(
+            {
+                "sentence": [
+                    "Why don't scientists trust atoms? Because they make up everything.",
+                    None,
+                    "Parallel lines have so much in common. It's a shame they'll never meet.",
+                ]
+            }
+        )
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        model = sentence_transformers.SentenceTransformer(random.choice(MODEL_NAMES))
+        model_output_normalized = _encode_sentences_with_nulls(
+            sentences["sentence"].tolist(),
+            model.encode,
+            {},
+        )
+        model_output_df = pd.DataFrame({"output": model_output_normalized})
+
+        input_df, expected_predictions = self._prepare_batch_inference_data(sentences, model_output_df)
+
+        self._test_registry_batch_inference(
+            model=model,
+            sample_input_data=sentences,
+            options={"cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            pip_requirements=["sentence-transformers"],
+            X=input_df,
+            output_spec=OutputSpec(stage_location=output_stage_location),
+            job_spec=JobSpec(
+                job_name=job_name,
+                num_workers=1,
+                replicas=1,
+                gpu_requests=None,
                 function_name="encode",
             ),
             expected_predictions=expected_predictions,

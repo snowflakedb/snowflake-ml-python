@@ -69,6 +69,170 @@ class ServiceSQLTest(absltest.TestCase):
             statement_params=m_statement_params,
         )
 
+    def test_execute_inference_job_service_minimal(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        m_async_job.query_id = uuid.uuid4()
+        m_df = mock_data_frame.MockDataFrame(
+            collect_block=False,
+            collect_result=m_async_job,
+            collect_statement_params=m_statement_params,
+        )
+
+        expected = (
+            "EXECUTE INFERENCE JOB SERVICE\n"
+            "IN COMPUTE POOL POOL\n"
+            "WITH SPECIFICATION 'minimal_body\n'\n"
+            "FROM @DB.SCHEMA.STAGE/out/_snowflake_temporary/abc123/\n"
+            "MODEL = DB.SCHEMA.MODEL\n"
+            "ASYNC = TRUE"
+        )
+        self.m_session.add_mock_sql(query=expected, result=copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).execute_inference_job_service(
+            yaml_body="minimal_body\n",
+            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+            model_fqn="DB.SCHEMA.MODEL",
+            version=None,
+            function_name=None,
+            job_fqn=None,
+            async_=True,
+            replicas=None,
+            from_stage_path="@DB.SCHEMA.STAGE/out/_snowflake_temporary/abc123/",
+            statement_params=m_statement_params,
+        )
+
+    def test_execute_inference_job_service_all_clauses(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        m_async_job.query_id = uuid.uuid4()
+        m_df = mock_data_frame.MockDataFrame(
+            collect_block=False,
+            collect_result=m_async_job,
+            collect_statement_params=m_statement_params,
+        )
+
+        expected = (
+            "EXECUTE INFERENCE JOB SERVICE\n"
+            "IN COMPUTE POOL POOL\n"
+            "WITH SPECIFICATION 'yaml_body\n'\n"
+            "FROM @stage/in/\n"
+            "MODEL = DB.SCHEMA.MODEL\n"
+            "VERSION = V1\n"
+            "FUNCTION = 'predict'\n"
+            "NAME = DB.SCHEMA.JOB\n"
+            "ASYNC = FALSE\n"
+            "REPLICAS = 2"
+        )
+        self.m_session.add_mock_sql(query=expected, result=copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).execute_inference_job_service(
+            yaml_body="yaml_body\n",
+            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+            model_fqn="DB.SCHEMA.MODEL",
+            version=sql_identifier.SqlIdentifier("V1"),
+            function_name="predict",
+            job_fqn="DB.SCHEMA.JOB",
+            async_=False,
+            replicas=2,
+            from_stage_path="@stage/in/",
+            statement_params=m_statement_params,
+        )
+
+    def test_execute_inference_job_service_escapes_function_name(self) -> None:
+        m_statement_params = {"test": "1"}
+        m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        m_async_job.query_id = uuid.uuid4()
+        m_df = mock_data_frame.MockDataFrame(
+            collect_block=False,
+            collect_result=m_async_job,
+            collect_statement_params=m_statement_params,
+        )
+
+        expected = (
+            "EXECUTE INFERENCE JOB SERVICE\n"
+            "IN COMPUTE POOL POOL\n"
+            "WITH SPECIFICATION 'yaml_body\n'\n"
+            "FROM @stage/\n"
+            "MODEL = M\n"
+            "FUNCTION = 'pred''ict'\n"
+            "ASYNC = TRUE"
+        )
+        self.m_session.add_mock_sql(query=expected, result=copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).execute_inference_job_service(
+            yaml_body="yaml_body\n",
+            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+            model_fqn="M",
+            version=None,
+            function_name="pred'ict",
+            job_fqn=None,
+            async_=True,
+            replicas=None,
+            from_stage_path="@stage/",
+            statement_params=m_statement_params,
+        )
+
+    def test_execute_inference_job_service_escapes_yaml_body_quotes_and_dollar(self) -> None:
+        """YAML containing single quotes and ``$$`` must round-trip into a single-quoted SQL literal.
+
+        Single quotes get backslash-escaped (snowpark_utils.escape_single_quotes);
+        ``$$`` passes through untouched because we use single-quoted, not dollar-quoted,
+        literals.
+        """
+        m_statement_params = {"test": "1"}
+        m_async_job = mock.MagicMock(spec=snowpark.AsyncJob)
+        m_async_job.query_id = uuid.uuid4()
+        m_df = mock_data_frame.MockDataFrame(
+            collect_block=False,
+            collect_result=m_async_job,
+            collect_statement_params=m_statement_params,
+        )
+
+        yaml_body = "input:\n  params:\n    prompt: 'has $$ and ' quote'\n"
+        expected = (
+            "EXECUTE INFERENCE JOB SERVICE\n"
+            "IN COMPUTE POOL POOL\n"
+            "WITH SPECIFICATION 'input:\n  params:\n    prompt: \\'has $$ and \\' quote\\'\n'\n"
+            "FROM @stage/\n"
+            "MODEL = M\n"
+            "ASYNC = TRUE"
+        )
+        self.m_session.add_mock_sql(query=expected, result=copy.deepcopy(m_df))
+        c_session = cast(Session, self.m_session)
+
+        service_sql.ServiceSQLClient(
+            c_session,
+            database_name=sql_identifier.SqlIdentifier("TEMP"),
+            schema_name=sql_identifier.SqlIdentifier("test", case_sensitive=True),
+        ).execute_inference_job_service(
+            yaml_body=yaml_body,
+            compute_pool_name=sql_identifier.SqlIdentifier("POOL"),
+            model_fqn="M",
+            version=None,
+            function_name=None,
+            job_fqn=None,
+            async_=True,
+            replicas=None,
+            from_stage_path="@stage/",
+            statement_params=m_statement_params,
+        )
+
     def test_invoke_function_method(self) -> None:
         m_statement_params = {"test": "1"}
         m_df = mock_data_frame.MockDataFrame()

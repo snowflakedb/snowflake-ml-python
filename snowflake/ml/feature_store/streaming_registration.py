@@ -471,8 +471,9 @@ def run_streaming_postamble(
         feature_view_name: Physical FV name (``<NAME>$<VERSION>``).
         preamble: Result from ``run_streaming_preamble``.
         metadata_manager: Metadata manager.
-        default_warehouse: Feature Store default warehouse; used only when
-            ``feature_view.warehouse`` is unset (one of the two must be set).
+        default_warehouse: Feature Store default warehouse; used only when neither
+            ``feature_view.initialization_warehouse`` nor ``feature_view.warehouse``
+            is set (one of the three must be set).
         get_fully_qualified_name_fn: Bound ``FeatureStore._get_fully_qualified_name``.
         telemetry_stmp: Telemetry statement parameters.
         on_resource_created: Optional callback invoked immediately after each
@@ -504,7 +505,16 @@ def run_streaming_postamble(
     if stream_config is None:
         raise ValueError(f"FeatureView '{feature_view.name}' does not have a stream_config.")
 
-    task_warehouse = feature_view.warehouse if feature_view.warehouse is not None else default_warehouse
+    # The backfill is the streaming FV's one-time, full-scan initialization, so it
+    # runs on the initialization warehouse when set, mirroring the dynamic table's
+    # initial/reinit refresh. Falls back to the FV warehouse, then the FS default.
+    task_warehouse = (
+        feature_view.initialization_warehouse
+        if feature_view.initialization_warehouse is not None
+        else feature_view.warehouse
+        if feature_view.warehouse is not None
+        else default_warehouse
+    )
     if task_warehouse is None:
         raise ValueError(
             "No warehouse available for streaming backfill task graph. Either set "

@@ -828,9 +828,9 @@ def append_realtime_listing_row(
     ]
 
     output_values.append(values)
-    # RTFVs have no BatchSource/StreamSource ref-list, so source_refs is always
-    # None. backup_source is also always None for RTFVs.
-    output_values_extra.append([None, None])  # source_refs, backup_source
+    # RTFVs have no initialization warehouse, BatchSource/StreamSource ref-list,
+    # or backup_source, so all verbose-only fields are None.
+    output_values_extra.append([None, None, None])  # initialization_warehouse, source_refs, backup_source
 
 
 def append_realtime_listing_rows(

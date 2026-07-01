@@ -22,6 +22,7 @@ import pandas as pd
 
 from fs_integ_test_base import FeatureStoreIntegTestBase, cleanup_spec_oft_e2e_databases
 from snowflake.connector.errors import DatabaseError
+from snowflake.ml._internal.exceptions.exceptions import SnowflakeMLException
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_store import CreationMode, FeatureStore
@@ -201,7 +202,7 @@ def wait_online_service_running_with_query_endpoint(
                     on_recreate()
                 try:
                     fs.create_online_service(producer_role, consumer_role)
-                except DatabaseError as e:
+                except (DatabaseError, SnowflakeMLException) as e:
                     logger.warning("create_online_service (recreate) raised: %s; will poll for RUNNING.", e)
                 break
             time.sleep(poll_interval_s)
