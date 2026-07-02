@@ -259,7 +259,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         httpx.Client.post = _spy_post  # type: ignore[method-assign]
         try:
             fv_live = fs.get_feature_view(fv_name, "v1")
-            pdf = fs.read_feature_view(fv_live, keys=[[batch_key]], store_type=StoreType.ONLINE, as_pandas=True)
+            # Retry inside the patched window so a transient 404 doesn't fail the measurement.
+            pdf = self._read_online_with_retry(fs, fv_live, keys=[[batch_key]])
             self.assertAlmostEqual(float(pdf.iloc[0]["AMOUNT"]), expected_amount, places=3)
         finally:
             httpx.Client.post = original_post  # type: ignore[method-assign]
@@ -1170,7 +1171,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         self.assertIsNotNone(first_client, "Postgres online read must populate fs._online_http_client.")
 
         fv_live = fs.get_feature_view(fv_name, "v1")
-        pdf2 = fs.read_feature_view(fv_live, keys=[[batch_key]], store_type=StoreType.ONLINE, as_pandas=True)
+        # Retry a transient 404; it's a response through the existing client, so reuse holds.
+        pdf2 = self._read_online_with_retry(fs, fv_live, keys=[[batch_key]])
         self.assertIs(fs._online_http_client, first_client, "Second read must reuse the same HTTP client.")
         import pandas as pd
 

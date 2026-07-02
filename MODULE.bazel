@@ -9,6 +9,7 @@ bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "rules_python", version = "2.0.0")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "prodrive_technologies_bazel_latex", version = "1.2.2-20250401-c552d5b", repo_name = "bazel_latex")
+bazel_dep(name = "platforms", version = "1.0.0")  # for @platforms//cpu:aarch64 in the aarch64-linux LaTeX toolchain
 
 # TexLive repos from bazel_latex needed by //docs and //third_party/rules_sphinx
 texlive_repositories = use_extension("@bazel_latex//:extensions.bzl", "texlive_repositories")
@@ -40,7 +41,16 @@ use_repo(
     "texlive_texmf__texmf-dist__tex__latex__tools",
     "texlive_texmf__texmf-dist__tex__latex__txfonts",
     "texlive_texmf__texmf-dist__web2c",
+    # For the snowml-defined aarch64-linux LaTeX toolchain (//third_party/rules_sphinx):
+    "texlive_bin__aarch64-linux",
+    "texlive_texmf__texmf-dist__scripts__texlive",
 )
+
+# Register the snowml-local aarch64-linux LaTeX toolchain — bazel_latex fetches the
+# aarch64-linux TeX Live binaries but registers no toolchain for the platform, so
+# //docs:docs otherwise can't resolve one on ARM Linux. See
+# //third_party/rules_sphinx:latex_toolchain.bzl.
+register_toolchains("//third_party/rules_sphinx:latex_toolchain_aarch64-linux")
 
 # --- Conda Python toolchain ---
 

@@ -1338,7 +1338,12 @@ class ModelVersion(lineage_node.LineageNode):
             func_name: core.ModelSignature.from_dict(sig_dict) for func_name, sig_dict in signatures_dict.items()
         }
 
-        if deserialized_signatures not in VALID_OPENAI_SIGNATURES:
+        # Check if the model is logged with OpenAI compatible signature that contains messages feature group.
+        if not any(
+            isinstance(spec, core.FeatureGroupSpec) and spec.name == "messages"
+            for sig in deserialized_signatures.values()
+            for spec in sig.inputs
+        ):
             raise ValueError(
                 "Inference engine requires the model to be logged with one of the following signatures: "
                 f"{VALID_OPENAI_SIGNATURES}. Please log the model again with one of these supported signatures."

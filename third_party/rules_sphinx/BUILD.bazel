@@ -1,6 +1,39 @@
+load(":latex_toolchain.bzl", "latex_toolchain_info")
+
 exports_files(
     [
         "sphinx_main.py",
     ],
     visibility = ["//visibility:public"],
+)
+
+# --- aarch64-linux LaTeX toolchain (see latex_toolchain.bzl) ---
+# The bazel_latex module fetches aarch64-linux TeX Live binaries but registers no
+# toolchain for the platform, so //docs:docs can't resolve one on ARM Linux. These
+# two targets add it. biber is absent from the aarch64-linux tarball but unused by
+# the engine, so it is stood in with bibtex.
+
+latex_toolchain_info(
+    name = "latex_toolchain_aarch64-linux_info",
+    biber = "@texlive_bin__aarch64-linux//:bibtex",
+    bibtex = "@texlive_bin__aarch64-linux//:bibtex",
+    dvisvgm = "@texlive_bin__aarch64-linux//:dvisvgm",
+    gsftopk = "@texlive_bin__aarch64-linux//:gsftopk",
+    kpseaccess = "@texlive_bin__aarch64-linux//:kpseaccess",
+    kpsestat = "@texlive_bin__aarch64-linux//:kpsestat",
+    kpsewhich = "@texlive_bin__aarch64-linux//:kpsewhich",
+    luahbtex = "@texlive_bin__aarch64-linux//:luahbtex",
+    luatex = "@texlive_bin__aarch64-linux//:luatex",
+    mktexlsr = "@texlive_texmf__texmf-dist__scripts__texlive//:mktexlsr",
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "latex_toolchain_aarch64-linux",
+    exec_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    toolchain = ":latex_toolchain_aarch64-linux_info",
+    toolchain_type = "@bazel_latex//:latex_toolchain_type",
 )

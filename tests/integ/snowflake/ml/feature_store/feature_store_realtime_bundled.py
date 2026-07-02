@@ -444,9 +444,9 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
                 )
                 if len(pdf) >= len(keys):
                     return pdf
-            except (snowml_exceptions.SnowflakeMLException, ValueError) as e:
-                # Expected transients while upstream OFT ingests; the public
-                # read API may unwrap SnowflakeMLException to ValueError.
+            except Exception as e:
+                # Broad catch: the read API unwraps to the original exception, and a
+                # transient online-serving 404 surfaces as RuntimeError, not ValueError.
                 last_err = f"{type(e).__name__}: {e}"
                 logger.info("RTFV read not yet ready: %s", last_err)
             time.sleep(5)
@@ -510,6 +510,15 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             rows = self.fs.list_feature_views().collect()
             kinds = {r["NAME"]: r["KIND"] for r in rows}
             self.assertEqual(kinds.get(rtfv_name), "REALTIME")
+            descs = {r["NAME"]: r["DESC"] for r in rows}
+            self.assertEqual(descs.get(rtfv_name), "integ-test RTFV")
+
+            # Verify desc round-trips through update_feature_view.
+            updated = self.fs.update_feature_view(rtfv_name, version, desc="updated RTFV desc")
+            self.assertEqual(updated.desc, "updated RTFV desc")
+
+            re_fetched = self.fs.get_feature_view(rtfv_name, version)
+            self.assertEqual(re_fetched.desc, "updated RTFV desc")
         finally:
             self.fs.delete_feature_view(rtfv_name, version)
             # Best-effort second delete: telemetry unwraps SnowflakeMLException

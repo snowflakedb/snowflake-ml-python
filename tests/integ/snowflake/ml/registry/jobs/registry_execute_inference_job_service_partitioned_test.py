@@ -1,0 +1,947 @@
+import inspect
+import os
+import tempfile
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+import xgboost
+from absl.testing import absltest
+from sklearn.linear_model import LinearRegression
+
+from snowflake import snowpark
+from snowflake.ml.model import custom_model, model_signature, openai_signatures
+from snowflake.ml.model._client.model import batch_inference_specs
+from snowflake.ml.model._packager.model_env import model_env
+from tests.integ.snowflake.ml.registry.jobs import (
+    registry_execute_inference_job_service_test_base,
+)
+from tests.integ.snowflake.ml.test_utils import test_env_utils
+
+_NUM_PARTITIONS = 2
+_NUM_ROWS_PER_PARTITION = 10
+_PARTITIONED_REDUCED_OUTPUT_SIZE = 5
+_PARTITIONED_EXPANDED_OUTPUT_SIZE = 20
+
+_PARTITIONED_INPUT_FEATURES = [
+    model_signature.FeatureSpec("PARTITION_COL", model_signature.DataType.INT64),
+    model_signature.FeatureSpec("INPUT_COL1", model_signature.DataType.DOUBLE),
+    model_signature.FeatureSpec("INPUT_COL2", model_signature.DataType.DOUBLE),
+]
+
+_OUTPUT_FEATURES = [
+    model_signature.FeatureSpec("OUTPUT_COL1", model_signature.DataType.DOUBLE),
+    model_signature.FeatureSpec("OUTPUT_COL2", model_signature.DataType.DOUBLE),
+]
+
+_DEFAULT_PARAM_INT = 1
+_DEFAULT_PARAM_FLOAT = 0.1
+_DEFAULT_PARAM_BOOL = False
+_OVERRIDE_PARAM_INT = 3
+_OVERRIDE_PARAM_FLOAT = 0.5
+_OVERRIDE_PARAM_BOOL = True
+
+_PARAM_SPECS = [
+    model_signature.ParamSpec(name="param_int", dtype=model_signature.DataType.INT64, default_value=_DEFAULT_PARAM_INT),
+    model_signature.ParamSpec(
+        name="param_float", dtype=model_signature.DataType.DOUBLE, default_value=_DEFAULT_PARAM_FLOAT
+    ),
+    model_signature.ParamSpec(
+        name="param_bool", dtype=model_signature.DataType.BOOL, default_value=_DEFAULT_PARAM_BOOL
+    ),
+]
+
+_PARTITIONED_MODEL_SIGNATURES = {
+    "predict_stateful": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("OUTPUT_PARTITION_ID", model_signature.DataType.INT64),
+            *_OUTPUT_FEATURES,
+        ],
+    ),
+    "predict_reduced": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=_OUTPUT_FEATURES,
+    ),
+    "predict_equal": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=_OUTPUT_FEATURES,
+    ),
+    "predict_equal_with_partition_col": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("PARTITION_COL", model_signature.DataType.INT64),
+            *_OUTPUT_FEATURES,
+        ],
+    ),
+    "predict_expanded": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=_OUTPUT_FEATURES,
+    ),
+}
+
+_PARAM_OUTPUT_FEATURES = [
+    *_OUTPUT_FEATURES,
+    model_signature.FeatureSpec("OUTPUT_PARAM_INT", model_signature.DataType.INT64),
+    model_signature.FeatureSpec("OUTPUT_PARAM_FLOAT", model_signature.DataType.DOUBLE),
+    model_signature.FeatureSpec("OUTPUT_PARAM_BOOL", model_signature.DataType.BOOL),
+]
+
+_PARTITIONED_MODEL_WITH_PARAMS_SIGNATURES = {
+    **_PARTITIONED_MODEL_SIGNATURES,
+    "predict_stateful_with_params": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("OUTPUT_PARTITION_ID", model_signature.DataType.INT64),
+            *_PARAM_OUTPUT_FEATURES,
+        ],
+        params=_PARAM_SPECS,
+    ),
+    "predict_expanded_with_params": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=_PARAM_OUTPUT_FEATURES,
+        params=_PARAM_SPECS,
+    ),
+}
+
+
+class BatchTableFunctionModel(custom_model.CustomModel):
+    """A non-partitioned table function model for basic batch processing."""
+
+    @custom_model.inference_api
+    def predict_batch(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
+                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
+            }
+        )
+
+
+class PartitionedModel(custom_model.CustomModel):
+    """A partitioned/non-partitioned table function model with methods for different cases."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+        self.partition_id_cache = None
+        self.model = None
+
+    @custom_model.inference_api
+    def predict_stateful(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        if input_df["PARTITION_COL"].nunique() != 1:
+            raise ValueError(
+                f"Mixed partitions in batch: expected all rows to be from the same partition, "
+                f"but found {input_df['PARTITION_COL'].unique().tolist()}"
+            )
+
+        current_partition = input_df["PARTITION_COL"].iloc[0]
+        if self.partition_id_cache != current_partition:
+            self.partition_id_cache = current_partition
+            self.model = lambda df: pd.DataFrame(
+                {
+                    "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                    "OUTPUT_COL1": df["INPUT_COL1"] * 2,
+                    "OUTPUT_COL2": df["INPUT_COL2"] + 1,
+                }
+            )
+
+        return self.model(input_df)
+
+    @custom_model.partitioned_api
+    def predict_reduced(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        from sklearn.linear_model import LinearRegression
+
+        model = LinearRegression()
+        model.fit(input_df[["INPUT_COL1"]], input_df["INPUT_COL2"])
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        output_col1_values = np.linspace(col1_min, col1_max, _PARTITIONED_REDUCED_OUTPUT_SIZE)
+        preds = model.predict(output_col1_values.reshape(-1, 1))
+        return pd.DataFrame({"OUTPUT_COL1": output_col1_values, "OUTPUT_COL2": preds})
+
+    @custom_model.partitioned_api
+    def predict_equal(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
+                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
+            }
+        )
+
+    @custom_model.partitioned_api
+    def predict_equal_with_partition_col(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "PARTITION_COL": input_df["PARTITION_COL"],
+                "OUTPUT_COL1": input_df["INPUT_COL1"] * 2,
+                "OUTPUT_COL2": input_df["INPUT_COL2"] + 1,
+            }
+        )
+
+    @custom_model.partitioned_api
+    def predict_expanded(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        col2_min, col2_max = input_df["INPUT_COL2"].min(), input_df["INPUT_COL2"].max()
+        return pd.DataFrame(
+            {
+                "OUTPUT_COL1": np.linspace(col1_min, col1_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE),
+                "OUTPUT_COL2": np.linspace(col2_min, col2_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE),
+            }
+        )
+
+    @custom_model.inference_api
+    def predict_stateful_with_params(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        param_int: int = _DEFAULT_PARAM_INT,
+        param_float: float = _DEFAULT_PARAM_FLOAT,
+        param_bool: bool = _DEFAULT_PARAM_BOOL,
+    ) -> pd.DataFrame:
+        if input_df["PARTITION_COL"].nunique() != 1:
+            raise ValueError(
+                f"Mixed partitions in batch: expected all rows to be from the same partition, "
+                f"but found {input_df['PARTITION_COL'].unique().tolist()}"
+            )
+
+        current_partition = input_df["PARTITION_COL"].iloc[0]
+        if self.partition_id_cache != current_partition:
+            self.partition_id_cache = current_partition
+            self.model = lambda df, p_int=param_int, p_float=param_float, p_bool=param_bool: pd.DataFrame(
+                {
+                    "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                    "OUTPUT_COL1": df["INPUT_COL1"] * 2,
+                    "OUTPUT_COL2": df["INPUT_COL2"] + 1,
+                    "OUTPUT_PARAM_INT": p_int,
+                    "OUTPUT_PARAM_FLOAT": p_float,
+                    "OUTPUT_PARAM_BOOL": p_bool,
+                }
+            )
+
+        return self.model(input_df)
+
+    @custom_model.partitioned_api
+    def predict_expanded_with_params(
+        self,
+        input_df: pd.DataFrame,
+        *,
+        param_int: int = _DEFAULT_PARAM_INT,
+        param_float: float = _DEFAULT_PARAM_FLOAT,
+        param_bool: bool = _DEFAULT_PARAM_BOOL,
+    ) -> pd.DataFrame:
+        col1_min, col1_max = input_df["INPUT_COL1"].min(), input_df["INPUT_COL1"].max()
+        col2_min, col2_max = input_df["INPUT_COL2"].min(), input_df["INPUT_COL2"].max()
+        return pd.DataFrame(
+            {
+                "OUTPUT_COL1": np.linspace(col1_min, col1_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE),
+                "OUTPUT_COL2": np.linspace(col2_min, col2_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE),
+                "OUTPUT_PARAM_INT": param_int,
+                "OUTPUT_PARAM_FLOAT": param_float,
+                "OUTPUT_PARAM_BOOL": param_bool,
+            }
+        )
+
+
+def _generate_partitioned_data(num_rows_per_partition: int = _NUM_ROWS_PER_PARTITION) -> pd.DataFrame:
+    np.random.seed(42)
+    rows = []
+    for partition_id in range(1, _NUM_PARTITIONS + 1):
+        col1 = np.random.rand(num_rows_per_partition) * 10
+        col2 = partition_id * 2.0 * col1 + partition_id * 3.0 + np.random.randn(num_rows_per_partition) * 0.1
+        for c1, c2 in zip(col1, col2):
+            rows.append({"PARTITION_COL": partition_id, "INPUT_COL1": c1, "INPUT_COL2": c2})
+    return pd.DataFrame(rows)
+
+
+class GPUXGBoostModel(custom_model.CustomModel):
+    """A stateful model that uses XGBoost for GPU-accelerated predictions with partition tracking."""
+
+    def __init__(self, context: custom_model.ModelContext) -> None:
+        super().__init__(context)
+        self.xgb_model = self.context.model_ref("xgb_model")
+        self.partition_id_cache = None
+
+    @custom_model.inference_api
+    def predict_stateful_gpu(self, input_df: pd.DataFrame) -> pd.DataFrame:
+        if input_df["PARTITION_COL"].nunique() != 1:
+            raise ValueError(
+                f"Mixed partitions in batch: expected all rows to be from the same partition, "
+                f"but found {input_df['PARTITION_COL'].unique().tolist()}"
+            )
+
+        if self.partition_id_cache is None:
+            self.partition_id_cache = input_df["PARTITION_COL"].iloc[0]
+
+        preds = self.xgb_model.predict(input_df[["INPUT_COL1", "INPUT_COL2"]])
+        import torch
+
+        return pd.DataFrame(
+            {
+                "OUTPUT_PARTITION_ID": self.partition_id_cache,
+                "OUTPUT": preds,
+                "GPU_COUNT": torch.cuda.device_count(),
+            }
+        )
+
+
+_GPU_XGBOOST_MODEL_SIGNATURES = {
+    "predict_stateful_gpu": model_signature.ModelSignature(
+        inputs=_PARTITIONED_INPUT_FEATURES,
+        outputs=[
+            model_signature.FeatureSpec("OUTPUT_PARTITION_ID", model_signature.DataType.INT64),
+            model_signature.FeatureSpec("OUTPUT", model_signature.DataType.DOUBLE),
+            model_signature.FeatureSpec("GPU_COUNT", model_signature.DataType.INT64),
+        ],
+    ),
+}
+
+
+class TestExecuteInferenceJobServicePartitionedInteg(
+    registry_execute_inference_job_service_test_base.ExecuteInferenceJobServiceTestBase
+):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.cache_dir = tempfile.TemporaryDirectory()
+        cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
+        os.environ["TRANSFORMERS_CACHE"] = cls.cache_dir.name
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._original_cache_dir:
+            os.environ["TRANSFORMERS_CACHE"] = cls._original_cache_dir
+        else:
+            os.environ.pop("TRANSFORMERS_CACHE", None)
+        cls.cache_dir.cleanup()
+
+    def _compare_with_warehouse(
+        self,
+        output_stage_location: str,
+        model_name: str,
+        version_name: str,
+        input_df: snowpark.DataFrame,
+        function_name: str,
+        sort_columns: list[str],
+        partition_column: Optional[str] = None,
+    ) -> None:
+        mv = self.registry.get_model(model_name).version(version_name)
+
+        job_output = self.session.read.option("pattern", ".*\\.parquet").parquet(output_stage_location).to_pandas()
+
+        run_kwargs: dict[str, str] = {"function_name": function_name}
+        if partition_column is not None:
+            run_kwargs["partition_column"] = partition_column
+        warehouse_output = mv.run(input_df, **run_kwargs)
+        if isinstance(warehouse_output, snowpark.DataFrame):
+            warehouse_output = warehouse_output.to_pandas()
+
+        job_cmp = job_output.sort_values(sort_columns).reset_index(drop=True)
+        wh_cmp = warehouse_output.sort_values(sort_columns).reset_index(drop=True)
+
+        pd.testing.assert_frame_equal(job_cmp, wh_cmp, check_dtype=False, rtol=1e-5)
+
+    def test_non_partitioned_table_function_without_partition_column(self) -> None:
+        """Case B: Non-partitioned table function without partition_column (1:1 row mapping, batch)."""
+        input_pandas_df = pd.DataFrame(
+            {
+                "INPUT_COL1": [1.0, 2.0, 3.0, 4.0],
+                "INPUT_COL2": [2.0, 4.0, 6.0, 8.0],
+            }
+        )
+        model = BatchTableFunctionModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+        sample_input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        def check_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["INPUT_COL1", "INPUT_COL2", "OUTPUT_COL1", "OUTPUT_COL2"],
+            )
+            self.assertEqual(len(actual), len(input_pandas_df))
+
+            actual_sorted = actual.sort_values("INPUT_COL1").reset_index(drop=True)
+            expected_sorted = input_pandas_df.sort_values("INPUT_COL1").reset_index(drop=True)
+
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT_COL1"].astype(float).values,
+                expected_sorted["INPUT_COL1"].astype(float).values * 2,
+                rtol=1e-5,
+            )
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT_COL2"].astype(float).values,
+                expected_sorted["INPUT_COL2"].astype(float).values + 1,
+                rtol=1e-5,
+            )
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            sample_input_data=sample_input_df,
+            X=input_df,
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_batch",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            prediction_assert_fn=check_output,
+            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_batch",
+            sort_columns=["OUTPUT_COL1"],
+        )
+
+    def test_non_partitioned_table_function_with_partition_column(self) -> None:
+        """Case C: Non-partitioned table function with partition column (1:1 row mapping)."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        expected_output = pd.DataFrame(
+            {
+                "OUTPUT_COL1": input_pandas_df["INPUT_COL1"] * 2,
+                "OUTPUT_COL2": input_pandas_df["INPUT_COL2"] + 1,
+                "OUTPUT_PARTITION_ID": input_pandas_df["PARTITION_COL"],
+            }
+        )
+        expected_with_input = pd.concat(
+            [input_pandas_df.reset_index(drop=True), expected_output.reset_index(drop=True)], axis=1
+        )
+
+        def check_non_partitioned_output(actual: pd.DataFrame) -> None:
+            self.assertEqual(len(actual), len(input_pandas_df))
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "INPUT_COL1", "INPUT_COL2", "OUTPUT_COL1", "OUTPUT_COL2", "OUTPUT_PARTITION_ID"],
+            )
+
+            actual_sorted = actual.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+            expected_sorted = expected_with_input.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT_COL1"].astype(float).values,
+                expected_sorted["OUTPUT_COL1"].astype(float).values,
+                rtol=1e-5,
+            )
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT_COL2"].astype(float).values,
+                expected_sorted["OUTPUT_COL2"].astype(float).values,
+                rtol=1e-5,
+            )
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_stateful",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+            prediction_assert_fn=check_non_partitioned_output,
+            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_stateful",
+            partition_column="PARTITION_COL",
+            sort_columns=["PARTITION_COL", "OUTPUT_COL1"],
+        )
+
+    def test_partitioned_table_function_without_partition_column(self) -> None:
+        """Case D: Partitioned table function without partition_column (M<N, partition by 1 fallback)."""
+        input_pandas_df = _generate_partitioned_data()
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        def check_partition_by_1_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["OUTPUT_COL1", "OUTPUT_COL2"],
+            )
+
+            expected_total_rows = _PARTITIONED_EXPANDED_OUTPUT_SIZE
+            self.assertEqual(len(actual), expected_total_rows)
+
+            col1_min, col1_max = input_pandas_df["INPUT_COL1"].min(), input_pandas_df["INPUT_COL1"].max()
+            col2_min, col2_max = input_pandas_df["INPUT_COL2"].min(), input_pandas_df["INPUT_COL2"].max()
+            expected_col1 = np.sort(np.linspace(col1_min, col1_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE))
+            expected_col2 = np.sort(np.linspace(col2_min, col2_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE))
+
+            actual_col1 = np.sort(actual["OUTPUT_COL1"].astype(float).values)
+            actual_col2 = np.sort(actual["OUTPUT_COL2"].astype(float).values)
+            np.testing.assert_allclose(actual_col1, expected_col1, rtol=1e-5)
+            np.testing.assert_allclose(actual_col2, expected_col2, rtol=1e-5)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_expanded",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+            prediction_assert_fn=check_partition_by_1_output,
+            skip_row_count_check=True,
+            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_expanded",
+            sort_columns=["OUTPUT_COL1"],
+        )
+
+    def test_partitioned_table_function_m_greater_than_n(self) -> None:
+        """Case E1: Partitioned table function with M>N row mapping."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=20)
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        def check_partitioned_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "OUTPUT_COL1", "OUTPUT_COL2"],
+            )
+
+            expected_total_rows = _NUM_PARTITIONS * _PARTITIONED_REDUCED_OUTPUT_SIZE
+            self.assertEqual(len(actual), expected_total_rows)
+
+            for partition_id in range(1, _NUM_PARTITIONS + 1):
+                partition_input = input_pandas_df[input_pandas_df["PARTITION_COL"] == partition_id]
+                lr = LinearRegression()
+                lr.fit(partition_input[["INPUT_COL1"]], partition_input["INPUT_COL2"])
+                col1_min, col1_max = partition_input["INPUT_COL1"].min(), partition_input["INPUT_COL1"].max()
+                output_col1_values = np.linspace(col1_min, col1_max, _PARTITIONED_REDUCED_OUTPUT_SIZE)
+                expected_preds = np.sort(lr.predict(output_col1_values.reshape(-1, 1)))
+
+                actual_partition = actual[actual["PARTITION_COL"] == partition_id]
+                actual_preds = np.sort(actual_partition["OUTPUT_COL2"].astype(float).values)
+                np.testing.assert_allclose(actual_preds, expected_preds, rtol=1e-5)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_reduced",
+            job_name=job_name,
+            additional_dependencies=["scikit-learn"],
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+            prediction_assert_fn=check_partitioned_output,
+            skip_row_count_check=True,
+        )
+
+    def test_partitioned_table_function_m_equals_n(self) -> None:
+        """Case E2: Partitioned table function with M=N row mapping."""
+        input_pandas_df = _generate_partitioned_data()
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        def check_partitioned_equal_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "OUTPUT_COL1", "OUTPUT_COL2"],
+            )
+
+            expected_total_rows = _NUM_PARTITIONS * _NUM_ROWS_PER_PARTITION
+            self.assertEqual(len(actual), expected_total_rows)
+
+            for partition_id in range(1, _NUM_PARTITIONS + 1):
+                partition_input = input_pandas_df[input_pandas_df["PARTITION_COL"] == partition_id]
+                expected_col1 = np.sort(partition_input["INPUT_COL1"].values * 2)
+                expected_col2 = np.sort(partition_input["INPUT_COL2"].values + 1)
+
+                actual_partition = actual[actual["PARTITION_COL"] == partition_id]
+                actual_col1 = np.sort(actual_partition["OUTPUT_COL1"].astype(float).values)
+                actual_col2 = np.sort(actual_partition["OUTPUT_COL2"].astype(float).values)
+                np.testing.assert_allclose(actual_col1, expected_col1, rtol=1e-5)
+                np.testing.assert_allclose(actual_col2, expected_col2, rtol=1e-5)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_equal",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+            prediction_assert_fn=check_partitioned_equal_output,
+            skip_row_count_check=True,
+        )
+
+    def test_partitioned_table_function_m_less_than_n(self) -> None:
+        """Case E3: Partitioned table function with M<N row mapping."""
+        input_pandas_df = _generate_partitioned_data()
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        def check_partitioned_expanded_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "OUTPUT_COL1", "OUTPUT_COL2"],
+            )
+
+            expected_total_rows = _NUM_PARTITIONS * _PARTITIONED_EXPANDED_OUTPUT_SIZE
+            self.assertEqual(len(actual), expected_total_rows)
+
+            for partition_id in range(1, _NUM_PARTITIONS + 1):
+                partition_input = input_pandas_df[input_pandas_df["PARTITION_COL"] == partition_id]
+                col1_min, col1_max = partition_input["INPUT_COL1"].min(), partition_input["INPUT_COL1"].max()
+                col2_min, col2_max = partition_input["INPUT_COL2"].min(), partition_input["INPUT_COL2"].max()
+                expected_col1 = np.sort(np.linspace(col1_min, col1_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE))
+                expected_col2 = np.sort(np.linspace(col2_min, col2_max, _PARTITIONED_EXPANDED_OUTPUT_SIZE))
+
+                actual_partition = actual[actual["PARTITION_COL"] == partition_id]
+                actual_col1 = np.sort(actual_partition["OUTPUT_COL1"].astype(float).values)
+                actual_col2 = np.sort(actual_partition["OUTPUT_COL2"].astype(float).values)
+                np.testing.assert_allclose(actual_col1, expected_col1, rtol=1e-5)
+                np.testing.assert_allclose(actual_col2, expected_col2, rtol=1e-5)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_expanded",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+            prediction_assert_fn=check_partitioned_expanded_output,
+            skip_row_count_check=True,
+            target_platforms=["WAREHOUSE", "SNOWPARK_CONTAINER_SERVICES"],
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+        self._compare_with_warehouse(
+            output_stage_location=output_stage_location,
+            model_name=model_name,
+            version_name=version_name,
+            input_df=input_df,
+            function_name="predict_expanded",
+            partition_column="PARTITION_COL",
+            sort_columns=["PARTITION_COL", "OUTPUT_COL1"],
+        )
+
+    def test_partitioned_table_function_with_partition_col_in_output(self) -> None:
+        """Case E4: Partitioned model whose output includes the partition column — client rejects."""
+        input_pandas_df = _generate_partitioned_data()
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name=f"model_{inspect.stack()[0].function}",
+            version_name=f"ver_{self._run_id}",
+            conda_dependencies=[
+                test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+            ],
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+            options={"function_type": "TABLE_FUNCTION", "embed_local_ml_library": True},
+            signatures=_PARTITIONED_MODEL_SIGNATURES,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "Partitioned model output includes the partition column",
+        ):
+            mv._run_batch_v2(
+                input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                image_build_spec=batch_inference_specs.ImageBuild(
+                    image_repo=".".join([self._test_db, self._test_schema, self._test_image_repo]),
+                ),
+                function_name="predict_equal_with_partition_col",
+                job_name=job_name,
+            )
+
+    def test_non_partitioned_table_function_with_partition_column_with_params(self) -> None:
+        """Case C + params: Non-partitioned table function with partition column and override params."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+        override_params = {
+            "param_int": _OVERRIDE_PARAM_INT,
+            "param_float": _OVERRIDE_PARAM_FLOAT,
+            "param_bool": _OVERRIDE_PARAM_BOOL,
+        }
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        def check_stateful_with_params(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                [
+                    "PARTITION_COL",
+                    "INPUT_COL1",
+                    "INPUT_COL2",
+                    "OUTPUT_COL1",
+                    "OUTPUT_COL2",
+                    "OUTPUT_PARTITION_ID",
+                    "OUTPUT_PARAM_INT",
+                    "OUTPUT_PARAM_FLOAT",
+                    "OUTPUT_PARAM_BOOL",
+                ],
+            )
+            self.assertEqual(len(actual), len(input_pandas_df))
+            np.testing.assert_array_equal(actual["OUTPUT_PARAM_INT"].values, _OVERRIDE_PARAM_INT)
+            np.testing.assert_allclose(actual["OUTPUT_PARAM_FLOAT"].values, _OVERRIDE_PARAM_FLOAT)
+            np.testing.assert_array_equal(actual["OUTPUT_PARAM_BOOL"].values, _OVERRIDE_PARAM_BOOL)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL", params=override_params),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_stateful_with_params",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_WITH_PARAMS_SIGNATURES,
+            prediction_assert_fn=check_stateful_with_params,
+        )
+
+    def test_partitioned_table_function_m_less_than_n_with_params(self) -> None:
+        """Case E3 + params: Partitioned table function with M<N row mapping and override params."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)
+        model = PartitionedModel(custom_model.ModelContext())
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+        override_params = {
+            "param_int": _OVERRIDE_PARAM_INT,
+            "param_float": _OVERRIDE_PARAM_FLOAT,
+            "param_bool": _OVERRIDE_PARAM_BOOL,
+        }
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        def check_expanded_with_params(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                [
+                    "PARTITION_COL",
+                    "OUTPUT_COL1",
+                    "OUTPUT_COL2",
+                    "OUTPUT_PARAM_INT",
+                    "OUTPUT_PARAM_FLOAT",
+                    "OUTPUT_PARAM_BOOL",
+                ],
+            )
+            expected_total_rows = _NUM_PARTITIONS * _PARTITIONED_EXPANDED_OUTPUT_SIZE
+            self.assertEqual(len(actual), expected_total_rows)
+            np.testing.assert_array_equal(actual["OUTPUT_PARAM_INT"].values, _OVERRIDE_PARAM_INT)
+            np.testing.assert_allclose(actual["OUTPUT_PARAM_FLOAT"].values, _OVERRIDE_PARAM_FLOAT)
+            np.testing.assert_array_equal(actual["OUTPUT_PARAM_BOOL"].values, _OVERRIDE_PARAM_BOOL)
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL", params=override_params),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="predict_expanded_with_params",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION"},
+            signatures=_PARTITIONED_MODEL_WITH_PARAMS_SIGNATURES,
+            prediction_assert_fn=check_expanded_with_params,
+            skip_row_count_check=True,
+        )
+
+    def test_hf_model_with_partition_column_raises_error(self) -> None:
+        """Test that run_batch raises ValueError when partition_column is specified for an HF pipeline model."""
+        import transformers
+
+        model = transformers.pipeline(
+            task="text-generation",
+            model="hf-internal-testing/tiny-gpt2-with-chatml-template",
+            max_length=200,
+        )
+
+        x_df = pd.DataFrame.from_records(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+                    ],
+                }
+            ]
+        )
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name="model_test_hf_partition_column_error",
+            version_name=f"ver_{self._run_id}",
+            conda_dependencies=conda_dependencies,
+            pip_requirements=["transformers", "torch==2.6.0"],
+            options={"embed_local_ml_library": True},
+            signatures=openai_signatures.OPENAI_CHAT_SIGNATURE,
+            target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
+        )
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        input_df = self.session.create_dataframe(x_df)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "partition_column is not supported for HuggingFace pipeline models",
+        ):
+            mv._run_batch_v2(
+                input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                input_spec=batch_inference_specs.Input(partition_column="messages"),
+                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                job_name=job_name,
+            )
+
+    def test_scalar_function_with_partition_column_raises_error(self) -> None:
+        """Test that run_batch raises ValueError when partition_column is specified for a scalar function model."""
+        from sklearn.linear_model import LinearRegression
+
+        model = LinearRegression()
+        input_pandas_df = pd.DataFrame({"INPUT_COL1": [1.0, 2.0, 3.0], "INPUT_COL2": [2.0, 4.0, 6.0]})
+        model.fit(input_pandas_df[["INPUT_COL1"]], input_pandas_df["INPUT_COL2"])
+
+        conda_dependencies = [
+            test_env_utils.get_latest_package_version_spec_in_server(self.session, "snowflake-snowpark-python")
+        ]
+
+        mv = self.registry.log_model(
+            model=model,
+            model_name="model_test_scalar_partition_column_error",
+            version_name=f"ver_{self._run_id}",
+            sample_input_data=input_pandas_df[["INPUT_COL1"]],
+            conda_dependencies=conda_dependencies,
+            options={"embed_local_ml_library": True, "function_type": "FUNCTION"},
+        )
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        input_df = self.session.create_dataframe(
+            pd.DataFrame({"PARTITION_COL": [1, 1, 2, 2], "INPUT_COL1": [1.0, 2.0, 3.0, 4.0]})
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "partition_column is not supported for FUNCTION type methods",
+        ):
+            mv._run_batch_v2(
+                input_df,
+                compute_pool=self._TEST_CPU_COMPUTE_POOL,
+                input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+                output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                function_name="predict",
+                job_name=job_name,
+            )
+
+    def test_gpu_xgboost_with_partition_column(self) -> None:
+        """GPU stateful model: XGBoost with partition column and GPU requests."""
+        input_pandas_df = _generate_partitioned_data(num_rows_per_partition=2)
+
+        xgb_regressor = xgboost.XGBRegressor(
+            n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1, device="cuda"
+        )
+        xgb_regressor.fit(input_pandas_df[["INPUT_COL1", "INPUT_COL2"]], input_pandas_df["INPUT_COL1"] * 2)
+
+        model = GPUXGBoostModel(custom_model.ModelContext(models={"xgb_model": xgb_regressor}))
+
+        input_df = self.session.create_dataframe(input_pandas_df)
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+        model_name = f"model_{inspect.stack()[0].function}"
+        version_name = f"ver_{self._run_id}"
+
+        def check_gpu_stateful_output(actual: pd.DataFrame) -> None:
+            self.assertIsInstance(actual, pd.DataFrame)
+            self.assertCountEqual(
+                actual.columns.tolist(),
+                ["PARTITION_COL", "INPUT_COL1", "INPUT_COL2", "OUTPUT_PARTITION_ID", "OUTPUT", "GPU_COUNT"],
+            )
+            self.assertEqual(len(actual), len(input_pandas_df))
+            self.assertTrue((actual["GPU_COUNT"].astype(int) >= 1).all(), "Expected at least 1 GPU available")
+
+            actual_sorted = actual.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+            input_sorted = input_pandas_df.sort_values(["PARTITION_COL", "INPUT_COL1"]).reset_index(drop=True)
+            expected_sorted_preds = xgb_regressor.predict(input_sorted[["INPUT_COL1", "INPUT_COL2"]])
+
+            np.testing.assert_allclose(
+                actual_sorted["OUTPUT"].astype(float).values,
+                expected_sorted_preds,
+                rtol=1e-4,
+            )
+
+        self._test_registry_execute_inference_job_service(
+            model=model,
+            X=input_df,
+            input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            resources_spec=batch_inference_specs.Resources(gpu_requests="1"),
+            function_name="predict_stateful_gpu",
+            job_name=job_name,
+            options={"function_type": "TABLE_FUNCTION", "cuda_version": model_env.DEFAULT_CUDA_VERSION},
+            signatures=_GPU_XGBOOST_MODEL_SIGNATURES,
+            pip_requirements=["torch==2.6.0"],
+            prediction_assert_fn=check_gpu_stateful_output,
+            model_name=model_name,
+            version_name=version_name,
+        )
+
+
+if __name__ == "__main__":
+    absltest.main()

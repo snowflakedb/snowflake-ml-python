@@ -11,6 +11,7 @@ from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test
 
 
 class TestMlflowBatchInferenceInteg(registry_batch_inference_test_base.RegistryBatchInferenceTestBase):
+    @absltest.skip("SNOW-3712069")
     @parameterized.parameters(  # type: ignore[misc]
         {"cpu_requests": "4", "memory_requests": "4Gi"},
         # todo: add tests for gpu

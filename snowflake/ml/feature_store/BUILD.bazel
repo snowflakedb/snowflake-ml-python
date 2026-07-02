@@ -381,3 +381,15 @@ py_test(
         ":feature_store_lib",
     ],
 )
+
+py_test(
+    name = "feature_store_streaming_update_test",
+    srcs = ["feature_store_streaming_update_test.py"],
+    tags = [
+        "feature:feature_store",
+        "short_regress",
+    ],
+    deps = [
+        ":feature_store_lib",
+    ],
+)

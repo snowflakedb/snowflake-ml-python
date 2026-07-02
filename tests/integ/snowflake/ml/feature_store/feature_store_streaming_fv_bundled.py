@@ -94,7 +94,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         self._wait_udf_and_backfill(
             fq_udf,
-            timeout_s=60,
             feature_store=fs,
             streaming_fv_metadata_name=str(registered_fv.name),
             streaming_fv_version=str(registered_fv.version),
@@ -263,7 +262,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
 
         self._wait_udf_and_backfill(
             fq_udf,
-            timeout_s=60,
             feature_store=fs,
             streaming_fv_metadata_name=str(registered_fv.name),
             streaming_fv_version=str(registered_fv.version),
@@ -986,6 +984,31 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         self.assertEqual(str(reconstructed.version), "v1")
         self.assertTrue(reconstructed.online)
 
+        # transformation_fn_source round-trips from metadata
+        self.assertIsNotNone(reconstructed.transformation_fn_source)
+        fn_source = reconstructed.transformation_fn_source
+        self.assertIn("def identity_transform", fn_source)
+        self.assertIn("USER_ID", fn_source)
+
+        # _for_reconstruction stub: transformation_fn and backfill_df are None
+        self.assertIsNone(reconstructed.stream_config.transformation_fn)
+        self.assertIsNone(reconstructed.stream_config.backfill_df)
+
+        # list_feature_views(verbose=True): streaming FVs do not populate
+        # source_refs (the stream source is stored in StreamingMetadata, not
+        # the FV_SOURCE_REFS metadata table).  The stream source name is only
+        # accessible via get_feature_view() + _for_reconstruction.
+        verbose_rows = fs.list_feature_views(verbose=True).collect()
+        fv_row = next(
+            (r for r in verbose_rows if r["NAME"].upper() == fv_name.upper() and r["VERSION"] == "v1"),
+            None,
+        )
+        self.assertIsNotNone(fv_row, "streaming FV must appear in list_feature_views(verbose=True)")
+        self.assertIsNone(fv_row["SOURCE_REFS"], "streaming FVs do not write source_refs")
+        # get_feature_view() is the sole path to the stream source name; confirm
+        # the _for_reconstruction stub carries it correctly.
+        self.assertIn(stream.upper(), reconstructed.stream_config.get_stream_source_name().upper())
+
     # =========================================================================
     # Overwrite (re-register with overwrite=True)
     # =========================================================================
@@ -1054,7 +1077,6 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         fq_udf = f"{self.test_db}.{fs._config.schema.identifier()}.{udf_table}"
         self._wait_udf_and_backfill(
             fq_udf,
-            timeout_s=60,
             feature_store=fs,
             streaming_fv_metadata_name=str(registered.name),
             streaming_fv_version=str(registered.version),

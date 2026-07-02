@@ -25,6 +25,24 @@ py_test(
 )
 
 py_library(
+    name = "source_info",
+    srcs = ["_source_info.py"],
+)
+
+py_test(
+    name = "source_info_test",
+    srcs = ["_source_info_test.py"],
+    main = "_source_info_test.py",
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":source_info",
+    ],
+)
+
+py_library(
     name = "experiment_tracking",
     srcs = ["experiment_tracking.py"],
     deps = [

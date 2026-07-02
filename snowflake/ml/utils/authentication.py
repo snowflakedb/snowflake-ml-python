@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import http
 import logging
 from datetime import timedelta
@@ -16,7 +18,7 @@ _JWT_TOKEN_CACHE: dict[str, dict[int, str]] = {}
 def get_jwt_token_generator(
     account: str,
     user: str,
-    private_key: types.PRIVATE_KEY_TYPES,
+    private_key: types.PrivateKeyTypes,
     lifetime: Optional[timedelta] = None,
     renewal_delay: Optional[timedelta] = None,
 ) -> jwt_generator.JWTGenerator:

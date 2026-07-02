@@ -1069,9 +1069,9 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         fv.realtime_config = None
         fv.is_tiled = True
         fv.aggregation_specs = aggregation_specs
+        fv.aggregation_secondary_keys = aggregation_secondary_keys or []
         fv.output_schema = output_schema
         fv.feature_names = [SqlIdentifier(s.output_column) for s in aggregation_specs]
-        fv.aggregation_secondary_keys = aggregation_secondary_keys
         return fv
 
     @staticmethod
@@ -1089,7 +1089,7 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         )
 
     def test_predetermined_count_output_type(self) -> None:
-        """COUNT outputs DecimalType(18, 0) regardless of source column type."""
+        """COUNT outputs LongType (NUMBER(38,0)) regardless of source column type."""
         spec = AggregationSpec(
             function=AggregationType.COUNT,
             source_column="AMOUNT",
@@ -1102,9 +1102,9 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
 
         self.assertEqual(len(cols), 1)
         self.assertEqual(cols[0].name, "AMOUNT_COUNT_1D")
-        self.assertEqual(cols[0].type, "DecimalType")
-        self.assertEqual(cols[0].precision, 18)
-        self.assertEqual(cols[0].scale, 0)
+        self.assertEqual(cols[0].type, "LongType")
+        self.assertIsNone(cols[0].precision)
+        self.assertIsNone(cols[0].scale)
 
     def test_predetermined_avg_std_var_output_type(self) -> None:
         """AVG/STD/VAR all produce DoubleType."""
@@ -1198,8 +1198,12 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         self.assertEqual(cols[0].name, "CATEGORY_FIRST_DISTINCT_5")
         self.assertEqual(cols[0].type, "ArrayType")
 
-    def test_secondary_key_array_filtered_out(self) -> None:
-        """``_SECONDARY_KEY_ARRAY`` aggs are internal-only and excluded from the output columns."""
+    def test_secondary_key_array_emitted_as_keys_column(self) -> None:
+        """``_SECONDARY_KEY_ARRAY`` aggs are emitted as the ``<SK>_KEYS_<window>`` array, not dropped.
+
+        The keys array maps each value-array position back to its secondary-key
+        value; without it the value arrays are uninterpretable through the FG.
+        """
         specs = [
             AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
             AggregationSpec(
@@ -1212,6 +1216,8 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         schema = StructType(
             [
                 StructField("USER_ID", StringType()),
+                # Tiled DT groups by the secondary-key column, so it is present.
+                StructField("MERCHANT", StringType()),
                 StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
                 StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
             ]
@@ -1220,7 +1226,13 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
 
         cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
 
-        self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D"])
+        by_name = {c.name: c for c in cols}
+        self.assertIn("_INTERNAL_MERCHANT_ARR", by_name)
+        keys_col = by_name["_INTERNAL_MERCHANT_ARR"]
+        self.assertEqual(keys_col.type, "ArrayType")
+        self.assertEqual(keys_col.element_type, "StringType")
+        self.assertIn("AMOUNT_SUM_1D", by_name)
+        self.assertEqual(by_name["AMOUNT_SUM_1D"].type, "ArrayType")
 
     def test_secondary_key_fv_value_outputs_wrapped_as_arrays(self) -> None:
         """A FeatureGroup source over a secondary-key FV must mirror the FV's stored ArrayType<scalar> shape."""
@@ -1237,6 +1249,7 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         schema = StructType(
             [
                 StructField("USER_ID", StringType()),
+                StructField("MERCHANT", StringType()),
                 StructField("_PARTIAL_SUM_AMOUNT", DecimalType(10, 2)),
                 StructField("_PARTIAL_COUNT_AMOUNT", LongType()),
             ]
@@ -1244,19 +1257,23 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
         fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
 
         cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        by_name = {c.name: c for c in cols}
 
-        self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D", "AMOUNT_COUNT_1D"])
-        sum_col, count_col = cols
+        self.assertEqual([c.name for c in cols], ["AMOUNT_SUM_1D", "AMOUNT_COUNT_1D", "_INTERNAL_MERCHANT_ARR"])
+        sum_col, count_col = by_name["AMOUNT_SUM_1D"], by_name["AMOUNT_COUNT_1D"]
         # SUM inherits the source scalar's precision/scale as the array element.
         self.assertEqual(sum_col.type, "ArrayType")
         self.assertEqual(sum_col.element_type, "DecimalType")
         self.assertEqual(sum_col.precision, 10)
         self.assertEqual(sum_col.scale, 2)
-        # COUNT's predetermined DecimalType(18, 0) becomes the array element.
+        # COUNT resolves to LongType, wrapped as the array element; no precision/scale.
         self.assertEqual(count_col.type, "ArrayType")
-        self.assertEqual(count_col.element_type, "DecimalType")
-        self.assertEqual(count_col.precision, 18)
-        self.assertEqual(count_col.scale, 0)
+        self.assertEqual(count_col.element_type, "LongType")
+        self.assertIsNone(count_col.precision)
+        self.assertIsNone(count_col.scale)
+        keys_col = by_name["_INTERNAL_MERCHANT_ARR"]
+        self.assertEqual(keys_col.type, "ArrayType")
+        self.assertEqual(keys_col.element_type, "StringType")
 
     def test_non_secondary_key_fv_outputs_stay_scalar(self) -> None:
         """Without a secondary key, value aggregations stay scalar (no array wrapping)."""
@@ -1303,6 +1320,104 @@ class TiledFeatureViewConversionTest(absltest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "_PARTIAL_SUM_AMOUNT"):
             FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+    def test_secondary_key_multi_window_keys_no_dup(self) -> None:
+        """Each value window gets its companion keys array exactly once (no dup, correct pairing)."""
+        specs = [
+            AggregationSpec(AggregationType._SECONDARY_KEY_ARRAY, "MERCHANT", "1d", "MERCHANT_KEYS_1D"),
+            AggregationSpec(AggregationType._SECONDARY_KEY_ARRAY, "MERCHANT", "7d", "MERCHANT_KEYS_7D"),
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "7d", "AMOUNT_SUM_7D"),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("MERCHANT", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        names = [c.name for c in cols]
+
+        self.assertEqual(names.count("MERCHANT_KEYS_1D"), 1)
+        self.assertEqual(names.count("MERCHANT_KEYS_7D"), 1)
+        self.assertEqual(set(names), {"MERCHANT_KEYS_1D", "MERCHANT_KEYS_7D", "AMOUNT_SUM_1D", "AMOUNT_SUM_7D"})
+
+    def test_keys_array_element_type_matches_sk_column(self) -> None:
+        """The keys array element type/params are taken from the secondary-key column (not string-hardcoded)."""
+        specs = [
+            AggregationSpec(AggregationType._SECONDARY_KEY_ARRAY, "AD_ID", "1d", "AD_ID_KEYS_1D"),
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                # Non-string secondary key with precision/scale.
+                StructField("AD_ID", DecimalType(20, 0)),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["AD_ID"])
+
+        cols = FeatureViewSpecBuilder._columns_from_feature_view(fv)
+        keys_col = {c.name: c for c in cols}["AD_ID_KEYS_1D"]
+
+        self.assertEqual(keys_col.type, "ArrayType")
+        self.assertEqual(keys_col.element_type, "DecimalType")
+        self.assertEqual(keys_col.precision, 20)
+        self.assertEqual(keys_col.scale, 0)
+
+    def test_secondary_key_missing_from_tile_schema_raises(self) -> None:
+        """If the secondary-key column is absent from the tile schema, raise a clear error."""
+        specs = [
+            AggregationSpec(AggregationType._SECONDARY_KEY_ARRAY, "MERCHANT", "1d", "MERCHANT_KEYS_1D"),
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
+
+        with self.assertRaisesRegex(ValueError, "MERCHANT"):
+            FeatureViewSpecBuilder._columns_from_feature_view(fv)
+
+    def test_secondary_key_slice_includes_companion_keys(self) -> None:
+        """A slice selecting a value feature plus its auto-included keys column retains both.
+
+        ``FeatureView.slice`` auto-includes the companion ``<SK>_KEYS_<window>``
+        for any selected value feature. This asserts the builder no longer drops
+        that keys column during slice projection.
+        """
+        from snowflake.ml.feature_store.feature_view import FeatureViewSlice
+
+        specs = [
+            AggregationSpec(AggregationType._SECONDARY_KEY_ARRAY, "MERCHANT", "1d", "MERCHANT_KEYS_1D"),
+            AggregationSpec(AggregationType.SUM, "AMOUNT", "1d", "AMOUNT_SUM_1D"),
+        ]
+        schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("MERCHANT", StringType()),
+                StructField("_PARTIAL_SUM_AMOUNT", DecimalType(38, 4)),
+            ]
+        )
+        fv = self._make_tiled_fv(aggregation_specs=specs, output_schema=schema, aggregation_secondary_keys=["MERCHANT"])
+
+        # Mirrors what fv.slice(["AMOUNT_SUM_1D"]) yields: the keys column is
+        # auto-prepended by slice() before reaching the builder.
+        fvs = mock.MagicMock(spec=FeatureViewSlice)
+        fvs.feature_view_ref = fv
+        fvs.names = [SqlIdentifier("MERCHANT_KEYS_1D"), SqlIdentifier("AMOUNT_SUM_1D")]
+
+        source = FeatureViewSpecBuilder._convert_feature_view_slice(fvs)
+
+        self.assertEqual([c.name for c in source.columns], ["MERCHANT_KEYS_1D", "AMOUNT_SUM_1D"])
+        self.assertEqual({c.name: c.type for c in source.columns}["MERCHANT_KEYS_1D"], "ArrayType")
 
 
 # ============================================================================
@@ -1780,7 +1895,7 @@ class FeatureResolutionTest(absltest.TestCase):
     # -- Output type determination ----------------------------------------
 
     def test_count_output_type_is_integer(self) -> None:
-        """COUNT always produces DecimalType(18, 0) regardless of source type."""
+        """COUNT always produces LongType (NUMBER(38,0)) regardless of source type."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -1809,9 +1924,9 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "DoubleType")
-        self.assertEqual(features[0].output_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.precision, 18)
-        self.assertEqual(features[0].output_column.scale, 0)
+        self.assertEqual(features[0].output_column.type, "LongType")
+        self.assertIsNone(features[0].output_column.precision)
+        self.assertIsNone(features[0].output_column.scale)
 
     def test_avg_output_type_is_float(self) -> None:
         """AVG always produces DoubleType regardless of source type."""
@@ -2044,7 +2159,7 @@ class FeatureResolutionTest(absltest.TestCase):
         self.assertIsNone(features[0].output_column.precision)
 
     def test_approx_count_distinct_output_type_is_integer(self) -> None:
-        """APPROX_COUNT_DISTINCT always produces DecimalType(18, 0)."""
+        """APPROX_COUNT_DISTINCT always produces LongType (NUMBER(38,0))."""
         builder = FeatureViewSpecBuilder(
             FeatureViewKind.StreamingFeatureView,
             database="DB",
@@ -2074,9 +2189,9 @@ class FeatureResolutionTest(absltest.TestCase):
         ]
         features = builder._resolve_features()
         self.assertEqual(features[0].source_column.type, "StringType")
-        self.assertEqual(features[0].output_column.type, "DecimalType")
-        self.assertEqual(features[0].output_column.precision, 18)
-        self.assertEqual(features[0].output_column.scale, 0)
+        self.assertEqual(features[0].output_column.type, "LongType")
+        self.assertIsNone(features[0].output_column.precision)
+        self.assertIsNone(features[0].output_column.scale)
         self.assertEqual(features[0].function_params, {"hll_lg_k": 8})
 
     def test_approx_percentile_output_type_is_float(self) -> None:
@@ -2932,17 +3047,30 @@ class BatchValidationTest(absltest.TestCase):
                         window="24h",
                         output_column="AMOUNT_SUM_24H",
                     ),
+                    AggregationSpec(
+                        function=AggregationType.COUNT,
+                        source_column="AMOUNT",
+                        window="24h",
+                        output_column="AMOUNT_COUNT_24H",
+                    ),
                 ]
             )
         )
         result = builder.build()
-        self.assertEqual(len(result.spec.features), 1)
+        self.assertEqual(len(result.spec.features), 2)
         sum_feature = result.spec.features[0]
         self.assertEqual(sum_feature.function, "sum")
         self.assertEqual(sum_feature.output_column.type, "ArrayType")
         self.assertEqual(sum_feature.output_column.element_type, "DecimalType")
         self.assertEqual(sum_feature.output_column.precision, 10)
         self.assertEqual(sum_feature.output_column.scale, 2)
+        # COUNT resolves to LongType; on an SK FV it wraps to ArrayType<LongType>.
+        count_feature = result.spec.features[1]
+        self.assertEqual(count_feature.function, "count")
+        self.assertEqual(count_feature.output_column.type, "ArrayType")
+        self.assertEqual(count_feature.output_column.element_type, "LongType")
+        self.assertIsNone(count_feature.output_column.precision)
+        self.assertIsNone(count_feature.output_column.scale)
 
     def test_pg_approx_count_distinct_string_source_accepted(self) -> None:
         """APPROX_COUNT_DISTINCT on a STRING column is accepted for PG online store."""

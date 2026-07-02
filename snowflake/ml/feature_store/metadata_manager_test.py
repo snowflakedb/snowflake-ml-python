@@ -12,6 +12,7 @@ from snowflake.ml.feature_store.metadata_manager import (
     FvSourceRefsMetadata,
     MetadataObjectType,
     MetadataType,
+    StreamingMetadata,
 )
 
 
@@ -306,6 +307,33 @@ class TestAggregationMetadataAggregationSecondaryKeys(absltest.TestCase):
         }
         meta = AggregationMetadata.from_dict(legacy)
         self.assertIsNone(meta.aggregation_secondary_keys)
+
+
+class TestStreamingMetadataBackfillTable(absltest.TestCase):
+    def test_backfill_table_round_trip(self) -> None:
+        meta = StreamingMetadata(
+            stream_source_name="TXN_SOURCE",
+            transformation_fn_name="normalize_txn",
+            backfill_table="DB.SCH.HISTORICAL_TXNS",
+        )
+        restored = StreamingMetadata.from_dict(meta.to_dict())
+        self.assertEqual(restored.backfill_table, "DB.SCH.HISTORICAL_TXNS")
+
+    def test_backfill_table_default_none(self) -> None:
+        meta = StreamingMetadata(
+            stream_source_name="TXN_SOURCE",
+            transformation_fn_name="normalize_txn",
+        )
+        self.assertIsNone(meta.backfill_table)
+        self.assertNotIn("backfill_table", meta.to_dict())
+
+    def test_legacy_dict_without_backfill_table_decodes_as_none(self) -> None:
+        legacy = {
+            "stream_source_name": "TXN_SOURCE",
+            "transformation_fn_name": "normalize_txn",
+        }
+        meta = StreamingMetadata.from_dict(legacy)
+        self.assertIsNone(meta.backfill_table)
 
 
 if __name__ == "__main__":

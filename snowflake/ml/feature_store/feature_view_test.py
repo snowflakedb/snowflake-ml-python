@@ -270,6 +270,83 @@ class SecondaryKeyFeatureViewTest(parameterized.TestCase):
             ],
         )
 
+    def test_from_json_recovers_secondary_keys_without_synthesized_specs(self) -> None:
+        """Load path: an upstream FV whose serialized ``_aggregation_specs`` lack the
+        synthesized ``_SECONDARY_KEY_ARRAY`` specs must still recover its FV-level
+        ``aggregation_secondary_keys`` from the persisted field.
+
+        Otherwise the ``__init__`` re-derivation cannot fire, the field stays
+        ``None``, and a downstream FeatureGroup emits scalar source columns
+        instead of ``ArrayType<scalar>`` — the production 500.
+        """
+        df_columns = ["USER_ID", "EVENT_TS", "AMOUNT", "AD_ID"]
+
+        def _mock_df() -> MagicMock:
+            df = MagicMock()
+            df.columns = df_columns
+            df.queries = {"queries": ["SELECT * FROM source"]}
+            ts_field = MagicMock()
+            ts_field.datatype = TimestampType()
+            df.schema.__getitem__ = lambda _self, _key: ts_field
+            return df
+
+        # Authored SK FV -> aggregation_specs including the synthesized _SECONDARY_KEY_ARRAY spec.
+        authored = FeatureView(
+            name="content_event_aggregations_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=_mock_df(),
+            timestamp_col="EVENT_TS",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            aggregation_secondary_keys=["AD_ID"],
+            features=[Feature.max("AMOUNT", "24h").alias("CLICKS_1DAY")],
+        )
+        fv = FeatureView._construct_feature_view(
+            name="content_event_aggregations_fv",
+            entities=[Entity(name="user", join_keys=["USER_ID"])],
+            feature_df=_mock_df(),
+            timestamp_col="EVENT_TS",
+            desc="",
+            version="V1",
+            status=FeatureViewStatus.ACTIVE,
+            feature_descs={},
+            refresh_freq="1h",
+            database="DB",
+            schema="SCH",
+            warehouse="WH",
+            refresh_mode="FULL",
+            refresh_mode_reason=None,
+            initialize="ON_CREATE",
+            owner=None,
+            infer_schema_df=None,
+            session=MagicMock(),
+            feature_granularity="1h",
+            aggregation_specs=authored.aggregation_specs,
+            feature_aggregation_method=None,
+        )
+        self.assertEqual(fv.aggregation_secondary_keys, ["AD_ID"])  # sanity: re-derivation works here
+
+        # Simulate a legacy stored blob: keys-specs absent, SK field still persisted.
+        json_dict = json.loads(fv.to_json())
+        removed = {
+            s["output_column"] for s in json_dict["_aggregation_specs"] if s["function"] == "secondary_key_array"
+        }
+        json_dict["_aggregation_specs"] = [
+            s for s in json_dict["_aggregation_specs"] if s["function"] != "secondary_key_array"
+        ]
+        json_dict["_feature_desc"] = {k: v for k, v in json_dict["_feature_desc"].items() if k not in removed}
+        self.assertEqual(json_dict["_aggregation_secondary_keys"], ["AD_ID"])
+
+        mock_session = MagicMock()
+        mock_session.sql.return_value = _mock_df()
+        restored = FeatureView.from_json(json.dumps(json_dict), session=mock_session)
+
+        self.assertEqual(restored.aggregation_secondary_keys, ["AD_ID"])
+        # The recovered field also lets __init__ re-synthesize the dropped
+        # _SECONDARY_KEY_ARRAY specs, fully repairing the loaded FV.
+        assert restored.aggregation_specs is not None
+        self.assertTrue(any(s.function.is_secondary_key_array() for s in restored.aggregation_specs))
+
     def test_secondary_key_cannot_be_an_entity_join_key(self) -> None:
         specs = [
             AggregationSpec(
@@ -1065,7 +1142,7 @@ class BuildBatchFeatureViewSpecTest(absltest.TestCase):
         count_feat = spec.spec.features[1]
         self.assertEqual(count_feat.source_column.name, "AMOUNT")
         self.assertEqual(count_feat.output_column.name, "AMOUNT_COUNT_24H")
-        self.assertEqual(count_feat.output_column.type, "DecimalType")  # COUNT always integer
+        self.assertEqual(count_feat.output_column.type, "LongType")  # COUNT always integer (NUMBER(38,0))
         self.assertEqual(count_feat.function, "count")
         self.assertEqual(count_feat.window_sec, 86400)
 

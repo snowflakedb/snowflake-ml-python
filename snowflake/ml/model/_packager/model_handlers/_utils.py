@@ -26,6 +26,7 @@ from snowflake.snowpark import DataFrame as SnowparkDataFrame
 logger = logging.getLogger(__name__)
 
 EXPLAIN_BACKGROUND_DATA_ROWS_COUNT_LIMIT = 1000
+_WRITABLE_HF_CACHE_DIR = "/tmp"
 
 
 class NumpyEncoder(json.JSONEncoder):
@@ -276,6 +277,30 @@ def get_explain_target_method(
         if method in model_metadata.signatures.keys():
             return method
     return None
+
+
+def redirect_hf_cache_to_writable_dir() -> None:
+    """Point HuggingFace cache env vars at a writable directory in sandboxed runtimes.
+
+    Warehouse stored procedures and SPCS inference containers often run with a
+    non-writable home cache (for example ``/root/.cache``). Models that load
+    transformers remote code need a writable HuggingFace modules cache.
+    """
+    from snowflake.snowpark._internal import utils as snowpark_utils
+
+    if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
+        os.environ["TRANSFORMERS_CACHE"] = _WRITABLE_HF_CACHE_DIR
+        os.environ["HF_HOME"] = _WRITABLE_HF_CACHE_DIR
+        os.environ["XDG_CACHE_HOME"] = _WRITABLE_HF_CACHE_DIR
+        return
+
+    default_cache_root = os.path.join(os.path.expanduser("~"), ".cache")
+    if os.access(default_cache_root, os.W_OK):
+        return
+
+    os.environ.setdefault("HF_HOME", _WRITABLE_HF_CACHE_DIR)
+    os.environ.setdefault("TRANSFORMERS_CACHE", _WRITABLE_HF_CACHE_DIR)
+    os.environ.setdefault("XDG_CACHE_HOME", _WRITABLE_HF_CACHE_DIR)
 
 
 def save_transformers_config_with_auto_map(local_model_path: str) -> None:

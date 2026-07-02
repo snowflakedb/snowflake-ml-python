@@ -23,6 +23,7 @@ from snowflake.ml.modeling.model_selection import (
 from snowflake.ml.modeling.pipeline import Pipeline  # type: ignore[attr-defined]
 from snowflake.ml.modeling.preprocessing import (  # type: ignore[attr-defined]
     OneHotEncoder,
+    OrdinalEncoder,
     StandardScaler,
 )
 from snowflake.ml.modeling.xgboost import (  # type: ignore[attr-defined]
@@ -347,6 +348,9 @@ class SnowMLModelHandlerTest(absltest.TestCase):
         for _, step in model_pipeline.steps[:-1]:
             transformed_df = step.transform(transformed_df)
         predictor = model_pipeline.steps[-1][1]
+        # The predictor only consumes its `input_cols` (passthrough columns such as the label are ignored), so
+        # restrict the background the same way to match the packaged explain output.
+        transformed_df = transformed_df[predictor.input_cols]
         explainer = shap.Explainer(predictor.predict_proba, transformed_df)
         explanations = handlers_utils.convert_explanations_to_2D_df(predictor, explainer(transformed_df).values)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -373,9 +377,10 @@ class SnowMLModelHandlerTest(absltest.TestCase):
             explain_method = getattr(pk.model, "explain", None)
             assert callable(explain_method)
             np.testing.assert_allclose(explanations, explain_method(df), atol=0.05)
-            # explain method should have the output match transformed data, e.g. onehot-encoded categorical data
-            # 11 = 4 numerical + 3 onehot * 2 categorical + 1 label
-            assert len(pk.meta.signatures["explain"].outputs) == 11
+            # explain output matches the predictor's input_cols (the transformed feature columns it was trained
+            # on), excluding passthrough columns such as the label.
+            # 10 = 4 numerical + 3 onehot * 2 categorical
+            assert len(pk.meta.signatures["explain"].outputs) == 10
 
     def test_snowml_pipeline_explainability_when_pipeline_not_convertible(self) -> None:
         """Regression: task resolution and packaging use the final estimator when the Pipeline does not convert."""
@@ -419,6 +424,140 @@ class SnowMLModelHandlerTest(absltest.TestCase):
                 model_metadata.function_properties["explain"],
                 {model_meta_schema.FunctionProperties.PARTITIONED.value: False},
             )
+
+    def test_snowml_pipeline_explainability_with_untransformed_passthrough_columns(self) -> None:
+        """Regression: OrdinalEncoder writes new numeric columns while the raw string columns pass through.
+
+        The final estimator selects only its `input_cols`, so the explain path must drop the untransformed
+        passthrough columns before handing the frame to SHAP; otherwise the tree explainer receives string data.
+        """
+        rng = np.random.RandomState(0)
+        df = pd.DataFrame(
+            {
+                "num1": rng.rand(80),
+                "num2": rng.rand(80),
+                "cat1": rng.choice(["a", "b", "c"], 80),
+                "cat2": rng.choice(["x", "y", "z"], 80),
+                "label": rng.randint(0, 3, 80),  # multi-class
+            }
+        )
+        Pipeline._send_pipeline_configuration_telemetry = lambda _: None
+
+        numeric_cols = ["num1", "num2"]
+        categorical_cols = ["cat1", "cat2"]
+        encoded_cols = ["cat1_ord", "cat2_ord"]
+
+        model_pipeline = Pipeline(
+            steps=[
+                # output_cols differ from input_cols and drop_input_cols is False (default), so the raw
+                # string columns cat1/cat2 remain in the transformed frame as passthrough columns.
+                ("ordinal", OrdinalEncoder(input_cols=categorical_cols, output_cols=encoded_cols)),
+                (
+                    "xgb",
+                    XGBClassifier(
+                        input_cols=numeric_cols + encoded_cols,
+                        label_cols=["label"],
+                        output_cols=["pred"],
+                    ),
+                ),
+            ]
+        )
+        model_pipeline.fit(df)
+        predictions = model_pipeline.predict(df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model_pipeline,
+                sample_input_data=df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SNOWModelSaveOptions(enable_explainability=True),
+            )
+            self.assertIn("explain", model_metadata.signatures)
+            # Explanations should only cover the columns the model was actually trained on (input_cols),
+            # not the untransformed string passthrough columns.
+            explain_output_names = [spec.name for spec in model_metadata.signatures["explain"].outputs]
+            self.assertEqual(len(explain_output_names), len(numeric_cols + encoded_cols))
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+            # The predict output carries the untransformed string passthrough columns too, so compare only the
+            # numeric prediction column.
+            np.testing.assert_allclose(predictions["pred"].to_numpy(), predict_method(df)["pred"].to_numpy())
+            explain_method = getattr(pk.model, "explain", None)
+            assert callable(explain_method)
+            explanations = explain_method(df)
+            self.assertEqual(explanations.shape[0], df.shape[0])
+
+    def test_snowml_pipeline_explainability_non_tree_with_passthrough_columns(self) -> None:
+        """Regression: the non-tree SHAP branch (to_sklearn) also runs through _apply_transforms_up_to_last_step.
+
+        A non-tree estimator routes through `shap.Explainer(masker=background_data)` rather than TreeExplainer, so
+        this exercises that path with a pipeline that leaves untransformed string passthrough columns in the frame.
+        Without filtering to the predictor's `input_cols`, those string columns would reach the masker/explainer.
+        """
+        rng = np.random.RandomState(0)
+        df = pd.DataFrame(
+            {
+                "num1": rng.rand(80),
+                "num2": rng.rand(80),
+                "cat1": rng.choice(["a", "b", "c"], 80),
+                "cat2": rng.choice(["x", "y", "z"], 80),
+                "label": rng.rand(80),  # continuous target for the regressor
+            }
+        )
+        Pipeline._send_pipeline_configuration_telemetry = lambda _: None
+
+        numeric_cols = ["num1", "num2"]
+        categorical_cols = ["cat1", "cat2"]
+        encoded_cols = ["cat1_ord", "cat2_ord"]
+
+        model_pipeline = Pipeline(
+            steps=[
+                # Raw string columns cat1/cat2 remain as passthrough columns (drop_input_cols defaults to False).
+                ("ordinal", OrdinalEncoder(input_cols=categorical_cols, output_cols=encoded_cols)),
+                (
+                    # LinearRegression is non-tree, so it converts via to_sklearn and takes the non-tree SHAP branch.
+                    "regr",
+                    LinearRegression(
+                        input_cols=numeric_cols + encoded_cols,
+                        label_cols=["label"],
+                        output_cols=["pred"],
+                    ),
+                ),
+            ]
+        )
+        model_pipeline.fit(df)
+        predictions = model_pipeline.predict(df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_metadata = model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                name="model1",
+                model=model_pipeline,
+                sample_input_data=df,
+                metadata={"author": "halu", "version": "1"},
+                options=model_types.SNOWModelSaveOptions(enable_explainability=True),
+            )
+            self.assertIn("explain", model_metadata.signatures)
+            explain_output_names = [spec.name for spec in model_metadata.signatures["explain"].outputs]
+            self.assertEqual(len(explain_output_names), len(numeric_cols + encoded_cols))
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
+            pk.load(as_custom_model=True)
+            assert pk.model
+            assert pk.meta
+            predict_method = getattr(pk.model, "predict", None)
+            assert callable(predict_method)
+            np.testing.assert_allclose(predictions["pred"].to_numpy(), predict_method(df)["pred"].to_numpy())
+            explain_method = getattr(pk.model, "explain", None)
+            assert callable(explain_method)
+            explanations = explain_method(df)
+            self.assertEqual(explanations.shape[0], df.shape[0])
+            self.assertEqual(explanations.shape[1], len(numeric_cols + encoded_cols))
 
 
 if __name__ == "__main__":

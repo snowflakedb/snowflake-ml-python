@@ -145,6 +145,13 @@ class StreamingMetadata:
     # ``FAILED`` once the finalizer has observed terminal state. ``None`` for
     # streaming FVs registered before this field existed.
     backfill_state: Optional[str] = None
+    # Pre-expansion FQN of the operator-supplied backfill table (e.g.
+    # ``MY_DB.MY_SCH.HISTORICAL_TXNS``). Captured at register time so the
+    # round-trip can restore ``StreamConfig.backfill_table`` losslessly
+    # (Plan section A3). ``None`` for streaming FVs registered before
+    # this field existed and for callers that supplied an inline
+    # ``backfill_df`` rather than a table reference.
+    backfill_table: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -168,6 +175,8 @@ class StreamingMetadata:
             d["backfill_udtf_signature"] = self.backfill_udtf_signature
         if self.backfill_state is not None:
             d["backfill_state"] = self.backfill_state
+        if self.backfill_table is not None:
+            d["backfill_table"] = self.backfill_table
         return d
 
     @classmethod
@@ -198,6 +207,7 @@ class StreamingMetadata:
             backfill_udtf_name=data.get("backfill_udtf_name"),
             backfill_udtf_signature=data.get("backfill_udtf_signature"),
             backfill_state=raw_backfill_state,
+            backfill_table=data.get("backfill_table"),
         )
 
 

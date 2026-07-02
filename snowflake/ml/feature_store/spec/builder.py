@@ -174,9 +174,11 @@ _PG_DISTINCT_N_SOURCE_TYPES: frozenset[str] = frozenset(
 # Aggregation functions whose output type is predetermined regardless of source type.
 # Functions not listed here (SUM, MIN, MAX, LAST_N, etc.) preserve the source type.
 _AGG_PREDETERMINED_OUTPUT: dict[AggregationType, FSColumn] = {
-    # COUNT / APPROX_COUNT_DISTINCT always produce an integer.
-    AggregationType.COUNT: FSColumn(name="", type="DecimalType", precision=18, scale=0),
-    AggregationType.APPROX_COUNT_DISTINCT: FSColumn(name="", type="DecimalType", precision=18, scale=0),
+    # COUNT / APPROX_COUNT_DISTINCT produce NUMBER(38,0), which Snowpark
+    # surfaces as LongType. DecimalType here would mismatch the upstream FV's
+    # stored ArrayType<LongType> and be rejected by the exact-shape check.
+    AggregationType.COUNT: FSColumn(name="", type="LongType"),
+    AggregationType.APPROX_COUNT_DISTINCT: FSColumn(name="", type="LongType"),
     # AVG / STD / VAR / APPROX_PERCENTILE always produce a float.
     AggregationType.AVG: FSColumn(name="", type="DoubleType"),
     AggregationType.STD: FSColumn(name="", type="DoubleType"),
@@ -801,9 +803,11 @@ class FeatureViewSpecBuilder:
         For tiled FVs the columns are derived from ``aggregation_specs`` because
         ``output_schema`` exposes ``_PARTIAL_*`` tile columns, not the FV's logical
         aggregation outputs. A secondary-key FV (``aggregation_secondary_keys``)
-        additionally wraps each value aggregation as ``ArrayType<scalar>`` so the
-        column matches the upstream FV's stored ``OutputColumn`` for the Online
-        Service exact-shape check.
+        additionally wraps each value aggregation as ``ArrayType<scalar>`` and emits
+        the companion ``<SK>_KEYS_<window>`` keys array (also ``ArrayType<scalar>``)
+        so the columns match the upstream FV's stored ``OutputColumn`` for the Online
+        Service exact-shape check. Without the keys array the value arrays cannot be
+        mapped back to their secondary-key values.
 
         For non-tiled, non-RTFV sources, when ``materialized_schema`` is
         provided, column shapes are read from it instead of the authoring-time
@@ -817,6 +821,10 @@ class FeatureViewSpecBuilder:
 
         Returns:
             FSColumns for the source's feature columns, in declaration order.
+
+        Raises:
+            ValueError: If a tiled secondary-key FV's keys array references a
+                secondary-key column absent from the tiled schema.
         """
         if fv.realtime_config is not None:
             entity_names = set(fv.ordered_entity_columns)
@@ -831,6 +839,18 @@ class FeatureViewSpecBuilder:
             columns: list[FSColumn] = []
             for spec in fv.aggregation_specs:
                 if spec.function.is_secondary_key_array():
+                    # Keys array has no _PARTIAL_* companion; its element type is
+                    # the secondary-key column, which the tiled DT exposes directly.
+                    sk_column = partials_by_name.get(spec.source_column)
+                    if sk_column is None:
+                        raise ValueError(
+                            f"feature retrieval: secondary aggregation key column "
+                            f"'{spec.source_column}' was not found in feature view "
+                            f"'{fv.name.resolved()}'; its keys array cannot be built."
+                        )
+                    columns.append(
+                        _as_secondary_key_array_column(sk_column.model_copy(update={"name": spec.output_column}))
+                    )
                     continue
                 resolved = _resolve_tiled_fv_output_column(spec, partials_by_name)
                 if has_secondary_key:

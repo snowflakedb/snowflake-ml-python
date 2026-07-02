@@ -1114,7 +1114,12 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             self.fs.delete_feature_group(fg_name, fg_version)
 
     def test_feature_group_with_secondary_key_bfv_online_read(self) -> None:
-        """A FG over a secondary-key tiled BFV registers and reads back array-shaped agg outputs."""
+        """A FG over a secondary-key tiled BFV registers and reads back array-shaped agg outputs.
+
+        Also verifies the companion ``<SK>_KEYS_<window>`` array is present and
+        element-aligned with the value arrays, so array positions can be mapped
+        back to their secondary-key values.
+        """
         sfx = "SK"
         fv_sk_name, seeded_user_id = self._register_postgres_secondary_key_bfv(suffix=sfx)
         fv_sk = self.fs.get_feature_view(fv_sk_name, "v1")
@@ -1122,6 +1127,9 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
         fg_name = f"FG_INTEG_SK_BFV_{uuid.uuid4().hex[:8].upper()}"
         fg_version = "v1"
         fg = FeatureGroup(name=fg_name, features=[fv_sk], auto_prefix=False)
+
+        # Secondary key AD_ID + value window 3d -> one synthesized keys array.
+        keys_col_token = "AD_ID_KEYS_3D"
 
         try:
             # This call regressed before the secondary-key array-wrapping fix.
@@ -1132,23 +1140,36 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                     any(agg in c for c in normalized_outputs),
                     f"expected agg '{agg}' in FG output_columns; got {sorted(normalized_outputs)}",
                 )
+            self.assertTrue(
+                any(keys_col_token in c for c in normalized_outputs),
+                f"expected keys array '{keys_col_token}' in FG output_columns; got {sorted(normalized_outputs)}",
+            )
 
             fg_live = self.fs.get_feature_group(fg_name, fg_version)
 
             sum_col_token = f"AMOUNT_SUM_3D_{sfx}"
+            count_col_token = f"TXN_COUNT_3D_{sfx}"
             deadline = time.time() + 600.0
             pdf: Optional[pd.DataFrame] = None
             value = None
+            count_value = None
+            keys_value = None
             while time.time() < deadline:
                 pdf = self._read_feature_group_with_retry(fg_live, keys=[[seeded_user_id]])
                 if len(pdf) > 0:
                     sum_col = next((c for c in pdf.columns if sum_col_token in _normalize_column_name(c)), None)
+                    count_col = next((c for c in pdf.columns if count_col_token in _normalize_column_name(c)), None)
+                    keys_col = next((c for c in pdf.columns if keys_col_token in _normalize_column_name(c)), None)
                     candidate = pdf.iloc[0][sum_col] if sum_col is not None else None
+                    count_candidate = pdf.iloc[0][count_col] if count_col is not None else None
+                    keys_candidate = pdf.iloc[0][keys_col] if keys_col is not None else None
                     # ``x != x`` detects float NaN without importing math; arrays
                     # are object-dtype so this only trips on a scalar-null cell.
                     is_nan = isinstance(candidate, float) and candidate != candidate
                     if candidate is not None and not is_nan:
                         value = candidate
+                        count_value = count_candidate
+                        keys_value = keys_candidate
                         break
                 time.sleep(5)
 
@@ -1161,6 +1182,10 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
                     any(agg in c for c in pdf_cols),
                     f"expected agg '{agg}' in read columns; got {sorted(pdf_cols)}",
                 )
+            self.assertTrue(
+                any(keys_col_token in c for c in pdf_cols),
+                f"expected keys array '{keys_col_token}' in read columns; got {sorted(pdf_cols)}",
+            )
 
             self.assertIsNotNone(
                 value,
@@ -1173,6 +1198,31 @@ class FeatureGroupIntegTest(StreamingFeatureViewIntegTestBase, absltest.TestCase
             # the array wrapping regresses.
             coerced = json.loads(value) if isinstance(value, str) else value
             self.assertIsInstance(list(coerced), list)
+            # COUNT is the column whose element type regressed (FG declared
+            # ArrayType<DecimalType> vs upstream ArrayType<LongType>). With COUNT
+            # as LongType the read succeeds and returns an array (one per AD_ID).
+            self.assertIsNotNone(
+                count_value,
+                f"secondary-key COUNT column '{count_col_token}' did not materialize a non-null value "
+                f"within 600s; cannot verify the COUNT element-type regression guard.",
+            )
+            coerced_count = json.loads(count_value) if isinstance(count_value, str) else count_value
+            self.assertIsInstance(list(coerced_count), list)
+            # Keys array must be element-aligned with the values (same length).
+            # Seeded AD_IDs {'ad_a','ad_b'} -> length 2.
+            self.assertIsNotNone(
+                keys_value,
+                f"secondary-key keys array '{keys_col_token}' did not materialize a non-null value within 600s.",
+            )
+            coerced_keys = json.loads(keys_value) if isinstance(keys_value, str) else keys_value
+            keys_list = list(coerced_keys)
+            self.assertGreater(len(keys_list), 0, "keys array came back empty.")
+            self.assertEqual(
+                len(keys_list),
+                len(list(coerced)),
+                f"keys array (len {len(keys_list)}) is not element-aligned with the "
+                f"SUM value array (len {len(list(coerced))}).",
+            )
         finally:
             self.fs.delete_feature_group(fg_name, fg_version)
 
