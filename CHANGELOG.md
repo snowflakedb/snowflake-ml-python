@@ -1,6 +1,22 @@
 # Release History
 
-## 1.45.0
+## 1.46.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+* Registry: For Snowpark ML Pipeline models with explainability enabled, explanations now cover only the columns the
+  final estimator was actually trained on (its `input_cols`). Untransformed passthrough columns (e.g. raw string
+  columns left in place by an encoder using new `output_cols`, or the label column) are no longer included in the
+  explain output. This also fixes a failure where such passthrough columns could reach the SHAP explainer and raise an
+  error during `log_model(..., enable_explainability=True)`.
+
+### Deprecations
+
+## 1.45.0 (2026-07-01)
 
 ### New Features
 

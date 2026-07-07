@@ -1,4 +1,5 @@
 import json
+import os
 from typing import cast
 from unittest import mock
 
@@ -394,6 +395,70 @@ class UtilTest(absltest.TestCase):
         # when data_size < 10 rows
         df = pd.DataFrame(np.random.randint(0, 100, size=(5, 3)))
         self.assertEqual(5, cast(pd.DataFrame, handlers_utils.get_truncated_sample_data(df, 10)).shape[0])
+
+
+class RedirectHfCacheToWritableDirTest(absltest.TestCase):
+    def setUp(self) -> None:
+        self._original_env = {key: os.environ.get(key) for key in ("HF_HOME", "TRANSFORMERS_CACHE", "XDG_CACHE_HOME")}
+
+    def tearDown(self) -> None:
+        for key, value in self._original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def test_redirects_in_stored_procedure(self) -> None:
+        with mock.patch(
+            "snowflake.snowpark._internal.utils.is_in_stored_procedure",
+            return_value=True,
+        ):
+            handlers_utils.redirect_hf_cache_to_writable_dir()
+
+        self.assertEqual(os.environ["HF_HOME"], "/tmp")
+        self.assertEqual(os.environ["TRANSFORMERS_CACHE"], "/tmp")
+        self.assertEqual(os.environ["XDG_CACHE_HOME"], "/tmp")
+
+    def test_redirects_when_default_cache_not_writable(self) -> None:
+        with mock.patch(
+            "snowflake.snowpark._internal.utils.is_in_stored_procedure",
+            return_value=False,
+        ), mock.patch("os.access", return_value=False):
+            handlers_utils.redirect_hf_cache_to_writable_dir()
+
+        self.assertEqual(os.environ["HF_HOME"], "/tmp")
+        self.assertEqual(os.environ["TRANSFORMERS_CACHE"], "/tmp")
+        self.assertEqual(os.environ["XDG_CACHE_HOME"], "/tmp")
+
+    def test_preserves_env_when_default_cache_writable(self) -> None:
+        os.environ["HF_HOME"] = "/custom/hf"
+        os.environ["TRANSFORMERS_CACHE"] = "/custom/transformers"
+        os.environ["XDG_CACHE_HOME"] = "/custom/xdg"
+
+        with mock.patch(
+            "snowflake.snowpark._internal.utils.is_in_stored_procedure",
+            return_value=False,
+        ), mock.patch("os.access", return_value=True):
+            handlers_utils.redirect_hf_cache_to_writable_dir()
+
+        self.assertEqual(os.environ["HF_HOME"], "/custom/hf")
+        self.assertEqual(os.environ["TRANSFORMERS_CACHE"], "/custom/transformers")
+        self.assertEqual(os.environ["XDG_CACHE_HOME"], "/custom/xdg")
+
+    def test_does_not_override_existing_env_when_cache_not_writable(self) -> None:
+        os.environ["HF_HOME"] = "/user/specified"
+        os.environ["TRANSFORMERS_CACHE"] = "/user/specified"
+        os.environ["XDG_CACHE_HOME"] = "/user/specified"
+
+        with mock.patch(
+            "snowflake.snowpark._internal.utils.is_in_stored_procedure",
+            return_value=False,
+        ), mock.patch("os.access", return_value=False):
+            handlers_utils.redirect_hf_cache_to_writable_dir()
+
+        self.assertEqual(os.environ["HF_HOME"], "/user/specified")
+        self.assertEqual(os.environ["TRANSFORMERS_CACHE"], "/user/specified")
+        self.assertEqual(os.environ["XDG_CACHE_HOME"], "/user/specified")
 
 
 if __name__ == "__main__":

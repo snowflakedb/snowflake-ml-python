@@ -623,6 +623,8 @@ def run_streaming_postamble(
             backfill_udtf_name=fq_udtf,
             backfill_udtf_signature=udtf_signature,
             backfill_state=BACKFILL_STATE_RUNNING,
+            # Persist backfill_table so get_feature_view can restore it.
+            backfill_table=stream_config.backfill_table,
         ),
     )
 

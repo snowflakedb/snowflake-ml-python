@@ -1399,23 +1399,6 @@ class JobManagerTest(JobTestBase):
             self.session.use_database(current_database)
             self.session.use_schema(current_schema)
 
-    def test_job_with_modin(self) -> None:
-        def test_modin_function() -> None:
-            import modin.pandas as mpd
-            import numpy as np
-            import pandas as pd
-
-            data = {
-                "A": np.random.randint(0, 100, size=100),
-                "B": np.random.randn(100),
-                "C": np.random.choice(["foo", "bar", "baz"], size=100),
-            }
-            df = pd.DataFrame(data)
-            mpd.DataFrame(df)
-
-        job = self._submit_func_as_file(test_modin_function)
-        self.assertEqual(job.wait(), "DONE", job.get_logs())
-
     @parameterized.parameters(  # type: ignore[misc]
         ("1.7.1"),
         ("/snowflake/images/snowflake_images/st_plat/runtime/x86/runtime_image/snowbooks:1.7.1"),

@@ -17,6 +17,7 @@ from absl.testing import absltest, parameterized
 
 from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store.entity import Entity
+from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_group import FeatureGroup, FeatureGroupVersion
 from snowflake.ml.feature_store.feature_view import (
     FeatureView,
@@ -409,6 +410,87 @@ class FeatureGroupToSpecTest(absltest.TestCase):
         self.assertEqual(outputs, ["WEIGHTED_BALANCE"])
         # The OFT's PK comes from the derived entity columns, not the features list.
         self.assertEqual(spec.spec.ordered_entity_column_names, ["USER_ID"])
+
+
+def _make_secondary_key_tiled_fv(
+    *,
+    name: str = "AGG_FV",
+    version: str = "v1",
+) -> FeatureView:
+    """Build a registered-looking tiled FV with an aggregation secondary key.
+
+    Value features: SUM(amount, 24h) and COUNT(amount, 7d). Secondary key AD_ID
+    synthesizes one ``AD_ID_KEYS_<window>`` array per window. ``output_schema``
+    is overridden to the physical tile-DT shape (join key + the secondary-key
+    scalar column + ``_PARTIAL_*`` value columns), which is what the FG spec
+    builder reads for tiled sources.
+    """
+    tile_schema = StructType(
+        [
+            StructField("USER_ID", StringType()),
+            StructField("AD_ID", StringType()),
+            StructField("_PARTIAL_SUM_AMOUNT", DoubleType()),
+        ]
+    )
+    mock_df = MagicMock(spec=DataFrame)
+    mock_df.columns = [f.name for f in tile_schema.fields]
+    mock_df.schema = tile_schema
+    mock_df.queries = {"queries": [f"SELECT * FROM {name}"]}
+
+    fv = FeatureView(
+        name=name,
+        entities=[Entity(name="USER", join_keys=["user_id"])],
+        feature_df=mock_df,
+        timestamp_col="event_ts",
+        refresh_freq="1h",
+        feature_granularity="1h",
+        aggregation_secondary_keys=["ad_id"],
+        features=[
+            Feature.sum("amount", "24h").alias("spend_24h"),
+            Feature.count("amount", "7d").alias("events_7d"),
+        ],
+    )
+    fv._version = FeatureViewVersion(version)
+    fv._database = SqlIdentifier("DB")
+    fv._schema = SqlIdentifier("SCH")
+    fv._infer_schema_df = mock_df
+    return fv
+
+
+class FeatureGroupSecondaryKeyAgreementTest(absltest.TestCase):
+    """The two output-column paths must agree for a secondary-key FV.
+
+    ``output_columns`` (advertised + persisted) and the served OFT spec are
+    computed by separate paths; the keys arrays must appear in both, not just
+    the advertised list.
+    """
+
+    def _spec_output_names(self, fg: FeatureGroup) -> set[str]:
+        spec = fg._to_spec(database="DB", schema="SCH", version="v1")
+        return {f.output_column.name for f in spec.spec.features}
+
+    def test_whole_fv_output_columns_match_served_spec(self) -> None:
+        fv = _make_secondary_key_tiled_fv()
+        fg = FeatureGroup(name="FG", features=[fv], auto_prefix=False)
+
+        advertised = set(fg.output_columns)
+        served = self._spec_output_names(fg)
+
+        self.assertIn("AD_ID_KEYS_24H", advertised)
+        self.assertIn("AD_ID_KEYS_7D", advertised)
+        self.assertEqual(advertised, served)
+
+    def test_slice_output_columns_match_served_spec(self) -> None:
+        fv = _make_secondary_key_tiled_fv()
+        # Select only a value feature; slice() auto-includes its companion keys.
+        fg = FeatureGroup(name="FG", features=[fv.slice(["SPEND_24H"])], auto_prefix=False)
+
+        advertised = set(fg.output_columns)
+        served = self._spec_output_names(fg)
+
+        self.assertIn("AD_ID_KEYS_24H", advertised)
+        self.assertIn("SPEND_24H", advertised)
+        self.assertEqual(advertised, served)
 
 
 class FeatureGroupVersionTest(absltest.TestCase):

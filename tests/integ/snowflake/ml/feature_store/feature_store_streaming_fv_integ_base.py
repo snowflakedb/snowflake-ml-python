@@ -516,6 +516,46 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         label = f" ({desc})" if desc else ""
         self.fail(f"Online read for {fv_name}/{version}{label} timed out; last_err={last_err!r}")
 
+    def _read_online_with_retry(
+        self,
+        fs: FeatureStore,
+        fv_live: FeatureView,
+        keys: list[list[Any]],
+        *,
+        retries: int = 6,
+        backoff_sec: float = 5.0,
+    ) -> pd.DataFrame:
+        """Read ONLINE with bounded retry against transient online-serving skew.
+
+        Mirrors the FeatureGroup bundle's ``_read_feature_group_with_retry``: use
+        this for tests that measure a specific read (HTTP client reuse, HTTP/2
+        negotiation) rather than readiness, where a transient online-serving 404
+        would otherwise fail the single measured read. The 404 unwraps to a bare
+        ``RuntimeError``, so the catch is intentionally broad.
+
+        Args:
+            fs: Feature store client.
+            fv_live: Hydrated FeatureView to read against.
+            keys: Join-key rows passed to ``read_feature_view``.
+            retries: Maximum attempts before giving up.
+            backoff_sec: Fixed sleep between attempts.
+
+        Returns:
+            The pandas DataFrame from the first successful attempt.
+
+        Raises:
+            last_err: The last exception observed if every attempt fails.
+        """
+        last_err: Optional[Exception] = None
+        for _ in range(retries):
+            try:
+                return fs.read_feature_view(fv_live, keys=keys, store_type=StoreType.ONLINE, as_pandas=True)
+            except Exception as e:
+                last_err = e
+                time.sleep(backoff_sec)
+        assert last_err is not None
+        raise last_err
+
     def _wait_online_service_ingest_endpoint(self, timeout_s: float = 180.0) -> None:
         """Poll until the Online Service exposes an ingest endpoint."""
         deadline = time.time() + timeout_s

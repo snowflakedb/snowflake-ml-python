@@ -1,3 +1,7 @@
+# Annotations are lazy so ``types.PrivateKeyTypes`` (added in cryptography 40.0, replacing the
+# now-removed ``PRIVATE_KEY_TYPES``) is never evaluated at runtime and stays version-tolerant.
+from __future__ import annotations
+
 import base64
 import hashlib
 import logging
@@ -30,7 +34,7 @@ class JWTGenerator:
         self,
         account: str,
         user: str,
-        private_key: types.PRIVATE_KEY_TYPES,
+        private_key: types.PrivateKeyTypes,
         lifetime: Optional[timedelta] = None,
         renewal_delay: Optional[timedelta] = None,
     ) -> None:
@@ -125,7 +129,7 @@ class JWTGenerator:
         return token
 
     @staticmethod
-    def _calculate_public_key_fingerprint(private_key: types.PRIVATE_KEY_TYPES) -> str:
+    def _calculate_public_key_fingerprint(private_key: types.PrivateKeyTypes) -> str:
         # Get the raw bytes of public key.
         public_key_raw = private_key.public_key().public_bytes(
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo

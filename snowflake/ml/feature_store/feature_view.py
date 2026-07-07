@@ -1544,7 +1544,7 @@ class FeatureView(lineage_node.LineageNode):
                 df["is_large"] = df["amount"] > 1000
                 return df
         """
-        if self._stream_config is not None:
+        if self._stream_config is not None and self._stream_config.transformation_fn is not None:
             return self._stream_config.get_function_source()
         return self._transformation_fn_source
 
@@ -2469,6 +2469,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
             ),
             feature_granularity=json_dict.get("_feature_granularity"),
             aggregation_specs=aggregation_specs,
+            aggregation_secondary_keys=json_dict.get("_aggregation_secondary_keys"),
             feature_aggregation_method=feature_aggregation_method,
             storage_config=(
                 StorageConfig.from_json(json_dict["_storage_config"]) if json_dict.get("_storage_config") else None
@@ -2580,6 +2581,7 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
         is_realtime: bool = False,
         realtime_config: Optional[RealtimeConfig] = None,
         source_refs: Optional[list[dict[str, Any]]] = None,
+        stream_config: Optional[StreamConfig] = None,
     ) -> FeatureView:
         if is_realtime:
             # Realtime FVs have no feature_df, no DT/View, no schema inference.
@@ -2620,6 +2622,9 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 append_only=append_only,
                 backup_source=backup_source,
             )
+            # Restore the rehydrated stream_config on the reconstructed FV.
+            if stream_config is not None:
+                fv._stream_config = stream_config
         fv._version = FeatureViewVersion(version) if version is not None else None
         fv._status = status
         fv._database = SqlIdentifier(database) if database is not None else None

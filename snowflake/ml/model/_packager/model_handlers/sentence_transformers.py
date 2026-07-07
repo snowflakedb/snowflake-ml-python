@@ -26,7 +26,6 @@ from snowflake.ml.model._packager.model_meta import (
     model_meta_schema,
 )
 from snowflake.ml.model.models import huggingface as snowml_huggingface
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 if TYPE_CHECKING:
     import sentence_transformers
@@ -894,9 +893,7 @@ class SentenceTransformerHandler(_base.BaseModelHandler["sentence_transformers.S
     ) -> "sentence_transformers.SentenceTransformer":
         import sentence_transformers
 
-        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            os.environ["TRANSFORMERS_CACHE"] = "/tmp"
-            os.environ["HF_HOME"] = "/tmp"
+        handlers_utils.redirect_hf_cache_to_writable_dir()
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blob_metadata = model_meta.models[name]

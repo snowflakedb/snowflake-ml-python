@@ -38,6 +38,14 @@ def _apply_transforms_up_to_last_step(
             if not hasattr(step, "transform"):
                 raise ValueError(f"Step '{step_name}' does not have a 'transform' method.")
             data = pd.DataFrame(step.transform(data))
+        # A transform step can leave columns the final predictor was not trained on in the frame (e.g. raw string
+        # columns that an encoder wrote to new output_cols without dropping, or label columns). The predictor
+        # itself selects only its `input_cols` before predicting, so restrict the frame the same way here.
+        # Otherwise these passthrough columns reach the underlying SHAP explainer, which rejects non-numeric data.
+        final_estimator = model.steps[-1][1]  # type: ignore[attr-defined]
+        input_cols = getattr(final_estimator, "input_cols", None)
+        if input_cols and isinstance(data, pd.DataFrame) and all(col in data.columns for col in input_cols):
+            data = data[list(input_cols)]
     return data
 
 

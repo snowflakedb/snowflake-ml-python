@@ -178,6 +178,8 @@ class StreamConfig:
     transformation_fn: Callable[[pd.DataFrame], pd.DataFrame]
     backfill_df: Any  # DataFrame — Any avoids circular import
     backfill_start_time: Optional[datetime.datetime] = None
+    # FQN of the backfill table; persisted so get_feature_view can restore it.
+    backfill_table: Optional[str] = None
 
     def __post_init__(self) -> None:
         fn = self.transformation_fn
@@ -238,6 +240,38 @@ class StreamConfig:
     def get_function_name(self) -> str:
         """Return the ``__name__`` of ``transformation_fn``."""
         return self.transformation_fn.__name__
+
+    @classmethod
+    def _for_reconstruction(
+        cls,
+        stream_source: Union[str, Any],
+        backfill_table: Optional[str] = None,
+        backfill_start_time: Optional[datetime.datetime] = None,
+    ) -> StreamConfig:
+        """Build a metadata-only ``StreamConfig`` for round-trip reconstruction.
+
+        Bypasses ``__post_init__`` validation so ``StreamConfig`` can be
+        rehydrated from ``StreamingMetadata`` without a live
+        ``transformation_fn`` or ``backfill_df``. Do not call
+        ``get_function_source`` or ``get_function_name`` on the result.
+
+        Args:
+            stream_source: ``StreamSource`` object or registered name string.
+            backfill_table: FQN of the backfill table, or ``None`` for legacy
+                streaming FVs registered before this field existed.
+            backfill_start_time: Authored ``backfill_start_time``, if any.
+
+        Returns:
+            A frozen ``StreamConfig`` with ``transformation_fn`` and
+            ``backfill_df`` set to ``None``.
+        """
+        instance = cls.__new__(cls)
+        object.__setattr__(instance, "stream_source", stream_source)
+        object.__setattr__(instance, "transformation_fn", None)
+        object.__setattr__(instance, "backfill_df", None)
+        object.__setattr__(instance, "backfill_start_time", backfill_start_time)
+        object.__setattr__(instance, "backfill_table", backfill_table)
+        return instance
 
     def get_stream_source_name(self) -> str:
         """Return the stream source name as a string.

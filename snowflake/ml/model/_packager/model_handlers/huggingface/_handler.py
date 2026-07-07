@@ -30,7 +30,6 @@ from snowflake.ml.model.models import (
     huggingface as huggingface_base,
     huggingface_pipeline,
 )
-from snowflake.snowpark._internal import utils as snowpark_utils
 
 logger = logging.getLogger(__name__)
 
@@ -366,10 +365,7 @@ class TransformersPipelineHandler(
     ) -> Union[
         huggingface_pipeline.HuggingFacePipelineModel, huggingface_base.TransformersPipeline, "transformers.Pipeline"
     ]:
-        if snowpark_utils.is_in_stored_procedure():  # type: ignore[no-untyped-call]
-            # We need to redirect the some folders to a writable location in the sandbox.
-            os.environ["HF_HOME"] = "/tmp"
-            os.environ["XDG_CACHE_HOME"] = "/tmp"
+        handlers_utils.redirect_hf_cache_to_writable_dir()
 
         model_blob_path = os.path.join(model_blobs_dir_path, name)
         model_blobs_metadata = model_meta.models

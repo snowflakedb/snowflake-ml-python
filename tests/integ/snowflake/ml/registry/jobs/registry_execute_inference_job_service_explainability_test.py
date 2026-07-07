@@ -1,0 +1,65 @@
+import unittest
+
+import inflection
+import pandas as pd
+import shap
+import xgboost
+from absl.testing import absltest
+from packaging import version as pkg_version
+from sklearn import datasets, model_selection
+
+from snowflake.ml.model import model_signature
+from snowflake.ml.model._client.model import batch_inference_specs
+from tests.integ.snowflake.ml.registry.jobs import (
+    registry_execute_inference_job_service_test_base,
+)
+
+_XGBOOST_SHAP_BROKEN = pkg_version.parse(xgboost.__version__) >= pkg_version.parse("3.1.0")
+_SKIP_REASON = (
+    f"XGBoost {xgboost.__version__} >= 3.1.0: SHAP explainability is broken due to "
+    "server-side numpy<2 constraint preventing shap>=0.50.0 installation."
+)
+
+
+class RegistryExecuteInferenceJobServiceExplainabilityTest(
+    registry_execute_inference_job_service_test_base.ExecuteInferenceJobServiceTestBase
+):
+    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
+    def test_xgb_booster_with_signature_and_sample_data(self) -> None:
+        cal_data = datasets.load_breast_cancer(as_frame=True)
+        cal_X = cal_data.data
+        cal_y = cal_data.target
+        cal_X.columns = [inflection.parameterize(c, "_") for c in cal_X.columns]
+        cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
+        params = dict(n_estimators=100, reg_lambda=1, gamma=0, max_depth=3, objective="binary:logistic")
+        regressor = xgboost.train(params, xgboost.DMatrix(data=cal_X_train, label=cal_y_train))
+        y_pred = pd.DataFrame(
+            regressor.predict(xgboost.DMatrix(data=cal_X_test)),
+            columns=["output_feature_0"],
+        )
+
+        job_name, output_stage_location, _ = self._prepare_job_name_and_stage_for_batch_inference()
+
+        cal_X_test = pd.DataFrame(cal_X_test)
+        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
+        explanation_columns = [f"{col}_explanation" for col in cal_X_test.columns]
+        expected_explanations_df = pd.DataFrame(expected_explanations, columns=explanation_columns)
+        input_df, expected_predictions = self._prepare_batch_inference_data(cal_X_test, expected_explanations_df)
+
+        sig = {"predict": model_signature.infer_signature(cal_X_test, y_pred)}
+
+        self._test_registry_execute_inference_job_service(
+            model=regressor,
+            sample_input_data=cal_X_test,
+            options={"enable_explainability": True},
+            signatures=sig,
+            X=input_df,
+            expected_predictions=expected_predictions,
+            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+            function_name="explain",
+            job_name=job_name,
+        )
+
+
+if __name__ == "__main__":
+    absltest.main()

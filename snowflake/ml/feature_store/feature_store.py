@@ -97,6 +97,7 @@ from snowflake.ml.feature_store.spec.models import (
     validate_spec_oft_offline_table_schema,
     validate_spec_oft_tiled_offline_table_schema,
 )
+from snowflake.ml.feature_store.stream_config import StreamConfig
 from snowflake.ml.feature_store.stream_source import (
     _LIST_STREAM_SOURCE_SCHEMA,
     StreamSource,
@@ -1323,11 +1324,16 @@ class FeatureStore:
         """Update a registered feature view.
             Check feature_view.py for which fields are allowed to be updated after registration.
 
+            ``RealtimeFeatureView`` does not support ``refresh_freq`` or ``warehouse``
+            updates. Recreate-only fields (``stream_source``, ``transformation_fn``,
+            ``feature_granularity``, ``aggregation_secondary_keys``, ``backfill_table``,
+            ``source_refs``) require :meth:`delete_feature_view` + :meth:`register_feature_view`.
+
         Args:
             name: FeatureView object or name to suspend.
             version: Optional version of feature view. Must set when argument feature_view is a str.
-            refresh_freq: updated refresh frequency.
-            warehouse: updated warehouse.
+            refresh_freq: updated refresh frequency. Not applicable to ``RealtimeFeatureView``.
+            warehouse: updated warehouse. Not applicable to ``RealtimeFeatureView``.
             initialization_warehouse: updated initialization warehouse, used for the initial build and
                 reinitializations of the backing dynamic table. Pass a warehouse name to set it, or ``None`` to clear
                 it (all refreshes then run on ``warehouse``). When omitted, the existing value is left unchanged.
@@ -1341,7 +1347,7 @@ class FeatureStore:
             updated_feature_df: Optional replacement Snowpark ``DataFrame`` for the feature view
                 definition. When set, the returned :class:`~snowflake.ml.feature_store.feature_view.FeatureView`
                 is reinitialized from this dataframe (same session as the ``FeatureStore``). Not supported for
-                streaming or rollup feature views.
+                streaming, realtime, or rollup feature views.
 
         Returns:
             Updated FeatureView.
@@ -1432,6 +1438,18 @@ class FeatureStore:
                 original_exception=RuntimeError(
                     f"Static feature view '{full_name}' does not support refresh_freq, warehouse, "
                     "and initialization_warehouse."
+                ),
+            )
+
+        # RTFVs are OFT-only — no Dynamic Table or refresh Task.
+        if feature_view.is_realtime_feature_view and (actual_refresh_freq is not None or warehouse is not None):
+            full_name = f"{feature_view.name}/{feature_view.version}"
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT,
+                original_exception=RuntimeError(
+                    f"Realtime feature view '{full_name}' does not support refresh_freq or warehouse "
+                    "updates; the underlying online feature table has no Dynamic Table or refresh Task. "
+                    "Only desc and online_config are alterable for realtime feature views."
                 ),
             )
 
@@ -1541,6 +1559,16 @@ class FeatureStore:
 
             # Step 3: Execute atomically
             self._execute_atomic_operations(operations)
+
+            # RTFVs have no offline resources (DT/task); their desc lives in the
+            # REALTIME_CONFIG metadata row and must be updated separately.
+            if feature_view.is_realtime_feature_view and new_desc != feature_view.desc:
+                rt_meta = self._metadata_manager.get_realtime_config(
+                    feature_view.name.resolved(), str(feature_view.version)
+                )
+                if rt_meta is not None:
+                    rt_meta.desc = new_desc
+                    self._metadata_manager.save_realtime_config(rt_meta)
 
         except Exception as e:
             # Step 4: Rollback on failure
@@ -4181,16 +4209,31 @@ class FeatureStore:
         desc: str,
         online_config: Optional[fv_mod.OnlineConfig],
     ) -> tuple[list[tuple[str, Union[str, FeatureView]]], list[tuple[str, Union[str, FeatureView]]],]:
-        """Plan all update operations and their rollbacks."""
+        """Plan all update operations and their rollbacks.
+
+        Args:
+            feature_view: The registered ``FeatureView`` to update.
+            refresh_freq: New refresh frequency, or ``None`` to leave it unchanged.
+            warehouse: New warehouse identifier, or ``None`` to leave it unchanged.
+            initialization_warehouse: Warehouse used for the initial backfill task,
+                or ``None`` to leave it unchanged.
+            desc: New description.
+            online_config: Online configuration update, or ``None`` to leave
+                online state unchanged.
+
+        Returns:
+            A tuple ``(operations, rollback_operations)`` of ``(op_type, op_data)`` pairs.
+        """
         operations: list[tuple[str, Union[str, FeatureView]]] = []
         rollback_operations: list[tuple[str, Union[str, FeatureView]]] = []
 
-        # Plan offline updates
-        offline_ops, offline_rollback_ops = self._build_offline_update_queries(
-            feature_view, refresh_freq, warehouse, initialization_warehouse, desc
-        )
-        operations.extend(offline_ops)
-        rollback_operations.extend(offline_rollback_ops)
+        # RealtimeFeatureViews have no offline resources to update.
+        if not feature_view.is_realtime_feature_view:
+            offline_ops, offline_rollback_ops = self._build_offline_update_queries(
+                feature_view, refresh_freq, warehouse, initialization_warehouse, desc
+            )
+            operations.extend(offline_ops)
+            rollback_operations.extend(offline_rollback_ops)
 
         # Plan online updates
         online_strategy = self._plan_online_update(feature_view, online_config)
@@ -7681,6 +7724,12 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
         source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
 
+        # Surface the authored source-ref list (JSON-encoded) when a
+        # ``FV_SOURCE_REFS`` row exists; otherwise leave the column null.
+        # Verbose-only: goes into output_values_extra alongside backup_source.
+        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name, version)
+        source_refs_json = json.dumps(source_refs_meta.sources) if source_refs_meta is not None else None
+
         backup_source: Optional[str] = None
         if fv_metadata.is_append_only:
             append_only_meta = self._metadata_manager.get_append_only_metadata(name, version)
@@ -7864,6 +7913,11 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
         source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name.identifier(), version)
         restored_source_refs = source_refs_meta.sources if source_refs_meta is not None else None
 
+        # Rehydrate the authored source-ref list onto the reconstructed
+        # FV when a ``FV_SOURCE_REFS`` row was persisted at register time.
+        source_refs_meta = self._metadata_manager.get_feature_view_source_refs(name.identifier(), version)
+        restored_source_refs = source_refs_meta.sources if source_refs_meta is not None else None
+
         if obj_type == _FeatureStoreObjTypes.MANAGED_FEATURE_VIEW:
             df = self._session.sql(query)
             entities = [find_and_compose_entity(n) for n in fv_metadata.entities]
@@ -7950,6 +8004,25 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 streaming_meta = self._metadata_manager.get_streaming_metadata(name.identifier(), version)
                 if streaming_meta and streaming_meta.transformation_fn_source:
                     fv._transformation_fn_source = streaming_meta.transformation_fn_source
+                # Restore a metadata-only ``StreamConfig`` so callers see the
+                # authored ``backfill_table`` / ``backfill_start_time`` /
+                # ``stream_source`` values rather than ``None``.
+                # ``transformation_fn`` and ``backfill_df`` are not
+                # rehydrated — the live callable is unavailable on the
+                # read path and the source DataFrame is not re-executable
+                # from a fresh session.
+                if streaming_meta is not None:
+                    parsed_backfill_start: Optional[datetime.datetime] = None
+                    if streaming_meta.backfill_start_time is not None:
+                        try:
+                            parsed_backfill_start = datetime.datetime.fromisoformat(streaming_meta.backfill_start_time)
+                        except (TypeError, ValueError):
+                            parsed_backfill_start = None
+                    fv._stream_config = StreamConfig._for_reconstruction(
+                        stream_source=streaming_meta.stream_source_name,
+                        backfill_table=streaming_meta.backfill_table,
+                        backfill_start_time=parsed_backfill_start,
+                    )
 
             # Load rollup metadata if this is a rollup FV
             if fv_metadata.is_rollup:
