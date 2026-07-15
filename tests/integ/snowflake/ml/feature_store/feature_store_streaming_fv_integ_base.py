@@ -115,6 +115,37 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+# When set, pins the session-level Feature Store runtime (quake) image tag before the
+# Online Service is provisioned, so the service comes up on the requested image. Must be
+# applied on the same session that creates the Online Service. Not honored in reuse mode,
+# where the Online Service already exists.
+FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV = "FEATURE_STORE_IMAGE_TAG_OVERRIDE"
+
+
+def get_feature_store_image_tag_override() -> Optional[str]:
+    """Return the Feature Store runtime image tag override, or ``None`` when unset."""
+    image_tag = os.environ.get(FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV, "").strip()
+    return image_tag or None
+
+
+def maybe_override_feature_store_image_tag(session: Session) -> None:
+    """Set the session-level ``FEATURE_STORE_IMAGE_TAG`` when the override env is set.
+
+    Must be called on the same session that creates the Online Service, before the
+    service is created, so it starts on the pinned runtime image. A no-op when the
+    override env is unset.
+
+    Args:
+        session: Snowpark session that will create the Online Service.
+    """
+    image_tag = get_feature_store_image_tag_override()
+    if image_tag is None:
+        return
+    safe_tag = snowpark_utils.escape_single_quotes(image_tag)  # type: ignore[no-untyped-call]
+    session.sql(f"ALTER SESSION SET FEATURE_STORE_IMAGE_TAG = '{safe_tag}'").collect()
+    logger.info("Applied session-level FEATURE_STORE_IMAGE_TAG override %r.", image_tag)
+
+
 def wait_online_service_running_with_query_endpoint(
     *,
     session: Session,
@@ -175,6 +206,10 @@ def wait_online_service_running_with_query_endpoint(
                 logger.warning("drop_online_service failed; continuing with create.", exc_info=True)
             if on_recreate is not None:
                 on_recreate()
+
+    # Pin the runtime image tag (if requested) on this session before we actually
+    # create the Online Service, so the override message prints only on create.
+    maybe_override_feature_store_image_tag(session)
 
     try:
         fs.create_online_service(producer_role, consumer_role)

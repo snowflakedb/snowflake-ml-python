@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 class ZeroShotImageClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles zero-shot image classification pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

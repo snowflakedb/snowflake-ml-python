@@ -61,7 +61,11 @@ class {transform.test_class_name}(TestCase):
 
         if add_sample_weight_col:
             random.seed(0)
-            input_df_pandas["SAMPLE_WEIGHT"] = np.array([random.randint(0, 100) for _ in range(input_df_pandas.shape[0])])
+            # Use strictly positive weights. scikit-learn 1.8+ estimators such as IsolationForest treat
+            # sample_weight as sampling probabilities during sub-sampling, and zero weights can make the
+            # number of non-zero entries smaller than the requested sample size ("Fewer non-zero entries
+            # in p than size").
+            input_df_pandas["SAMPLE_WEIGHT"] = np.array([random.randint(1, 100) for _ in range(input_df_pandas.shape[0])])
 
         # Predict UDF processes and returns data in random order.
         # Add INDEX column so that output can be sorted by that column

@@ -54,12 +54,24 @@ DATAFRAME_TYPE = Union[DataFrame, pd.DataFrame]
 
 INFER_SIGNATURE_MAX_ROWS = 100
 
-SKLEARN_LOWER, SKLEARN_UPPER = ('1.4', '1.8')
+SKLEARN_LOWER, SKLEARN_UPPER = ('1.4', '1.9')
 # Modeling library estimators require a smaller sklearn version range.
 if not version.Version(SKLEARN_LOWER) <= version.Version(sklearn.__version__) < version.Version(SKLEARN_UPPER):
     raise Exception(
         f"To use the modeling library, install scikit-learn version >= {{SKLEARN_LOWER}} and < {{SKLEARN_UPPER}}"
     )
+
+
+def _get_estimator_type(estimator: Any) -> Optional[str]:
+    # scikit-learn 1.8+ exposes the estimator type via ``Tags.estimator_type``
+    # (retrieved through ``sklearn.utils.get_tags``); the private
+    # ``_estimator_type`` attribute is deprecated in newer versions.
+    if version.Version(sklearn.__version__) >= version.Version("1.8"):
+        from sklearn.utils import get_tags
+
+        estimator_type: Optional[str] = get_tags(estimator).estimator_type
+        return estimator_type
+    return getattr(estimator, "_estimator_type", None)
 
 
 class {transform.original_class_name}(BaseTransformer):
@@ -908,9 +920,10 @@ class {transform.original_class_name}(BaseTransformer):
         outputs: List[BaseFeatureSpec] = []
         if hasattr(self, "predict"):
             # keep mypy happy
-            assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type")
+            assert self._sklearn_object is not None
+            estimator_type = _get_estimator_type(self._sklearn_object)
             # For classifier, the type of predict is the same as the type of label
-            if self._sklearn_object._estimator_type == "classifier":
+            if estimator_type == "classifier":
                 # label columns is the desired type for output
                 outputs = list(_infer_signature(_truncate_data(dataset[self.label_cols], INFER_SIGNATURE_MAX_ROWS), "output", use_snowflake_identifiers=True))
                 # rename the output columns
@@ -921,14 +934,14 @@ class {transform.original_class_name}(BaseTransformer):
             # For mixture models that use the density mixin, `predict` returns the argmax of the log prob.
             # For outlier models, returns -1 for outliers and 1 for inliers.
             # Clusterer returns int64 cluster labels.
-            elif self._sklearn_object._estimator_type in ["DensityEstimator", "clusterer", "outlier_detector"]:
+            elif estimator_type in ["DensityEstimator", "density_estimator", "clusterer", "outlier_detector"]:
                 outputs = [FeatureSpec(dtype=DataType.INT64, name=c) for c in self.output_cols]
                 self._model_signature_dict["predict"] = ModelSignature(
                     inputs, ([] if self._drop_input_cols else inputs) + outputs
                 )
 
             # For regressor, the type of predict is float64
-            elif self._sklearn_object._estimator_type == "regressor":
+            elif estimator_type == "regressor":
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
                 self._model_signature_dict["predict"] = ModelSignature(
                     inputs, ([] if self._drop_input_cols else inputs) + outputs

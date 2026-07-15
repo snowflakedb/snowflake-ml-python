@@ -1028,6 +1028,14 @@ class FeatureStore:
                     original_exception=ValueError(f"Entity {e.name} has not been registered."),
                 )
 
+        # Fail fast if name+version or a column would overflow the Postgres online store identifiers.
+        try:
+            feature_view._validate_online_store_identifier_budget(version)
+        except ValueError as e:
+            raise snowml_exceptions.SnowflakeMLException(
+                error_code=error_codes.INVALID_ARGUMENT, original_exception=e
+            ) from e
+
         # RTFVs are OFT-only (no DT/View, no preamble/postamble).
         if feature_view.is_realtime_feature_view:
             logger.warning("RealtimeFeatureView is in Public Preview since 1.43.0.")
@@ -1463,6 +1471,9 @@ class FeatureStore:
             probe_fv._online_config = online_config
             try:
                 probe_fv._validate_online_store_supported()
+                probe_version = feature_view.version
+                if probe_version is not None:
+                    probe_fv._validate_online_store_identifier_budget(probe_version)
             except ValueError as e:
                 raise snowml_exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT, original_exception=e
@@ -1523,6 +1534,12 @@ class FeatureStore:
                 new_feature_view._online_config = online_config  # no public setter; mirrors __init__
 
             new_feature_view._validate()
+            try:
+                new_feature_view._validate_online_store_identifier_budget(feature_view._version)
+            except ValueError as e:
+                raise snowml_exceptions.SnowflakeMLException(
+                    error_code=error_codes.INVALID_ARGUMENT, original_exception=e
+                ) from e
             # update_feature_view cannot mutate the structural invariants that
             # validate_snapshot_config_for_register checks (entities, timestamp_col,
             # refresh_mode, etc.); they were enforced once at registration. Only the
@@ -1932,10 +1949,6 @@ class FeatureStore:
         Returns:
             FeatureView object.
 
-        Raises:
-            SnowflakeMLException: [ValueError] FeatureView with name and version is not found,
-                or incurred exception when reconstructing the FeatureView object.
-
         Example::
 
             >>> fs = FeatureStore(...)
@@ -1958,10 +1971,58 @@ class FeatureStore:
             desc:this is description
 
         """
-        name = SqlIdentifier(name)
-        version = FeatureViewVersion(version)
+        return self._get_feature_view_impl(name, version)
 
-        fv_name = FeatureView._get_physical_name(name, version)
+    @overload
+    def _get_feature_view_impl(
+        self,
+        name: str,
+        version: str,
+        *,
+        raise_if_not_found: Literal[True] = True,
+    ) -> FeatureView:
+        ...
+
+    @overload
+    def _get_feature_view_impl(
+        self,
+        name: str,
+        version: str,
+        *,
+        raise_if_not_found: Literal[False],
+    ) -> Optional[FeatureView]:
+        ...
+
+    def _get_feature_view_impl(
+        self,
+        name: str,
+        version: str,
+        *,
+        raise_if_not_found: bool = True,
+    ) -> Optional[FeatureView]:
+        """Retrieve a registered FeatureView, optionally returning None instead of raising.
+
+        Private helper shared by :meth:`get_feature_view` and :meth:`delete_feature_view`.
+        The public ``get_feature_view`` always raises on NOT_FOUND (``raise_if_not_found=True``).
+        ``delete_feature_view`` passes ``raise_if_not_found=False`` so it can detect an orphaned
+        state (backing DT already dropped) and attempt cleanup without a separate backend probe.
+
+        Args:
+            name: FeatureView name.
+            version: FeatureView version.
+            raise_if_not_found: When True (default) raises SnowflakeMLException on NOT_FOUND.
+                When False, returns None instead.
+
+        Returns:
+            FeatureView if found; None when not found and ``raise_if_not_found`` is False.
+
+        Raises:
+            SnowflakeMLException: [ValueError] FeatureView not found and raise_if_not_found is True.
+        """
+        name_id = SqlIdentifier(name)
+        version_id = FeatureViewVersion(version)
+
+        fv_name = FeatureView._get_physical_name(name_id, version_id)
         results = self._get_fv_backend_representations(fv_name)
         if len(results) == 1:
             return self._compose_feature_view(
@@ -1971,7 +2032,7 @@ class FeatureStore:
             )
         if len(results) == 0:
             # RTFVs are OFT-only; the metadata table is the source of truth.
-            rtfv_meta = self._metadata_manager.get_realtime_config(name.resolved(), str(version))
+            rtfv_meta = self._metadata_manager.get_realtime_config(name_id.resolved(), str(version_id))
             if rtfv_meta is not None:
                 from snowflake.ml.feature_store.realtime_registration import (
                     compose_rtfv_from_metadata,
@@ -1979,9 +2040,11 @@ class FeatureStore:
 
                 return compose_rtfv_from_metadata(self, rtfv_meta)
 
+        if not raise_if_not_found:
+            return None
         raise snowml_exceptions.SnowflakeMLException(
             error_code=error_codes.NOT_FOUND,
-            original_exception=ValueError(f"Failed to find FeatureView {name}/{version}: {results}"),
+            original_exception=ValueError(f"Failed to find FeatureView {name_id}/{version_id}: {results}"),
         )
 
     @dispatch_decorator()
@@ -2603,6 +2666,24 @@ class FeatureStore:
             ----------------------
 
         """
+        # For str+version input: look up the FV without raising on NOT_FOUND.
+        # If the backing DT was dropped in a previous partial deletion, resolved will be None;
+        # attempt streaming orphan cleanup. RTFVs are reconstructed from their OFT metadata
+        # so they naturally return non-None here and continue on the normal deletion path.
+        if isinstance(feature_view, str) and version is not None:
+            resolved = self._get_feature_view_impl(feature_view, version, raise_if_not_found=False)
+            if resolved is None:
+                if self._cleanup_orphaned_feature_view_resources(feature_view, version):
+                    logger.warning(
+                        "feature store: FeatureView %s/%s backing object was already dropped; "
+                        "cleaned up orphaned artifacts.",
+                        feature_view,
+                        version,
+                    )
+                    return
+            else:
+                feature_view = resolved
+
         feature_view = self._validate_feature_view_name_and_version_input(feature_view, version)
 
         # TODO: we should leverage lineage graph to check downstream deps, and block the deletion
@@ -2634,7 +2715,7 @@ class FeatureStore:
             )
 
         # Drop companion task first (if any), then snapshot artifacts for this FV.
-        # This mirrors the overwrite cleanup ordering and guarantees we don’t
+        # This mirrors the overwrite cleanup ordering and guarantees we don't
         # leave a running CRON task targeting a deleted snapshot table.
         fv_physical_name = FeatureView._get_physical_name(feature_view.name, feature_view.version)
         self._cleanup_stale_feature_view_resources(
@@ -5557,6 +5638,100 @@ class FeatureStore:
                 e,
             )
 
+    def _cleanup_orphaned_feature_view_resources(self, fv_name: str, version: str) -> bool:
+        """Clean up orphaned companion artifacts for a partially deleted FeatureView.
+
+        Called when the backing DT/View no longer exists but companion artifacts
+        may still be present.  Handles:
+
+        - Streaming ref_count decrement and ``$UDF_TRANSFORMED`` / ``$UDF_TRANSFORMED$BACKFILL``
+          table drops (streaming FVs).
+        - The companion refresh Task (append-only / CRON-scheduled FVs) and, probed
+          independently, the snapshot table and its status row (append-only FVs).
+        - The ``$ONLINE`` companion Online Feature Table (any online-enabled FV), which is
+          named after the FV and outlives a dropped offline DT.
+        - FV metadata row deletion from the metadata table.
+
+        Args:
+            fv_name: Feature view name string (as supplied by the caller).
+            version: Feature view version string.
+
+        Returns:
+            True if any orphaned artifacts were found and cleaned up; False if nothing
+            existed (the caller should re-raise NOT_FOUND in that case).
+        """
+        from snowflake.ml.feature_store.streaming_registration import (
+            cleanup_streaming_feature_view,
+        )
+
+        fv_name_id = SqlIdentifier(fv_name)
+        fv_version = FeatureViewVersion(version)
+        feature_view_name = FeatureView._get_physical_name(fv_name_id, fv_version)
+        fully_qualified_name = self._get_fully_qualified_name(feature_view_name)
+        online_table_name = FeatureView._get_online_table_name(feature_view_name)
+
+        streaming_meta = self._metadata_manager.get_streaming_metadata(fv_name, version)
+
+        # Append-only and CRON-scheduled FVs own a companion refresh Task named after the FV's
+        # physical name; append-only FVs additionally accumulate a $SNAPSHOT table. When the
+        # backing DT was dropped either can be left behind, and a partial deletion may have
+        # removed one but not the other, so probe for each independently rather than inferring
+        # the snapshot table's existence from the Task.
+        has_refresh_task = bool(
+            self._session.sql(
+                f"SHOW TASKS LIKE '{feature_view_name.resolved()}' IN SCHEMA {self._config.full_schema_path}"
+            ).collect(statement_params=self._telemetry_stmp)
+        )
+        snapshot_table_name = FeatureView._get_snapshot_table_name(feature_view_name)
+        has_snapshot_table = bool(
+            self._session.sql(
+                f"SHOW TABLES LIKE '{snapshot_table_name.resolved()}' IN SCHEMA {self._config.full_schema_path}"
+            ).collect(statement_params=self._telemetry_stmp)
+        )
+
+        # Any online-enabled FV owns a $ONLINE Online Feature Table that is independent of the
+        # offline DT, so it can outlive a dropped DT even for plain (non-streaming,
+        # non-append-only) FVs. _find_object returns [] when the OFT preview is disabled.
+        has_online_table = bool(self._find_object("ONLINE FEATURE TABLES", online_table_name))
+
+        # Nothing recoverable from metadata or the backend: let the caller re-raise NOT_FOUND.
+        if streaming_meta is None and not has_refresh_task and not has_snapshot_table and not has_online_table:
+            return False
+
+        if streaming_meta is not None:
+            cleanup_streaming_feature_view(
+                session=self._session,
+                feature_view_name=feature_view_name,
+                version=version,
+                fv_name=fv_name,
+                fv_metadata=_FeatureViewMetadata(entities=[], timestamp_col="", is_streaming=True),
+                metadata_manager=self._metadata_manager,
+                get_fully_qualified_name_fn=self._get_fully_qualified_name,
+                telemetry_stmp=self._telemetry_stmp,
+            )
+
+        # Drop the companion refresh Task and any append-only snapshot table independently:
+        # both names are deterministic and the underlying drops use IF EXISTS, and a partial
+        # deletion may have left only one of the two behind.
+        if has_refresh_task:
+            self._drop_companion_refresh_task(fully_qualified_name)
+        if has_snapshot_table:
+            self._drop_orphaned_snapshot_table(feature_view_name)
+
+        # Best-effort drop of the $ONLINE companion table, which is not covered by
+        # cleanup_streaming_feature_view and is not returned by get_feature_view.
+        if has_online_table:
+            fq_online_name = self._get_fully_qualified_name(online_table_name)
+            try:
+                self._session.sql(f"DROP ONLINE FEATURE TABLE IF EXISTS {fq_online_name}").collect(
+                    statement_params=self._telemetry_stmp
+                )
+            except Exception as e:
+                logger.warning("feature store: failed to drop online feature table %s: %s", fq_online_name, e)
+
+        self._metadata_manager.delete_feature_view_metadata(fv_name, version)
+        return True
+
     def _cleanup_stale_feature_view_resources(
         self,
         feature_view: FeatureView,
@@ -5602,13 +5777,24 @@ class FeatureStore:
                 delete flows pass ``True`` explicitly.
         """
         if not new_has_task:
-            self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(
-                statement_params=self._telemetry_stmp
-            )
+            self._drop_companion_refresh_task(fully_qualified_name)
         if drop_snapshot_table is None:
             drop_snapshot_table = not feature_view.append_only
         if drop_snapshot_table:
             self._drop_orphaned_snapshot_table(feature_view_name)
+
+    def _drop_companion_refresh_task(self, fully_qualified_name: str) -> None:
+        """Drop a feature view's companion refresh Task.
+
+        Append-only and CRON-scheduled FVs own a Task named identically to the offline
+        object's fully qualified name. ``IF EXISTS`` makes this a safe no-op for FVs that
+        never had a Task (Views and duration-based Dynamic Tables).
+
+        Args:
+            fully_qualified_name: Fully qualified name of the offline object, which is also
+                the companion Task name when one exists.
+        """
+        self._session.sql(f"DROP TASK IF EXISTS {fully_qualified_name}").collect(statement_params=self._telemetry_stmp)
 
     def _create_snapshot_table(
         self,

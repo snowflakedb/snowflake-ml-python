@@ -73,7 +73,7 @@ class XGBModelHandler(_base.BaseModelHandler[Union["xgboost.Booster", "xgboost.X
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.XGBModelSaveOptions],
     ) -> None:
-        enable_explainability = kwargs.get("enable_explainability", True)
+        enable_explainability = kwargs.get("enable_explainability", False)
 
         import xgboost
 

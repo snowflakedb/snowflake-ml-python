@@ -30,6 +30,7 @@ from snowflake.ml._internal.utils.sql_identifier import SqlIdentifier
 from snowflake.ml.feature_store import feature_view as fv_mod, online_service
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature_group import (
+    _normalize_join_key_datatype,
     build_source_refs,
     hydrate_source_refs,
     reject_name_collision,
@@ -248,7 +249,7 @@ def validate_rtfv_entity_contract(
                 # The upstream declares the entity but the column isn't in its
                 # output_schema; nothing to type-check here.
                 continue
-            datatype = field.datatype
+            datatype = _normalize_join_key_datatype(field.datatype)
             prev = seen_types.get(jk)
             if prev is None:
                 seen_types[jk] = (datatype, upstream_label)
@@ -358,11 +359,12 @@ def resolve_realtime_join_key_fields(feature_view: FeatureView) -> list[Any]:
             field = field_by_name.get(key)
             if field is None:
                 continue
+            datatype = _normalize_join_key_datatype(field.datatype)
             previous = type_by_name.get(key)
             if previous is None:
-                type_by_name[key] = field.datatype
+                type_by_name[key] = datatype
                 source_by_name[key] = label
-            elif previous != field.datatype:
+            elif previous != datatype:
                 # Registry-corruption path: register-time validator should have
                 # rejected this. Defense-in-depth so we don't synthesize a
                 # schema that depends on source order.
@@ -371,7 +373,7 @@ def resolve_realtime_join_key_fields(feature_view: FeatureView) -> list[Any]:
                     original_exception=RuntimeError(
                         f"realtime feature view: join key {key!r} has inconsistent "
                         f"datatypes across upstream sources ({source_by_name[key]} "
-                        f"declares {previous}; {label} declares {field.datatype}). "
+                        f"declares {previous}; {label} declares {datatype}). "
                         "Registry corruption -- the register-time validator should "
                         "have rejected this."
                     ),

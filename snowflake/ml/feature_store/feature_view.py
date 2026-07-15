@@ -58,6 +58,14 @@ _UDF_TRANSFORMED_TABLE_SUFFIX = "$UDF_TRANSFORMED"
 _FEATURE_VIEW_VERSION_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.\-]*$")
 _FEATURE_VIEW_VERSION_MAX_LENGTH = 128
 
+# Postgres online store identifiers must fit PostgreSQL's 63-byte limit (NAMEDATALEN - 1); longer names
+# are silently truncated and can collide. name+version maps to "{name}${version}$UDF_TRANSFORMED"
+# (17 bytes of affixes) and columns to a distinct-N tile column "_PARTIAL_FIRST_DISTINCT_1000_TS_<col>"
+# (32 bytes), so each budget below leaves a 1-byte margin. The padding-guard test rechecks the affixes.
+_PG_IDENTIFIER_BYTE_LIMIT = 63
+_POSTGRES_ONLINE_MAX_NAME_VERSION_LEN = 45
+_POSTGRES_ONLINE_MAX_COLUMN_LEN = 30
+
 _RESULT_SCAN_QUERY_PATTERN = re.compile(
     r".*FROM\s*TABLE\s*\(\s*RESULT_SCAN\s*\(.*",
     flags=re.DOTALL | re.IGNORECASE | re.X,
@@ -2150,6 +2158,52 @@ Got {len(self._feature_df.queries['queries'])}: {self._feature_df.queries['queri
                 f"aggregation (tiled) feature views. Use "
                 f"OnlineConfig(store_type=OnlineStoreType.POSTGRES) to enable online storage."
             )
+
+    def _validate_online_store_identifier_budget(self, version: FeatureViewVersion) -> None:
+        """Reject name+version or column names that would overflow the Postgres online store's identifiers.
+
+        Only the Postgres online store is affected; columns get a tighter budget than name+version.
+        Enforced at registration and update, where the version is known.
+
+        Args:
+            version: The feature view version being registered or updated.
+
+        Raises:
+            ValueError: If the combined name+version or any column name exceeds its online store budget.
+        """
+        if (
+            self._online_config is None
+            or not self._online_config.enable
+            or self._online_config.store_type != OnlineStoreType.POSTGRES
+        ):
+            return
+
+        name_version_len = len(self._name.resolved()) + len(str(version))
+        if name_version_len > _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN:
+            raise ValueError(
+                f"feature view name and version are too long for the Postgres online store: "
+                f"'{self._name}' with version '{version}' uses {name_version_len} characters, but the "
+                f"combined limit is {_POSTGRES_ONLINE_MAX_NAME_VERSION_LEN}. Shorten the name or version."
+            )
+
+        resolved_columns: set[str] = set()
+        try:
+            inferred_columns = self._get_column_names()
+        except Exception:
+            inferred_columns = None
+        for column in inferred_columns or []:
+            resolved_columns.add(column.resolved())
+        for entity in self._entities:
+            for join_key in entity.join_keys:
+                key = join_key if isinstance(join_key, SqlIdentifier) else SqlIdentifier(join_key)
+                resolved_columns.add(key.resolved())
+
+        for resolved in sorted(resolved_columns):
+            if len(resolved) > _POSTGRES_ONLINE_MAX_COLUMN_LEN:
+                raise ValueError(
+                    f"column '{resolved}' is too long for the Postgres online store: {len(resolved)} "
+                    f"characters exceeds the limit of {_POSTGRES_ONLINE_MAX_COLUMN_LEN}. Rename the column."
+                )
 
     def _validate_window_offset_alignment(self) -> None:
         """Validate that window and offset are multiples of feature_granularity.

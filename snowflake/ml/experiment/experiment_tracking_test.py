@@ -109,10 +109,11 @@ class ExperimentTrackingTest(absltest.TestCase):
         # Verify the experiment is stored in the tracking context
         self.assertEqual(exp._experiment, experiment)
 
-        # Setting the same experiment name with the same database and schema should return the existing experiment
+        # Setting the same experiment name with the same database and schema should keep the existing experiment
+        # object, but still (re-)create idempotently so an experiment deleted out-of-band is restored.
         self.mock_sql_client.reset_mock()
         experiment2 = exp.set_experiment("TEST_EXPERIMENT")
-        self.mock_sql_client.create_experiment.assert_not_called()
+        self.mock_sql_client.create_experiment.assert_called_once()
         self.assertIs(experiment, experiment2)
 
         # Setting the database_name without schema_name should use the "PUBLIC" schema

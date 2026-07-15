@@ -255,6 +255,24 @@ class ExecuteInferenceJobServiceTestBase(registry_spcs_test_base.RegistrySPCSTes
 
         raise ValueError(f"Unknown batch image override mode: {effective_mode!r}")
 
+    @staticmethod
+    def _resolve_job_output_stage_location(output_stage_location: str, batch_job: job.MLJob[Any]) -> str:
+        """Resolve the job-scoped output location for a completed batch inference job.
+
+        The server treats ``output.stage_location`` as a base and writes results under a
+        per-job subdirectory (``<stage_location>/<job_name>/``). The subdirectory is the
+        resolved unqualified job name, i.e. the trailing identifier of ``batch_job.id``.
+
+        Args:
+            output_stage_location: The base output stage location passed to the job.
+            batch_job: The launched batch inference job, used to resolve the job name.
+
+        Returns:
+            The job-scoped output location, ``<output_stage_location>/<job_name>/``.
+        """
+        resolved_job_name = batch_job.id.split(".")[-1].strip('"')
+        return output_stage_location.rstrip("/") + "/" + resolved_job_name + "/"
+
     def _deploy_execute_inference_job_service(
         self,
         mv: ModelVersion,
@@ -337,11 +355,12 @@ class ExecuteInferenceJobServiceTestBase(registry_spcs_test_base.RegistrySPCSTes
                 f"Expected {assert_container_count} containers but got {len(containers)}: {containers}",
             )
 
-        success_file_path = output_stage_location.rstrip("/") + "/_SUCCESS"
+        job_output_stage_location = self._resolve_job_output_stage_location(output_stage_location, batch_job)
+        success_file_path = job_output_stage_location.rstrip("/") + "/_SUCCESS"
         list_results = self.session.sql(f"LIST {success_file_path}").collect()
         self.assertGreater(len(list_results), 0, f"Batch job did not produce success file at: {success_file_path}")
 
-        df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
+        df = self.session.read.option("on_error", "CONTINUE").parquet(job_output_stage_location)
         if not skip_row_count_check:
             output_count = df.count()
             input_count = X.count()

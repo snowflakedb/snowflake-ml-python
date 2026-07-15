@@ -167,7 +167,8 @@ class RegistryExecuteInferenceJobServicePrivilegeTest(
             batch_job.wait()
             self.assertEqual(batch_job.status, "DONE", f"Job status is {batch_job.status}, expected DONE")
 
-            output_df = self.session.read.option("on_error", "CONTINUE").parquet(output_stage_location)
+            job_output_stage_location = self._resolve_job_output_stage_location(output_stage_location, batch_job)
+            output_df = self.session.read.option("on_error", "CONTINUE").parquet(job_output_stage_location)
             self.assertEqual(output_df.count(), input_df.count())
 
         self._run_as_role(self._read_role, _test_batch_inference)

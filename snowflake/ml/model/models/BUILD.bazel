@@ -52,7 +52,6 @@ py_test(
     srcs = ["sentence_transformers_test.py"],
     tags = [
         "feature:model_registry",
-        "short_regress",
     ],
     deps = [
         ":huggingface",

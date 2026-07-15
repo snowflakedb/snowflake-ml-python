@@ -114,6 +114,7 @@ class TestRegistryHuggingFacePipelineVllmBatchInferenceInteg(
                     "top_p": 0.9,
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.1,
+                    "response_format": None,
                 }
             ]
         )

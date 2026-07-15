@@ -1,7 +1,7 @@
 import logging
 import warnings
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Optional, Sequence
 
 from packaging import requirements
 
@@ -78,8 +78,8 @@ class ModelParameterReconciler:
             reconciled_artifact_repository_map, reconciled_target_platforms, force_conda_defaults
         )
 
-        reconciled_options = self._reconcile_explainability_options(
-            reconciled_target_platforms, reconciled_artifact_repository_map, force_conda_defaults
+        reconciled_options = self._handle_embed_local_ml_library(
+            self._options.copy() if self._options else {}, reconciled_target_platforms
         )
         reconciled_options = self._reconcile_relax_version(
             reconciled_options, reconciled_target_platforms, force_conda_defaults
@@ -313,36 +313,6 @@ class ModelParameterReconciler:
             or "WAREHOUSE" in target_platforms
         )
 
-    def _reconcile_explainability_options(
-        self,
-        target_platforms: Optional[list[model_types.TargetPlatform]],
-        reconciled_artifact_repository_map: Optional[dict[str, str]],
-        force_conda_defaults: bool,
-    ) -> model_types.ModelSaveOption:
-        """Reconcile explainability settings and embed_local_ml_library based on warehouse runnability."""
-        options = self._options.copy() if self._options else {}
-
-        conda_dep_dict = env_utils.validate_conda_dependency_string_list(self._conda_dependencies or [])
-
-        enable_explainability = options.get("enable_explainability", None)
-
-        # Handle case where user explicitly disabled explainability
-        if enable_explainability is False:
-            return self._handle_embed_local_ml_library(options, target_platforms)
-
-        target_platform_set = set(target_platforms) if target_platforms else set()
-
-        is_warehouse_runnable = self._is_warehouse_runnable(
-            conda_dep_dict, reconciled_artifact_repository_map, force_conda_defaults
-        )
-        only_spcs = target_platform_set == set(target_platform.SNOWPARK_CONTAINER_SERVICES_ONLY)
-        # Handle case where explainability is not specified (None) - set default behavior
-        if enable_explainability is None:
-            if only_spcs or not is_warehouse_runnable:
-                options["enable_explainability"] = False
-
-        return self._handle_embed_local_ml_library(options, target_platforms)
-
     def _handle_embed_local_ml_library(
         self, options: model_types.ModelSaveOption, target_platforms: Optional[list[model_types.TargetPlatform]]
     ) -> model_types.ModelSaveOption:
@@ -365,34 +335,6 @@ class ModelParameterReconciler:
                 options["embed_local_ml_library"] = True
 
         return options
-
-    def _is_warehouse_runnable(
-        self,
-        conda_dep_dict: dict[str, list[Any]],
-        reconciled_artifact_repository_map: Optional[dict[str, str]],
-        force_conda_defaults: bool,
-    ) -> bool:
-        """Check if model can run in warehouse based on conda channels and pip requirements."""
-        if force_conda_defaults:
-            return True
-        # If pip requirements are present but no artifact repository map, model cannot run in warehouse
-        if self._pip_requirements and not reconciled_artifact_repository_map:
-            return False
-
-        if self._needs_implicit_pip_only_packaging() and not reconciled_artifact_repository_map:
-            return False
-
-        # If no conda dependencies, model can run in warehouse
-        if not conda_dep_dict:
-            return True
-
-        # Check if all conda channels are warehouse-compatible
-        warehouse_compatible_channels = {env_utils.DEFAULT_CHANNEL_NAME, env_utils.SNOWFLAKE_CONDA_CHANNEL_URL}
-        for channel in conda_dep_dict:
-            if channel not in warehouse_compatible_channels:
-                return False
-
-        return True
 
     def _reconcile_relax_version(
         self,

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 class ImageToTextTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles image-to-text pipelines, removed in transformers 5.x."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def get_transformers_upper_bound(self) -> Optional[version.Version]:
         return version.Version("5")

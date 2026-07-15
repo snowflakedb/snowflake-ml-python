@@ -7,6 +7,8 @@ from typing import Any, Iterable, Mapping, Optional, Union, overload
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import sklearn
+from packaging import version
 
 from snowflake import snowpark
 from snowflake.ml._internal import telemetry
@@ -25,7 +27,29 @@ PROJECT = "ModelDevelopment"
 SUBPROJECT = "Preprocessing"
 
 SKLEARN_SUPERVISED_ESTIMATORS = ["regressor", "classifier"]
-SKLEARN_SINGLE_OUTPUT_ESTIMATORS = ["DensityEstimator", "clusterer", "outlier_detector"]
+# ``_estimator_type`` reports density estimators as "DensityEstimator" while the scikit-learn 1.8+
+# ``Tags.estimator_type`` reports them as "density_estimator"; accept both spellings.
+SKLEARN_SINGLE_OUTPUT_ESTIMATORS = ["DensityEstimator", "density_estimator", "clusterer", "outlier_detector"]
+
+
+def _get_estimator_type(estimator: Any) -> Optional[str]:
+    """Return the estimator type in a scikit-learn version-compatible way.
+
+    scikit-learn 1.8+ exposes the estimator type via ``Tags.estimator_type`` (retrieved through
+    ``sklearn.utils.get_tags``); the private ``_estimator_type`` attribute is deprecated in newer versions.
+
+    Args:
+        estimator: The scikit-learn estimator object.
+
+    Returns:
+        The estimator type string (e.g. "classifier", "regressor"), or None if it cannot be determined.
+    """
+    if version.Version(sklearn.__version__) >= version.Version("1.8"):
+        from sklearn.utils import get_tags
+
+        estimator_type: Optional[str] = get_tags(estimator).estimator_type
+        return estimator_type
+    return getattr(estimator, "_estimator_type", None)
 
 
 def _process_cols(cols: Optional[Union[str, Iterable[str]]]) -> list[str]:
@@ -582,21 +606,22 @@ class BaseTransformer(BaseEstimator):
 
         # keep mypy happy
         assert self._sklearn_object is not None
-        if hasattr(self._sklearn_object, "_estimator_type"):
+        estimator_type = _get_estimator_type(self._sklearn_object)
+        if estimator_type is not None:
             # For supervised estimators, infer the output columns from the label columns
-            if self._sklearn_object._estimator_type in SKLEARN_SUPERVISED_ESTIMATORS:
+            if estimator_type in SKLEARN_SUPERVISED_ESTIMATORS:
                 cols = [identifier.concat_names(["OUTPUT_", c]) for c in self.label_cols]
                 return cols
 
             # For density estimators, clusterers, and outlier detectors, there is always exactly one output column.
-            elif self._sklearn_object._estimator_type in SKLEARN_SINGLE_OUTPUT_ESTIMATORS:
+            elif estimator_type in SKLEARN_SINGLE_OUTPUT_ESTIMATORS:
                 return ["OUTPUT_0"]
 
             else:
                 raise exceptions.SnowflakeMLException(
                     error_code=error_codes.INVALID_ARGUMENT,
                     original_exception=ValueError(
-                        f"Unable to infer output columns for estimator type {self._sklearn_object._estimator_type}."
+                        f"Unable to infer output columns for estimator type {estimator_type}."
                         f"Please include `output_cols` explicitly."
                     ),
                 )

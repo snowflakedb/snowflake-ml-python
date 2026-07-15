@@ -34,7 +34,7 @@ from snowflake.ml.modeling._internal.transformer_protocols import (
     BatchInferenceKwargsTypedDict,
     ScoreKwargsTypedDict,
 )
-from snowflake.ml.modeling.framework.base import BaseTransformer
+from snowflake.ml.modeling.framework.base import BaseTransformer, _get_estimator_type
 from snowflake.snowpark import DataFrame, Session
 from snowflake.snowpark._internal.type_utils import convert_sp_to_sf_type
 
@@ -838,9 +838,10 @@ class RandomizedSearchCV(BaseTransformer):
         outputs: list[BaseFeatureSpec] = []
         if hasattr(self, "predict"):
             # keep mypy happy
-            assert self._sklearn_object is not None and hasattr(self._sklearn_object, "_estimator_type")
+            assert self._sklearn_object is not None
+            estimator_type = _get_estimator_type(self._sklearn_object)
             # For classifier, the type of predict is the same as the type of label
-            if self._sklearn_object._estimator_type == "classifier":
+            if estimator_type == "classifier":
                 # label columns is the desired type for output
                 outputs = list(
                     _infer_signature(
@@ -856,7 +857,7 @@ class RandomizedSearchCV(BaseTransformer):
                 )
 
             # For regressor, the type of predict is float64
-            elif self._sklearn_object._estimator_type == "regressor":
+            elif estimator_type == "regressor":
                 outputs = [FeatureSpec(dtype=DataType.DOUBLE, name=c) for c in self.output_cols]
                 self._model_signature_dict["predict"] = ModelSignature(
                     inputs, ([] if self._drop_input_cols else inputs) + outputs

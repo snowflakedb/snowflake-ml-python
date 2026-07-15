@@ -24,6 +24,7 @@ from snowflake.ml.experiment._client import (
     experiment_tracking_sql_client as sql_client,
 )
 from snowflake.ml.experiment._entities import run_metadata
+from snowflake.ml.lineage import lineage_node
 from snowflake.ml.model import type_hints
 from snowflake.ml.utils import sql_client as sql_client_utils
 
@@ -196,21 +197,22 @@ class ExperimentTracking:
         schema_name = sql_identifier.SqlIdentifier(schema_name) if schema_name is not None else self._schema_name
 
         experiment_name = sql_identifier.SqlIdentifier(experiment_name)
-        if (
+        if not (
             self._experiment
             and self._experiment.name == experiment_name
             and self._database_name == database_name
             and self._schema_name == schema_name
         ):
-            return self._experiment
+            # If the requested experiment differs from the current one, switch context (and drop any active run)
+            self._update_database_and_schema(database_name, schema_name)
+            self._experiment = entities.Experiment(experiment_name=experiment_name)
+            self._unset_run()
 
-        self._update_database_and_schema(database_name, schema_name)
+        # Always attempt to create idempotently so an experiment that was deleted (e.g. via the UI) is restored.
         self._sql_client.create_experiment(
             experiment_name=experiment_name,
             creation_mode=sql_client_utils.CreationMode(if_not_exists=True),
         )
-        self._experiment = entities.Experiment(experiment_name=experiment_name)
-        self._unset_run()
         return self._experiment
 
     def delete_experiment(
@@ -266,6 +268,44 @@ class ExperimentTracking:
         run = self._get_or_start_run()
         with experiment_info.ExperimentInfoPatcher(experiment_info=run._get_experiment_info()):
             return self._registry.log_model(model, model_name=model_name, **kwargs)
+
+    def list_model_versions(self, run_name: Optional[str] = None) -> list[ml_model.ModelVersion]:
+        """
+        List the model versions that were logged under a run.
+
+        Models logged via ``log_model`` inside a run are linked to that run through Snowflake lineage. This method
+        traverses that lineage to return the corresponding model versions.
+
+        Args:
+            run_name: The name of the run to list model versions from. If None, uses the currently active run.
+
+        Returns:
+            A list of ModelVersion objects that were logged under the run.
+
+        Raises:
+            RuntimeError: If no experiment is set, or if no run_name is provided and no run is active.
+        """
+        if not self._experiment:
+            raise RuntimeError("No experiment set. Please set an experiment before listing model versions.")
+
+        if run_name:
+            resolved_run_name = sql_identifier.SqlIdentifier(run_name)
+        elif self._run:
+            resolved_run_name = self._run.name
+        else:
+            raise RuntimeError("No run is active. Please provide a run_name or start a run.")
+
+        experiment_fqn = self._sql_client.fully_qualified_object_name(
+            self._database_name, self._schema_name, self._experiment.name
+        )
+        run_node = lineage_node.LineageNode(
+            session=self._session,
+            name=experiment_fqn,
+            domain="experiment",
+            version=resolved_run_name.identifier(),
+        )
+        logged_models = run_node.lineage(direction="downstream", domain_filter={"model"})
+        return [model for model in logged_models if isinstance(model, ml_model.ModelVersion)]
 
     def start_run(
         self,

@@ -1,7 +1,6 @@
 import functools
 import logging
 import os
-import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Callable, Optional, Union, cast, final
 
@@ -135,8 +134,7 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SKLModelSaveOptions],
     ) -> None:
-        # setting None by default to distinguish if users did not set it
-        enable_explainability = kwargs.get("enable_explainability", None)
+        enable_explainability = kwargs.get("enable_explainability", False)
 
         import sklearn.base
         import sklearn.pipeline
@@ -187,21 +185,6 @@ class SKLModelHandler(_base.BaseModelHandler[Union["sklearn.base.BaseEstimator",
             model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(model, model_meta.task)
             model_meta.task = model_task_and_output_type.task
 
-            # if users did not ask then we enable if we have background data
-            if enable_explainability is None:
-                if background_data is None:
-                    warnings.warn(
-                        "sample_input_data should be provided to enable explainability by default",
-                        category=UserWarning,
-                        stacklevel=1,
-                    )
-                    enable_explainability = False
-                elif model_meta.task == model_types.Task.UNKNOWN:
-                    enable_explainability = False
-                elif explain_target_method is None:
-                    enable_explainability = False
-                else:
-                    enable_explainability = True
             if enable_explainability:
                 explain_target_method = str(explain_target_method)  # mypy complains if we don't cast to str here
 

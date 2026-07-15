@@ -6,6 +6,8 @@ from typing import Any, Iterable, Optional, Union
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+import sklearn
+from packaging import version
 from sklearn import impute
 
 from snowflake import snowpark
@@ -454,5 +456,9 @@ class SimpleImputer(base.BaseTransformer):
             simple_imputer.n_features_in_ = self.n_features_in_
             simple_imputer.feature_names_in_ = self.feature_names_in_
             simple_imputer._fit_dtype = self._sklearn_fit_dtype
+            # scikit-learn 1.8+ stores the fit-time dtype used by `transform` in `_fill_dtype`.
+            # Since the fitted estimator is reconstructed here without calling `fit`, set it explicitly.
+            if version.Version(sklearn.__version__) >= version.Version("1.8"):
+                simple_imputer._fill_dtype = self._sklearn_fit_dtype
 
         return simple_imputer

@@ -221,9 +221,9 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
-                - enable_explainability: Whether to enable the model explainability feature. Defaults to None,
-                    in which case explainability will be enabled automatically for supported model types when
-                    running in the Warehouse.
+                - enable_explainability: Whether to enable the model explainability feature. Defaults to False.
+                    Set to True to generate an `explain` method for supported model types. Explainability is
+                    only available when the model runs in the Warehouse.
 
                     Note: In Snowpark Container Services, the explain function is only available for batch
                     inference jobs, not online inference services.
@@ -391,9 +391,9 @@ class Registry:
                 - target_methods: List of target methods to register when logging the model.
                   This option is not used in MLFlow models. Defaults to None, in which case the model handler's
                   default target methods will be used.
-                - enable_explainability: Whether to enable the model explainability feature. Defaults to None,
-                    in which case explainability will be enabled automatically for supported model types when
-                    running in the Warehouse.
+                - enable_explainability: Whether to enable the model explainability feature. Defaults to False.
+                    Set to True to generate an `explain` method for supported model types. Explainability is
+                    only available when the model runs in the Warehouse.
 
                     Note: In Snowpark Container Services, the explain function is only available for batch
                     inference jobs, not online inference services.

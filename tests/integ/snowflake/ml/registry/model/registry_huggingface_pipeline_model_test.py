@@ -521,6 +521,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
                     "top_p": 1.0,
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.2,
+                    "response_format": None,
                 }
             ],
         )

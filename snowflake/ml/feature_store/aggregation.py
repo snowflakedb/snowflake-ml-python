@@ -19,6 +19,11 @@ from snowflake.ml.feature_store.interval_utils import (  # noqa: F401 - re-expor
     parse_interval as parse_interval,
 )
 
+# Product-wide upper bound on ``n`` for the ordered-N list aggregations
+# (last_n / first_n / last_distinct_n / first_distinct_n). Enforced at authoring
+# time so users get a clear error, and matched by the engine's own bound.
+_MAX_ORDERED_N = 100
+
 
 class AggregationType(Enum):
     """Supported aggregation functions for tiled feature views.
@@ -160,6 +165,11 @@ class AggregationSpec:
             if not isinstance(n, int) or n <= 0:
                 raise ValueError(
                     f"Parameter 'n' must be a positive integer for aggregation " f"'{self.output_column}', got: {n}"
+                )
+            if n > _MAX_ORDERED_N:
+                raise ValueError(
+                    f"Parameter 'n' must be between 1 and {_MAX_ORDERED_N} for "
+                    f"{self.function.value} aggregation '{self.output_column}', got: {n}"
                 )
 
         # Validate params for approx_percentile

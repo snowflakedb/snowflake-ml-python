@@ -351,6 +351,27 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
                 "TransformersPipeline wrapper should not pin tokenizers to an exact version",
             )
 
+        wrapper_model = hf_base.TransformersPipeline(
+            task="image-to-text",
+            model="google-bert/bert-base-uncased",
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            model_packager.ModelPackager(os.path.join(tmpdir, "model")).save(
+                name="model",
+                model=wrapper_model,
+                metadata={"author": "test", "version": "1"},
+                pip_requirements=["transformers"],
+                options=model_types.HuggingFaceSaveOptions(),
+            )
+
+            pk = model_packager.ModelPackager(os.path.join(tmpdir, "model"))
+            pk.load(meta_only=True)
+            assert pk.meta is not None
+
+            pip_dep_names = {requirements.Requirement(dep).name for dep in pk.meta.env.pip_requirements}
+            self.assertIn("transformers", pip_dep_names)
+            self.assertIn("pillow", pip_dep_names)
+
     def test_save_pipeline_captures_model(self) -> None:
         """Verify that saving a transformers.Pipeline captures model in blob options."""
         import transformers
@@ -1722,6 +1743,22 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             fake_model.task = task_name
             handler = _handler._get_task_handler(fake_model)
             self.assertIsNone(handler.get_transformers_upper_bound())
+            self.assertFalse(handler.REQUIRES_PILLOW)
+
+    def test_image_task_handlers_require_pillow(self) -> None:
+        """Verify image pipeline task handlers declare a Pillow dependency."""
+        from snowflake.ml.model._packager.model_handlers.huggingface import _handler
+
+        fake_model = mock.MagicMock()
+        for task in (
+            "image-to-text",
+            "image-classification",
+            "object-detection",
+            "zero-shot-image-classification",
+        ):
+            fake_model.task = task
+            handler = _handler._get_task_handler(fake_model)
+            self.assertTrue(handler.REQUIRES_PILLOW, task)
 
     def test_deprecated_task_handlers_return_upper_bound(self) -> None:
         """Verify that handlers for tasks removed in transformers 5.x return an upper bound of 5."""
@@ -1746,6 +1783,8 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertIsNotNone(upper, f"Expected upper bound for deprecated task {task!r}")
             self.assertEqual(upper, pkg_version.Version("5"))
 
+    _IMAGE_TASKS_REQUIRING_PILLOW = frozenset({"image-to-text", "visual-question-answering"})
+
     @parameterized.parameters(  # type: ignore[misc]
         {"task": "conversational"},
         {"task": "image-to-text"},
@@ -1756,7 +1795,7 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         {"task": "translation_en_to_fr"},
     )
     def test_save_wrapper_deprecated_task_pins_transformers_below_5(self, task: str) -> None:
-        """Verify that saving a TransformersPipeline wrapper for a deprecated task pins transformers<5."""
+        """Verify deprecated-task wrapper saves pin transformers<5 and image tasks include pillow."""
         dummy_signature = model_signature.ModelSignature(
             inputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="inputs")],
             outputs=[model_signature.FeatureSpec(dtype=model_signature.DataType.STRING, name="outputs")],
@@ -1789,6 +1828,9 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
             self.assertTrue(transformers_spec.contains("4.40.0"), f"Should allow 4.x: {transformers_spec}")
             self.assertFalse(transformers_spec.contains("5.0.0"), f"Should block 5.x: {transformers_spec}")
             self.assertFalse(transformers_spec.contains("5.3.0"), f"Should block 5.3: {transformers_spec}")
+
+            if task in self._IMAGE_TASKS_REQUIRING_PILLOW:
+                self.assertIn("pillow", deps)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"task": "fill-mask"},

@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class ObjectDetectionTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles object detection pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

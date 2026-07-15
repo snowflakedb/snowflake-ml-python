@@ -93,6 +93,7 @@ py_test(
     deps = [
         "//snowflake/ml/_internal/utils:snowflake_env",
         "//snowflake/ml/experiment",
+        "//snowflake/ml/model",
         "//snowflake/ml/utils:connection_params",
         "//tests/integ/snowflake/ml/test_utils:db_manager",
     ],

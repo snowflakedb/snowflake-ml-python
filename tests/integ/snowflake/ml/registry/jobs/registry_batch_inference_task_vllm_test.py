@@ -10,6 +10,7 @@ from typing import Optional
 
 import pandas as pd
 from absl.testing import absltest
+from pydantic import BaseModel
 
 try:
     from snowflake.core import Root
@@ -19,8 +20,9 @@ try:
 except ModuleNotFoundError:
     _HAS_SNOWFLAKE_CORE = False
 
+from snowflake.core import _common
+
 from snowflake.ml.model import inference_engine, openai_signatures
-from snowflake.ml.model._signatures import core as signature_core
 from snowflake.ml.model.batch import BatchInferenceTask, InputSpec, JobSpec, OutputSpec
 from snowflake.ml.model.models import huggingface
 from tests.integ.snowflake.ml.registry.jobs import registry_batch_inference_test_base
@@ -111,7 +113,7 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         schema = api_root.databases[self._test_db].schemas[self._test_schema]
         dag_op = DAGOperation(schema)
 
-        dag_op.deploy(dag, mode="orReplace")
+        dag_op.deploy(dag, mode=_common.CreateMode.or_replace)
         self._apply_dag_task_image_overrides()
         dag_op.run(dag)
 
@@ -174,6 +176,7 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
                     "top_p": 0.9,
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.1,
+                    "response_format": None,
                 }
             ]
         )
@@ -220,65 +223,25 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
         The successor task materializes parquet, parses ``choices[0].message.content``, and stores structured fields
         as columns.
         """
-        self.skipTest(
-            "Skipping test_vllm_batch_dag_response_format_extracts_output_to_table"
-            "until ray-orchestrator supports OBJECT data types"
-        )
-        params_with_response_format = list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.params) + [
-            signature_core.ParamGroupSpec(
-                name="response_format",
-                default_value=None,
-                specs=[
-                    signature_core.ParamSpec(
-                        name="type", dtype=signature_core.DataType.STRING, default_value="json_schema"
-                    ),
-                    signature_core.ParamGroupSpec(
-                        name="json_schema",
-                        default_value=None,
-                        specs=[
-                            signature_core.ParamSpec(
-                                name="name", dtype=signature_core.DataType.STRING, default_value=""
-                            ),
-                            signature_core.ParamSpec(
-                                name="description", dtype=signature_core.DataType.STRING, default_value=None
-                            ),
-                            signature_core.ParamSpec(
-                                name="schema", dtype=signature_core.DataType.OBJECT, default_value=None
-                            ),
-                            signature_core.ParamSpec(
-                                name="strict", dtype=signature_core.DataType.BOOL, default_value=None
-                            ),
-                        ],
-                    ),
-                ],
-            ),
-        ]
-        signature_with_rf = signature_core.ModelSignature(
-            inputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.inputs),
-            outputs=list(openai_signatures._OPENAI_CHAT_SIGNATURE_WITH_PARAMS_SPEC.outputs),
-            params=params_with_response_format,
-        )
-
-        response_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "capital-city",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "city": {"type": "string"},
-                        "country": {"type": "string"},
-                    },
-                    "required": ["city", "country"],
-                },
-            },
-        }
 
         model = huggingface.TransformersPipeline(
             task="image-text-to-text",
             model="google/gemma-4-E2B-it",
             compute_pool_for_log=None,
         )
+
+        class CityCountry(BaseModel):
+            city: str
+            country: str
+
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "city_country",
+                "schema": CityCountry.model_json_schema(),
+            },
+        }
+
         name = f"model_{uuid.uuid4().hex[:8]}"
         version = f"ver_{self._run_id}"
         conda_deps = [
@@ -288,7 +251,6 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
             model=model,
             model_name=name,
             version_name=version,
-            signatures={"__call__": signature_with_rf},
             conda_dependencies=conda_deps,
             target_platforms=["SNOWPARK_CONTAINER_SERVICES"],
             options={"embed_local_ml_library": True},
@@ -321,18 +283,18 @@ class TestBatchInferenceTaskVllmInteg(registry_batch_inference_test_base.Registr
 
         result_table = f"{self._test_db}.{self._test_schema}.batch_rf_extract_{uuid.uuid4().hex[:8]}"
         ff_fqn = f"{self._test_db}.{self._test_schema}.{ff_name}"
-        # Parsing mirrors SQL against model __call__ output: bracket paths on VARIANT and
-        # CAST(content AS OBJECT) for the assistant JSON string (same shape as SERVICE ! __call__).
+        # Stage parquet reads expose each row as $1 (VARIANT), not named columns. Bracket paths
+        # on raw:"choices" mirror SERVICE ! __call__ output; CAST(content AS OBJECT) parses JSON.
         extract_sql = f"""
 CREATE OR REPLACE TABLE {result_table} AS
 WITH src AS (
-  SELECT * FROM {output_stage_location}
+  SELECT $1 AS raw FROM {output_stage_location}
     (FILE_FORMAT => '{ff_fqn}', PATTERN => '.*\\.parquet')
 ),
 extracted_structured_output AS (
   SELECT
-    CAST(choices AS ARRAY) AS choices,
-    CAST(choices[0]['message']['content'] AS OBJECT) AS content
+    CAST(raw:"choices" AS ARRAY) AS choices,
+    CAST(raw:"choices"[0]['message']['content'] AS OBJECT) AS content
   FROM src
 )
 SELECT

@@ -27,7 +27,9 @@ import uuid
 
 from absl.testing import absltest
 from feature_store_streaming_fv_integ_base import (
+    FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV,
     StreamingFeatureViewIntegTestBase,
+    get_feature_store_image_tag_override,
     wait_online_service_running_with_query_endpoint,
 )
 
@@ -89,6 +91,14 @@ def _setup_reuse_mode(reuse_db: str, reuse_schema: str) -> None:
     against a long-lived schema.
     """
     global _module_state
+
+    if get_feature_store_image_tag_override() is not None:
+        raise RuntimeError(
+            f"{FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV} cannot be used with reuse mode "
+            f"(SPEC_OFT_BUNDLE_REUSE_SCHEMA={reuse_db}.{reuse_schema}): the Online Service already "
+            f"exists, so the runtime image tag cannot be pinned before service creation. Unset "
+            f"{FEATURE_STORE_IMAGE_TAG_OVERRIDE_ENV} or run without reuse mode."
+        )
 
     session = test_env_utils.get_available_session()
     dbm = db_manager.DBManager(session)
@@ -285,6 +295,10 @@ from feature_store_distinct_n_online_bundled import (  # noqa: E402,F401
     FeatureStoreDistinctNStreamingIntegTest,
 )
 from feature_store_feature_group_bundled import FeatureGroupIntegTest  # noqa: E402,F401
+from feature_store_last_first_n_online_bundled import (  # noqa: E402,F401
+    FeatureStoreLastFirstNBatchIntegTest,
+    FeatureStoreLastFirstNStreamingIntegTest,
+)
 from feature_store_oft_varchar_length_bundled import (  # noqa: E402,F401
     FeatureStoreOftVarcharLengthIntegTest,
 )
@@ -302,6 +316,8 @@ from feature_store_streaming_fv_bundled import (  # noqa: E402,F401
 FeatureStoreBatchOnlineReadIntegTest.__module__ = __name__
 FeatureStoreDistinctNStreamingIntegTest.__module__ = __name__
 FeatureStoreDistinctNBatchIntegTest.__module__ = __name__
+FeatureStoreLastFirstNStreamingIntegTest.__module__ = __name__
+FeatureStoreLastFirstNBatchIntegTest.__module__ = __name__
 FeatureGroupIntegTest.__module__ = __name__
 FeatureStoreOftVarcharLengthIntegTest.__module__ = __name__
 RealtimeFeatureViewIntegTest.__module__ = __name__

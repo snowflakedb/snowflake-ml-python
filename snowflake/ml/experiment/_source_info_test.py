@@ -1,6 +1,10 @@
+import json
+import os
+import shutil
 import subprocess
 import sys
 import types
+from typing import Literal, Optional
 from unittest import mock
 from unittest.mock import patch
 
@@ -21,6 +25,22 @@ def _fake_ipython_module(shell: object) -> types.ModuleType:
     module = types.ModuleType("IPython")
     module.get_ipython = lambda: shell  # type: ignore[attr-defined]
     return module
+
+
+class _FakeHTTPResponse:
+    """Minimal context-manager stand-in for urlopen() returning JSON."""
+
+    def __init__(self, payload: object) -> None:
+        self._payload = json.dumps(payload).encode()
+
+    def __enter__(self) -> "_FakeHTTPResponse":
+        return self
+
+    def __exit__(self, *args: object) -> Literal[False]:
+        return False
+
+    def read(self, *args: object) -> bytes:
+        return self._payload
 
 
 class GitHelperTest(absltest.TestCase):
@@ -84,6 +104,27 @@ class GitCwdTest(absltest.TestCase):
     def test_returns_none_when_cwd_fallback_fails(self, mock_git: object, mock_getcwd: object) -> None:
         # Non-file argv[0] and os.getcwd() unavailable: nothing to anchor on.
         self.assertIsNone(_source_info._git_cwd())
+
+    @patch("snowflake.ml.experiment._source_info.os.getcwd", autospec=True, return_value="/cwd")
+    @patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True)
+    def test_anchors_on_notebook_dir_in_kernel(self, mock_kernel: object, mock_getcwd: object) -> None:
+        # In a kernel we use the notebook's own directory and never CWD, which
+        # could point at an unrelated repo (e.g. a Homebrew checkout).
+        self.assertEqual(_source_info._git_cwd("/home/me/work/analysis.ipynb"), "/home/me/work")
+        mock_getcwd.assert_not_called()  # type: ignore[attr-defined]
+
+    @patch("snowflake.ml.experiment._source_info.os.getcwd", autospec=True, return_value="/cwd")
+    @patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True)
+    def test_returns_none_in_kernel_when_notebook_unresolved(self, mock_kernel: object, mock_getcwd: object) -> None:
+        self.assertIsNone(_source_info._git_cwd(None))
+        mock_getcwd.assert_not_called()  # type: ignore[attr-defined]
+
+    @patch("snowflake.ml.experiment._source_info.os.getcwd", autospec=True, return_value="/cwd")
+    @patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True)
+    def test_returns_none_in_kernel_for_relative_notebook_path(self, mock_kernel: object, mock_getcwd: object) -> None:
+        # A server-relative path (no known root) cannot be anchored safely.
+        self.assertIsNone(_source_info._git_cwd("sub/analysis.ipynb"))
+        mock_getcwd.assert_not_called()  # type: ignore[attr-defined]
 
 
 class ScrubUrlTest(absltest.TestCase):
@@ -217,11 +258,15 @@ class DetectEntryPointTest(absltest.TestCase):
         # Outside a repo we deliberately drop the directory to avoid leaking $HOME.
         self.assertEqual(_source_info._detect_entry_point(), "standalone.py")
 
-    @patch("snowflake.ml.experiment._source_info.sys.argv", new=["/site-packages/ipykernel_launcher.py"])
     @patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True)
-    def test_returns_none_in_ipython_kernel(self, mock_in_kernel: object) -> None:
-        # In a kernel, argv[0] is the launcher; suppress it rather than emit a misleading path.
-        self.assertIsNone(_source_info._detect_entry_point())
+    def test_returns_notebook_basename_in_kernel(self, mock_in_kernel: object) -> None:
+        # In a kernel, argv[0] is the launcher; record the resolved notebook basename.
+        self.assertEqual(_source_info._detect_entry_point("/home/me/work/analysis.ipynb"), "analysis.ipynb")
+
+    @patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True)
+    def test_returns_none_in_kernel_when_notebook_unresolved(self, mock_in_kernel: object) -> None:
+        # Drop the field rather than record the launcher path.
+        self.assertIsNone(_source_info._detect_entry_point(None))
 
 
 class InIpythonKernelTest(absltest.TestCase):
@@ -251,6 +296,186 @@ class InIpythonKernelTest(absltest.TestCase):
         module.get_ipython = _boom  # type: ignore[attr-defined]
         with mock.patch.dict(sys.modules, {"IPython": module}):
             self.assertFalse(_source_info._in_ipython_kernel())
+
+
+class JupyterKernelIdTest(absltest.TestCase):
+    def test_parses_id_from_connection_file(self) -> None:
+        fake = types.ModuleType("ipykernel")
+        fake.get_connection_file = lambda: "/run/user/kernel-abc-123.json"  # type: ignore[attr-defined]
+        with mock.patch.dict(sys.modules, {"ipykernel": fake}):
+            self.assertEqual(_source_info._jupyter_kernel_id(), "abc-123")
+
+    def test_none_when_ipykernel_unavailable(self) -> None:
+        with mock.patch.dict(sys.modules, {"ipykernel": None}):
+            self.assertIsNone(_source_info._jupyter_kernel_id())
+
+
+class JupyterRunningServersTest(absltest.TestCase):
+    def test_collects_from_both_modules(self) -> None:
+        modern = types.SimpleNamespace(list_running_servers=lambda: [{"url": "a"}])
+        classic = types.SimpleNamespace(list_running_servers=lambda: [{"url": "b"}])
+
+        def fake_import(name: str) -> object:
+            return {"jupyter_server.serverapp": modern, "notebook.notebookapp": classic}[name]
+
+        with patch("snowflake.ml.experiment._source_info.importlib.import_module", side_effect=fake_import):
+            self.assertEqual(_source_info._jupyter_running_servers(), [{"url": "a"}, {"url": "b"}])
+
+    def test_returns_empty_when_unavailable(self) -> None:
+        with patch(
+            "snowflake.ml.experiment._source_info.importlib.import_module",
+            side_effect=ImportError,
+        ):
+            self.assertEqual(_source_info._jupyter_running_servers(), [])
+
+
+class JupyterSessionNotebookPathTest(absltest.TestCase):
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value=None)
+    def test_none_without_kernel_id(self, mock_kid: object) -> None:
+        self.assertIsNone(_source_info._jupyter_session_notebook_path())
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://localhost:8888/", "token": "tok"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_matches_session_by_kernel_id(self, mock_kid: object, mock_servers: object) -> None:
+        sessions = [
+            {"kernel": {"id": "other"}, "path": "Other.ipynb"},
+            {"kernel": {"id": "kid-123"}, "path": "sub/My.ipynb"},
+        ]
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(sessions),
+        ):
+            self.assertEqual(_source_info._jupyter_session_notebook_path(), "sub/My.ipynb")
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://localhost:8888/", "token": "tok", "root_dir": "/home/me/project"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_joins_server_root_dir(self, mock_kid: object, mock_servers: object) -> None:
+        sessions = [{"kernel": {"id": "kid-123"}, "path": "sub/My.ipynb"}]
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(sessions),
+        ):
+            self.assertEqual(_source_info._jupyter_session_notebook_path(), "/home/me/project/sub/My.ipynb")
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://localhost:8888/", "token": "tok"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_none_when_no_session_matches(self, mock_kid: object, mock_servers: object) -> None:
+        sessions = [{"kernel": {"id": "other"}, "path": "Other.ipynb"}]
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(sessions),
+        ):
+            self.assertIsNone(_source_info._jupyter_session_notebook_path())
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://localhost:8888/"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_none_when_urlopen_raises(self, mock_kid: object, mock_servers: object) -> None:
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+            side_effect=OSError("connection refused"),
+        ):
+            self.assertIsNone(_source_info._jupyter_session_notebook_path())
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://evil.example.com:8888/", "token": "tok"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_skips_non_loopback_server(self, mock_kid: object, mock_servers: object) -> None:
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+        ) as mock_urlopen:
+            self.assertIsNone(_source_info._jupyter_session_notebook_path())
+            mock_urlopen.assert_not_called()
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_running_servers",
+        autospec=True,
+        return_value=[{"url": "http://localhost:8888/", "token": "tok"}],
+    )
+    @patch("snowflake.ml.experiment._source_info._jupyter_kernel_id", autospec=True, return_value="kid-123")
+    def test_token_sent_as_authorization_header(self, mock_kid: object, mock_servers: object) -> None:
+        sessions = [{"kernel": {"id": "kid-123"}, "path": "My.ipynb"}]
+        with patch(
+            "snowflake.ml.experiment._source_info.urllib_request.urlopen",
+            return_value=_FakeHTTPResponse(sessions),
+        ) as mock_urlopen:
+            _source_info._jupyter_session_notebook_path()
+            request = mock_urlopen.call_args.args[0]
+            self.assertEqual(request.full_url, "http://localhost:8888/api/sessions")
+            self.assertEqual(request.get_header("Authorization"), "token tok")
+
+
+class IsLoopbackUrlTest(absltest.TestCase):
+    def test_accepts_localhost(self) -> None:
+        self.assertTrue(_source_info._is_loopback_url("http://localhost:8888/"))
+
+    def test_accepts_loopback_ipv4(self) -> None:
+        self.assertTrue(_source_info._is_loopback_url("http://127.0.0.1:8888/"))
+
+    def test_rejects_non_http_scheme(self) -> None:
+        self.assertFalse(_source_info._is_loopback_url("file:///etc/passwd"))
+
+    def test_rejects_non_loopback_ip(self) -> None:
+        self.assertFalse(_source_info._is_loopback_url("http://8.8.8.8:8888/"))
+
+    def test_rejects_unresolvable_host(self) -> None:
+        with patch(
+            "snowflake.ml.experiment._source_info.socket.getaddrinfo",
+            side_effect=OSError("name resolution failed"),
+        ):
+            self.assertFalse(_source_info._is_loopback_url("http://example.invalid:8888/"))
+
+    def test_rejects_host_resolving_to_public_ip(self) -> None:
+        with patch(
+            "snowflake.ml.experiment._source_info.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 8888))],
+        ):
+            self.assertFalse(_source_info._is_loopback_url("http://sneaky.example:8888/"))
+
+
+class ResolveNotebookPathTest(absltest.TestCase):
+    @patch("snowflake.ml.experiment._source_info._jupyter_session_notebook_path", autospec=True)
+    def test_prefers_vscode_namespace(self, mock_sessions: mock.MagicMock) -> None:
+        shell = mock.MagicMock()
+        shell.user_ns = {"__vsc_ipynb_file__": "/home/me/Analysis.ipynb"}
+        with patch("snowflake.ml.experiment._source_info._ipython_shell", autospec=True, return_value=shell):
+            self.assertEqual(_source_info._resolve_notebook_path(), "/home/me/Analysis.ipynb")
+        # VS Code resolves it cheaply, so we never hit the sessions API.
+        mock_sessions.assert_not_called()
+
+    @patch(
+        "snowflake.ml.experiment._source_info._jupyter_session_notebook_path",
+        autospec=True,
+        return_value="/srv/remote/Notebook.ipynb",
+    )
+    def test_falls_back_to_sessions_api(self, mock_sessions: object) -> None:
+        shell = mock.MagicMock()
+        shell.user_ns = {}
+        with patch("snowflake.ml.experiment._source_info._ipython_shell", autospec=True, return_value=shell):
+            self.assertEqual(_source_info._resolve_notebook_path(), "/srv/remote/Notebook.ipynb")
+
+    @patch("snowflake.ml.experiment._source_info._jupyter_session_notebook_path", autospec=True, return_value=None)
+    @patch("snowflake.ml.experiment._source_info._ipython_shell", autospec=True, return_value=None)
+    def test_returns_none_when_nothing_resolves(self, mock_shell: object, mock_sessions: object) -> None:
+        self.assertIsNone(_source_info._resolve_notebook_path())
 
 
 class GitInfoTest(absltest.TestCase):
@@ -328,19 +553,50 @@ class SourceInfoTest(absltest.TestCase):
             {"entry_point": "m.py", "git": {"commit_hash": "abc"}},
         )
 
+    def test_to_json_dict_includes_snowflake_file_fields(self) -> None:
+        self.assertEqual(
+            _source_info.SourceInfo(
+                entry_point="git_capture_test.ipynb",
+                snowflake_file_domain_type="workspace",
+                snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+            ).to_json_dict(),
+            {
+                "entry_point": "git_capture_test.ipynb",
+                "snowflake_file_domain_type": "workspace",
+                "snowflake_file_domain_name": 'USER$.PUBLIC."ML Runtime Testing"',
+            },
+        )
+
+    def test_to_json_dict_drops_snowflake_field_containing_dollar_quote(self) -> None:
+        self.assertEqual(
+            _source_info.SourceInfo(
+                entry_point="nb.ipynb",
+                snowflake_file_domain_type="we$$ird",
+            ).to_json_dict(),
+            {"entry_point": "nb.ipynb"},
+        )
+
+    def test_is_empty_false_when_snowflake_field_set(self) -> None:
+        self.assertFalse(_source_info.SourceInfo(snowflake_file_domain_type="workspace").is_empty())
+        self.assertFalse(_source_info.SourceInfo(snowflake_file_domain_name="USER$.PUBLIC.NB").is_empty())
+
+    @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._collect_git", autospec=True, return_value=None)
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True, return_value=None)
-    def test_collect_returns_empty_when_nothing_collected(self, mock_entry: object, mock_git: object) -> None:
+    def test_collect_returns_empty_when_nothing_collected(
+        self, mock_entry: object, mock_git: object, mock_snowflake: object
+    ) -> None:
         result = _source_info.SourceInfo.collect()
         self.assertTrue(result.is_empty())
 
+    @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch(
         "snowflake.ml.experiment._source_info._collect_git",
         autospec=True,
         return_value=_source_info.GitInfo(remote_url="https://x", commit_hash="abc", branch="main"),
     )
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True, return_value="m.py")
-    def test_collect_composes_both_buckets(self, mock_entry: object, mock_git: object) -> None:
+    def test_collect_composes_both_buckets(self, mock_entry: object, mock_git: object, mock_snowflake: object) -> None:
         self.assertEqual(
             _source_info.SourceInfo.collect(),
             _source_info.SourceInfo(
@@ -349,10 +605,204 @@ class SourceInfoTest(absltest.TestCase):
             ),
         )
 
+    @patch(
+        "snowflake.ml.experiment._source_info._collect_snowflake_file",
+        autospec=True,
+        return_value=_source_info.SourceInfo(
+            entry_point="git_capture_test.ipynb",
+            snowflake_file_domain_type="workspace",
+            snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+        ),
+    )
     @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True)
-    def test_collect_never_raises(self, mock_entry: object) -> None:
+    def test_collect_prefers_snowflake_file(self, mock_entry: object, mock_snowflake: object) -> None:
+        # A Snowflake-managed file short-circuits the git/notebook-path machinery.
+        self.assertEqual(
+            _source_info.SourceInfo.collect(),
+            _source_info.SourceInfo(
+                entry_point="git_capture_test.ipynb",
+                snowflake_file_domain_type="workspace",
+                snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+            ),
+        )
+        mock_entry.assert_not_called()  # type: ignore[attr-defined]
+
+    @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
+    @patch("snowflake.ml.experiment._source_info._detect_entry_point", autospec=True)
+    def test_collect_never_raises(self, mock_entry: object, mock_snowflake: object) -> None:
         mock_entry.side_effect = RuntimeError("boom")  # type: ignore[attr-defined]
         self.assertTrue(_source_info.SourceInfo.collect().is_empty())
+
+
+class CollectSnowflakeFileTest(absltest.TestCase):
+    _ENV_KEYS = ("SNOWFLAKE_FILE_DOMAIN_TYPE", "SNOWFLAKE_FILE_DOMAIN_NAME", "SNOWFLAKE_MAIN_FILE_PATH")
+
+    def _clear_env(self) -> None:
+        for key in self._ENV_KEYS:
+            os.environ.pop(key, None)
+
+    def test_none_when_not_a_snowflake_file(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=False):
+            self._clear_env()
+            self.assertIsNone(_source_info._collect_snowflake_file())
+
+    def test_collects_all_fields(self) -> None:
+        env = {
+            "SNOWFLAKE_FILE_DOMAIN_TYPE": "workspace",
+            "SNOWFLAKE_FILE_DOMAIN_NAME": 'USER$.PUBLIC."ML Runtime Testing"',
+            "SNOWFLAKE_MAIN_FILE_PATH": "git_capture_test.ipynb",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertEqual(
+                _source_info._collect_snowflake_file(),
+                _source_info.SourceInfo(
+                    entry_point="git_capture_test.ipynb",
+                    snowflake_file_domain_type="workspace",
+                    snowflake_file_domain_name='USER$.PUBLIC."ML Runtime Testing"',
+                ),
+            )
+
+    def test_partial_env_still_collected(self) -> None:
+        with mock.patch.dict(os.environ, {"SNOWFLAKE_FILE_DOMAIN_TYPE": "workspace"}, clear=False):
+            os.environ.pop("SNOWFLAKE_FILE_DOMAIN_NAME", None)
+            os.environ.pop("SNOWFLAKE_MAIN_FILE_PATH", None)
+            self.assertEqual(
+                _source_info._collect_snowflake_file(),
+                _source_info.SourceInfo(snowflake_file_domain_type="workspace"),
+            )
+
+    def test_empty_env_values_treated_as_absent(self) -> None:
+        env = {
+            "SNOWFLAKE_FILE_DOMAIN_TYPE": "",
+            "SNOWFLAKE_FILE_DOMAIN_NAME": "",
+            "SNOWFLAKE_MAIN_FILE_PATH": "",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            self.assertIsNone(_source_info._collect_snowflake_file())
+
+
+@absltest.skipUnless(shutil.which("git") is not None, "git binary not available")
+class RealGitTest(absltest.TestCase):
+    """End-to-end tests that drive collection against a real on-disk git repo.
+
+    Only ``_in_ipython_kernel`` / ``_resolve_notebook_path`` are faked (to model
+    "running in a notebook at this path"); git itself is exercised for real.
+    """
+
+    # Isolate from any global/system git config so commits and reads are deterministic.
+    _GIT_ENV = {
+        **os.environ,
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+    def _git(self, cwd: str, *args: str) -> str:
+        result = subprocess.run(
+            ("git", "-C", cwd, *args),
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self._GIT_ENV,
+        )
+        return result.stdout.strip()
+
+    def _init_repo(self, path: str, *, remote: Optional[str] = None) -> None:
+        self._git(path, "init", "-q")
+        self._git(path, "config", "user.email", "test@example.com")
+        self._git(path, "config", "user.name", "Test User")
+        self._git(path, "config", "commit.gpgsign", "false")
+        if remote is not None:
+            self._git(path, "remote", "add", "origin", remote)
+
+    def _commit(self, path: str, filename: str) -> str:
+        with open(os.path.join(path, filename), "w") as handle:
+            handle.write("{}\n")
+        self._git(path, "add", "-A")
+        self._git(path, "commit", "-qm", f"add {filename}")
+        return self._git(path, "rev-parse", "HEAD")
+
+    def _collect_in_kernel(self, notebook_path: str) -> _source_info.SourceInfo:
+        with patch(
+            "snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None
+        ), patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=True), patch(
+            "snowflake.ml.experiment._source_info._resolve_notebook_path",
+            autospec=True,
+            return_value=notebook_path,
+        ):
+            return _source_info.SourceInfo.collect()
+
+    def test_notebook_in_repo_captures_scrubbed_git(self) -> None:
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo, remote="https://user:token@github.com/acme/proj.git")
+        commit = self._commit(repo, "a.ipynb")
+        self._git(repo, "branch", "-M", "main")
+
+        result = self._collect_in_kernel(os.path.join(repo, "a.ipynb"))
+
+        self.assertEqual(result.entry_point, "a.ipynb")
+        assert result.git is not None
+        self.assertEqual(result.git.remote_url, "https://github.com/acme/proj.git")
+        self.assertEqual(result.git.commit_hash, commit)
+        self.assertEqual(result.git.branch, "main")
+
+    def test_git_dropped_when_notebook_dir_not_a_repo_even_if_cwd_is(self) -> None:
+        # Regression: in a kernel we must anchor on the notebook's directory and
+        # never os.getcwd(), which previously picked up an unrelated repo.
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo, remote="https://github.com/acme/proj.git")
+        self._commit(repo, "code.py")
+
+        notebook_dir = self.create_tempdir().full_path  # a sibling dir, not a repo
+        notebook = os.path.join(notebook_dir, "scratch.ipynb")
+        open(notebook, "w").close()
+
+        original_cwd = os.getcwd()
+        self.addCleanup(os.chdir, original_cwd)
+        os.chdir(repo)  # os.getcwd() is now inside a real repo
+
+        result = self._collect_in_kernel(notebook)
+
+        self.assertEqual(result.entry_point, "scratch.ipynb")
+        self.assertIsNone(result.git)
+
+    def test_detached_head_has_no_branch(self) -> None:
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo, remote="https://github.com/acme/proj.git")
+        first = self._commit(repo, "a.ipynb")
+        self._commit(repo, "b.ipynb")
+        self._git(repo, "checkout", "-q", first)  # detached HEAD
+
+        result = self._collect_in_kernel(os.path.join(repo, "a.ipynb"))
+
+        assert result.git is not None
+        self.assertEqual(result.git.commit_hash, first)
+        self.assertIsNone(result.git.branch)
+
+    def test_repo_without_remote_yields_none_remote_url(self) -> None:
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo)  # no origin remote configured
+        commit = self._commit(repo, "a.ipynb")
+
+        result = self._collect_in_kernel(os.path.join(repo, "a.ipynb"))
+
+        assert result.git is not None
+        self.assertIsNone(result.git.remote_url)
+        self.assertEqual(result.git.commit_hash, commit)
+
+    def test_script_entry_point_is_repo_relative(self) -> None:
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo, remote="https://github.com/acme/proj.git")
+        os.makedirs(os.path.join(repo, "train"))
+        script = os.path.join(repo, "train", "main.py")
+        open(script, "w").close()
+        self._commit(repo, "a.ipynb")
+
+        with patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=False), patch(
+            "snowflake.ml.experiment._source_info.sys.argv", new=[script]
+        ):
+            self.assertEqual(_source_info._detect_entry_point(), os.path.join("train", "main.py"))
+            self.assertIsNotNone(_source_info._collect_git())
 
 
 if __name__ == "__main__":

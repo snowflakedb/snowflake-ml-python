@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 class ImageFeatureExtractionTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles image feature extraction pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

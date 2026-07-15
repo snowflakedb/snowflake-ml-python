@@ -21,7 +21,7 @@ REQUIREMENTS = [
     "pyyaml>=6.0,<7",
     "requests",
     "retrying>=1.3.3,<2",
-    "scikit-learn<1.8",
+    "scikit-learn<1.9",
     "scipy>=1.9,<2",
     "shap>=0.46.0,<1",
     "snowflake-connector-python>=3.17.3,<5",

@@ -927,6 +927,51 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         self.assertIn("dup_rn = 1 AND rn <= 5", body)
         self.assertNotIn("QUALIFY ROW_NUMBER() OVER (", body)
 
+    def _nondistinct_merge_body(self, function: AggregationType) -> str:
+        """Return the LIST_MERGED CTE body for a single non-distinct list spec."""
+        features = [
+            AggregationSpec(
+                function=function,
+                source_column="CATEGORY",
+                window="24h",
+                output_column="RECENT_CATS",
+                params={"n": 5},
+            ),
+        ]
+        generator = MergingSqlGenerator(
+            tile_table="DB.SCHEMA.TILES",
+            join_keys=["USER_ID"],
+            timestamp_col="EVENT_TS",
+            feature_granularity="1h",
+            features=features,
+            spine_timestamp_col="query_ts",
+            fv_index=0,
+        )
+        ctes = generator.generate_all_ctes()
+        return next(cte for cte in ctes if cte[0] == "LIST_MERGED_FV0")[1]
+
+    def test_last_n_merge_selects_newest_but_displays_oldest_first(self) -> None:
+        """Non-distinct LAST_N merge: cap by newest N, display oldest-first."""
+        body = self._nondistinct_merge_body(AggregationType.LAST_N)
+
+        self.assertNotIn("ARRAY_SLICE(", body)
+        self.assertIn("QUALIFY ROW_NUMBER() OVER (", body)
+        # Cap keeps the most-recent N (TILE_START DESC).
+        self.assertIn("ORDER BY t.TILE_START DESC, flat.INDEX ASC\n         ) <= 5", body)
+        # Display oldest-first; LAST_N tiles are stored newest-first so idx reverses.
+        self.assertIn("ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key ASC, idx_key DESC)", body)
+
+    def test_first_n_merge_selects_oldest_and_displays_oldest_first(self) -> None:
+        """Non-distinct FIRST_N merge: cap by earliest N, display oldest-first."""
+        body = self._nondistinct_merge_body(AggregationType.FIRST_N)
+
+        self.assertNotIn("ARRAY_SLICE(", body)
+        self.assertIn("QUALIFY ROW_NUMBER() OVER (", body)
+        # Cap keeps the earliest N (TILE_START ASC).
+        self.assertIn("ORDER BY t.TILE_START ASC, flat.INDEX ASC\n         ) <= 5", body)
+        # Display oldest-first; FIRST_N tiles are stored oldest-first so idx stays ASC.
+        self.assertIn("ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key ASC, idx_key ASC)", body)
+
 
 class RollupSqlGeneratorTest(parameterized.TestCase):
     """Unit tests for RollupSqlGenerator class."""

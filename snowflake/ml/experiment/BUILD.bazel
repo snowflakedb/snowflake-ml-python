@@ -54,6 +54,7 @@ py_library(
         "//snowflake/ml/experiment/_entities:entities",
         "//snowflake/ml/experiment/_entities:run_metadata",
         "//snowflake/ml/experiment/_logging:logging",
+        "//snowflake/ml/lineage",
         "//snowflake/ml/registry",
     ],
 )

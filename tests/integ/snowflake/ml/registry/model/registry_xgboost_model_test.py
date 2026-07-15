@@ -54,6 +54,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             },
             # pin version of shap for tests
             additional_dependencies=[f"shap=={shap.__version__}"],
+            options={"enable_explainability": True},
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
@@ -117,8 +118,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
             options={"enable_explainability": False},
         )
 
-    @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
-    def test_xgb_explain_by_default(self) -> None:
+    def test_xgb_no_explain_by_default(self) -> None:
         cal_data = datasets.load_breast_cancer(as_frame=True)
         cal_X = cal_data.data
         cal_y = cal_data.target
@@ -126,21 +126,21 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
         cal_X_train, cal_X_test, cal_y_train, cal_y_test = model_selection.train_test_split(cal_X, cal_y)
         regressor = xgboost.XGBRegressor(n_estimators=10, reg_lambda=1, gamma=0, max_depth=3, n_jobs=1)
         regressor.fit(cal_X_train, cal_y_train)
-        expected_explanations = shap.TreeExplainer(regressor)(cal_X_test).values
+
+        # Explainability is opt-in: with no options, only predict is registered (no explain method).
         self._test_registry_model(
             model=regressor,
             sample_input_data=cal_X_test,
             prediction_assert_fns={
-                "explain": (
+                "predict": (
                     cal_X_test,
                     lambda res: pd.testing.assert_frame_equal(
                         res,
-                        pd.DataFrame(expected_explanations, columns=res.columns),
+                        pd.DataFrame(regressor.predict(cal_X_test), columns=res.columns),
                         check_dtype=False,
                     ),
                 ),
             },
-            function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
     @unittest.skipIf(_XGBOOST_SHAP_BROKEN, _SKIP_REASON)
@@ -264,6 +264,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            options={"enable_explainability": True},
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
@@ -319,6 +320,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            options={"enable_explainability": True},
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 
@@ -391,6 +393,7 @@ class TestRegistryXGBoostModelInteg(registry_model_test_base.RegistryModelTestBa
                     ),
                 ),
             },
+            options={"enable_explainability": True},
             function_type_assert={"explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION},
         )
 

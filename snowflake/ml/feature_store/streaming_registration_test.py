@@ -2356,5 +2356,229 @@ class BuildStreamingSpecTest(absltest.TestCase):
         self.assertEqual(spec_dict["spec"]["feature_aggregation_method"], "tiles")
 
 
+# ============================================================================
+# delete_feature_view orphan-cleanup tests
+# ============================================================================
+
+
+def _create_feature_store_with_mocks() -> MagicMock:
+    """Create a FeatureStore instance with mocked internals (bypasses __init__)."""
+    from snowflake.ml.feature_store.feature_store import (
+        FeatureStore,
+        _FeatureStoreConfig,
+    )
+
+    fs = object.__new__(FeatureStore)
+    fs._session = MagicMock()
+    fs._session.get_current_role.return_value = "ROLE_1"
+    fs._session.get_current_warehouse.return_value = "WH_1"
+    # Default every SQL query (e.g. SHOW TASKS) to an empty result so probes resolve to
+    # "nothing found" unless a test opts in by overriding collect's return value.
+    fs._session.sql.return_value.collect.return_value = []
+    fs._metadata_manager = MagicMock()
+    fs._config = _FeatureStoreConfig(
+        database=SqlIdentifier("TEST_DB"),
+        schema=SqlIdentifier("TEST_SCHEMA"),
+    )
+    fs._default_warehouse = SqlIdentifier("WH_1")
+    fs._telemetry_stmp = {}
+    fs._default_iceberg_external_volume = None
+    fs._asof_join_enabled = None
+    # Needed by _find_object (used to probe for orphaned online feature tables).
+    fs._obj_search_spaces = {
+        "DYNAMIC TABLES": (fs._config.full_schema_path, "TABLE"),
+        "VIEWS": (fs._config.full_schema_path, "TABLE"),
+        "ONLINE FEATURE TABLES": (fs._config.full_schema_path, "TABLE"),
+        "TASKS": (fs._config.full_schema_path, "TASK"),
+    }
+    return fs  # type: ignore[return-value]
+
+
+class DeleteOrphanedStreamingResourcesTest(absltest.TestCase):
+    """Tests for delete_feature_view when the backing DT is already gone."""
+
+    def test_cleanup_orphaned_returns_true_when_streaming_meta_exists(self) -> None:
+        """_cleanup_orphaned_feature_view_resources returns True and runs full cleanup."""
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="TXN_EVENTS",
+            transformation_fn_name="my_fn",
+        )
+
+        result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
+
+        self.assertTrue(result)
+        # get_streaming_metadata is consulted both by the orphan helper's own guard and by
+        # cleanup_streaming_feature_view, so assert it was called with the right args (not once).
+        fs._metadata_manager.get_streaming_metadata.assert_any_call("MY_FV", "V1")
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+
+    def test_cleanup_orphaned_returns_false_when_nothing_exists(self) -> None:
+        """_cleanup_orphaned_feature_view_resources returns False when there is no streaming
+        metadata, no companion refresh task, no snapshot table, and no online feature table
+        to clean up."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+
+        with patch.object(fs, "_find_object", return_value=[]):
+            result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
+
+        self.assertFalse(result)
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        fs._metadata_manager.delete_feature_view_metadata.assert_not_called()
+
+    def test_cleanup_orphaned_drops_snapshot_table_when_task_already_gone(self) -> None:
+        """_cleanup_orphaned_feature_view_resources drops an orphaned snapshot table even when
+        the companion refresh task was already removed by an earlier partial deletion."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+
+        # SHOW TASKS finds nothing (task already dropped), but SHOW TABLES finds the snapshot
+        # table, which must still be cleaned up.
+        def _sql_side_effect(query: str) -> MagicMock:
+            result = MagicMock()
+            result.collect.return_value = [MagicMock()] if "SHOW TABLES LIKE" in query else []
+            return result
+
+        fs._session.sql.side_effect = _sql_side_effect
+
+        with patch.object(fs, "_find_object", return_value=[]):
+            result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
+
+        self.assertTrue(result)
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
+        self.assertTrue(
+            any("DROP TABLE IF EXISTS" in sql for sql in issued_sql),
+            f"expected a snapshot DROP TABLE statement, got: {issued_sql}",
+        )
+        self.assertFalse(
+            any("DROP TASK IF EXISTS" in sql for sql in issued_sql),
+            "should not drop a refresh task when none exists",
+        )
+
+    def test_cleanup_orphaned_drops_task_for_append_only_fv(self) -> None:
+        """_cleanup_orphaned_feature_view_resources drops the companion refresh task and
+        snapshot table for an orphaned append-only FV (no streaming metadata, no OFT)."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+        # SHOW TASKS returns a row -> the FV had a companion refresh task.
+        fs._session.sql.return_value.collect.return_value = [MagicMock()]
+
+        # No orphaned online feature table for this FV.
+        with patch.object(fs, "_find_object", return_value=[]):
+            result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
+
+        self.assertTrue(result)
+        # No streaming cleanup happened, but the task drop and metadata deletion did.
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
+        self.assertTrue(
+            any("DROP TASK IF EXISTS" in sql for sql in issued_sql),
+            f"expected a DROP TASK statement, got: {issued_sql}",
+        )
+
+    def test_cleanup_orphaned_drops_online_table_for_plain_online_fv(self) -> None:
+        """_cleanup_orphaned_feature_view_resources drops the orphaned $ONLINE feature table
+        for a plain online-enabled FV (no streaming metadata, no refresh task)."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+        # Default collect -> [] so SHOW TASKS finds no refresh task. _find_object returns a row
+        # so the FV is detected as having an orphaned online feature table.
+        with patch.object(fs, "_find_object", return_value=[MagicMock()]):
+            result = fs._cleanup_orphaned_feature_view_resources("MY_FV", "V1")
+
+        self.assertTrue(result)
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+        issued_sql = [call.args[0] for call in fs._session.sql.call_args_list if call.args]
+        self.assertTrue(
+            any("DROP ONLINE FEATURE TABLE IF EXISTS" in sql for sql in issued_sql),
+            f"expected a DROP ONLINE FEATURE TABLE statement, got: {issued_sql}",
+        )
+        self.assertFalse(
+            any("DROP TASK IF EXISTS" in sql for sql in issued_sql),
+            "should not drop a refresh task when none exists",
+        )
+
+    def test_delete_feature_view_cleans_up_and_returns_when_backing_gone(self) -> None:
+        """delete_feature_view(name, version) returns gracefully when backing DT is gone
+        but streaming metadata still exists."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_realtime_config.return_value = None
+        fs._metadata_manager.get_streaming_metadata.return_value = StreamingMetadata(
+            stream_source_name="TXN_EVENTS",
+            transformation_fn_name="my_fn",
+        )
+
+        # Backing object is gone: the lookup returns no rows, so _get_feature_view_impl
+        # resolves to None and delete_feature_view falls into the orphan-cleanup path.
+        with patch.object(fs, "_get_fv_backend_representations", return_value=[]):
+            # Should not raise — orphaned resources are cleaned up and the call returns.
+            fs.delete_feature_view("MY_FV", "V1")
+
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_called_once_with("TXN_EVENTS")
+        fs._metadata_manager.delete_feature_view_metadata.assert_called_once_with("MY_FV", "V1")
+
+    def test_delete_feature_view_reraises_when_nothing_to_clean_up(self) -> None:
+        """delete_feature_view(name, version) re-raises NOT_FOUND when neither the
+        backing object nor any streaming metadata exists."""
+        from unittest.mock import patch
+
+        fs = _create_feature_store_with_mocks()
+        fs._metadata_manager.get_realtime_config.return_value = None
+        fs._metadata_manager.get_streaming_metadata.return_value = None
+
+        # Backing object is gone and there is no streaming metadata to clean up, so the
+        # downstream validation lookup raises NOT_FOUND. The telemetry decorator unwraps the
+        # SnowflakeMLException to its original ValueError when no live connection is present
+        # (as in this unit test), so we assert on that.
+        with patch.object(fs, "_get_fv_backend_representations", return_value=[]):
+            with self.assertRaises(ValueError) as cm:
+                fs.delete_feature_view("MY_FV", "V1")
+            self.assertIn("Failed to find FeatureView", str(cm.exception))
+
+        fs._metadata_manager.decrement_stream_source_ref_count.assert_not_called()
+
+    def test_delete_feature_view_propagates_non_not_found_errors(self) -> None:
+        """delete_feature_view propagates errors other than NOT_FOUND, without attempting
+        orphan cleanup."""
+        from unittest.mock import patch
+
+        from snowflake.ml._internal.exceptions import (
+            error_codes,
+            exceptions as snowml_exceptions,
+        )
+
+        fs = _create_feature_store_with_mocks()
+
+        internal_error = snowml_exceptions.SnowflakeMLException(
+            error_code=error_codes.INTERNAL_SNOWML_ERROR,
+            original_exception=RuntimeError("something went wrong"),
+        )
+        # An error other than NOT_FOUND while probing the backend must surface, and orphan
+        # cleanup must not be attempted. The telemetry decorator unwraps the
+        # SnowflakeMLException to its original RuntimeError when no live connection is present.
+        with patch.object(fs, "_get_fv_backend_representations", side_effect=internal_error):
+            with self.assertRaises(RuntimeError) as cm:
+                fs.delete_feature_view("MY_FV", "V1")
+            self.assertIn("something went wrong", str(cm.exception))
+
+        fs._metadata_manager.get_streaming_metadata.assert_not_called()
+
+
 if __name__ == "__main__":
     absltest.main()

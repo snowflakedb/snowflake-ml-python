@@ -1428,19 +1428,15 @@ class MergingSqlGenerator:
             tile_sort_dir = (
                 "DESC" if spec.function in (AggregationType.LAST_N, AggregationType.LAST_DISTINCT_N) else "ASC"
             )
-            # Final user-visible arrays are always ordered oldest-first (ascending
-            # timestamp), for both LAST_DISTINCT_N and FIRST_DISTINCT_N. This is
-            # independent of which N distinct values survive (see the new-version
-            # distinct branch below, where LAST keeps the most-recent N).
-            #
-            # Within a single tile the merge orders by array position (idx_key)
-            # rather than the per-value timestamp, so the idx_key tiebreak must
-            # match the direction the tile array was stored in. LAST_DISTINCT_N
-            # tile arrays are stored most-recent-first, so oldest-first display
-            # needs idx_key DESC; FIRST_DISTINCT_N tile arrays are already stored
-            # oldest-first, so idx_key ASC.
+            # All ordered-N variants display oldest-first (ascending timestamp),
+            # decoupled from the cap direction ({tile_sort_dir}): "first"/"last"
+            # only selects WHICH N survive. The idx_key tiebreak must match the
+            # stored tile-array direction: LAST_* tiles are stored most-recent-
+            # first (needs idx_key DESC); FIRST_* tiles are stored oldest-first.
             display_sort_dir = "ASC"
-            display_idx_dir = "DESC" if spec.function == AggregationType.LAST_DISTINCT_N else "ASC"
+            display_idx_dir = (
+                "DESC" if spec.function in (AggregationType.LAST_N, AggregationType.LAST_DISTINCT_N) else "ASC"
+            )
 
             if is_distinct and _is_new_distinct_version(self._authoring_pkg_version):
                 n = spec.params["n"]
@@ -1520,18 +1516,25 @@ class MergingSqlGenerator:
      GROUP BY {group_by_str}
     )"""
             else:
-                # Non-distinct: straightforward flatten and aggregate
+                # Non-distinct (LAST_N / FIRST_N): cap to the N selected values
+                # via QUALIFY ({tile_sort_dir} keeps newest N for LAST_N, earliest
+                # N for FIRST_N), then emit oldest-first (display decoupled from
+                # cap), mirroring the new-version distinct branch above.
                 subquery = f"""
-    (SELECT {select_group_cols},
-            ARRAY_SLICE(
-                ARRAY_AGG(flat.VALUE) WITHIN GROUP (ORDER BY {order_clause}),
-                0, {n_value}
-            ) AS {output_col}
-     FROM TILES_JOINED_FV{self._fv_index} t,
-     LATERAL FLATTEN(INPUT => t.{col_name}) flat
-     WHERE {tile_filter}
-     AND flat.VALUE IS NOT NULL
-     GROUP BY {select_group_cols}
+    (SELECT {group_by_str},
+            ARRAY_AGG(val) WITHIN GROUP (ORDER BY ts_key {display_sort_dir}, idx_key {display_idx_dir}) AS {output_col}
+     FROM (
+         SELECT {select_group_cols}, flat.VALUE AS val,
+                t.{_TILE_START_COL} AS ts_key, flat.INDEX AS idx_key
+         FROM TILES_JOINED_FV{self._fv_index} t,
+         LATERAL FLATTEN(INPUT => t.{col_name}) flat
+         WHERE {tile_filter}
+         AND flat.VALUE IS NOT NULL
+         QUALIFY ROW_NUMBER() OVER (
+             PARTITION BY {select_group_cols} ORDER BY t.{_TILE_START_COL} {tile_sort_dir}, flat.INDEX ASC
+         ) <= {n_value}
+     ) capped
+     GROUP BY {group_by_str}
     )"""
 
             feature_subqueries.append((output_col, subquery))

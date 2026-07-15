@@ -111,9 +111,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
             if hasattr(estimator, method_name):
                 try:
                     result = getattr(estimator, method_name)()
-                    if enable_explainability is None and background_data is None:
-                        return None  # cannot get explain without background data
-                    elif enable_explainability and background_data is None:
+                    if enable_explainability and background_data is None:
                         raise ValueError(
                             "Provide `sample_input_data` to generate explanations for sklearn Snowpark ML models."
                         )
@@ -133,7 +131,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.SNOWModelSaveOptions],
     ) -> None:
-        enable_explainability = kwargs.get("enable_explainability", None)
+        enable_explainability = kwargs.get("enable_explainability", False)
 
         from snowflake.ml.modeling.framework.base import BaseEstimator
 
@@ -190,30 +188,27 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                             raise ValueError(f"Target method {method_name} does not exist in the model.")
                     model_meta.signatures = temp_model_signature_dict
 
-        python_base_obj = cls._get_supported_object_for_explainability(model, sample_input_data, enable_explainability)
-        if type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model) and python_base_obj is None:
-            # Whole-pipeline conversion (to_sklearn / to_xgboost / ...) often fails when later steps use
-            # explicit input_cols, but explainability still runs on the final estimator via _build_explain_fn.
-            # steps[-1] is the last (name, estimator) pair; [1] accesses the estimator itself ([0] is the name).
-            final_estimator = model.steps[-1][1]  # type: ignore[attr-defined]
-            python_base_obj = cls._get_supported_object_for_explainability(
-                final_estimator, sample_input_data, enable_explainability
-            )
-        explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
-
         if enable_explainability:
+            python_base_obj = cls._get_supported_object_for_explainability(
+                model, sample_input_data, enable_explainability
+            )
+            if (
+                type_utils.LazyType("snowflake.ml.modeling.pipeline.Pipeline").isinstance(model)
+                and python_base_obj is None
+            ):
+                # Whole-pipeline conversion (to_sklearn / to_xgboost / ...) often fails when later steps use
+                # explicit input_cols, but explainability still runs on the final estimator via _build_explain_fn.
+                # steps[-1] is the last (name, estimator) pair; [1] accesses the estimator itself ([0] is the name).
+                final_estimator = model.steps[-1][1]  # type: ignore[attr-defined]
+                python_base_obj = cls._get_supported_object_for_explainability(
+                    final_estimator, sample_input_data, enable_explainability
+                )
+            explain_target_method = handlers_utils.get_explain_target_method(model_meta, cls.EXPLAIN_TARGET_METHODS)
             if explain_target_method is None:
                 raise ValueError(
                     "The model must have one of the following methods to enable explainability: "
                     + ", ".join(cls.EXPLAIN_TARGET_METHODS)
                 )
-        if enable_explainability is None:
-            if python_base_obj is None or explain_target_method is None:
-                # set None to False so we don't include shap in the environment
-                enable_explainability = False
-            else:
-                enable_explainability = True
-        if enable_explainability:
             try:
                 model_task_and_output_type = model_task_utils.resolve_model_task_and_output_type(
                     python_base_obj, model_meta.task
@@ -228,7 +223,7 @@ class SnowMLModelHandler(_base.BaseModelHandler["BaseEstimator"]):
                     model_meta = handlers_utils.add_inferred_explain_method_signature(
                         model_meta=model_meta,
                         explain_method="explain",
-                        target_method=explain_target_method,  # type: ignore[arg-type]
+                        target_method=explain_target_method,
                         background_data=background_data,
                         explain_fn=explain_fn,
                         output_feature_names=transformed_df.columns,

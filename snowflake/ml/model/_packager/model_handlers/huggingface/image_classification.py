@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 class ImageClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles image classification pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

@@ -2,8 +2,10 @@ from typing import Optional, Union
 
 import numpy as np
 import numpy.typing as npt
+import sklearn
 from absl.testing import parameterized
 from absl.testing.absltest import main
+from packaging import version
 from sklearn import exceptions, metrics as sklearn_metrics
 
 from snowflake import snowpark
@@ -314,14 +316,25 @@ class PrecisionRecallFscoreSupportTest(parameterized.TestCase):
             y_true_col_names=_Y_TRUE_COL,
             y_pred_col_names=_Y_PRED_COL,
         )
-        sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
-            pandas_df[_Y_TRUE_COL],
-            pandas_df[_Y_PRED_COL],
-        )
-        np.testing.assert_allclose(
-            np.array((actual_p, actual_r, actual_f, actual_s)),
-            np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s)),
-        )
+
+        # scikit-learn 1.8+ rejects empty input with a ValueError, whereas earlier versions returned
+        # empty arrays. snowml keeps returning empty arrays regardless, so only compare against sklearn
+        # on versions where empty input is still supported.
+        if version.Version(sklearn.__version__) >= version.Version("1.8"):
+            with self.assertRaises(ValueError):
+                sklearn_metrics.precision_recall_fscore_support(
+                    pandas_df[_Y_TRUE_COL],
+                    pandas_df[_Y_PRED_COL],
+                )
+        else:
+            sklearn_p, sklearn_r, sklearn_f, sklearn_s = sklearn_metrics.precision_recall_fscore_support(
+                pandas_df[_Y_TRUE_COL],
+                pandas_df[_Y_PRED_COL],
+            )
+            np.testing.assert_allclose(
+                np.array((actual_p, actual_r, actual_f, actual_s)),
+                np.array((sklearn_p, sklearn_r, sklearn_f, sklearn_s)),
+            )
 
     def test_with_large_num_of_rows_binary(self) -> None:
         pandas_df, input_df = utils.get_df(self._session, _LARGE_BINARY_DATA, _SF_SCHEMA)

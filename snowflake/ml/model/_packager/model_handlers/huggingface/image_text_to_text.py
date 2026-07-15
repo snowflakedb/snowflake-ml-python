@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 class ImageTextToTextTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles image-text-to-text pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

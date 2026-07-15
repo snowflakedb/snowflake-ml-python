@@ -173,7 +173,6 @@ class XgboostHandlerTest(absltest.TestCase):
         y_pred_proba = classifier.predict_proba(cal_X_test)
         explanations = shap.TreeExplainer(classifier)(cal_X_test).values
         with tempfile.TemporaryDirectory() as tmpdir:
-
             # check for warnings if sample_input_data is not provided while saving the model
             with self.assertWarnsRegex(
                 UserWarning, "sample_input_data should be provided for better explainability results"
@@ -184,7 +183,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                     metadata={"author": "halu", "version": "1"},
                     task=model_types.Task.UNKNOWN,
-                    options=model_types.XGBModelSaveOptions(),
+                    options=model_types.XGBModelSaveOptions(enable_explainability=True),
                 )
 
             with warnings.catch_warnings():
@@ -207,7 +206,7 @@ class XgboostHandlerTest(absltest.TestCase):
                     model=classifier,
                     sample_input_data=cal_X_test,
                     metadata={"author": "halu", "version": "1"},
-                    options=model_types.XGBModelSaveOptions(),
+                    options=model_types.XGBModelSaveOptions(enable_explainability=True),
                 )
                 save_background_data.assert_called_once()
 
@@ -236,13 +235,12 @@ class XgboostHandlerTest(absltest.TestCase):
         y_pred = classifier.predict(cal_X_test)
         explanations = shap.TreeExplainer(classifier)(cal_X_test).values
         with tempfile.TemporaryDirectory() as tmpdir:
-
             model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
                 name="model1",
                 model=classifier,
                 signatures={"predict": model_signature.infer_signature(cal_X_test, y_pred)},
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.XGBModelSaveOptions(),
+                options=model_types.XGBModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -264,7 +262,7 @@ class XgboostHandlerTest(absltest.TestCase):
                 model=classifier,
                 sample_input_data=cal_X_test,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.XGBModelSaveOptions(),
+                options=model_types.XGBModelSaveOptions(enable_explainability=True),
             )
 
             pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1_no_sig"))

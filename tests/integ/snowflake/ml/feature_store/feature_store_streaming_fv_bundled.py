@@ -1464,6 +1464,91 @@ class StreamingFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, parameter
         names = {row["NAME"] for row in fv_list}
         self.assertNotIn(SqlIdentifier(f"STREAM_FV_{s}").resolved(), names)
 
+    def test_delete_feature_view_cleans_up_orphaned_streaming_resources(self) -> None:
+        """delete_feature_view cleans up orphaned streaming artifacts when the offline
+        dynamic table was already dropped in a previous partial deletion.
+
+        Simulates the real failure mode end-to-end:
+        1. A streaming FV is registered via register_feature_view, creating the offline
+           DT, $UDF_TRANSFORMED table, OFT, streaming metadata, and bumping the ref_count.
+        2. The offline DT is dropped externally (simulating a crashed first delete).
+        3. A second delete_feature_view call must succeed and clean up the remaining
+           orphaned artifacts ($UDF_TRANSFORMED, streaming metadata, ref_count).
+
+        Regression test for the gap where the FS could reach an unrecoverable orphaned
+        state: the offline DT was dropped but delete_feature_view kept raising NOT_FOUND
+        before reaching the streaming cleanup code, leaving ref_count stuck at 1.
+        """
+        s = uuid.uuid4().hex[:8]
+        stream = f"ORPHAN_STREAM_{s}"
+        fv_name = f"ORPHAN_STREAM_FV_{s}"
+
+        fs = self._create_feature_store()
+        self._make_stream_source(fs, stream)
+        backfill_table = self._create_backfill_table(fs, s)
+        backfill_df = self._session.table(backfill_table)
+
+        stream_config = StreamConfig(
+            stream_source=stream,
+            transformation_fn=identity_transform,
+            backfill_df=backfill_df,
+        )
+        fv = FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            stream_config=stream_config,
+            timestamp_col="EVENT_TIME",
+            refresh_freq="1 minute",
+            online_config=OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+
+        # --- Step 1: register the streaming FV ---
+        registered_fv = fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.is_streaming)
+        self.assertTrue(registered_fv.online)
+
+        fv_name_str = str(registered_fv.name)
+        version_str = str(registered_fv.version)
+        phys_name = FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        fq_offline_dt = fs._get_fully_qualified_name(phys_name)
+        udf_table_name = FeatureView._get_udf_transformed_table_name(phys_name)
+        source_ref_key = self._stream_source_ref_key(stream)
+
+        self.assertEqual(
+            fs._metadata_manager.get_stream_source_ref_count(source_ref_key),
+            1,
+            "ref_count must be 1 immediately after registration",
+        )
+        self.assertIsNotNone(
+            fs._metadata_manager.get_streaming_metadata(fv_name_str, version_str),
+            "streaming metadata must exist after registration",
+        )
+
+        # --- Step 2: simulate a crashed first deletion (offline DT dropped externally) ---
+        self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fq_offline_dt}").collect()
+
+        dt_rows = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{phys_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(dt_rows, "Offline DT must be absent before the retry delete call")
+
+        # --- Step 3: retry delete — must succeed and clean up all orphaned artifacts ---
+        fs.delete_feature_view(fv_name_str, version_str)
+
+        self.assertEqual(
+            fs._metadata_manager.get_stream_source_ref_count(source_ref_key),
+            0,
+            "ref_count must be decremented to 0 by orphan cleanup",
+        )
+        self.assertIsNone(
+            fs._metadata_manager.get_streaming_metadata(fv_name_str, version_str),
+            "streaming metadata row must be deleted by orphan cleanup",
+        )
+        udf_tables_after = self._session.sql(
+            f"SHOW TABLES LIKE '{udf_table_name.resolved()}' IN SCHEMA {fs._config.full_schema_path}"
+        ).collect()
+        self.assertEmpty(udf_tables_after, "$UDF_TRANSFORMED table must be dropped by orphan cleanup")
+
 
 if __name__ == "__main__":
     absltest.main()

@@ -353,6 +353,18 @@ class EntityContractTest(absltest.TestCase):
         rtc = _make_realtime_config_with_sources([u1, u2])
         validate_rtfv_entity_contract([Entity(name="USER", join_keys=["USER_ID"])], rtc)
 
+    def test_shared_join_key_differing_varchar_lengths_pass(self) -> None:
+        """USER_ID as StringType() in one upstream and StringType(14) in another -> ok.
+
+        VARCHAR length is irrelevant to join semantics and can legitimately
+        differ across sources (e.g. a materialized dynamic table narrows the
+        length to its stored data), so it must not be treated as a conflict.
+        """
+        u_unbounded = _build_upstream_fv("A", entity_name="USER", join_keys=("USER_ID",), join_key_type=StringType())
+        u_bounded = _build_upstream_fv("B", entity_name="USER", join_keys=("USER_ID",), join_key_type=StringType(14))
+        rtc = _make_realtime_config_with_sources([u_unbounded, u_bounded])
+        validate_rtfv_entity_contract([Entity(name="USER", join_keys=["USER_ID"])], rtc)
+
     def test_shared_join_key_conflicting_datatypes_rejected(self) -> None:
         """Two upstreams declare USER_ID with different Snowpark datatypes -> rejected.
 

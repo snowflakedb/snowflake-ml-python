@@ -24,7 +24,7 @@ class LineageNode(mixins.SerializableSessionMixin):
         self,
         session: snowpark.Session,
         name: str,
-        domain: Union[Literal["feature_view", "dataset", "model", "table", "view"]],
+        domain: Union[Literal["feature_view", "dataset", "model", "table", "view", "experiment"]],
         version: Optional[str] = None,
         status: Optional[Literal["ACTIVE", "DELETED", "MASKED"]] = None,
         created_on: Optional[datetime] = None,
