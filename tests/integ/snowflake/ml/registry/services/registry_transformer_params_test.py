@@ -34,6 +34,25 @@ logger = logging.getLogger(__name__)
 
 _SMALL_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
+
+# Remote model logging runs in the model_logger image, which pins a released
+# snowflake-ml-python (see model_container_services_deployment/model_logger/requirements.txt).
+# Until that image includes response_format ParamGroupSpec support, omit the param for
+# compute_pool_for_log paths.
+#
+# TODO: After the next model_logger image release ships a snowflake-ml-python client with
+# response_format ParamGroupSpec support, revert _include_response_format_params to always
+# return True so remote logging paths exercise response_format in _FULL_PARAMS by default.
+def _include_response_format_params(compute_pool_for_log: Optional[str]) -> bool:
+    return compute_pool_for_log is None
+
+
+def _params_for_logging(params: dict[str, Any], *, include_response_format: bool) -> dict[str, Any]:
+    if include_response_format:
+        return params
+    return {name: value for name, value in params.items() if name != "response_format"}
+
+
 # All OpenAI params — n=2 so we can verify params actually reach the model
 # (2 choices in response proves n was honoured).
 _FULL_PARAMS: dict[str, Any] = {
@@ -45,6 +64,7 @@ _FULL_PARAMS: dict[str, Any] = {
     "top_p": 0.9,
     "frequency_penalty": 0.05,
     "presence_penalty": 0.05,
+    "response_format": None,
 }
 
 _PARTIAL_PARAMS: dict[str, Any] = {
@@ -171,24 +191,29 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
             f"{tag}Expected 400, got {response.status_code}: {response.text[:300]}",
         )
 
-    def _flat_payload(self, messages: list[dict[str, Any]], **params: Any) -> dict[str, Any]:
+    def _flat_payload(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        include_response_format: bool,
+        **params: Any,
+    ) -> dict[str, Any]:
         """Flat format: row_index followed by messages and all param columns in signature order."""
-        return {
-            "data": [
-                [
-                    0,
-                    messages,
-                    params.get("temperature", 1.0),
-                    params.get("max_completion_tokens", 250),
-                    params.get("stop", None),
-                    params.get("n", 1),
-                    params.get("stream", False),
-                    params.get("top_p", 1.0),
-                    params.get("frequency_penalty", 0.0),
-                    params.get("presence_penalty", 0.0),
-                ]
-            ]
-        }
+        row: list[Any] = [
+            0,
+            messages,
+            params.get("temperature", 1.0),
+            params.get("max_completion_tokens", 250),
+            params.get("stop", None),
+            params.get("n", 1),
+            params.get("stream", False),
+            params.get("top_p", 1.0),
+            params.get("frequency_penalty", 0.0),
+            params.get("presence_penalty", 0.0),
+        ]
+        if include_response_format:
+            row.append(params.get("response_format", None))
+        return {"data": [row]}
 
     # ========================================================================
     # Deploy (called once per parameterized test)
@@ -234,12 +259,20 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
     # Test groups — each uses subTests so failures pinpoint the exact case
     # ========================================================================
 
-    def _test_mv_run(self, mv: Any, messages: list[dict[str, Any]], ctx: str) -> None:
+    def _test_mv_run(
+        self,
+        mv: Any,
+        messages: list[dict[str, Any]],
+        ctx: str,
+        *,
+        include_response_format: bool,
+    ) -> None:
         service_name = mv.list_services().loc[0, "name"]
         input_df = pd.DataFrame.from_records([{"messages": messages}])
+        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
 
         with self.subTest("mv_run / full"):
-            res = mv.run(input_df, function_name="__call__", service_name=service_name, params=_FULL_PARAMS)
+            res = mv.run(input_df, function_name="__call__", service_name=service_name, params=full_params)
             self._validate_openai_response(res, expected_choices=2, label=f"{ctx}/mv_run/full")
 
         with self.subTest("mv_run / partial"):
@@ -258,15 +291,38 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
             with self.assertRaisesRegex(ValueError, r"not compatible with dtype"):
                 mv.run(input_df, function_name="__call__", service_name=service_name, params=_INVALID_TYPE_PARAMS)
 
-    def _test_rest_flat(self, endpoint: str, messages: list[dict[str, Any]], ctx: str) -> None:
+    def _test_rest_flat(
+        self,
+        endpoint: str,
+        messages: list[dict[str, Any]],
+        ctx: str,
+        *,
+        include_response_format: bool,
+    ) -> None:
+        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
         with self.subTest("rest_flat / full"):
-            self._assert_rest_ok(endpoint, self._flat_payload(messages, **_FULL_PARAMS), 2, f"{ctx}/flat/full")
+            self._assert_rest_ok(
+                endpoint,
+                self._flat_payload(messages, include_response_format=include_response_format, **full_params),
+                2,
+                f"{ctx}/flat/full",
+            )
 
         with self.subTest("rest_flat / partial"):
-            self._assert_rest_ok(endpoint, self._flat_payload(messages, **_PARTIAL_PARAMS), 3, f"{ctx}/flat/partial")
+            self._assert_rest_ok(
+                endpoint,
+                self._flat_payload(messages, include_response_format=include_response_format, **_PARTIAL_PARAMS),
+                3,
+                f"{ctx}/flat/partial",
+            )
 
         with self.subTest("rest_flat / default"):
-            self._assert_rest_ok(endpoint, self._flat_payload(messages), 1, f"{ctx}/flat/default")
+            self._assert_rest_ok(
+                endpoint,
+                self._flat_payload(messages, include_response_format=include_response_format),
+                1,
+                f"{ctx}/flat/default",
+            )
 
         # vLLM Go proxy silently drops invalid types (toFloat64 type assertion fails,
         # field stays nil, vLLM uses its default). No server-side type validation.
@@ -277,17 +333,28 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         #     )
 
         with self.subTest("rest_flat / too_many_cols"):
-            row = [0, messages, 0.8, 50, None, 1, False, 0.9, 0.05, 0.05, "extra"]
+            row: list[Any] = [0, messages, 0.8, 50, None, 1, False, 0.9, 0.05, 0.05]
+            if include_response_format:
+                row.append(None)
+            row.append("extra")
             self._assert_rest_400(endpoint, {"data": [row]}, f"{ctx}/flat/too_many_cols")
 
         with self.subTest("rest_flat / too_few_cols"):
             self._assert_rest_400(endpoint, {"data": [[0, messages, 0.8]]}, f"{ctx}/flat/too_few_cols")
 
-    def _test_rest_split(self, endpoint: str, messages: list[dict[str, Any]], ctx: str) -> None:
+    def _test_rest_split(
+        self,
+        endpoint: str,
+        messages: list[dict[str, Any]],
+        ctx: str,
+        *,
+        include_response_format: bool,
+    ) -> None:
         base = {"dataframe_split": {"index": [0], "columns": ["messages"], "data": [[messages]]}}
+        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
 
         with self.subTest("rest_split / full"):
-            self._assert_rest_ok(endpoint, {**base, "params": _FULL_PARAMS}, 2, f"{ctx}/split/full")
+            self._assert_rest_ok(endpoint, {**base, "params": full_params}, 2, f"{ctx}/split/full")
 
         with self.subTest("rest_split / partial"):
             self._assert_rest_ok(endpoint, {**base, "params": _PARTIAL_PARAMS}, 3, f"{ctx}/split/partial")
@@ -304,7 +371,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
                         "columns": ["messages", "extra_col"],
                         "data": [[messages, "x"]],
                     },
-                    "params": _FULL_PARAMS,
+                    "params": full_params,
                     "extra_columns": ["extra_col"],
                 },
                 2,
@@ -319,11 +386,19 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
         # with self.subTest("rest_split / invalid_type"):
         #     self._assert_rest_400(endpoint, {**base, "params": _INVALID_TYPE_PARAMS}, f"{ctx}/split/invalid_type")
 
-    def _test_rest_records(self, endpoint: str, messages: list[dict[str, Any]], ctx: str) -> None:
+    def _test_rest_records(
+        self,
+        endpoint: str,
+        messages: list[dict[str, Any]],
+        ctx: str,
+        *,
+        include_response_format: bool,
+    ) -> None:
         base: dict[str, Any] = {"dataframe_records": [{"messages": messages}]}
+        full_params = _params_for_logging(_FULL_PARAMS, include_response_format=include_response_format)
 
         with self.subTest("rest_records / full"):
-            self._assert_rest_ok(endpoint, {**base, "params": _FULL_PARAMS}, 2, f"{ctx}/records/full")
+            self._assert_rest_ok(endpoint, {**base, "params": full_params}, 2, f"{ctx}/records/full")
 
         with self.subTest("rest_records / partial"):
             self._assert_rest_ok(endpoint, {**base, "params": _PARTIAL_PARAMS}, 3, f"{ctx}/records/partial")
@@ -336,7 +411,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
                 endpoint,
                 {
                     "dataframe_records": [{"messages": messages, "extra_col": "x"}],
-                    "params": _FULL_PARAMS,
+                    "params": full_params,
                     "extra_columns": ["extra_col"],
                 },
                 2,
@@ -391,15 +466,16 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
         mv, endpoint = self._deploy(engine, compute_pool_for_log, signature)
         messages = _get_messages(signature)
+        include_response_format = _include_response_format_params(compute_pool_for_log)
 
         with self.subTest("mv_run"):
-            self._test_mv_run(mv, messages, ctx)
+            self._test_mv_run(mv, messages, ctx, include_response_format=include_response_format)
         with self.subTest("rest_flat"):
-            self._test_rest_flat(endpoint, messages, ctx)
+            self._test_rest_flat(endpoint, messages, ctx, include_response_format=include_response_format)
         with self.subTest("rest_split"):
-            self._test_rest_split(endpoint, messages, ctx)
+            self._test_rest_split(endpoint, messages, ctx, include_response_format=include_response_format)
         with self.subTest("rest_records"):
-            self._test_rest_records(endpoint, messages, ctx)
+            self._test_rest_records(endpoint, messages, ctx, include_response_format=include_response_format)
 
 
 if __name__ == "__main__":

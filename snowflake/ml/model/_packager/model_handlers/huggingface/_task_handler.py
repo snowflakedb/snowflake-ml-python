@@ -72,6 +72,8 @@ class HuggingFaceTaskHandler(ABC):
     post-processing in the handler.
     """
 
+    REQUIRES_PILLOW: bool = False
+
     def get_transformers_upper_bound(self) -> Optional[version.Version]:
         """Return the maximum supported transformers version for this task, or None if unbounded.
 

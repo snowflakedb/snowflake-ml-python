@@ -139,6 +139,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
                     ),
                 ),
             },
+            options={"enable_explainability": True},
             function_type_assert={
                 "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
                 "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,
@@ -243,6 +244,7 @@ class TestRegistryCatBoostModelInteg(registry_model_test_base.RegistryModelTestB
                     lambda res: dataframe_utils.check_sp_df_res(res, explanation_df_expected, check_dtype=False),
                 ),
             },
+            options={"enable_explainability": True},
             function_type_assert={
                 "explain": model_manifest_schema.ModelMethodFunctionTypes.TABLE_FUNCTION,
                 "predict": model_manifest_schema.ModelMethodFunctionTypes.FUNCTION,

@@ -303,6 +303,8 @@ class TransformersPipelineHandler(
             pkgs_requirements.append(model_env.ModelDependency(requirement="pytorch", pip_name="torch"))
         elif framework == "tf":
             pkgs_requirements.append(model_env.ModelDependency(requirement="tensorflow", pip_name="tensorflow"))
+        if has_image_preprocessor or task_handler.REQUIRES_PILLOW:
+            pkgs_requirements.append(model_env.ModelDependency(requirement="pillow", pip_name="pillow"))
         model_meta.env.include_if_absent(
             pkgs_requirements, check_local_version=(type_utils.LazyType("transformers.Pipeline").isinstance(model))
         )

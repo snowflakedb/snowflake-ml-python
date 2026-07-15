@@ -377,7 +377,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
                 rtol=1e-5,
             )
 
-        self._test_registry_execute_inference_job_service(
+        batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             sample_input_data=sample_input_df,
             X=input_df,
@@ -392,7 +392,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         )
 
         self._compare_with_warehouse(
-            output_stage_location=output_stage_location,
+            output_stage_location=self._resolve_job_output_stage_location(output_stage_location, batch_job),
             model_name=model_name,
             version_name=version_name,
             input_df=input_df,
@@ -443,7 +443,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
                 rtol=1e-5,
             )
 
-        self._test_registry_execute_inference_job_service(
+        batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
             input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
@@ -459,7 +459,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         )
 
         self._compare_with_warehouse(
-            output_stage_location=output_stage_location,
+            output_stage_location=self._resolve_job_output_stage_location(output_stage_location, batch_job),
             model_name=model_name,
             version_name=version_name,
             input_df=input_df,
@@ -499,7 +499,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
             np.testing.assert_allclose(actual_col1, expected_col1, rtol=1e-5)
             np.testing.assert_allclose(actual_col2, expected_col2, rtol=1e-5)
 
-        self._test_registry_execute_inference_job_service(
+        batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
             output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
@@ -515,7 +515,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         )
 
         self._compare_with_warehouse(
-            output_stage_location=output_stage_location,
+            output_stage_location=self._resolve_job_output_stage_location(output_stage_location, batch_job),
             model_name=model_name,
             version_name=version_name,
             input_df=input_df,
@@ -645,7 +645,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
                 np.testing.assert_allclose(actual_col1, expected_col1, rtol=1e-5)
                 np.testing.assert_allclose(actual_col2, expected_col2, rtol=1e-5)
 
-        self._test_registry_execute_inference_job_service(
+        batch_job = self._test_registry_execute_inference_job_service(
             model=model,
             X=input_df,
             input_spec=batch_inference_specs.Input(partition_column="PARTITION_COL"),
@@ -662,7 +662,7 @@ class TestExecuteInferenceJobServicePartitionedInteg(
         )
 
         self._compare_with_warehouse(
-            output_stage_location=output_stage_location,
+            output_stage_location=self._resolve_job_output_stage_location(output_stage_location, batch_job),
             model_name=model_name,
             version_name=version_name,
             input_df=input_df,

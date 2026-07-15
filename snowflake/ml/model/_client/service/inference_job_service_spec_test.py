@@ -93,9 +93,10 @@ class InferenceJobServiceSpecTest(absltest.TestCase):
         )
         self.assertEqual(body["input"]["partition_column"], "PART_COL")
 
-    def test_inference_engine_serializes_to_string_value(self) -> None:
+    def test_inference_engine_serializes_to_server_enum(self) -> None:
         body = self._build(with_inference=True)
-        self.assertEqual(body["inference"]["engine_options"]["engine"], "vllm")
+        # The server engine enum is upper-case (DEFAULT / VLLM / PYTHON_GENERIC).
+        self.assertEqual(body["inference"]["engine_options"]["engine"], "VLLM")
         self.assertEqual(body["inference"]["engine_options"]["engine_args_override"], ["--max-num-seqs=128"])
 
     def test_resources_omits_none_fields(self) -> None:

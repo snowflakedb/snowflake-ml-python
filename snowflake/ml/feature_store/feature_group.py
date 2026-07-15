@@ -730,6 +730,26 @@ def _resolve_fg_output_columns(fg: FeatureGroup) -> list[str]:
     return cols
 
 
+def _normalize_join_key_datatype(datatype: Any) -> Any:
+    """Collapse ``StringType`` VARCHAR length so join keys compare by logical type.
+
+    A shared string join key can surface with different VARCHAR lengths across
+    sources -- e.g. a tiled FeatureView exposes the unbounded ``StringType()``
+    default while a batch FeatureView read back through its materialized dynamic
+    table reports a length narrowed to its stored data. The length is irrelevant
+    to join semantics and to the response schema, so all ``StringType`` variants
+    normalize to the unbounded ``StringType()``. Other datatypes pass through
+    unchanged.
+
+    Args:
+        datatype: A Snowpark datatype from a source's join-key column.
+
+    Returns:
+        ``StringType()`` for any ``StringType`` input; ``datatype`` otherwise.
+    """
+    return StringType() if isinstance(datatype, StringType) else datatype
+
+
 def _fg_join_key_field_types(fg: FeatureGroup, *, strict: bool = False) -> dict[str, Any]:
     """Resolve ``{join_key -> Snowpark datatype}`` across every source FV.
 
@@ -787,6 +807,7 @@ def _fg_join_key_field_types(fg: FeatureGroup, *, strict: bool = False) -> dict[
         else:
             iterator = ((f.name, f.datatype) for f in fv.output_schema.fields if f.name in pk)
         for name, datatype in iterator:
+            datatype = _normalize_join_key_datatype(datatype)
             previous = type_by_name.get(name)
             if previous is None:
                 type_by_name[name] = datatype

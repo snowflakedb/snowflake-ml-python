@@ -22,6 +22,11 @@ from snowflake.ml.feature_store.aggregation import AggregationSpec, AggregationT
 from snowflake.ml.feature_store.entity import Entity
 from snowflake.ml.feature_store.feature import Feature
 from snowflake.ml.feature_store.feature_view import (
+    _FEATURE_VIEW_NAME_DELIMITER,
+    _PG_IDENTIFIER_BYTE_LIMIT,
+    _POSTGRES_ONLINE_MAX_COLUMN_LEN,
+    _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN,
+    _UDF_TRANSFORMED_TABLE_SUFFIX,
     FeatureView,
     FeatureViewStatus,
     FeatureViewVersion,
@@ -3170,6 +3175,103 @@ class FeatureViewSourceRefsPropertyTest(absltest.TestCase):
         ]
         fv._source_refs = list(sources)
         self.assertEqual(fv.source_refs, sources)
+
+
+class PostgresOnlineIdentifierBudgetTest(parameterized.TestCase):
+    """Tests for the Postgres online-store identifier budget validation."""
+
+    def _make_fv(
+        self,
+        name: str,
+        columns: list[str],
+        join_key: str,
+        online_config: OnlineConfig,
+    ) -> FeatureView:
+        mock_df = MagicMock()
+        mock_df.columns = columns
+        mock_df.queries = {"queries": ["SELECT * FROM source"]}
+        return FeatureView(
+            name=name,
+            entities=[Entity(name="user", join_keys=[join_key])],
+            feature_df=mock_df,
+            refresh_freq="1h",
+            online_config=online_config,
+        )
+
+    def test_generated_affix_padding_fits_reserved_budget(self) -> None:
+        """The fixed affixes wrapped around a name/column must fit within the bytes reserved by each
+        budget, so a max-length user identifier can never overflow PostgreSQL's 63-byte limit. If a
+        longer suffix/prefix (or a larger distinct-N bound) is ever introduced, this fails loudly to
+        force recomputing the budget."""
+        # Longest PG table identifier is "{name}${version}$UDF_TRANSFORMED"; "$ONLINE"/"$SNAPSHOTS"
+        # never reach Postgres. Padding = internal "$" separator + longest PG-bound table suffix.
+        table_padding = len(_FEATURE_VIEW_NAME_DELIMITER) + len(_UDF_TRANSFORMED_TABLE_SUFFIX)
+        self.assertLessEqual(
+            _POSTGRES_ONLINE_MAX_NAME_VERSION_LEN + table_padding,
+            _PG_IDENTIFIER_BYTE_LIMIT,
+            f"name+version budget {_POSTGRES_ONLINE_MAX_NAME_VERSION_LEN} plus table padding "
+            f"{table_padding} exceeds {_PG_IDENTIFIER_BYTE_LIMIT}; lower the budget or shorten the suffix.",
+        )
+
+        # Tile columns wrap the source column as "_PARTIAL_{func}_{column}" (see ofs_quake
+        # sql_generation/aggregations.go partialCol). The longest label is a distinct-N companion
+        # timestamp column, "FIRST_DISTINCT_{n}_TS" with n up to distinctNMax=1000. Mirrored here since
+        # the constants live in the Go repo (guarded authoritatively by a Go test in that repo).
+        worst_column_label = "FIRST_DISTINCT_1000_TS"
+        column_padding = len("_PARTIAL_") + len(worst_column_label) + len("_")
+        self.assertLessEqual(
+            _POSTGRES_ONLINE_MAX_COLUMN_LEN + column_padding,
+            _PG_IDENTIFIER_BYTE_LIMIT,
+            f"column budget {_POSTGRES_ONLINE_MAX_COLUMN_LEN} plus column padding {column_padding} "
+            f"exceeds {_PG_IDENTIFIER_BYTE_LIMIT}; lower the budget or shorten the _PARTIAL_ prefix.",
+        )
+
+    def test_name_and_version_within_budget_passes(self) -> None:
+        fv = self._make_fv(
+            "short_fv",
+            ["user_id", "event_ts", "amount"],
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_name_plus_version_over_budget_raises(self) -> None:
+        fv = self._make_fv(
+            "a" * 44,
+            ["user_id", "event_ts", "amount"],
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        with self.assertRaisesRegex(ValueError, "name and version are too long for the Postgres online store"):
+            fv._validate_online_store_identifier_budget(FeatureViewVersion("VERSION1"))  # 44 + 8 = 52 > 45
+
+    def test_long_column_over_budget_raises(self) -> None:
+        fv = self._make_fv(
+            "short_fv",
+            ["user_id", "event_ts", "c" * 32],  # 32 > column budget of 31
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.POSTGRES),
+        )
+        with self.assertRaisesRegex(ValueError, "is too long for the Postgres online store"):
+            fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_hybrid_store_not_enforced(self) -> None:
+        fv = self._make_fv(
+            "a" * 60,
+            ["user_id", "event_ts", "amount"],
+            "user_id",
+            OnlineConfig(enable=True, store_type=OnlineStoreType.HYBRID_TABLE),
+        )
+        fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
+
+    def test_online_disabled_not_enforced(self) -> None:
+        fv = self._make_fv(
+            "a" * 60,
+            ["user_id", "event_ts", "amount"],
+            "user_id",
+            OnlineConfig(enable=False, store_type=OnlineStoreType.POSTGRES),
+        )
+        fv._validate_online_store_identifier_budget(FeatureViewVersion("V1"))
 
 
 if __name__ == "__main__":

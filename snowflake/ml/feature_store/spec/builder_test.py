@@ -2831,6 +2831,176 @@ class BatchValidationTest(absltest.TestCase):
         self.assertEqual(ts_col["type"], "ArrayType")
         self.assertEqual(ts_col["element_type"], "TimestampType")
 
+    def test_last_n_online_eligible_and_partial_element_types(self) -> None:
+        """Non-distinct LAST_N is online-eligible and stamps element types on its
+        SHARED (n-agnostic) partial columns _PARTIAL_LAST_<col> / _TS_<col>."""
+        batch_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("EVENT_TIME", TimestampType()),
+                StructField("PAGE_URL", StringType()),
+            ]
+        )
+        # Non-distinct last_n reuses the shared, n-agnostic column pair (no _DISTINCT,
+        # no n in the name). Two last_n features (n=3, n=5) share this one pair.
+        tiled_schema = StructType(
+            [
+                StructField("USER_ID", StringType()),
+                StructField("TILE_START", TimestampType()),
+                StructField("_PARTIAL_LAST_PAGE_URL", ArrayType()),
+                StructField("_PARTIAL_LAST_TS_PAGE_URL", ArrayType()),
+            ]
+        )
+        builder = (
+            self._base_builder()
+            .set_offline_configs(
+                [
+                    SnowflakeTableInfo(
+                        table_type=TableType.BATCH_SOURCE,
+                        database="DB",
+                        schema="SCH",
+                        table="TILED_TBL",
+                        columns=tiled_schema,
+                    )
+                ]
+            )
+            .set_properties(
+                entity_columns=["USER_ID"],
+                timestamp_field="EVENT_TIME",
+                granularity="1h",
+                agg_method=FeatureAggregationMethod.TILES,
+                target_lag="30s",
+            )
+            .set_sources([BatchSource(schema=batch_schema)])
+            .set_features(
+                [
+                    AggregationSpec(
+                        function=AggregationType.LAST_N,
+                        source_column="PAGE_URL",
+                        window="1h",
+                        output_column="RECENT_PAGES_3",
+                        params={"n": 3},
+                    ),
+                    AggregationSpec(
+                        function=AggregationType.LAST_N,
+                        source_column="PAGE_URL",
+                        window="1h",
+                        output_column="RECENT_PAGES_5",
+                        params={"n": 5},
+                    ),
+                ]
+            )
+        )
+
+        spec = builder.build()
+        payload = spec.to_dict()
+
+        # Online store eligibility: build succeeds for the Postgres online store.
+        self.assertEqual(payload["online_store_type"], "postgres")
+
+        # Quake wire contract: plain last_n + {"n": ...}, output is an array of source type.
+        feature = payload["spec"]["features"][0]
+        self.assertEqual(feature["function"], "last_n")
+        self.assertEqual(feature["function_params"], {"n": 3})
+        self.assertEqual(feature["output_column"]["type"], "ArrayType")
+        self.assertEqual(feature["output_column"]["element_type"], "StringType")
+
+        # The SHARED partial columns carry exact element types from the spec, not storage.
+        offline_cols = {c["name"]: c for c in payload["offline_configs"][0]["columns"]}
+        value_col = offline_cols["_PARTIAL_LAST_PAGE_URL"]
+        self.assertEqual(value_col["type"], "ArrayType")
+        self.assertEqual(value_col["element_type"], "StringType")
+        ts_col = offline_cols["_PARTIAL_LAST_TS_PAGE_URL"]
+        self.assertEqual(ts_col["type"], "ArrayType")
+        self.assertEqual(ts_col["element_type"], "TimestampType")
+
+    def test_ordered_n_online_eligible_over_functions_and_source_types(self) -> None:
+        """last_n AND first_n are PG-eligible across scalar source types, and their
+        shared partial columns are stamped with the source's element type."""
+        functions = [
+            (AggregationType.LAST_N, "last_n", "LAST"),
+            (AggregationType.FIRST_N, "first_n", "FIRST"),
+        ]
+        source_types = [
+            (StringType(), "StringType"),
+            (LongType(), "LongType"),
+            (BooleanType(), "BooleanType"),
+        ]
+        for function, function_str, direction in functions:
+            for source_type, type_str in source_types:
+                with self.subTest(function=function_str, source_type=type_str):
+                    value_col = f"_PARTIAL_{direction}_SRC_COL"
+                    ts_col_name = f"_PARTIAL_{direction}_TS_SRC_COL"
+                    batch_schema = StructType(
+                        [
+                            StructField("USER_ID", StringType()),
+                            StructField("EVENT_TIME", TimestampType()),
+                            StructField("SRC_COL", source_type),
+                        ]
+                    )
+                    tiled_schema = StructType(
+                        [
+                            StructField("USER_ID", StringType()),
+                            StructField("TILE_START", TimestampType()),
+                            StructField(value_col, ArrayType()),
+                            StructField(ts_col_name, ArrayType()),
+                        ]
+                    )
+                    builder = (
+                        self._base_builder()
+                        .set_offline_configs(
+                            [
+                                SnowflakeTableInfo(
+                                    table_type=TableType.BATCH_SOURCE,
+                                    database="DB",
+                                    schema="SCH",
+                                    table="TILED_TBL",
+                                    columns=tiled_schema,
+                                )
+                            ]
+                        )
+                        .set_properties(
+                            entity_columns=["USER_ID"],
+                            timestamp_field="EVENT_TIME",
+                            granularity="1h",
+                            agg_method=FeatureAggregationMethod.TILES,
+                            target_lag="30s",
+                        )
+                        .set_sources([BatchSource(schema=batch_schema)])
+                        .set_features(
+                            [
+                                AggregationSpec(
+                                    function=function,
+                                    source_column="SRC_COL",
+                                    window="1h",
+                                    output_column="RECENT_VALUES",
+                                    params={"n": 3},
+                                )
+                            ]
+                        )
+                    )
+
+                    payload = builder.build().to_dict()
+                    self.assertEqual(payload["online_store_type"], "postgres")
+                    self.assertEqual(payload["spec"]["features"][0]["function"], function_str)
+
+                    offline_cols = {c["name"]: c for c in payload["offline_configs"][0]["columns"]}
+                    self.assertEqual(offline_cols[value_col]["type"], "ArrayType")
+                    self.assertEqual(offline_cols[value_col]["element_type"], type_str)
+                    self.assertEqual(offline_cols[ts_col_name]["type"], "ArrayType")
+                    self.assertEqual(offline_cols[ts_col_name]["element_type"], "TimestampType")
+
+    def test_last_n_over_max_rejected(self) -> None:
+        """last_n with n above the product limit (100) is rejected at authoring."""
+        with self.assertRaisesRegex(ValueError, "must be between 1 and 100"):
+            AggregationSpec(
+                function=AggregationType.LAST_N,
+                source_column="PAGE_URL",
+                window="1h",
+                output_column="RECENT_PAGES",
+                params={"n": 101},
+            )
+
     def _distinct_n_builder(self, *, source_type: DataType, n: int) -> FeatureViewSpecBuilder:
         """Build a tiled distinct-N batch FV on a single source column for PG validation tests."""
         batch_schema = StructType(
@@ -2883,10 +3053,9 @@ class BatchValidationTest(absltest.TestCase):
         )
 
     def test_distinct_n_over_max_rejected(self) -> None:
-        """distinct-N with n above the PG limit is rejected for the online store."""
-        builder = self._distinct_n_builder(source_type=StringType(), n=1001)
-        with self.assertRaisesRegex(ValueError, "n must be between 1 and 1000"):
-            builder.build()
+        """distinct-N with n above the product limit (100) is rejected at authoring."""
+        with self.assertRaisesRegex(ValueError, "must be between 1 and 100"):
+            self._distinct_n_builder(source_type=StringType(), n=101)
 
     def test_distinct_n_binary_source_rejected(self) -> None:
         """distinct-N on a BINARY source is rejected (unsupported PG array element type)."""
@@ -2938,11 +3107,11 @@ class BatchValidationTest(absltest.TestCase):
                         output_column="AMOUNT_SUM_24H",
                     ),
                     AggregationSpec(
-                        function=AggregationType.LAST_N,
+                        function=AggregationType.APPROX_PERCENTILE,
                         source_column="AMOUNT",
                         window="24h",
-                        output_column="AMOUNT_LAST_5_24H",
-                        params={"n": 5},
+                        output_column="AMOUNT_AP_24H",
+                        params={"percentile": 0.5},
                     ),
                 ]
             )

@@ -42,6 +42,7 @@ _FULL_PARAMS: dict[str, Any] = {
     "top_p": 1.0,
     "frequency_penalty": 0.1,
     "presence_penalty": 0.2,
+    "response_format": None,
 }
 
 _PARTIAL_PARAMS: dict[str, Any] = {
@@ -184,6 +185,7 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
                     params.get("top_p", 1.0),
                     params.get("frequency_penalty", 0.0),
                     params.get("presence_penalty", 0.0),
+                    params.get("response_format", None),
                 ]
             ]
         }
@@ -284,7 +286,7 @@ class TestRegistryTransformerNonParamSpecSignatureInteg(
         #     )
 
         with self.subTest("rest_flat / too_many_cols"):
-            row = [0, messages, 0.9, 20, None, 1, False, 1.0, 0.1, 0.2, "extra"]
+            row = [0, messages, 0.9, 20, None, 1, False, 1.0, 0.1, 0.2, None, "extra"]
             self._assert_rest_400(endpoint, {"data": [row]}, f"{ctx}/flat/too_many_cols")
 
         with self.subTest("rest_flat / too_few_cols"):

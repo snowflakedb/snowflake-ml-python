@@ -1,6 +1,39 @@
 # Release History
 
-## 1.46.0
+## 1.47.0
+
+### New Features
+
+* Experiment Tracking: Added `ExperimentTracking.list_model_versions` to retrieve the model versions that were
+  logged under a run. Models logged via `log_model` inside a run are linked to that run through Snowflake lineage,
+  and this method traverses that lineage to return the corresponding `ModelVersion` objects.
+
+```python
+from snowflake.ml.experiment import ExperimentTracking
+
+exp = ExperimentTracking(session)
+exp.set_experiment("MY_EXPERIMENT")
+with exp.start_run(run_name="MY_RUN"):
+    exp.log_model(model, model_name="MY_MODEL", sample_input_data=X)
+
+model_versions = exp.list_model_versions(run_name="MY_RUN")
+```
+
+### Bug Fixes
+
+* Experiment Tracking: Fix a bug where `.set_experiment` does not recreate an experiment deleted in Snowsight
+
+### Behavior Changes
+
+* Registry: `enable_explainability` now defaults to `False` for all model types when logging a model. Previously it
+  defaulted to `True` for XGBoost, LightGBM, and CatBoost models and was auto-enabled for supported scikit-learn and
+  Snowpark ML modeling models when running in the Warehouse. To generate an `explain` method, explicitly pass
+  `options={"enable_explainability": True}` to `log_model` (this requires `sample_input_data` for supported model
+  types).
+
+### Deprecations
+
+## 1.46.0 (2026-07-07)
 
 ### New Features
 

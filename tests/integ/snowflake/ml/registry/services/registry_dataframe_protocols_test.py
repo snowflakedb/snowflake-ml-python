@@ -245,6 +245,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
                     "top_p": 1.0,
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.2,
+                    "response_format": None,
                 }
             ],
         )
@@ -288,6 +289,7 @@ class TestRegistryDataframeProtocolsInteg(registry_model_deployment_test_base.Re
                     "top_p": 0.9,
                     "frequency_penalty": 0.1,
                     "presence_penalty": 0.1,
+                    "response_format": None,
                 }
                 for prompt in test_prompts
             ],

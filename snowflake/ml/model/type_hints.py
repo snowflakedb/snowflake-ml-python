@@ -181,7 +181,7 @@ class BaseModelSaveOption(TypedDict):
         the per-method volatility takes precedence.
     method_options: Per-method saving options. This dictionary has method names as keys and dictionary
         values with the desired options.
-    enable_explainability: Whether to enable explainability features for the model.
+    enable_explainability: Whether to enable explainability features for the model. Defaults to False.
     save_location: Local directory path to save the model and metadata.
     model_init_once: When True, the model is loaded once per worker process at startup, eliminating
         model-loading overhead on the first inference batch. Applies to FUNCTION and TABLE_FUNCTION

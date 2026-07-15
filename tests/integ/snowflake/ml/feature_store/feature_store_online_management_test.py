@@ -374,6 +374,76 @@ class FeatureStoreOnlineTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fv_rows = list_result.filter(list_result.name == fv_name.upper()).collect()
         self.assertEqual(len(fv_rows), 0)
 
+    def test_delete_feature_view_cleans_up_orphaned_online_table(self) -> None:
+        """delete_feature_view cleans up an orphaned HT-based online feature table when the
+        backing offline dynamic table was already dropped in a previous partial deletion.
+
+        Simulates the real failure mode end-to-end for a plain (non-streaming,
+        non-append-only) online FV:
+        1. A DT-backed FV with a HYBRID_TABLE online feature table is registered.
+        2. The offline DT is dropped externally (simulating a crashed first delete). The
+           $ONLINE feature table is a separate object and is left orphaned.
+        3. A second delete_feature_view (name + version) must succeed and clean up the
+           orphaned online feature table and the FV metadata row.
+
+        Regression test for the gap where a plain online FV could reach an unrecoverable
+        orphaned state: the offline DT was dropped but delete_feature_view kept raising
+        NOT_FOUND before reaching the online-table cleanup.
+        """
+        fv_name = f"orphan_online_fv_{uuid.uuid4().hex[:8]}"
+
+        fv = feature_view.FeatureView(
+            name=fv_name,
+            entities=[self.user_entity],
+            feature_df=self.sample_data.select("user_id", "purchase_amount", "purchase_time"),
+            timestamp_col="purchase_time",
+            refresh_freq="1h",
+            desc="orphan HT online FV",
+            online_config=feature_view.OnlineConfig(enable=True),  # default HYBRID_TABLE
+        )
+
+        registered_fv = self.fs.register_feature_view(fv, "v1")
+        self.assertTrue(registered_fv.online)
+
+        physical_name = feature_view.FeatureView._get_physical_name(registered_fv.name, registered_fv.version)
+        online_table_name = feature_view.FeatureView._get_online_table_name(physical_name)
+        fq_offline_dt = self.fs._get_fully_qualified_name(physical_name)
+
+        def _count_online_tables() -> int:
+            return len(
+                self._session.sql(
+                    f"SHOW ONLINE FEATURE TABLES LIKE '{online_table_name.resolved()}' "
+                    f"IN SCHEMA {self.fs._config.full_schema_path}"
+                ).collect()
+            )
+
+        self.assertEqual(_count_online_tables(), 1, "online feature table must exist after registration")
+
+        # --- Simulate a crashed first deletion: offline DT dropped externally ---
+        self._session.sql(f"DROP DYNAMIC TABLE IF EXISTS {fq_offline_dt}").collect()
+
+        dt_rows = self._session.sql(
+            f"SHOW DYNAMIC TABLES LIKE '{physical_name.resolved()}' IN SCHEMA {self.fs._config.full_schema_path}"
+        ).collect()
+        self.assertEqual(len(dt_rows), 0, "offline DT must be absent before the retry delete call")
+        self.assertEqual(
+            _count_online_tables(),
+            1,
+            "online feature table must still be orphaned after the offline DT was dropped",
+        )
+
+        # --- Retry delete via name + version: must succeed and clean up the orphaned OFT ---
+        self.fs.delete_feature_view(str(registered_fv.name), str(registered_fv.version))
+
+        self.assertEqual(
+            _count_online_tables(),
+            0,
+            "online feature table must be dropped by orphan cleanup",
+        )
+        list_result = self.fs.list_feature_views()
+        fv_rows = list_result.filter(list_result.name == fv_name.upper()).collect()
+        self.assertEqual(len(fv_rows), 0, "feature view must no longer be listed after orphan cleanup")
+
     def test_online_config_serialization(self) -> None:
         """Test OnlineConfig serialization and deserialization."""
         # Test with all fields

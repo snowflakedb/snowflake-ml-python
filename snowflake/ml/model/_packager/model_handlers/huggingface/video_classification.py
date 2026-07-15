@@ -19,6 +19,8 @@ class VideoClassificationTaskHandler(_task_handler.HuggingFaceTaskHandler):
     processed, then cleaned up.
     """
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

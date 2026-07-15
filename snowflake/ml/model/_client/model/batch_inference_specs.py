@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_serializer, model_validator
 from typing_extensions import TypedDict
 
 from snowflake.ml.model import inference_engine as inference_engine_module
@@ -206,8 +206,8 @@ class Input(BaseModel):
 class Output(BaseModel):
     """Output block of the batch inference YAML body.
 
-    ``stage_location`` is required. ``base_stage_location`` is not part of the
-    YAML schema and is intentionally omitted.
+    ``stage_location`` is required and is treated as a base: results are written under a
+    per-job subdirectory, ``<stage_location>/<job_name>/``.
     """
 
     stage_location: str
@@ -227,6 +227,13 @@ class EngineOptions(BaseModel):
 
     engine: Optional[inference_engine_module.InferenceEngine] = None
     engine_args_override: Optional[list[str]] = None
+
+    @field_serializer("engine")
+    def _serialize_engine(self, engine: Optional[inference_engine_module.InferenceEngine]) -> Optional[str]:
+        # The EXECUTE INFERENCE JOB SERVICE engine enum is upper-case
+        # (DEFAULT / VLLM / PYTHON_GENERIC), but the Python enum's value is
+        # lower-case. Emit the member name so the server accepts it.
+        return engine.name if engine is not None else None
 
 
 class Inference(BaseModel):

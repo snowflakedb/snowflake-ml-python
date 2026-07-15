@@ -915,7 +915,9 @@ class ModelVersion(lineage_node.LineageNode):
         Args:
             X: Snowpark DataFrame with the input rows.
             compute_pool: Compute pool used by the SPCS job and image build.
-            output_spec: Output block.
+            output_spec: Output block. ``stage_location`` is treated as a base;
+                results are written under a per-job subdirectory,
+                ``<stage_location>/<job_name>/``.
             input_spec: Input block.
             resources_spec: Resources block.
             inference_spec: Inference block.

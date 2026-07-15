@@ -127,9 +127,10 @@ class BatchSource:
 
 
 # Aggregation functions supported by the Postgres (PG) online store backend.
-# List aggregations are not implemented in the PG path, except DISTINCT-N. The
-# sketch aggregation APPROX_COUNT_DISTINCT is also supported, restricted to
-# STRING source columns (enforced by _validate_pg_source_types).
+# List aggregations are not implemented in the PG path, except the ordered-N
+# family (last/first_distinct_n and last/first_n). The sketch aggregation
+# APPROX_COUNT_DISTINCT is also supported, restricted to STRING source columns
+# (enforced by _validate_pg_source_types).
 _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
     {
         AggregationType.SUM,
@@ -142,25 +143,32 @@ _PG_SUPPORTED_AGGREGATIONS: frozenset[AggregationType] = frozenset(
         AggregationType.APPROX_COUNT_DISTINCT,
         AggregationType.LAST_DISTINCT_N,
         AggregationType.FIRST_DISTINCT_N,
+        AggregationType.LAST_N,
+        AggregationType.FIRST_N,
     }
 )
 
-# Distinct-N aggregations gated for the Postgres online path.
-_PG_DISTINCT_N_AGGREGATIONS: frozenset[AggregationType] = frozenset(
+# Ordered-N aggregations gated for the Postgres online path: distinct (per-N
+# columns) and non-distinct (shared columns). Both share the n-bound and
+# source-type restrictions below.
+_PG_ORDERED_N_AGGREGATIONS: frozenset[AggregationType] = frozenset(
     {
         AggregationType.LAST_DISTINCT_N,
         AggregationType.FIRST_DISTINCT_N,
+        AggregationType.LAST_N,
+        AggregationType.FIRST_N,
     }
 )
 
-# Upper bound on ``n`` for distinct-N aggregations served by the Postgres online
-# store.
-_PG_DISTINCT_N_MAX = 1000
+# Upper bound on ``n`` for the ordered-N aggregations served by the Postgres
+# online store.
+_PG_ORDERED_N_MAX = 100
 
-# Source column element types the Postgres online store can serve as distinct-N
-# arrays. ``BinaryType`` is a valid scalar but is intentionally
-# excluded here: Quake does not support it as an array element type.
-_PG_DISTINCT_N_SOURCE_TYPES: frozenset[str] = frozenset(
+# Source column element types the Postgres online store can serve as ordered-N
+# arrays (last/first_n and last/first_distinct_n). ``BinaryType`` is a valid
+# scalar but is intentionally excluded: Quake does not support it as an array
+# element type.
+_PG_ORDERED_N_SOURCE_TYPES: frozenset[str] = frozenset(
     {
         "StringType",
         "LongType",
@@ -1349,31 +1357,41 @@ class FeatureViewSpecBuilder:
 
     @staticmethod
     def _distinct_partial_column_names(agg_spec: AggregationSpec) -> Optional[tuple[str, str]]:
-        """Return the (value, timestamp) partial column names for a distinct-N spec.
+        """Return the (value, timestamp) partial column names for an ordered-N spec.
 
-        Mirrors the new-format tile-column naming emitted by the tile SQL generator
-        (``_PARTIAL_(LAST|FIRST)_DISTINCT_<N>[_TS]_<COL>``) so element types can be
-        stamped onto the matching offline-config columns. Returns ``None`` for
-        non-distinct aggregations.
+        Mirrors the tile-column naming emitted by the tile SQL generator so element
+        types can be stamped onto the matching offline-config columns:
+          - distinct-N (new format): ``_PARTIAL_(LAST|FIRST)_DISTINCT_<N>[_TS]_<COL>``
+          - non-distinct last_n/first_n (shared, n-agnostic):
+            ``_PARTIAL_(LAST|FIRST)[_TS]_<COL>``
+        Returns ``None`` for non-ordered aggregations.
 
         Args:
             agg_spec: The aggregation spec to derive partial column names for.
 
         Returns:
             A ``(value_column, timestamp_column)`` tuple, or ``None`` if the spec
-            is not a LAST/FIRST distinct-N aggregation.
+            is not a LAST/FIRST ordered-N aggregation.
         """
-        if agg_spec.function == AggregationType.LAST_DISTINCT_N:
-            direction = "LAST"
-        elif agg_spec.function == AggregationType.FIRST_DISTINCT_N:
-            direction = "FIRST"
-        else:
-            return None
-        n = agg_spec.params["n"]
         resolved_src = SqlIdentifier(agg_spec.source_column).resolved()
-        value_col = f"_PARTIAL_{direction}_DISTINCT_{n}_{resolved_src}"
-        ts_col = f"_PARTIAL_{direction}_DISTINCT_{n}_TS_{resolved_src}"
-        return value_col, ts_col
+        if agg_spec.function == AggregationType.LAST_DISTINCT_N:
+            n = agg_spec.params["n"]
+            return (
+                f"_PARTIAL_LAST_DISTINCT_{n}_{resolved_src}",
+                f"_PARTIAL_LAST_DISTINCT_{n}_TS_{resolved_src}",
+            )
+        if agg_spec.function == AggregationType.FIRST_DISTINCT_N:
+            n = agg_spec.params["n"]
+            return (
+                f"_PARTIAL_FIRST_DISTINCT_{n}_{resolved_src}",
+                f"_PARTIAL_FIRST_DISTINCT_{n}_TS_{resolved_src}",
+            )
+        # Non-distinct last_n/first_n reuse a shared, n-agnostic column pair.
+        if agg_spec.function == AggregationType.LAST_N:
+            return f"_PARTIAL_LAST_{resolved_src}", f"_PARTIAL_LAST_TS_{resolved_src}"
+        if agg_spec.function == AggregationType.FIRST_N:
+            return f"_PARTIAL_FIRST_{resolved_src}", f"_PARTIAL_FIRST_TS_{resolved_src}"
+        return None
 
     def _apply_distinct_partial_element_types(self, spec_features: list[Feature]) -> None:
         """Set exact element types on distinct-N partial columns in offline configs.
@@ -1428,13 +1446,13 @@ class FeatureViewSpecBuilder:
             )
 
         for spec in self._agg_specs:
-            if spec.function in _PG_DISTINCT_N_AGGREGATIONS:
+            if spec.function in _PG_ORDERED_N_AGGREGATIONS:
                 n = spec.params.get("n")
-                if not isinstance(n, int) or not (1 <= n <= _PG_DISTINCT_N_MAX):
+                if not isinstance(n, int) or not (1 <= n <= _PG_ORDERED_N_MAX):
                     raise ValueError(
                         f"{spec.function.value} on column '{spec.source_column}' has n={n}, "
                         f"which is not supported for Postgres online store. "
-                        f"n must be between 1 and {_PG_DISTINCT_N_MAX}."
+                        f"n must be between 1 and {_PG_ORDERED_N_MAX}."
                     )
 
     def _validate_pg_source_types(self, features: list[Feature]) -> None:
@@ -1445,7 +1463,7 @@ class FeatureViewSpecBuilder:
 
         - APPROX_COUNT_DISTINCT is limited to STRING source columns.
         - Distinct-N source columns must be one of the element types Quake can
-          store/serve as a JSONB array (see ``_PG_DISTINCT_N_SOURCE_TYPES``).
+          store/serve as a JSONB array (see ``_PG_ORDERED_N_SOURCE_TYPES``).
 
         Args:
             features: Resolved spec-internal Feature models.
@@ -1462,9 +1480,9 @@ class FeatureViewSpecBuilder:
                         f"(type {feat.source_column.type}) is not supported for Postgres "
                         f"online store. Only STRING/TEXT source columns are allowed."
                     )
-            elif feat.function in {fn.value for fn in _PG_DISTINCT_N_AGGREGATIONS}:
-                if feat.source_column.type not in _PG_DISTINCT_N_SOURCE_TYPES:
-                    allowed = sorted(_PG_DISTINCT_N_SOURCE_TYPES)
+            elif feat.function in {fn.value for fn in _PG_ORDERED_N_AGGREGATIONS}:
+                if feat.source_column.type not in _PG_ORDERED_N_SOURCE_TYPES:
+                    allowed = sorted(_PG_ORDERED_N_SOURCE_TYPES)
                     raise ValueError(
                         f"{feat.function} on column '{feat.source_column.name}' "
                         f"(type {feat.source_column.type}) is not supported for Postgres "

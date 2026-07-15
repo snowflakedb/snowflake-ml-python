@@ -6,6 +6,7 @@ from absl.testing import absltest
 from sklearn.linear_model import LinearRegression
 
 from snowflake.ml.experiment import ExperimentTracking
+from snowflake.ml.model import ModelVersion
 from snowflake.ml.utils import connection_params
 from snowflake.snowpark import Session
 from tests.integ.snowflake.ml.test_utils import db_manager
@@ -102,6 +103,50 @@ class ExperimentLineageIntegrationTest(absltest.TestCase):
         self.assertEqual(target["properties"]["parentName"], model_name)
         self.assertEqual(target["schema"], self._schema_name)
         self.assertEqual(target["db"], self._db_name)
+
+    def test_list_model_versions(self) -> None:
+        """Test that list_model_versions retrieves model versions logged under a run via lineage."""
+        experiment_name = "LIST_MODEL_VERSIONS_EXPERIMENT"
+        run_name = "LIST_MODEL_VERSIONS_RUN"
+        model_name = "LIST_MODEL_VERSIONS_MODEL"
+
+        X = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+        y = [0, 1, 0]
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            model = LinearRegression()
+            model.fit(X, y)
+            mv = self.exp.log_model(
+                model,
+                model_name=model_name,
+                sample_input_data=X,
+            )
+
+        # Retrieve logged model versions by explicit run name
+        logged_models = self.exp.list_model_versions(run_name=run_name)
+        self.assertEqual(len(logged_models), 1, f"Expected 1 logged model, got {len(logged_models)}")
+        logged_model = logged_models[0]
+        self.assertIsInstance(logged_model, ModelVersion)
+        self.assertEqual(logged_model.model_name, mv.model_name)
+        self.assertEqual(logged_model.version_name, mv.version_name)
+
+        # The retrieved model version should be runnable and produce the same output
+        actual = logged_model.run(X, function_name="predict")
+        expected = pd.DataFrame({"output_feature_0": model.predict(X)})
+        pd.testing.assert_frame_equal(actual, expected)
+
+    def test_list_model_versions_empty(self) -> None:
+        """Test that list_model_versions returns an empty list for a run with no logged models."""
+        experiment_name = "EMPTY_MODELS_EXPERIMENT"
+        run_name = "EMPTY_MODELS_RUN"
+
+        self.exp.set_experiment(experiment_name=experiment_name)
+        with self.exp.start_run(run_name=run_name):
+            self.exp.log_metric("accuracy", 0.9)
+
+        logged_models = self.exp.list_model_versions(run_name=run_name)
+        self.assertEqual(len(logged_models), 0, f"Expected 0 logged models, got {len(logged_models)}")
 
 
 if __name__ == "__main__":

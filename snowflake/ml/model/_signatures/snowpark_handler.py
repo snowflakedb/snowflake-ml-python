@@ -134,7 +134,11 @@ class SnowparkDataFrameHandler(base_handler.BaseDataHandler[snowflake.snowpark.D
             if quoted_identifiers_ignore_case:
                 feature_name = feature_name.upper()
             column_names.append(feature_name)
-            columns.append(F.col(feature_name).cast(feature.as_snowpark_type()))
+            target_type = feature.as_snowpark_type()
+            col_expr = F.col(feature_name)
+            if isinstance(target_type, (spt.StructType, spt.MapType, spt.ArrayType)):
+                col_expr = col_expr.cast(spt.VariantType())
+            columns.append(col_expr.cast(target_type))
 
         sp_df = sp_df.with_columns(column_names, columns)
 

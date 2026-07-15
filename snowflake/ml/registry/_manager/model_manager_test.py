@@ -734,7 +734,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=(
-                    {"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE}
+                    {"relax_version": False, "volatility": Volatility.IMMUTABLE}
                     if target_platforms == ["SNOWPARK_CONTAINER_SERVICES"]
                     or target_platforms == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
                     or target_platforms == [type_hints.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
@@ -805,7 +805,7 @@ class ModelManagerTest(parameterized.TestCase):
                 code_paths=None,
                 ext_modules=None,
                 options=(
-                    {"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE}
+                    {"relax_version": False, "volatility": Volatility.IMMUTABLE}
                     if target_platform_constant == [target_platform.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]
                     else {"embed_local_ml_library": True, "relax_version": True, "volatility": Volatility.IMMUTABLE}
                 ),
@@ -1049,7 +1049,7 @@ class ModelManagerTest(parameterized.TestCase):
                 user_files=None,
                 code_paths=None,
                 ext_modules=None,
-                options={"enable_explainability": False, "relax_version": False, "volatility": Volatility.IMMUTABLE},
+                options={"relax_version": False, "volatility": Volatility.IMMUTABLE},
                 task=task.Task.UNKNOWN,
                 prefer_pip_for_automatic_dependencies=True,
                 experiment_info=None,

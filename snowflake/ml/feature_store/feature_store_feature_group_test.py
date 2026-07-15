@@ -414,6 +414,30 @@ class RegisterFeatureGroupWithRtfvSourceTest(absltest.TestCase):
         self.assertIn("USER_FV@v1", msg)
         self.assertIn("RT_FV@v1", msg)
 
+    def test_cross_source_join_key_varchar_length_difference_allowed(self) -> None:
+        """Two sources declare the same string join key with different VARCHAR lengths -> no conflict.
+
+        A tiled FV exposes ``USER_ID`` as the unbounded ``StringType()`` default,
+        while a batch FV read back through its materialized dynamic table reports
+        ``StringType(14)`` (the DT narrows the VARCHAR to the observed data
+        length). Both are the same logical string join key, so the FG-level type
+        resolver must accept them and normalize to an unbounded ``StringType()``.
+        """
+        bfv_unbounded = _make_registered_fv(name="USER_FV_A", version="v1", feature_columns=["BALANCE"])
+        bfv_bounded = _make_registered_fv(name="USER_FV_B", version="v1", feature_columns=["AMOUNT"])
+        # Narrow the second source's USER_ID to a bounded VARCHAR, mimicking a
+        # materialized dynamic table sized to its data. _make_registered_fv points
+        # feature_df and _infer_schema_df at the same mock, so this drives output_schema.
+        assert bfv_bounded._infer_schema_df is not None
+        bounded_schema = StructType([StructField("USER_ID", StringType(14)), StructField("AMOUNT", DoubleType())])
+        bfv_bounded._infer_schema_df.schema = bounded_schema
+
+        fg = FeatureGroup(name="FG", features=[bfv_unbounded, bfv_bounded])
+
+        # The pre-fix code raised here on ``StringType() != StringType(14)``.
+        types = fg_mod._fg_join_key_field_types(fg)
+        self.assertEqual(types["USER_ID"], StringType())
+
     def test_request_source_overlaps_fg_pk_rejected(self) -> None:
         """An RTFV's RequestSource column that collides with the FG's superset PK is rejected."""
         fs, _sess, _md = self._new_register_setup()

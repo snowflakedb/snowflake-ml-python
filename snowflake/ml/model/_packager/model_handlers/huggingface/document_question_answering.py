@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class DocumentQuestionAnsweringTaskHandler(_task_handler.HuggingFaceTaskHandler):
     """Handles document question answering pipelines."""
 
+    REQUIRES_PILLOW = True
+
     @override
     def run_inference(
         self,

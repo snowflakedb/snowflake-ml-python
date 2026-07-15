@@ -533,8 +533,10 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
           v1: 100.0@10:00, 200.0@10:30, 150.0@11:00
           v2: 300.0@10:15, 250.0@10:45
 
-        Expected LAST_N(order_value, 24h, n=5) for s1 (most recent first):
-          [150.0, 250.0, 200.0, 300.0, 100.0]
+        Expected LAST_N(order_value, 24h, n=5) for s1 (oldest first; output is
+        always ascending by timestamp, "last" only selects WHICH n survive — here
+        all 5 fit under n=5):
+          [100.0, 300.0, 200.0, 250.0, 150.0]
         """
         fs = self._create_feature_store()
 
@@ -1019,8 +1021,10 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         Without the fix, ARRAY_UNION_AGG merges per-visitor arrays in
         indeterminate order (e.g. [150,200,100,300,250]). With the fix,
         LATERAL FLATTEN + ORDER BY companion TS produces the correct
-        globally-ordered result: [150.0, 250.0, 200.0, 300.0, 100.0]
-        (most recent first: 11:00, 10:45, 10:30, 10:15, 10:00).
+        globally-ordered result: [100.0, 300.0, 200.0, 250.0, 150.0]
+        (oldest first: 10:00, 10:15, 10:30, 10:45, 11:00). Output is always
+        ascending by timestamp; with n=5 all events survive so last_n and
+        first_n coincide here.
         """
         fs = self._create_feature_store()
 
@@ -1075,13 +1079,14 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         last_orders_raw = results[0][last_orders_col]
         last_orders = json.loads(last_orders_raw) if isinstance(last_orders_raw, str) else last_orders_raw
-        # The array must be globally sorted by timestamp DESC (most recent first):
-        #   150.0@11:00, 250.0@10:45, 200.0@10:30, 300.0@10:15, 100.0@10:00
-        expected = [150.0, 250.0, 200.0, 300.0, 100.0]
+        # The array must be globally sorted by timestamp ASC (oldest first);
+        # last_n(n=5) keeps all 5 events so it coincides with first_n here:
+        #   100.0@10:00, 300.0@10:15, 200.0@10:30, 250.0@10:45, 150.0@11:00
+        expected = [100.0, 300.0, 200.0, 250.0, 150.0]
         self.assertEqual(
             [float(v) for v in last_orders],
             expected,
-            f"LAST_N rollup should be globally ordered by timestamp DESC. " f"Got {last_orders}, expected {expected}",
+            f"LAST_N rollup should be globally ordered by timestamp ASC. " f"Got {last_orders}, expected {expected}",
         )
 
     def test_rollup_first_n_global_ordering(self) -> None:
@@ -1165,11 +1170,12 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
           v2: 300.0@10:15, 250.0@10:45
 
         Expected LAST_N(order_value, 24h, n=3) for s1:
-          [150.0, 250.0, 200.0]  (the 3 most recent: 11:00, 10:45, 10:30)
+          [200.0, 250.0, 150.0]  (the 3 most recent — 10:30, 10:45, 11:00 —
+          selected by recency but displayed oldest-first)
 
         This is the exact scenario the customer described: without the fix,
         the slice might return [150,200,100] (v1's array first) instead of
-        [150,250,200] (globally correct top-3).
+        the globally-correct top-3 (displayed oldest-first).
         """
         fs = self._create_feature_store()
 
@@ -1222,12 +1228,13 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
 
         recent_orders_raw = results[0][recent_orders_col]
         recent_orders = json.loads(recent_orders_raw) if isinstance(recent_orders_raw, str) else recent_orders_raw
-        # Must be the 3 most recent globally, not the first 3 from any single visitor
-        expected = [150.0, 250.0, 200.0]
+        # Must be the 3 most recent globally (selected by recency), displayed
+        # oldest-first — not the first 3 from any single visitor.
+        expected = [200.0, 250.0, 150.0]
         self.assertEqual(
             [float(v) for v in recent_orders],
             expected,
-            f"LAST_N(n=3) rollup should return the 3 most recent events globally. "
+            f"LAST_N(n=3) rollup should return the 3 most recent events globally, oldest-first. "
             f"Got {recent_orders}, expected {expected}",
         )
 

@@ -150,6 +150,32 @@ class AggregationSpecTest(absltest.TestCase):
             )
         self.assertIn("'n' is required", str(cm.exception))
 
+    def test_list_aggregation_n_over_max_raises(self) -> None:
+        """n above the product limit (100) is rejected for every ordered-N function."""
+        for function in (
+            AggregationType.LAST_N,
+            AggregationType.FIRST_N,
+            AggregationType.LAST_DISTINCT_N,
+            AggregationType.FIRST_DISTINCT_N,
+        ):
+            with self.assertRaisesRegex(ValueError, "must be between 1 and 100"):
+                AggregationSpec(
+                    function=function,
+                    source_column="page_id",
+                    window="1h",
+                    output_column="recent_pages",
+                    params={"n": 101},
+                )
+        # n == 100 (the boundary) is allowed.
+        spec = AggregationSpec(
+            function=AggregationType.LAST_N,
+            source_column="page_id",
+            window="1h",
+            output_column="recent_pages",
+            params={"n": 100},
+        )
+        self.assertEqual(spec.params["n"], 100)
+
     def test_invalid_window_raises(self) -> None:
         """Test that invalid window format raises."""
         with self.assertRaises(ValueError):

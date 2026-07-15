@@ -64,7 +64,7 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
         is_sub_model: Optional[bool] = False,
         **kwargs: Unpack[model_types.CatBoostModelSaveOptions],
     ) -> None:
-        enable_explainability = kwargs.get("enable_explainability", True)
+        enable_explainability = kwargs.get("enable_explainability", False)
 
         import catboost
 
@@ -210,7 +210,6 @@ class CatBoostModelHandler(_base.BaseModelHandler["catboost.CatBoost"]):
             ) -> Callable[[custom_model.CustomModel, pd.DataFrame], pd.DataFrame]:
                 @custom_model._internal_inference_api
                 def fn(self: custom_model.CustomModel, X: pd.DataFrame, **method_kwargs: Any) -> pd.DataFrame:
-
                     res = getattr(raw_model, target_method)(X, **method_kwargs)
 
                     if isinstance(res, list) and len(res) > 0 and isinstance(res[0], np.ndarray):

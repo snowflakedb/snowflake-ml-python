@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Usage
-# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--report <report_path>] [--feature-areas <areas>]
+# build_and_run_tests.sh <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--grype-no-ignore] [--report <report_path>] [--feature-areas <areas>]
 #
 # Args
 # workspace: path to the workspace, SnowML code should be in snowml directory.
@@ -19,6 +19,8 @@
 # build-spcs-images: Comma-separated list of specific SPCS images to build and push. Implies --with-spcs-image.
 # run-grype: Run grype security scanning on SPCS images. Only valid with --with-spcs-image.
 # grype-scan-only: Only build images and run grype scan, skip package build and tests. Requires --with-spcs-image and --run-grype.
+# grype-no-ignore: Run the grype scan with the per-image ignore lists disabled, so every normally-suppressed
+#   High/Critical CVE is surfaced. Diagnostic mode: findings are reported but do not fail the build. Requires --run-grype.
 # snowflake-env: The environment of the snowflake, use to determine the test quarantine list
 # report: Path to xml test report
 # feature-areas: Comma-separated list of feature areas to test (e.g., "jobs,core").
@@ -37,7 +39,7 @@ PROG=$0
 
 help() {
     local exit_code=$1
-    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
+    echo "Usage: ${PROG} <workspace> [-b <bazel path>] [--env pip|conda] [--mode merge_gate|continuous_run|quarantined|short_regression] [--with-snowpark] [--with-spcs-image] [--build-spcs-images <images>] [--run-grype] [--grype-scan-only] [--grype-no-ignore] [--snowflake-env <sf_env>] [--report <report_path>] [--feature-areas <areas>]"
     exit "${exit_code}"
 }
 
@@ -48,6 +50,7 @@ WITH_SNOWPARK=false
 WITH_SPCS_IMAGE=false
 RUN_GRYPE=false
 GRYPE_SCAN_ONLY=false
+GRYPE_NO_IGNORE=false
 MODE="continuous_run"
 PYTHON_VERSION=3.11
 PYTHON_ENABLE_SCRIPT="bin/activate"
@@ -112,6 +115,9 @@ while (($#)); do
     --grype-scan-only)
         GRYPE_SCAN_ONLY=true
         ;;
+    --grype-no-ignore)
+        GRYPE_NO_IGNORE=true
+        ;;
     --feature-areas)
         shift
         FEATURE_AREAS=$1
@@ -147,6 +153,11 @@ if [ "${GRYPE_SCAN_ONLY}" = true ]; then
     fi
 fi
 
+if [ "${GRYPE_NO_IGNORE}" = true ] && [ "${RUN_GRYPE}" = false ]; then
+    echo "Error: --grype-no-ignore flag requires --run-grype to be set"
+    help 1
+fi
+
 # Grype-only mode: build images and run grype scan, skip package build and tests
 if [ "${GRYPE_SCAN_ONLY}" = true ]; then
     echo "Running in grype-scan-only mode: building images and running grype scan..."
@@ -154,6 +165,7 @@ if [ "${GRYPE_SCAN_ONLY}" = true ]; then
     pushd ${SNOWML_DIR}
     export RUN_GRYPE
     export GRYPE_SCAN_ONLY
+    export GRYPE_NO_IGNORE
     source model_container_services_deployment/ci/build_and_push_images.sh
     popd
     echo "Done running ${PROG} (grype-scan-only mode)"
@@ -405,6 +417,7 @@ if [[ "${WITH_SPCS_IMAGE}" = true ]]; then
     pushd ${SNOWML_DIR}
     echo "Building SPCS Image ..."
     export RUN_GRYPE
+    export GRYPE_NO_IGNORE
     export BUILD_SPCS_IMAGES
     source model_container_services_deployment/ci/build_and_push_images.sh
     popd

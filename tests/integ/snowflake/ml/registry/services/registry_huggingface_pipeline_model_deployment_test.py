@@ -84,6 +84,7 @@ class TestRegistryHuggingFacePipelineDeploymentModelInteg(
                     "top_p": 0.9,
                     "frequency_penalty": 0.2,
                     "presence_penalty": 0.1,
+                    "response_format": None,
                 }
             ]
         )

@@ -285,7 +285,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                     model=regr,
                     sample_input_data=iris_X_df,
                     metadata={"author": "halu", "version": "1"},
-                    options=model_types.SKLModelSaveOptions(),
+                    options=model_types.SKLModelSaveOptions(enable_explainability=True),
                 )
                 save_background_data.assert_called_once()
 
@@ -294,7 +294,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             self.assertEqual(
@@ -329,7 +329,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 model=regr,
                 sample_input_data=iris_X_df.values,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -389,7 +389,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 model=pipe,
                 sample_input_data=iris_X_df,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -421,7 +421,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 model=pipe,
                 sample_input_data=iris_X,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():
@@ -597,29 +597,21 @@ class SKLearnHandlerTest(parameterized.TestCase):
         pipe = Pipeline([("passthrough", "passthrough"), ("regr", regr)])  # passthrough has no transform method
         pipe.fit(iris_X, iris_y)
 
+        # Explainability is opt-in; enabling it on a pipeline whose steps cannot be transformed raises and logs.
         with tempfile.TemporaryDirectory() as tmpdir, self.assertLogs(logger, level="DEBUG") as log:
-            model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
-                name="model1",
-                model=pipe,
-                sample_input_data=iris_X,
-                metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
-            )
+            with self.assertRaisesRegex(
+                ValueError,
+                "Explainability for this model is not supported. Please set `enable_explainability=False`",
+            ):
+                model_packager.ModelPackager(os.path.join(tmpdir, "model1")).save(
+                    name="model1",
+                    model=pipe,
+                    sample_input_data=iris_X,
+                    metadata={"author": "halu", "version": "1"},
+                    options=model_types.SKLModelSaveOptions(enable_explainability=True),
+                )
 
-            with warnings.catch_warnings():
-                warnings.simplefilter("error")
-
-                pk = model_packager.ModelPackager(os.path.join(tmpdir, "model1"))
-                pk.load(as_custom_model=True)
-                assert pk.model
-                assert pk.meta
-                predict_method = getattr(pk.model, "predict", None)
-                explain_method = getattr(pk.model, "explain", None)
-                assert callable(predict_method)
-                self.assertEqual(explain_method, None)
-
-            self.assertEqual(len(log.output), 1)
-            self.assertIn("Explainability is disabled due to an exception.", log.output[0])
+            self.assertIn("Explainability is disabled due to an exception.", "".join(log.output))
 
     def test_skl_with_cr_estimator(self) -> None:
         class SecondMockEstimator:
@@ -668,7 +660,7 @@ class SKLearnHandlerTest(parameterized.TestCase):
                 model=pipe,
                 sample_input_data=X,
                 metadata={"author": "halu", "version": "1"},
-                options=model_types.SKLModelSaveOptions(),
+                options=model_types.SKLModelSaveOptions(enable_explainability=True),
             )
 
             with warnings.catch_warnings():

@@ -1,4 +1,3 @@
-import contextlib
 import sys
 import warnings
 from typing import Any, cast
@@ -364,28 +363,14 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             result = reconciler.reconcile()
             self.assertIsNone(result.target_platforms)
 
-    def test_is_warehouse_runnable(self) -> None:
-        """Test _is_warehouse_runnable logic using conda channels and pip requirements."""
-        reconciler = self._create_reconciler()
-        self.assertTrue(reconciler._is_warehouse_runnable({}, None, False))
-        self.assertTrue(reconciler._is_warehouse_runnable({"": ["pkg1"]}, None, False))
-        self.assertTrue(
-            reconciler._is_warehouse_runnable({"https://repo.anaconda.com/pkgs/snowflake": ["pkg1"]}, None, False)
-        )
-
-        self.assertFalse(reconciler._is_warehouse_runnable({"conda-forge": ["pkg1"]}, None, False))
-
-        reconciler = self._create_reconciler(pip_requirements=["numpy"])
-        self.assertFalse(reconciler._is_warehouse_runnable({}, None, False))
-        self.assertTrue(reconciler._is_warehouse_runnable({}, {"pip": "db.schema.repo"}, False))
-
     def test_explainability_validation(self) -> None:
-        """Test explainability validation logic for different platform configurations."""
+        """Explainability is no longer forced off by the reconciler; explicit values are preserved."""
 
+        # Unspecified explainability is left absent so the model handler default (False) applies.
         reconciler = self._create_reconciler(target_platforms=[model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES])
         result = reconciler.reconcile()
         assert result.options is not None
-        self.assertEqual(result.options["enable_explainability"], False)
+        self.assertNotIn("enable_explainability", result.options)
 
         reconciler = self._create_reconciler(
             target_platforms=[
@@ -404,7 +389,7 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
         )
         result = reconciler.reconcile()
         assert result.options is not None
-        self.assertEqual(result.options["enable_explainability"], False)
+        self.assertNotIn("enable_explainability", result.options)
 
         reconciler = self._create_reconciler(
             conda_dependencies=["conda-forge::python-package==1.0.0"],
@@ -576,31 +561,20 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
                 self.assertTrue(result.options["relax_version"])
 
     @parameterized.parameters(  # type: ignore[misc]
-        {"disable_explainability": True, "target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},
+        {"target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},
         {
-            "disable_explainability": False,
             "target_platforms": [
                 model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES,
                 model_types.TargetPlatform.WAREHOUSE,
-            ],
+            ]
         },
-        {"disable_explainability": False, "target_platforms": []},
-        {
-            "disable_explainability": True,
-            "conda_dependencies": ["python-package1==1.0.0", "conda-forge::python-package2==1.1.0"],
-        },
-        {
-            "disable_explainability": False,
-            "conda_dependencies": [
-                "python-package1==1.0.0",
-                "https://repo.anaconda.com/pkgs/snowflake::python-package2",
-            ],
-        },
-        {"disable_explainability": True, "pip_requirements": ["python-package==1.0.0"]},
-        {"disable_explainability": False, "pip_requirements": None},
+        {"target_platforms": []},
+        {"conda_dependencies": ["python-package1==1.0.0", "conda-forge::python-package2==1.1.0"]},
+        {"pip_requirements": ["python-package==1.0.0"]},
+        {"pip_requirements": None},
     )
-    def test_explainability_parameter_reconciliation(self, disable_explainability: bool, **kwargs: Any) -> None:
-        """Test explainability parameter reconciliation matching original model_composer test structure."""
+    def test_explainability_left_unset(self, **kwargs: Any) -> None:
+        """The reconciler no longer sets enable_explainability; unspecified values stay absent."""
         m_session = mock_session.MockSession(conn=None, test_case=self)
         c_session = cast(Session, m_session)
 
@@ -615,67 +589,45 @@ class ModelParameterReconcilerTest(parameterized.TestCase):
             options=None,
         )
 
-        if kwargs.get("conda_dependencies") == ["python-package1==1.0.0", "conda-forge::python-package2==1.1.0"]:
-            mock_conda_result = {"conda-forge": ["python-package2"]}
-        else:
-            mock_conda_result = {}
+        with mock.patch.object(
+            model_parameter_reconciler.ModelParameterReconciler,
+            "_pypi_shared_repository_accessible",
+            return_value=False,
+        ):
+            with mock.patch.object(
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ):
+                result = reconciler.reconcile()
+                assert result.options is not None
+                self.assertNotIn("enable_explainability", result.options)
 
-        # Pip + no artifact map: without shared repo access, warehouse is not runnable → explainability defaults off.
-        pypi_patch = (
-            mock.patch.object(
-                model_parameter_reconciler.ModelParameterReconciler,
-                "_pypi_shared_repository_accessible",
-                return_value=False,
-            )
-            if kwargs.get("pip_requirements") and disable_explainability
-            else contextlib.nullcontext()
+        # Explicit values are preserved regardless of platform / dependency configuration.
+        reconciler = model_parameter_reconciler.ModelParameterReconciler(
+            model=self._create_mock_model(CustomModel),
+            session=c_session,
+            database_name=self.database_name,
+            schema_name=self.schema_name,
+            conda_dependencies=kwargs.get("conda_dependencies"),
+            pip_requirements=kwargs.get("pip_requirements"),
+            target_platforms=kwargs.get("target_platforms"),
+            options={"enable_explainability": True},
         )
 
-        with pypi_patch:
+        with mock.patch.object(
+            model_parameter_reconciler.ModelParameterReconciler,
+            "_pypi_shared_repository_accessible",
+            return_value=False,
+        ):
             with mock.patch.object(
-                env_utils, "validate_conda_dependency_string_list", return_value=mock_conda_result
-            ) as mock_validate_conda:
-                with mock.patch.object(
-                    env_utils,
-                    "get_matched_package_versions_in_information_schema",
-                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-                ) as mock_get_versions:
-                    result = reconciler.reconcile()
-
-                    mock_validate_conda.assert_called_once()
-                    if kwargs.get("target_platforms") != [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]:
-                        mock_get_versions.assert_called_once()
-                    else:
-                        mock_get_versions.assert_not_called()
-
-                    if disable_explainability:
-                        assert result.options is not None
-                        self.assertEqual(result.options["enable_explainability"], False)
-                    else:
-                        assert result.options is not None
-                        self.assertNotIn("enable_explainability", result.options)
-
-        if disable_explainability:
-            reconciler = model_parameter_reconciler.ModelParameterReconciler(
-                model=self._create_mock_model(CustomModel),
-                session=c_session,
-                database_name=self.database_name,
-                schema_name=self.schema_name,
-                conda_dependencies=kwargs.get("conda_dependencies"),
-                pip_requirements=kwargs.get("pip_requirements"),
-                target_platforms=kwargs.get("target_platforms"),
-                options={"enable_explainability": True},
-            )
-
-            with mock.patch.object(env_utils, "validate_conda_dependency_string_list", return_value=mock_conda_result):
-                with mock.patch.object(
-                    env_utils,
-                    "get_matched_package_versions_in_information_schema",
-                    return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
-                ):
-                    result = reconciler.reconcile()
-                    assert result.options is not None
-                    self.assertEqual(result.options["enable_explainability"], True)
+                env_utils,
+                "get_matched_package_versions_in_information_schema",
+                return_value={env_utils.SNOWPARK_ML_PKG_NAME: []},
+            ):
+                result = reconciler.reconcile()
+                assert result.options is not None
+                self.assertEqual(result.options["enable_explainability"], True)
 
     @parameterized.parameters(  # type: ignore[misc]
         {"target_platforms": [model_types.TargetPlatform.SNOWPARK_CONTAINER_SERVICES]},

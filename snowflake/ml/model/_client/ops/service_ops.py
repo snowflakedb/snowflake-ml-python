@@ -1207,7 +1207,9 @@ class ServiceOperator:
             compute_pool_name: Compute pool for ``IN COMPUTE POOL``.
             input_spec: Optional input block of the YAML body.
             output_spec: Required output block of the YAML body. ``stage_location``
-                is normalized to end with ``/`` before being emitted.
+                is normalized to end with ``/`` before being emitted, and is treated
+                by the server as a base: results are written under a per-job
+                subdirectory, ``<stage_location>/<job_name>/``.
             resources_spec: Optional resources block of the YAML body.
             inference_spec: Optional inference block of the YAML body.
             image_build_spec: Optional image build block of the YAML body.

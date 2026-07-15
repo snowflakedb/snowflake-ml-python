@@ -232,7 +232,7 @@
     - build_essential
 - name: scikit-learn
   dev_version: 1.5.1
-  version_requirements: <1.8
+  version_requirements: <1.9
   tags:
     - build_essential
 - name: scipy
