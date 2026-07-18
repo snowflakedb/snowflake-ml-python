@@ -127,39 +127,72 @@ class TestExecuteInferenceJobServiceFunctionalInteg(
         )
 
     def test_output_mode_error_rejects_existing(self) -> None:
-        """ERROR mode rejects a second run when output already exists at the stage path."""
-        model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
+        """ERROR mode rejects a run when the job-scoped output subdir already has files."""
+        model, _, output_stage_location, input_df, _, sp_df = self._prepare_test()
         mv = self._log_demo_model(model, sp_df)
 
-        self._deploy_execute_inference_job_service(
-            mv,
-            X=input_df,
-            output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
-            expected_predictions=expected_predictions,
-        )
+        # Output is job-scoped as <stage_location>/<job_name>/, so pin the job name and seed a
+        # file in that subdir to give mode=error a non-empty destination to reject.
+        job_name = f"BATCH_INFERENCE_{uuid.uuid4().hex.upper()}"
+        job_scoped_output = output_stage_location.rstrip("/") + "/" + job_name + "/"
+        self.session.sql(
+            f"COPY INTO {job_scoped_output}stale.txt FROM (SELECT 'pre-existing' AS payload) "
+            "FILE_FORMAT = (TYPE = 'CSV') OVERWRITE = TRUE SINGLE = TRUE"
+        ).collect()
 
         with self.assertRaises(connector_errors.DatabaseError):
             mv._run_batch_v2(
                 input_df,
                 compute_pool=self._TEST_CPU_COMPUTE_POOL,
                 output_spec=batch_inference_specs.Output(stage_location=output_stage_location),
+                job_name=job_name,
             )
 
     def test_output_mode_overwrite_replaces_existing(self) -> None:
-        """OVERWRITE mode succeeds when output already exists and produces the expected rows."""
+        """OVERWRITE clears the job-scoped subdir and writes fresh rows, leaving sibling base files intact."""
         model, _, output_stage_location, input_df, expected_predictions, sp_df = self._prepare_test()
         mv = self._log_demo_model(model, sp_df)
 
-        for _ in range(2):
-            self._deploy_execute_inference_job_service(
-                mv,
-                X=input_df,
-                output_spec=batch_inference_specs.Output(
-                    stage_location=output_stage_location,
-                    mode=batch_inference_specs.SaveMode.OVERWRITE,
-                ),
-                expected_predictions=expected_predictions,
-            )
+        # Output is job-scoped as <stage_location>/<job_name>/, so pin the job name and seed a
+        # stale file in that subdir for overwrite to clear.
+        job_name = f"BATCH_INFERENCE_{uuid.uuid4().hex.upper()}"
+        job_scoped_output = output_stage_location.rstrip("/") + "/" + job_name + "/"
+        self.session.sql(
+            f"COPY INTO {job_scoped_output}stale.txt FROM (SELECT 'pre-existing' AS payload) "
+            "FILE_FORMAT = (TYPE = 'CSV') OVERWRITE = TRUE SINGLE = TRUE"
+        ).collect()
+
+        # Overwrite scopes deletion to the job subdir; seed a sibling under the base to verify it survives.
+        sibling_file = output_stage_location.rstrip("/") + "/sibling_keep.txt"
+        self.session.sql(
+            f"COPY INTO {sibling_file} FROM (SELECT 'keep' AS payload) "
+            "FILE_FORMAT = (TYPE = 'CSV') OVERWRITE = TRUE SINGLE = TRUE"
+        ).collect()
+
+        self._deploy_execute_inference_job_service(
+            mv,
+            X=input_df,
+            output_spec=batch_inference_specs.Output(
+                stage_location=output_stage_location,
+                mode=batch_inference_specs.SaveMode.OVERWRITE,
+            ),
+            job_name=job_name,
+            expected_predictions=expected_predictions,
+        )
+
+        # Overwrite must have cleared the seeded file before the job wrote its output.
+        remaining = self.session.sql(f"LIST {job_scoped_output}").collect()
+        self.assertFalse(
+            any("stale.txt" in row["name"] for row in remaining),
+            f"mode=overwrite should have cleared stale.txt, got: {[row['name'] for row in remaining]}",
+        )
+
+        # Files outside the job subdir must be left untouched.
+        base_files = self.session.sql(f"LIST {output_stage_location}").collect()
+        self.assertTrue(
+            any("sibling_keep.txt" in row["name"] for row in base_files),
+            f"mode=overwrite must not delete files outside the job subdir, got: {[row['name'] for row in base_files]}",
+        )
 
     def test_mljob_api(self) -> None:
         model, job_name, output_stage_location, input_df, _, sp_df = self._prepare_test()

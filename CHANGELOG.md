@@ -1,6 +1,16 @@
 # Release History
 
-## 1.47.0
+## 1.48.0
+
+### New Features
+
+### Bug Fixes
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.47.0 (2026-07-15)
 
 ### New Features
 
@@ -36,6 +46,10 @@ model_versions = exp.list_model_versions(run_name="MY_RUN")
 ## 1.46.0 (2026-07-07)
 
 ### New Features
+
+* Experiment Tracking: `ExperimentTracking` now captures best-effort source provenance (entry-point filename and any
+  surrounding git commit, branch, and remote URL) for each new run by default. Pass `capture_source_info=False` to
+  disable it. Collection is always non-fatal and never blocks run creation.
 
 ### Bug Fixes
 

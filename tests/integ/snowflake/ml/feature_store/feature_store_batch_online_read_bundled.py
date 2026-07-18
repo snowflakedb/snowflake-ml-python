@@ -140,26 +140,17 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         """
         ).collect()
         amounts = (10.0, 20.0, 30.0)
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+        utc_yesterday = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
         self._session.sql(
             f"""
             INSERT INTO {table_name}
             SELECT column1, column2, column3
             FROM VALUES
-                (
-                    {entity_key!r},
-                    DATEADD('hour', 1, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    {amounts[0]}
-                ),
-                (
-                    {entity_key!r},
-                    DATEADD('hour', 2, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    {amounts[1]}
-                ),
-                (
-                    {entity_key!r},
-                    DATEADD('hour', 3, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    {amounts[2]}
-                )
+                ({entity_key!r}, DATEADD('hour', 1, {utc_yesterday}), {amounts[0]}),
+                ({entity_key!r}, DATEADD('hour', 2, {utc_yesterday}), {amounts[1]}),
+                ({entity_key!r}, DATEADD('hour', 3, {utc_yesterday}), {amounts[2]})
         """
         ).collect()
         return table_name, sum(amounts), len(amounts)
@@ -445,7 +436,8 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
             )
         """
         ).collect()
-        yesterday = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        yesterday = "DATEADD('day', -1, DATE_TRUNC('day', CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ))"
         self._session.sql(
             f"""
             INSERT INTO {table_name}
@@ -507,8 +499,10 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
         """
         ).collect()
 
-        yesterday_midnight = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
-        two_days_ago_midnight = "DATEADD('day', -2, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+        yesterday_midnight = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
+        two_days_ago_midnight = f"DATEADD('day', -2, DATE_TRUNC('day', {utc_now_ntz}))"
         self._session.sql(
             f"""
             INSERT INTO {table_name}

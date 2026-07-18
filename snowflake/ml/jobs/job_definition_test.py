@@ -93,6 +93,38 @@ class MLJobDefinitionTest(parameterized.TestCase):
             self.assertEqual(result.runtime_environment, expected.runtime_environment)
             self.assertEqual(result.name, expected.name)
 
+    @parameterized.named_parameters(  # type: ignore[misc]
+        ("stage_volume_source", constants.STAGE_VOLUME_NAME, {"source": "@EVIL_DB.EVIL_SCH.EVIL_STAGE/any/path"}),
+        ("result_volume_source", constants.RESULT_VOLUME_NAME, {"source": "@EVIL_DB.EVIL_SCH.EVIL_STAGE/any/path"}),
+        (
+            "stage_volume_stage_config",
+            constants.STAGE_VOLUME_NAME,
+            {"stageConfig": {"name": "@EVIL_DB.EVIL_SCH.EVIL_STAGE"}},
+        ),
+    )
+    def test_spec_overrides_reject_managed_volume_override(
+        self, volume_name: str, volume_extra: dict[str, Any]
+    ) -> None:
+        """Overriding a managed stage/result volume must be rejected (confused-deputy stage wipe, CWE-441).
+
+        A malicious submitter could otherwise point the job's stage-volume/result-volume at an arbitrary
+        stage. When a *different* principal later runs delete_job() to clean up a shared schema, the
+        victim's session would execute REMOVE against that stage using the victim's WRITE privileges.
+        Validation must therefore reject the override at submission time rather than merely warning.
+        """
+        malicious_volume = {"name": volume_name, **volume_extra}
+        with patch("snowflake.ml.jobs.job_definition.payload_utils.JobPayload", return_value=MagicMock()):
+            with self.assertRaisesRegex(ValueError, "managed volume"):
+                job_definition.MLJobDefinition._create(
+                    source="entry.py",
+                    compute_pool="POOL",
+                    stage_name="@payload_stage/job",
+                    session=self.session,
+                    entrypoint="entry.py",
+                    name="entry",
+                    spec_overrides={"spec": {"volumes": [malicious_volume]}},
+                )
+
     def _create_job_definition_with_arg_protocol(
         self,
         arg_protocol_value: arg_protocol.ArgProtocol,

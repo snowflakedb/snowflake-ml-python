@@ -589,6 +589,13 @@ class SourceInfoTest(absltest.TestCase):
         result = _source_info.SourceInfo.collect()
         self.assertTrue(result.is_empty())
 
+    def test_collect_captures_running_file_without_mocks(self) -> None:
+        # No mocks: collect() runs against this live test process, so the entry point
+        # is resolved from the real sys.argv[0] — its basename is this running file.
+        result = _source_info.SourceInfo.collect()
+        assert result.entry_point is not None
+        self.assertEqual(os.path.basename(result.entry_point), os.path.basename(sys.argv[0]))
+
     @patch("snowflake.ml.experiment._source_info._collect_snowflake_file", autospec=True, return_value=None)
     @patch(
         "snowflake.ml.experiment._source_info._collect_git",
@@ -789,6 +796,28 @@ class RealGitTest(absltest.TestCase):
         assert result.git is not None
         self.assertIsNone(result.git.remote_url)
         self.assertEqual(result.git.commit_hash, commit)
+
+    def test_git_dropped_for_script_outside_repo_even_if_cwd_is(self) -> None:
+        # Regression: `python ../script.py` run from inside a repo must NOT stamp
+        # the run with that repo when the script lives outside any work tree.
+        # os.getcwd() being a repo is not a safe signal here.
+        repo = self.create_tempdir().full_path
+        self._init_repo(repo, remote="https://github.com/acme/proj.git")
+        self._commit(repo, "code.py")
+
+        script_dir = self.create_tempdir().full_path  # a sibling dir, not a repo
+        script = os.path.join(script_dir, "scratch.py")
+        open(script, "w").close()
+
+        original_cwd = os.getcwd()
+        self.addCleanup(os.chdir, original_cwd)
+        os.chdir(repo)  # os.getcwd() is now inside a real repo
+
+        with patch("snowflake.ml.experiment._source_info._in_ipython_kernel", autospec=True, return_value=False), patch(
+            "snowflake.ml.experiment._source_info.sys.argv", new=[script]
+        ):
+            self.assertEqual(_source_info._detect_entry_point(), "scratch.py")
+            self.assertIsNone(_source_info._collect_git())
 
     def test_script_entry_point_is_repo_relative(self) -> None:
         repo = self.create_tempdir().full_path

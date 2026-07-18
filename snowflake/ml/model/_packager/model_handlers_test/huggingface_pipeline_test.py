@@ -9,7 +9,6 @@ from unittest import mock
 
 import numpy as np
 import pandas as pd
-import torch
 from absl.testing import absltest, parameterized
 from packaging import requirements
 
@@ -736,11 +735,9 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
 
         self._basic_test_case(
             task="summarization",
-            model_id="Falconsai/text_summarization",
+            model_id="shorecode/t5-efficient-tiny-summarizer-general-purpose-v3",
             udf_test_input=x_df,
-            # This model is stored in fp16, but the architecture does not support it,
-            # it will messed up the auto dtype loading.
-            options={"torch_dtype": torch.float32},
+            options={},
             check_pipeline_fn=check_pipeline,
             check_udf_res_fn=check_udf_res,
         )
@@ -751,9 +748,9 @@ class HuggingFacePipelineHandlerTest(parameterized.TestCase):
         ):
             self._basic_test_case(
                 task="summarization",
-                model_id="Falconsai/text_summarization",
+                model_id="shorecode/t5-efficient-tiny-summarizer-general-purpose-v3",
                 udf_test_input=x_df,
-                options={"return_tensors": True, "torch_dtype": torch.float32},
+                options={"return_tensors": True},
                 check_pipeline_fn=check_pipeline,
                 check_udf_res_fn=check_udf_res,
             )

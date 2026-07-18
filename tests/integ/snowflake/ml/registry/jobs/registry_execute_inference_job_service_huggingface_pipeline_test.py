@@ -77,6 +77,7 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineInteg(
                     "top_p": 0.9,
                     "frequency_penalty": 0.2,
                     "presence_penalty": 0.1,
+                    "response_format": None,
                 }
             ]
         )
@@ -95,6 +96,7 @@ class TestExecuteInferenceJobServiceHuggingFacePipelineInteg(
                         "top_p",
                         "frequency_penalty",
                         "presence_penalty",
+                        "response_format",
                         "id",
                         "object",
                         "created",

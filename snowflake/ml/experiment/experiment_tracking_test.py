@@ -13,6 +13,7 @@ from snowflake.ml._internal.utils import sql_identifier
 from snowflake.ml.experiment import (
     _entities as entities,
     _logging as experiment_logging,
+    _source_info as source_info,
     experiment_tracking,
 )
 from snowflake.ml.experiment._client import artifact
@@ -179,6 +180,11 @@ class ExperimentTrackingTest(absltest.TestCase):
         call_args = self.mock_sql_client.add_run.call_args[1]
         self.assertEqual(call_args["experiment_name"], experiment.name)
         self.assertEqual(call_args["run_name"].identifier(), "TEST_RUN")
+        # Capture is on by default; assert start_run forwards whatever collect()
+        # resolves here (env-dependent, so compared self-referentially).
+        expected = source_info.SourceInfo.collect()
+        expected_json = None if expected.is_empty() else json.dumps(expected.to_json_dict())
+        self.assertEqual(call_args["source_info"], expected_json)
 
         # Verify Run object properties
         self.assertIsInstance(run, entities.Run)
@@ -192,6 +198,61 @@ class ExperimentTrackingTest(absltest.TestCase):
         self.assertIn(
             "A run is already active. Please end the current run before starting a new one.", str(context.exception)
         )
+
+    @patch("snowflake.ml.experiment.experiment_tracking.source_info.SourceInfo.collect", autospec=True)
+    def test_start_run_does_not_collect_source_info_when_disabled(self, mock_collect: MagicMock) -> None:
+        """With capture_source_info=False, collect() is never called."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=False)
+        exp.set_experiment("TEST_EXPERIMENT")
+
+        exp.start_run("TEST_RUN")
+
+        mock_collect.assert_not_called()
+        self.assertIsNone(self.mock_sql_client.add_run.call_args[1]["source_info"])
+
+    def test_capture_source_info_is_updated_on_singleton_reconstruction(self) -> None:
+        """Re-constructing the singleton updates capture_source_info even though the instance is reused."""
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=True)
+        self.assertTrue(exp._capture_source_info)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            same = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=False)
+
+        self.assertIs(same, exp)
+        self.assertFalse(exp._capture_source_info)
+
+    @patch("snowflake.ml.experiment.experiment_tracking.source_info.SourceInfo.collect", autospec=True)
+    def test_start_run_captures_source_info_when_enabled(self, mock_collect: MagicMock) -> None:
+        """With capture_source_info=True, the collected SourceInfo is serialized and forwarded to add_run."""
+        captured = source_info.SourceInfo(
+            entry_point="train/main.py",
+            git=source_info.GitInfo(commit_hash="abc", branch="main"),
+        )
+        mock_collect.return_value = captured
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=True)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        mock_collect.assert_called_once()
+        # The caller owns serialization; add_run receives a JSON string, not the dataclass.
+        self.assertEqual(
+            self.mock_sql_client.add_run.call_args[1]["source_info"],
+            json.dumps(captured.to_json_dict()),
+        )
+
+    @patch("snowflake.ml.experiment.experiment_tracking.source_info.SourceInfo.collect", autospec=True)
+    def test_start_run_omits_empty_source_info(self, mock_collect: MagicMock) -> None:
+        """An empty collected SourceInfo is normalized to None so no WITH clause is rendered."""
+        mock_collect.return_value = source_info.SourceInfo()
+
+        exp = experiment_tracking.ExperimentTracking(session=self.mock_session, capture_source_info=True)
+        exp.set_experiment("TEST_EXPERIMENT")
+        exp.start_run("TEST_RUN")
+
+        mock_collect.assert_called_once()
+        self.assertIsNone(self.mock_sql_client.add_run.call_args[1]["source_info"])
 
     def test_start_run_resumes_when_existing_run_is_running(self) -> None:
         """If a run exists with RUNNING status, start_run should resume it and not add a new one."""

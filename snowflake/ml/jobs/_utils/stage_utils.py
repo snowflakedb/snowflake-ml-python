@@ -2,7 +2,7 @@ import os
 import re
 from os import PathLike
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from snowflake.ml._internal.utils import identifier
 
@@ -172,3 +172,11 @@ def resolve_path(path: Union[str, Path]) -> "type_utils.PayloadPath":
         # Always return platform-native Path for local filesystem access
         return Path(path_str)
     return stage_path
+
+
+def try_resolve_stage_path(path: str) -> Optional[str]:
+    """Return the canonical stage path if ``path`` is a well-formed stage path, else ``None``."""
+    try:
+        return StagePath(path).as_posix()
+    except (ValueError, TypeError):
+        return None

@@ -7,7 +7,7 @@ from snowflake import snowpark
 from snowflake.ml._internal import telemetry
 from snowflake.ml._internal.utils import identifier
 from snowflake.ml.jobs import job as jb
-from snowflake.ml.jobs._utils import query_helper
+from snowflake.ml.jobs._utils import query_helper, stage_utils
 from snowflake.ml.jobs.job_definition import MLJobDefinition
 from snowflake.snowpark.context import get_active_session
 from snowflake.snowpark.exceptions import SnowparkSQLException
@@ -180,11 +180,20 @@ def delete_job(job: Union[str, jb.MLJob[Any]], session: Optional[snowpark.Sessio
     job = job if isinstance(job, jb.MLJob) else get_job(job, session=session)
     session = job._session
     if job._stage_path:
-        try:
-            session.sql(f"REMOVE {job._stage_path}/").collect()
-            logger.debug(f"Successfully cleaned up stage files for job {job.id} at {job._stage_path}")
-        except Exception as e:
-            logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
+        # The stage path originates from the job's SPCS service spec, which can be influenced by the
+        # (untrusted) job submitter. Interpolating it unescaped into a REMOVE statement would let a
+        # submitter redirect the cleanup to an arbitrary stage and abuse REMOVE syntax using the
+        # deleting principal's privileges (confused deputy, CWE-441 / CWE-89). Only proceed when the
+        # value parses as a well-formed stage path, and always use the validated canonical form.
+        safe_stage_path = stage_utils.try_resolve_stage_path(job._stage_path)
+        if safe_stage_path is None:
+            logger.warning(f"Skipping stage cleanup for job {job.id}: {job._stage_path!r} is not a valid stage path.")
+        else:
+            try:
+                session.sql(f"REMOVE {safe_stage_path}/").collect()
+                logger.debug(f"Successfully cleaned up stage files for job {job.id} at {safe_stage_path}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up stage files for job {job.id}: {e}")
     query_helper.run_query(session, "DROP SERVICE IDENTIFIER(?)", params=(job.id,))
 
 

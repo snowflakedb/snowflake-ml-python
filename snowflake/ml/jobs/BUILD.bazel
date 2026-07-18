@@ -36,6 +36,7 @@ py_library(
         "//snowflake/ml/jobs/_utils:feature_flags",
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
+        "//snowflake/ml/jobs/_utils:stage_utils",
         "//snowflake/ml/jobs/_utils:type_utils",
     ],
 )
@@ -73,6 +74,7 @@ py_library(
         "//snowflake/ml/jobs/_utils:payload_utils",
         "//snowflake/ml/jobs/_utils:query_helper",
         "//snowflake/ml/jobs/_utils:runtime_env_utils",
+        "//snowflake/ml/jobs/_utils:stage_utils",
         "//snowflake/ml/jobs/_utils:type_utils",
     ],
 )
