@@ -695,8 +695,10 @@ class StreamingFeatureViewIntegTestBase(FeatureStoreIntegTestBase):
         """
         ).collect()
 
-        yesterday_midnight = "DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
-        two_days_ago_midnight = "DATEADD('day', -2, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))"
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+        yesterday_midnight = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
+        two_days_ago_midnight = f"DATEADD('day', -2, DATE_TRUNC('day', {utc_now_ntz}))"
         self._session.sql(
             f"""
             INSERT INTO {table_name}

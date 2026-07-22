@@ -737,7 +737,7 @@ class FeatureStoreAppendOnlyOFTIntegTest(StreamingFeatureViewIntegTestBase, absl
         """
         fs = self._create_feature_store()
         s = uuid.uuid4().hex[:8]
-        fv_name = f"APPEND_ONLY_OVERWRITE_REJECT_OFT_FV_{s}"
+        fv_name = f"APPEND_ONLY_OVERWRITE_REJ_OFT_FV_{s}"
 
         src_table = self._create_append_only_source_table(fs, s)
         feature_sql = f"SELECT USER_ID, EVENT_TIME, AMOUNT FROM {src_table}"

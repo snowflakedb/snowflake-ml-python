@@ -136,6 +136,11 @@
   dev_version: 4.23.0
   tags:
     - build_essential
+- name: jinja2
+  dev_version: 3.1.6
+  version_requirements: '>=3.1.0,<4'
+  tags:
+    - build_essential
 - name: joblib
   dev_version: 1.4.2
 - name: lightgbm
@@ -252,7 +257,7 @@
     - llm
 - name_conda: snowflake-connector-python
   name_pypi: snowflake-connector-python[pandas]
-  dev_version: 3.17.3
+  dev_version: 3.18.0
   version_requirements: '>=3.17.3,<5'
 - name: snowflake.core
   dev_version: 1.12.0

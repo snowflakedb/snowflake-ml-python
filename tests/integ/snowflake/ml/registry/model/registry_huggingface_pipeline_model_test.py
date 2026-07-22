@@ -11,6 +11,11 @@ from snowflake.ml._internal import env_utils
 from snowflake.ml.model import model_signature, openai_signatures
 from tests.integ.snowflake.ml.registry.model import registry_model_test_base
 
+_ARTIFACTORY_HF_PROXY_SKIP_REASON = (
+    "Skipping test due to intermittent connection failures from the Artifactory "
+    "HuggingFace remote proxy during lazy model file downloads in CI"
+)
+
 
 class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.RegistryModelTestBase):
     @classmethod
@@ -247,8 +252,9 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
 
         model = huggingface.TransformersPipeline(
             task="summarization",
-            model="Falconsai/text_summarization",
+            model="shorecode/t5-efficient-tiny-summarizer-general-purpose-v3",
             compute_pool_for_log=None,
+            ignore_patterns=["checkpoint-*", "onnx/*", "pytorch_model.bin", "training_args.bin"],
         )
 
         x_df = pd.DataFrame(
@@ -286,6 +292,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_table_question_answering_pipeline(self) -> None:
+        self.skipTest(_ARTIFACTORY_HF_PROXY_SKIP_REASON)
         from snowflake.ml.model.models import huggingface
 
         model_id = "google/tapas-base-finetuned-wtq"
@@ -578,6 +585,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_translation_pipeline(self) -> None:
+        self.skipTest(_ARTIFACTORY_HF_PROXY_SKIP_REASON)
         from snowflake.ml.model.models import huggingface
 
         model = huggingface.TransformersPipeline(
@@ -1217,12 +1225,14 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_summarization_pipeline_with_params(self) -> None:
+        self.skipTest(_ARTIFACTORY_HF_PROXY_SKIP_REASON)
         from snowflake.ml.model.models import huggingface
 
         model = huggingface.TransformersPipeline(
             task="summarization",
-            model="Falconsai/text_summarization",
+            model="shorecode/t5-efficient-tiny-summarizer-general-purpose-v3",
             compute_pool_for_log=None,
+            ignore_patterns=["checkpoint-*", "onnx/*", "pytorch_model.bin", "training_args.bin"],
         )
 
         x_df = pd.DataFrame(
@@ -1297,6 +1307,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_translation_pipeline_with_params(self) -> None:
+        self.skipTest(_ARTIFACTORY_HF_PROXY_SKIP_REASON)
         from snowflake.ml.model.models import huggingface
 
         model = huggingface.TransformersPipeline(
@@ -1426,6 +1437,7 @@ class TestRegistryHuggingFacePipelineModelInteg(registry_model_test_base.Registr
         )
 
     def test_image_to_text_pipeline_with_params(self) -> None:
+        self.skipTest(_ARTIFACTORY_HF_PROXY_SKIP_REASON)
         from snowflake.ml.model.models import huggingface
 
         model = huggingface.TransformersPipeline(

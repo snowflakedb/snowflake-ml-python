@@ -300,7 +300,10 @@ py_test(
     ],
     optional_dependencies = ["transformers"],
     shard_count = 4,
-    tags = ["feature:model_registry"],
+    tags = [
+        "exclusive",
+        "feature:model_registry",
+    ],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env_utils",
@@ -309,11 +312,14 @@ py_test(
 
 py_test(
     name = "registry_sentence_transformers_model_test",
-    timeout = "long",
+    timeout = "eternal",
     srcs = ["registry_sentence_transformers_model_test.py"],
     optional_dependencies = ["transformers"],
-    shard_count = 4,
-    tags = ["feature:model_registry"],
+    shard_count = 1,
+    tags = [
+        "exclusive",
+        "feature:model_registry",
+    ],
     deps = [
         ":registry_model_test_base",
         "//snowflake/ml/_internal:env_utils",
