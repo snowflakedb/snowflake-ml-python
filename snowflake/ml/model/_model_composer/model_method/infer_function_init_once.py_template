@@ -33,9 +33,9 @@ def _is_null_param_value(val):
 
 
 # User-defined parameters
-MODEL_DIR_REL_PATH = "{model_dir_name}"
-TARGET_METHOD = "{target_method}"
-MAX_BATCH_SIZE = {max_batch_size}
+MODEL_DIR_REL_PATH = "{{ model_dir_name }}"
+TARGET_METHOD = "{{ target_method }}"
+MAX_BATCH_SIZE = {{ max_batch_size|default('None', true) }}
 
 # Initialized to None so the inference function can detect whether load_model() has run yet.
 runner = None
@@ -69,15 +69,15 @@ def load_model():
     global input_cols
     global dtype_map
     input_cols = [feature.name for feature in features]
-    dtype_map = {{feature.name: feature.as_dtype() for feature in features}}
+    dtype_map = {feature.name: feature.as_dtype() for feature in features}
 
     # Load inference parameters from method signature (if any)
     global param_cols
     global param_defaults
     global param_dtype_map
     param_cols = []
-    param_defaults = {{}}
-    param_dtype_map = {{}}
+    param_defaults = {}
+    param_dtype_map = {}
     if hasattr(meta.signatures[TARGET_METHOD], "params") and meta.signatures[TARGET_METHOD].params:
         for param_spec in meta.signatures[TARGET_METHOD].params:
             param_cols.append(param_spec.name)
@@ -89,8 +89,8 @@ def load_model():
 
 
 # Actual function
-@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input={wide_input})
-def {function_name}(df: pd.DataFrame) -> dict:
+@vectorized(input=pd.DataFrame, max_batch_size=MAX_BATCH_SIZE, flatten_object_input={{ wide_input }})
+def {{ function_name }}(df: pd.DataFrame) -> dict:
     if runner is None:
         load_model()
     df.columns = input_cols + param_cols
@@ -98,10 +98,10 @@ def {function_name}(df: pd.DataFrame) -> dict:
 
     # Extract runtime param values, using defaults if None
     # Validate that all param values are equal (including nulls)
-    method_params = {{}}
+    method_params = {}
     for col in param_cols:
         if not _check_param_equality(df[col]):
-            raise ValueError(f"All values for parameter '{{col}}' must be equal. Please provide a constant value.")
+            raise ValueError(f"All values for parameter '{col}' must be equal. Please provide a constant value.")
         val = df[col].iloc[0]
         if _is_null_param_value(val):
             method_params[col] = param_defaults[col]
@@ -111,4 +111,4 @@ def {function_name}(df: pd.DataFrame) -> dict:
             method_params[col] = val
 
     predictions_df = runner(input_df, **method_params)
-    return predictions_df.replace({{pd.NA: None, np.nan: None}}).to_dict("records")
+    return predictions_df.replace({pd.NA: None, np.nan: None}).to_dict("records")

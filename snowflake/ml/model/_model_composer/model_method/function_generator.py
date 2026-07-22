@@ -1,6 +1,7 @@
 import pathlib
 from typing import Optional, TypedDict
 
+import jinja2
 from typing_extensions import NotRequired
 
 from snowflake.ml._internal.exceptions import (
@@ -11,6 +12,8 @@ from snowflake.ml.model import type_hints
 from snowflake.ml.model._model_composer.model_manifest.model_manifest_schema import (
     ModelMethodFunctionTypes,
 )
+
+_JINJA_ENV = jinja2.Environment(keep_trailing_newline=True)
 
 
 class FunctionGenerateOptions(TypedDict):
@@ -74,7 +77,8 @@ class FunctionGenerator:
             .read_text()
         )
 
-        udf_code = function_template.format(
+        template = _JINJA_ENV.from_string(function_template)
+        udf_code = template.render(
             model_dir_name=self.model_dir_rel_path.name,
             target_method=target_method,
             max_batch_size=options.get("max_batch_size", None),

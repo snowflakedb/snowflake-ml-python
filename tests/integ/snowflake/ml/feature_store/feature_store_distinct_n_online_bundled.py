@@ -202,9 +202,9 @@ class FeatureStoreDistinctNBatchIntegTest(StreamingFeatureViewIntegTestBase, abs
             )
         """
         ).collect()
-        # Daily tiles anchored on start-of-day. The 4d window covers day -1..day -4, so day -2 is
-        # included while day -6 is excluded.
-        today = "DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ)"
+        # Daily tiles anchored on UTC start-of-day so they align with the online store's UTC window.
+        # The 4d window covers day -1..day -4, so day -2 is included while day -6 is excluded.
+        today = "DATE_TRUNC('day', CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ)"
         day1 = f"DATEADD('day', -1, {today})"  # recent tile
         day2 = f"DATEADD('day', -2, {today})"  # older tile, inside the window
         day6 = f"DATEADD('day', -6, {today})"  # outside the window

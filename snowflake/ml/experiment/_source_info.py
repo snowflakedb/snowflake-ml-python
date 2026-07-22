@@ -244,6 +244,12 @@ def _collect_git(notebook_path: Optional[str] = None) -> Optional[GitInfo]:
         directory is not a work tree, or every field came back empty.
     """
     cwd = _git_cwd(notebook_path)
+    # No safe anchoring directory (e.g. a script outside any work tree, or a
+    # kernel whose notebook path is unknown). Passing cwd=None to git would fall
+    # back to the process's current directory, stamping the run with an unrelated
+    # repo that merely happens to be where the interpreter was launched.
+    if cwd is None:
+        return None
     # Cheap probe — short-circuits to a single subprocess call when the script
     # is not inside a repo (the overwhelmingly common case for SPCS jobs).
     if not _git("rev-parse", "--is-inside-work-tree", cwd=cwd):

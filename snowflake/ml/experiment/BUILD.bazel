@@ -46,6 +46,7 @@ py_library(
     name = "experiment_tracking",
     srcs = ["experiment_tracking.py"],
     deps = [
+        ":source_info",
         "//snowflake/ml/_internal/human_readable_id:hrid_generator",
         "//snowflake/ml/_internal/utils:connection_params",
         "//snowflake/ml/_internal/utils:sql_identifier",
@@ -68,6 +69,7 @@ py_test(
     ],
     deps = [
         ":experiment_tracking",
+        ":source_info",
     ],
 )
 

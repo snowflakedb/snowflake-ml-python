@@ -358,26 +358,17 @@ class RealtimeFeatureViewIntegTest(StreamingFeatureViewIntegTestBase, absltest.T
             )
             """
         ).collect()
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        utc_now_ntz = "CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ"
+        utc_yesterday = f"DATEADD('day', -1, DATE_TRUNC('day', {utc_now_ntz}))"
         self._session.sql(
             f"""
             INSERT INTO {src_table}
             SELECT column1, column2, column3
             FROM VALUES
-                (
-                    {seeded_user_id!r},
-                    DATEADD('hour', 1, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    10.0
-                ),
-                (
-                    {seeded_user_id!r},
-                    DATEADD('hour', 2, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    20.0
-                ),
-                (
-                    {seeded_user_id!r},
-                    DATEADD('hour', 3, DATEADD('day', -1, DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ))),
-                    30.0
-                )
+                ({seeded_user_id!r}, DATEADD('hour', 1, {utc_yesterday}), 10.0),
+                ({seeded_user_id!r}, DATEADD('hour', 2, {utc_yesterday}), 20.0),
+                ({seeded_user_id!r}, DATEADD('hour', 3, {utc_yesterday}), 30.0)
             """
         ).collect()
         feature_df = self._session.table(src_table)

@@ -18,6 +18,7 @@ from snowflake.ml.experiment import (
     _entities as entities,
     _experiment_info as experiment_info,
     _logging as experiment_logging,
+    _source_info as source_info,
 )
 from snowflake.ml.experiment._client import (
     artifact,
@@ -49,6 +50,7 @@ class ExperimentTracking:
         *,
         database_name: Optional[str] = None,
         schema_name: Optional[str] = None,
+        capture_source_info: bool = True,
     ) -> None:
         """
         Initializes experiment tracking within a pre-created schema.
@@ -60,10 +62,17 @@ class ExperimentTracking:
                 will be used. Defaults to None.
             schema_name: The name of the schema. If None, the current schema of the session
                 will be used. If there is no active schema, the PUBLIC schema will be used. Defaults to None.
+            capture_source_info: If True, each new run records best-effort source provenance — the
+                entry-point filename and any surrounding git commit, branch, and remote URL. Set to
+                False to skip collection entirely. Collection is always non-fatal and never blocks
+                run creation. Defaults to True.
 
         Raises:
             ValueError: If no database is provided and no active database exists in the session.
         """
+        # Applied on every construction (even when reusing the singleton)
+        self._capture_source_info = capture_source_info
+
         if hasattr(self, "_initialized"):
             warnings.warn(
                 "ExperimentTracking is a singleton class. Reusing the existing instance, which has the setting:\n"
@@ -344,9 +353,15 @@ class ExperimentTracking:
                 return self._run
 
         run_name = sql_identifier.SqlIdentifier(run_name)
+        source_info_json: Optional[str] = None
+        if self._capture_source_info:
+            captured = source_info.SourceInfo.collect()
+            if not captured.is_empty():
+                source_info_json = json.dumps(captured.to_json_dict())
         self._sql_client.add_run(
             experiment_name=experiment.name,
             run_name=run_name,
+            source_info=source_info_json,
         )
         self._set_run(entities.Run(experiment_tracking=self, experiment_name=experiment.name, run_name=run_name))
         assert self._run is not None  # for mypy

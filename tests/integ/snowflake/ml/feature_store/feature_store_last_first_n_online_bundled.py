@@ -204,7 +204,8 @@ class FeatureStoreLastFirstNBatchIntegTest(StreamingFeatureViewIntegTestBase, ab
             )
         """
         ).collect()
-        today = "DATE_TRUNC('day', CURRENT_TIMESTAMP()::TIMESTAMP_NTZ)"
+        # Anchor to UTC day boundaries so tiles align with the online store's UTC window.
+        today = "DATE_TRUNC('day', CONVERT_TIMEZONE('UTC', CURRENT_TIMESTAMP())::TIMESTAMP_NTZ)"
         day1 = f"DATEADD('day', -1, {today})"  # recent tile
         day2 = f"DATEADD('day', -2, {today})"  # older tile, inside the window
         day6 = f"DATEADD('day', -6, {today})"  # outside the window

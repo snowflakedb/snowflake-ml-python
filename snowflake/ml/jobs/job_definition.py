@@ -22,6 +22,7 @@ from snowflake.ml.jobs._utils import (
     payload_utils,
     query_helper,
     runtime_env_utils,
+    stage_utils,
     type_utils,
 )
 from snowflake.snowpark import context as sp_context
@@ -33,12 +34,28 @@ _ReturnValue = TypeVar("_ReturnValue")
 _ALLOWED_CONTAINER_KEYS = {"name", "secrets"}
 _ALLOWED_SPEC_KEYS = {"containers"}
 
+# Volumes that are managed by the ML Job service and back the job's artifact storage. These are the
+# volumes that ``MLJob._stage_path`` / ``MLJob._result_stage_path`` read to determine which stage
+# location ``delete_job`` will wipe with a REMOVE statement. Allowing a submitter to override the
+# source of these volumes via ``spec_overrides`` enables a confused-deputy stage wipe (CWE-441): an
+# operator later deleting the job would issue a REMOVE against a submitter-chosen stage using the
+# operator's own WRITE privileges. Overriding them is therefore rejected outright.
+_PROTECTED_VOLUME_NAMES = frozenset({constants.STAGE_VOLUME_NAME, constants.RESULT_VOLUME_NAME})
+
 logger = logging.getLogger(__name__)
 
 
 def _validate_spec_overrides(spec_overrides: Any) -> None:
-    """Warn if spec_overrides contains keys beyond the officially supported set."""
+    """Reject overrides that redirect the managed stage volumes and warn on other unsupported keys."""
     spec = spec_overrides.get("spec", {})
+
+    for volume in spec.get("volumes", []):
+        if isinstance(volume, dict) and volume.get("name") in _PROTECTED_VOLUME_NAMES:
+            raise ValueError(
+                f"spec_overrides may not override the managed volume '{volume.get('name')}'. "
+                "Overriding the source of the job's stage or result volume is not allowed because it "
+                "can redirect artifact cleanup (REMOVE) to an arbitrary stage."
+            )
 
     disallowed_spec_keys = set(spec.keys()) - _ALLOWED_SPEC_KEYS
     if disallowed_spec_keys:
@@ -197,11 +214,17 @@ class MLJobDefinition(Generic[_Args, _ReturnValue], SerializableSessionMixin):
         if self.session is None:
             raise RuntimeError("Session is required to delete job definition")
         if self.stage_name:
-            try:
-                self.session.sql(f"REMOVE {self.stage_name}/").collect()
-                logger.debug(f"Successfully cleaned up stage files for job definition {self.stage_name}")
-            except Exception as e:
-                logger.warning(f"Failed to clean up stage files for job definition {self.stage_name}: {e}")
+            # Validate/canonicalize the stage path before interpolating it into a REMOVE statement to
+            # avoid REMOVE-syntax / path injection through submitter-controlled identifiers (CWE-89).
+            safe_stage_path = stage_utils.try_resolve_stage_path(self.stage_name)
+            if safe_stage_path is None:
+                logger.warning(f"Skipping stage cleanup: {self.stage_name!r} is not a valid stage path.")
+            else:
+                try:
+                    self.session.sql(f"REMOVE {safe_stage_path}/").collect()
+                    logger.debug(f"Successfully cleaned up stage files for job definition {safe_stage_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to clean up stage files for job definition {safe_stage_path}: {e}")
 
     def _prepare_arguments(self, *args: _Args.args, **kwargs: _Args.kwargs) -> Optional[list[Any]]:
         if self.arg_protocol == arg_protocol.ArgProtocol.NONE:

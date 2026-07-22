@@ -26,6 +26,21 @@ py_test(
 )
 
 py_test(
+    name = "experiment_tracking_source_info_integ_test",
+    timeout = "long",
+    srcs = ["experiment_tracking_source_info_integ_test.py"],
+    tags = [
+        "feature:experiment_tracking",
+        "short_regress",
+    ],
+    deps = [
+        ":experiment_tracking_integ_test_base",
+        "//snowflake/ml/_internal/utils:sql_identifier",
+        "//snowflake/ml/experiment:source_info",
+    ],
+)
+
+py_test(
     name = "experiment_tracking_metrics_params_integ_test",
     timeout = "long",
     srcs = ["experiment_tracking_metrics_params_integ_test.py"],

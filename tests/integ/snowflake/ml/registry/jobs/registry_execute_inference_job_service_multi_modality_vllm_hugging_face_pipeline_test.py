@@ -49,9 +49,10 @@ class TestExecuteInferenceJobServiceMultiModalityVLLMHuggingFacePipelineInteg(
             "TOP_P",
             "FREQUENCY_PENALTY",
             "PRESENCE_PENALTY",
+            "RESPONSE_FORMAT",
         ]
 
-        data = [(json.dumps(m), 0.9, 250, None, 1, False, 0.9, 0.2, 0.1) for m in messages]
+        data = [(json.dumps(m), 0.9, 250, None, 1, False, 0.9, 0.2, 0.1, None) for m in messages]
 
         return self.session.create_dataframe(data, schema=schema)
 
