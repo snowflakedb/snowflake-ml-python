@@ -6,7 +6,7 @@ import http
 import json
 import logging
 import os
-import tempfile
+import time
 from typing import Any, Optional
 
 import pandas as pd
@@ -14,28 +14,31 @@ import requests
 from absl.testing import absltest
 from retrying import retry
 
+import snowflake.snowpark.exceptions
 from snowflake.ml.model import ModelVersion
 from snowflake.ml.model._packager.model_env import model_env
 from snowflake.ml.model.inference_engine import InferenceEngine
 from snowflake.ml.model.models import huggingface_pipeline
-from tests.integ.snowflake.ml.registry.services import (
-    registry_model_deployment_test_base,
-)
+from tests.integ.snowflake.ml.registry.services import registry_aisql_byom_test_base
 
 logger = logging.getLogger(__name__)
 
 
-class TestAICompleteEndpointInteg(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
+class TestAICompleteEndpointInteg(registry_aisql_byom_test_base.AISQLBYOMTestBase):
     """Integration tests for the /ai_complete endpoint."""
 
-    # Class-level state populated on first setUp call
+    _SESSION_PARAMS = {
+        "SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE": "true",
+        "ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL": "true",
+    }
+
+    # AI_COMPLETE-specific class-level state
     _endpoint: Optional[str] = None
     _model_version: Optional[ModelVersion] = None
-    _service_name: Optional[str] = None
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.cache_dir = tempfile.TemporaryDirectory()
+        super().setUpClass()
         cls._original_cache_dir = os.getenv("TRANSFORMERS_CACHE", None)
         cls._original_hf_home = os.getenv("HF_HOME", None)
         cls._original_hf_endpoint = None
@@ -45,37 +48,17 @@ class TestAICompleteEndpointInteg(registry_model_deployment_test_base.RegistryMo
             cls._original_hf_endpoint = os.environ["HF_ENDPOINT"]
             del os.environ["HF_ENDPOINT"]
 
-    def setUp(self) -> None:
-        super().setUp()
-        # The AI_COMPLETE feature requires a proxy image with the endpoint code.
-        # Override proxy image to one that has /ai_complete support.
-
-        self.session.sql("ALTER SESSION SET SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE=true;").collect()
-        self.session.sql("ALTER SESSION SET ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL=true;").collect()
-
-        # Deploy once, reuse across all tests
-        if TestAICompleteEndpointInteg._endpoint is None:
-            self._deploy_test_service()
-
-    def tearDown(self) -> None:
-        # Don't call super().tearDown() per-test — it drops the DB which kills the shared service.
-        # Cleanup happens in tearDownClass after all tests complete.
-        pass
-
     @classmethod
     def tearDownClass(cls) -> None:
-        # Drop the test DB (and service) after all tests are done
-        if hasattr(cls, "_db_manager") and hasattr(cls, "_test_db"):
-            cls._db_manager.drop_database(cls._test_db)
         if cls._original_cache_dir:
             os.environ["TRANSFORMERS_CACHE"] = cls._original_cache_dir
         if cls._original_hf_home:
             os.environ["HF_HOME"] = cls._original_hf_home
-        cls.cache_dir.cleanup()
         if cls._original_hf_endpoint:
             os.environ["HF_ENDPOINT"] = cls._original_hf_endpoint
+        super().tearDownClass()
 
-    def _deploy_test_service(self) -> None:
+    def _do_deploy(self) -> None:
         """Deploy a vLLM-backed text-generation model for all AI_COMPLETE tests."""
         model = huggingface_pipeline.HuggingFacePipelineModel(
             task="text-generation",
@@ -115,7 +98,28 @@ class TestAICompleteEndpointInteg(registry_model_deployment_test_base.RegistryMo
         TestAICompleteEndpointInteg._model_version = model_version
         TestAICompleteEndpointInteg._endpoint = self._ensure_ingress_url(model_version)
         TestAICompleteEndpointInteg._service_name = model_version.list_services().loc[0, "name"]
+        TestAICompleteEndpointInteg._model_fq_name = (
+            f"{self._test_db}.{self._test_schema}.{model_version.model_name.upper()}"
+        )
         logger.info(f"AI_COMPLETE test service deployed: {self._service_name} at {self._endpoint}")
+
+        # Wait until AI_COMPLETE returns a valid response before proceeding.
+        # The service status transitions to RUNNING before the vLLM process finishes
+        # loading the model weights — tests that run too early get a 400 "unavailable".
+        service_name = TestAICompleteEndpointInteg._service_name
+        deadline = time.monotonic() + 300
+        while True:
+            try:
+                result = self.session.sql(f"SELECT AI_COMPLETE('{service_name}', 'hi') AS r").collect()
+                if result and result[0]["R"] is not None:
+                    logger.info("AI_COMPLETE warmup succeeded.")
+                    break
+            except snowflake.snowpark.exceptions.SnowparkSQLException as e:
+                logger.warning("AI_COMPLETE warmup attempt failed: %s", e)
+            if time.monotonic() >= deadline:
+                logger.warning("AI_COMPLETE warmup timed out after 300 s — proceeding anyway.")
+                break
+            time.sleep(10)
 
     # ─── Helper Methods ───────────────────────────────────────────────
 
@@ -464,6 +468,76 @@ class TestAICompleteEndpointInteg(registry_model_deployment_test_base.RegistryMo
         value = self._assert_success_row(data[0], expected_idx=0)
         self.assertIn("choices", value)
         self.assertGreater(len(value["choices"][0]["messages"]), 0)
+
+    # ─── Permission tests ─────────────────────────────────────────────────────
+
+    # --- Diagnostic: two grants at a time ---
+    # Confirmed: SERVICE ROLE is the essential grant. USAGE ON SERVICE alone
+    # without SERVICE ROLE fails with error 399259 "function __CALL__ does not
+    # exist or is not authorized". Kept as a regression test for that behaviour.
+
+    def test_service_and_model_without_service_role_denies_ai_complete(self) -> None:
+        """USAGE ON SERVICE + USAGE ON MODEL without SERVICE ROLE is not enough.
+
+        Error 399259: function __CALL__ does not exist or is not authorized.
+        SERVICE ROLE !INFERENCE_SERVICE_FUNCTION_USAGE is the essential grant.
+        """
+        service_name = self._service_name
+        role = self._aisql_byom_make_limited_role("COMPLETE_NO_ROLE", service_fqn=self._service_name)
+        try:
+            self.session.sql(f"GRANT USAGE ON SERVICE {service_name} TO ROLE {role}").collect()
+            if self._model_fq_name:
+                self.session.sql(f"GRANT USAGE ON MODEL {self._model_fq_name} TO ROLE {role}").collect()
+            with self.assertRaisesRegex(Exception, "does not exist or is not authorized|Unsupported when routing AI"):
+                self._run_as_role(
+                    role,
+                    lambda: self.session.sql(f"SELECT AI_COMPLETE('{service_name}', 'hello')").collect(),
+                )
+        finally:
+            self._db_manager.drop_role(role, if_exists=True)
+
+    def test_no_service_usage_denies_ai_complete(self) -> None:
+        """A role without USAGE on the service cannot call AI_COMPLETE."""
+        service_name = self._service_name
+        role = self._aisql_byom_make_limited_role("COMPLETE_NO_PRIV", service_fqn=self._service_name)
+        try:
+            with self.assertRaisesRegex(
+                Exception,
+                "Insufficient privileges|does not exist or not authorized|invalid argument|unavailable",
+            ):
+                self._run_as_role(
+                    role,
+                    lambda: self.session.sql(f"SELECT AI_COMPLETE('{service_name}', 'hello')").collect(),
+                )
+        finally:
+            self._db_manager.drop_role(role, if_exists=True)
+
+    def test_service_usage_allows_ai_complete(self) -> None:
+        """A role with USAGE ON SERVICE + SERVICE ROLE can call AI_COMPLETE.
+
+        USAGE ON MODEL is not required — SERVICE ROLE is the essential grant.
+        """
+        service_name = self._service_name
+        admin_role = self.session.get_current_role().strip('"')
+        role = self._aisql_byom_make_limited_role("COMPLETE_USAGE", service_fqn=self._service_name)
+        try:
+            self.session.sql(f"GRANT USAGE ON SERVICE {service_name} TO ROLE {role}").collect()
+            self.session.sql(
+                f"GRANT SERVICE ROLE {service_name}!INFERENCE_SERVICE_FUNCTION_USAGE TO ROLE {role}"
+            ).collect()
+
+            def _call() -> None:
+                # Re-apply session params — some parameters are not preserved across USE ROLE.
+                self.session.sql("ALTER SESSION SET SPCS_MODEL_INFERENCE_SERVER_ENABLE_AI_COMPLETE=true").collect()
+                self.session.sql("ALTER SESSION SET ENABLE_SPCS_SERVICE_FUNCTIONS_IN_AISQL=true").collect()
+                result = self.session.sql(f"SELECT AI_COMPLETE('{service_name}', 'hello') AS r").collect()
+                self.assertLen(result, 1)
+                self.assertIsNotNone(result[0]["R"])
+
+            self._run_as_role(role, _call)
+        finally:
+            self.session.use_role(admin_role)
+            self._db_manager.drop_role(role, if_exists=True)
 
     # ─── SQL E2E Tests ────────────────────────────────────────────────────────
     # Test cases cover the use cases from the following public docs:

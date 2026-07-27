@@ -25,6 +25,16 @@ py_library(
     ],
 )
 
+py_library(
+    name = "registry_aisql_byom_test_base",
+    testonly = True,
+    srcs = ["registry_aisql_byom_test_base.py"],
+    deps = [
+        ":registry_model_deployment_test_base",
+        "//tests/integ/snowflake/ml/test_utils:db_manager",
+    ],
+)
+
 py_test(
     name = "registry_model_deployment_privilege_test",
     timeout = "eternal",
@@ -284,6 +294,35 @@ py_test(
     name = "registry_ai_complete_test",
     timeout = "eternal",
     srcs = ["registry_ai_complete_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = [
+        "feature:model_serving",
+    ],
+    deps = [
+        ":registry_aisql_byom_test_base",
+        "//snowflake/ml/model/models:huggingface_pipeline",
+    ],
+)
+
+py_test(
+    name = "registry_ai_embed_test",
+    timeout = "eternal",
+    srcs = ["registry_ai_embed_test.py"],
+    optional_dependencies = ["transformers"],
+    shard_count = 1,
+    tags = [
+        "feature:model_serving",
+    ],
+    deps = [
+        ":registry_aisql_byom_test_base",
+    ],
+)
+
+py_test(
+    name = "registry_genai_autocapture_test",
+    timeout = "eternal",
+    srcs = ["registry_genai_autocapture_test.py"],
     optional_dependencies = ["transformers"],
     shard_count = 1,
     tags = [

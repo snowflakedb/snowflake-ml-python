@@ -35,16 +35,16 @@ logger = logging.getLogger(__name__)
 _SMALL_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 
 
-# Remote model logging runs in the model_logger image, which pins a released
-# snowflake-ml-python (see model_container_services_deployment/model_logger/requirements.txt).
-# Until that image includes response_format ParamGroupSpec support, omit the param for
-# compute_pool_for_log paths.
-#
-# TODO: After the next model_logger image release ships a snowflake-ml-python client with
-# response_format ParamGroupSpec support, revert _include_response_format_params to always
-# return True so remote logging paths exercise response_format in _FULL_PARAMS by default.
-def _include_response_format_params(compute_pool_for_log: Optional[str]) -> bool:
-    return compute_pool_for_log is None
+def _signature_has_response_format(signature: dict[str, model_signature.ModelSignature]) -> bool:
+    """True when the deployed signature includes a response_format param column.
+
+    Flat REST payloads must include that trailing column whenever it is present in
+    the signature; the proxy validates expectedCols against GetParameterSpecs.
+    """
+    params = signature["__call__"].params
+    if not params:
+        return False
+    return any(param.name == "response_format" for param in params)
 
 
 def _params_for_logging(params: dict[str, Any], *, include_response_format: bool) -> dict[str, Any]:
@@ -466,7 +466,7 @@ class TestTransformerParamsInteg(registry_model_deployment_test_base.RegistryMod
 
         mv, endpoint = self._deploy(engine, compute_pool_for_log, signature)
         messages = _get_messages(signature)
-        include_response_format = _include_response_format_params(compute_pool_for_log)
+        include_response_format = _signature_has_response_format(signature)
 
         with self.subTest("mv_run"):
             self._test_mv_run(mv, messages, ctx, include_response_format=include_response_format)

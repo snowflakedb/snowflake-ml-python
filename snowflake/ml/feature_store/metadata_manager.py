@@ -1377,6 +1377,9 @@ class FeatureStoreMetadataManager:
         # Strip surrounding quotes if present; callers pass resolved() which handles casing.
         normalized_name = object_name.strip('"')
 
+        # Writes append via INSERT and Snowflake does not enforce the primary
+        # key, so multiple rows can share a key after a re-register. Return the
+        # most recently written row so reads reflect the latest registration.
         result = self._session.sql(
             f"""
             SELECT METADATA
@@ -1385,6 +1388,8 @@ class FeatureStoreMetadataManager:
             AND OBJECT_NAME = '{normalized_name}'
             AND VERSION = '{version}'
             AND METADATA_TYPE = '{metadata_type.value}'
+            ORDER BY UPDATED_AT DESC, CREATED_AT DESC
+            LIMIT 1
             """
         ).collect(statement_params=self._telemetry_stmp)
 

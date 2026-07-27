@@ -101,9 +101,14 @@ class TestModelImplInteg(parameterized.TestCase):
         self.assertLen(self._model.show_versions(), 2)
 
     def test_tag(self) -> None:
+        baseline_tags = self._model.show_tags()  # inherited account-level tags
+
+        def test_tags() -> dict[str, str]:
+            return {k: v for k, v in self._model.show_tags().items() if k not in baseline_tags}
+
         fq_tag_name1 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name1)
         fq_tag_name2 = identifier.get_schema_level_object_identifier(self._test_db, self._test_schema, self._tag_name2)
-        self.assertDictEqual({}, self._model.show_tags())
+        self.assertDictEqual({}, test_tags())
         self.assertIsNone(self._model.get_tag(self._tag_name1))
         self._model.set_tag(self._tag_name1, "val1")
         self.assertEqual(
@@ -112,7 +117,7 @@ class TestModelImplInteg(parameterized.TestCase):
         )
         self.assertDictEqual(
             {fq_tag_name1: "val1"},
-            self._model.show_tags(),
+            test_tags(),
         )
         self._model.set_tag(fq_tag_name2, "v2")
         self.assertEqual("v2", self._model.get_tag(self._tag_name2))
@@ -121,15 +126,15 @@ class TestModelImplInteg(parameterized.TestCase):
                 fq_tag_name1: "val1",
                 fq_tag_name2: "v2",
             },
-            self._model.show_tags(),
+            test_tags(),
         )
         self._model.unset_tag(fq_tag_name2)
         self.assertDictEqual(
             {fq_tag_name1: "val1"},
-            self._model.show_tags(),
+            test_tags(),
         )
         self._model.unset_tag(self._tag_name1)
-        self.assertDictEqual({}, self._model.show_tags())
+        self.assertDictEqual({}, test_tags())
 
     def test_rename(self) -> None:
         model, test_features, _ = model_factory.ModelFactory.prepare_sklearn_model()

@@ -8274,8 +8274,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
                 (e.g. ``"get_feature_view"``, ``"get_feature_group"``).
 
         Returns:
-            The query endpoint URL when the Online Service is RUNNING and
-            advertises a ``query`` endpoint; ``None`` otherwise.
+            The query endpoint URL when the Online Service is RUNNING or
+            UPDATING and advertises a ``query`` endpoint; ``None`` otherwise.
         """
         try:
             st = online_service.fetch_online_service_status(
@@ -8293,7 +8293,8 @@ FROM {batch_cte_names[0]}{''.join(merge_join_parts)}
             )
             return None
         query_url = online_service.endpoint_url(st, "query", access=self._online_service_access)
-        if st.status == "RUNNING" and query_url:
+        # UPDATING (redeploy in progress) still serves the query endpoint, so accept it too.
+        if st.status in ("RUNNING", "UPDATING") and query_url:
             # Temporary: SYSTEM$ may return host-only query URLs until server sends full https URLs.
             return query_url
         warnings.warn(

@@ -1,6 +1,24 @@
 # Release History
 
-## 1.48.0
+## 1.49.0
+
+### New Features
+
+### Bug Fixes
+
+* Registry: Fixed a bug where logging a model with explainability enabled could fail with a data validation error
+  ("There is no non-null data in column ...") when a numeric input column was entirely null within the background
+  sample. The `explain` method now reuses the model's existing input signature instead of re-inferring it from the
+  sample.
+
+* Feature Store: Fixed a bug where `get_feature_view()` could return stale metadata after re-registering a feature
+  view with `overwrite=True`. Metadata reads now select the most recently written row.
+
+### Behavior Changes
+
+### Deprecations
+
+## 1.48.0 (2026-07-22)
 
 ### New Features
 

@@ -798,7 +798,9 @@ class MergingSqlGeneratorTest(parameterized.TestCase):
         simple_cte = next(cte for cte in ctes if cte[0] == "SIMPLE_MERGED_FV0")
         body = simple_cte[1]
 
-        self.assertIn("DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(", body)
+        self.assertIn("ROUND(DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(", body)
+        # Estimate is finalized to a rounded integer for online/offline parity.
+        self.assertIn("))::BIGINT AS UNIQUE_USERS_24H", body)
         self.assertIn("_PARTIAL_DS_HLL_USER_ID", body)
         self.assertNotIn("HLL_IMPORT", body)
         self.assertNotIn("HLL_ESTIMATE(HLL_COMBINE", body)
@@ -2375,9 +2377,10 @@ class MergingSqlGeneratorSecondaryKeyTest(absltest.TestCase):
         ]
         body = self._secondary_cte(self._generator(features))
 
-        # Datasketches HLL: DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(...)) per sk
+        # Datasketches HLL: estimate is rounded to a BIGINT for online parity.
         self.assertIn(
-            "DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(_PARTIAL_DS_HLL_USER_AGENT)) AS UNIQUE_AGENTS_PER_AD",
+            "ROUND(DATASKETCHES_HLL_ESTIMATE(DATASKETCHES_HLL_COMBINE(_PARTIAL_DS_HLL_USER_AGENT)))::BIGINT"
+            " AS UNIQUE_AGENTS_PER_AD",
             body,
         )
         # T-Digest: APPROX_PERCENTILE_ESTIMATE(APPROX_PERCENTILE_COMBINE(state), pct)

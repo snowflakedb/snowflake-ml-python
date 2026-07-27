@@ -3,7 +3,7 @@ import http
 import inspect
 import logging
 import time
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -360,6 +360,19 @@ class RegistryModelDeploymentTestBase(registry_spcs_test_base.RegistrySPCSTestBa
                 return str(endpoint)
             time.sleep(10)
         raise TimeoutError(f"Ingress endpoint did not appear within {timeout_s:.0f}s.")
+
+    _T = TypeVar("_T")
+
+    def _run_as_role(self, role: str, fn: Callable[[], "_T"]) -> "_T":
+        """Execute a callable under a specific role with secondary roles disabled."""
+        prev_role = self.session.get_current_role()
+        try:
+            self.session.sql("USE SECONDARY ROLES NONE").collect()
+            self.session.use_role(role)
+            return fn()
+        finally:
+            self.session.use_role(prev_role)
+            self.session.sql("USE SECONDARY ROLES ALL").collect()
 
     def _get_jwt_token_generator(self) -> Optional[jwt_generator.JWTGenerator]:
         """Get JWT token generator if private key is available."""

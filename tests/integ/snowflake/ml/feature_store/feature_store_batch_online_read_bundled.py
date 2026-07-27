@@ -467,10 +467,14 @@ class FeatureStoreBatchOnlineReadIntegTest(StreamingFeatureViewIntegTestBase, ab
 
         self._wait_offline_dt_rows(fs, fv_name, "v1")
 
+        # key_a has categories {electronics, books} within the window -> exactly 2
+        # distinct. The online store returns a rounded integer estimate; assert an
+        # exact integer value (no float coercion, no tolerance) for parity.
         def _validate(pdf):
             self.assertIn("UNIQUE_CATS_2D", pdf.columns)
-            val = float(pdf.iloc[0]["UNIQUE_CATS_2D"])
-            self.assertAlmostEqual(val, 2.0, delta=0.1)
+            self.assert_long_feature(
+                pdf.iloc[0]["UNIQUE_CATS_2D"], expected=2, msg="batch online approx_count_distinct"
+            )
 
         self._poll_online_read(
             fs, fv_name, "v1", keys=[[key_a]], validate_fn=_validate, desc="batch tiled approx_count_distinct"

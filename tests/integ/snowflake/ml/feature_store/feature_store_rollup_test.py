@@ -669,6 +669,11 @@ class RollupFeatureViewTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         # Read and verify
         result_df = fs.read_feature_view(registered_subscriber)
         self.assertGreater(result_df.count(), 0)
+        self.assert_offline_column_is_long(result_df, "UNIQUE_PRODUCTS")
+        for row in result_df.select("UNIQUE_PRODUCTS").collect():
+            value = row["UNIQUE_PRODUCTS"]
+            if value is not None:
+                self.assert_long_feature(value, msg="rollup approx_count_distinct")
 
     # =========================================================================
     # Aggregation Correctness Tests - APPROX_PERCENTILE

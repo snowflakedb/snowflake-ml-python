@@ -36,6 +36,7 @@ py_library(
         "//snowflake/ml/_internal/utils:sql_identifier",
         "//snowflake/ml/model/_client/model:model_impl",
         "//snowflake/ml/model/_client/model:model_version_impl",
+        "//snowflake/ml/model/_client/ops:live_commit_naming",
         "//snowflake/ml/model/_client/ops:metadata_ops",
         "//snowflake/ml/model/_client/ops:model_ops",
         "//snowflake/ml/model/_client/ops:service_ops",

@@ -242,23 +242,32 @@ class SqlResultValidator(ResultValidator):
         result = (
             SqlResultValidator(
                 session=self._session,
-                query="UPDATE table SET NAME = 'name'",
+                query="UPDATE table SET NAME = ?",
                 statement_params=statement_params,
+                params=["name"],
             )
             .has_dimensions(expected_rows=1, expected_cols=1)
             .has_partial_match(row_idx=0, col_idx=0, expected_value="number of rows updated=1")
             .validate()
         )
+
+    ``params`` are bound as SQL query parameters (``?`` placeholders) rather than interpolated into the query.
     """
 
     def __init__(
-        self, session: snowpark.Session, query: str, statement_params: Optional[dict[str, Any]] = None
+        self,
+        session: snowpark.Session,
+        query: str,
+        statement_params: Optional[dict[str, Any]] = None,
+        *,
+        params: Optional[list[Any]] = None,
     ) -> None:
         self._session: snowpark.Session = session
         self._query: str = query
         self._success_matchers: list[Callable[[list[snowpark.Row], Optional[str]], bool]] = []
         self._statement_params: Optional[dict[str, Any]] = statement_params
+        self._params: Optional[list[Any]] = params
 
     def _get_result(self) -> list[snowpark.Row]:
         """Collect the result of the given SQL query."""
-        return self._session.sql(self._query).collect(statement_params=self._statement_params)
+        return self._session.sql(self._query, params=self._params).collect(statement_params=self._statement_params)

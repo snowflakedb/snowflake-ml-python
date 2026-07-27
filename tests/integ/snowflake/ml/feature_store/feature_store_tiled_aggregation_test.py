@@ -739,6 +739,59 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
         self.assertEqual(retrieved_fv.feature_granularity, "1h")
         self.assertEqual(len(retrieved_fv.aggregation_specs), 2)
 
+    def test_overwrite_tiled_fv_get_returns_latest_specs(self) -> None:
+        """Re-registering with overwrite must make get_feature_view reflect the new specs.
+
+        Metadata writes append to the metadata table (Snowflake does not enforce
+        the primary key), so a re-register leaves a stale FEATURE_SPECS row. The
+        read path must return the most recently written row.
+        """
+        fs = self._create_feature_store()
+
+        e = Entity("user", ["user_id"])
+        fs.register_entity(e)
+
+        sql = f"SELECT user_id, event_ts, amount FROM {self._events_table}"
+
+        # Register v1 with two features.
+        fv_v1 = FeatureView(
+            name="user_stats",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[
+                Feature.sum("amount", "2h").alias("amount_sum_2h"),
+                Feature.avg("amount", "2h").alias("amount_avg_2h"),
+            ],
+        )
+        fs.register_feature_view(feature_view=fv_v1, version="v1")
+
+        # Re-register the same version with a different (three-feature) spec set.
+        fv_v2 = FeatureView(
+            name="user_stats",
+            entities=[e],
+            feature_df=self._session.sql(sql),
+            timestamp_col="event_ts",
+            refresh_freq="1h",
+            feature_granularity="1h",
+            features=[
+                Feature.sum("amount", "2h").alias("amount_sum_2h"),
+                Feature.avg("amount", "2h").alias("amount_avg_2h"),
+                Feature.count("amount", "2h").alias("amount_count_2h"),
+            ],
+        )
+        fs.register_feature_view(feature_view=fv_v2, version="v1", overwrite=True)
+
+        # The append leaves more than one FEATURE_SPECS row; the read must still
+        # surface the latest registration (three features), not a stale row.
+        retrieved_fv = fs.get_feature_view("user_stats", "v1")
+        assert retrieved_fv.aggregation_specs is not None
+        self.assertEqual(len(retrieved_fv.aggregation_specs), 3)
+        output_columns = {spec.output_column.upper() for spec in retrieved_fv.aggregation_specs}
+        self.assertIn("AMOUNT_COUNT_2H", output_columns)
+
     def test_delete_tiled_fv_removes_metadata(self) -> None:
         """Test that deleting a tiled FV removes its metadata."""
         fs = self._create_feature_store()
@@ -1478,13 +1531,19 @@ class TiledAggregationFeatureViewTest(FeatureStoreIntegTestBase, parameterized.T
             join_method="cte",
         )
 
+        # The offline column must be a rounded integer (LongType / NUMBER), matching
+        # the online store's finalized HLL estimate.
+        self.assert_offline_column_is_long(result_df, "UNIQUE_CATEGORIES")
+
         result_pd = result_df.to_pandas()
         self.assertEqual(len(result_pd), 1)
         self.assertIn("UNIQUE_CATEGORIES", result_pd.columns)
-        # Approximate count should be a positive number
-        count_val = result_pd["UNIQUE_CATEGORIES"].iloc[0]
-        if count_val is not None:
-            self.assertGreater(float(count_val), 0)
+        # 2h window at query_ts 03:00 covers tiles 01:00 (cat1@01:15, cat3@01:45)
+        # and 02:00 (cat2@02:30): distinct categories = {cat1, cat2, cat3} = 3.
+        # HLL is exact at this cardinality, so assert exact integer equality.
+        self.assert_long_feature(
+            result_pd["UNIQUE_CATEGORIES"].iloc[0], expected=3, msg="offline approx_count_distinct"
+        )
 
     def test_approx_percentile_values(self) -> None:
         """Test APPROX_PERCENTILE aggregation produces reasonable values."""

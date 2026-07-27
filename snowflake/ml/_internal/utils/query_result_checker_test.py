@@ -53,6 +53,21 @@ class SnowflakeQueryResultCheckerTest(TestCase):
         )
         self.assertEqual(sql_result, actual_result)
 
+    def test_sql_result_validator_binds_params(self) -> None:
+        """SqlResultValidator forwards bind params to session.sql()."""
+        session = mock_session.MockSession(conn=None, test_case=self)
+        query = "UPDATE TABLE SET COL = ?"
+        sql_result = [Row("number of rows updated=1, number of multi-joined rows updated=0")]
+        session.add_mock_sql(query=query, result=mock_data_frame.MockDataFrame(sql_result), params=["we$$ird"])
+        actual_result = (
+            query_result_checker.SqlResultValidator(
+                session=cast(snowpark.Session, session), query=query, params=["we$$ird"]
+            )
+            .has_dimensions(expected_rows=1, expected_cols=1)
+            .validate()
+        )
+        self.assertEqual(sql_result, actual_result)
+
     def test_sql_result_validator_dimensions_rows_cols_separately_ok(self) -> None:
         """Use SqlResultValidator to check dimensions (rows and cols) separately."""
         session = mock_session.MockSession(conn=None, test_case=self)

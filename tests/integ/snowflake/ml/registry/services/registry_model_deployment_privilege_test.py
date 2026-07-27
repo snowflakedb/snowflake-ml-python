@@ -1,5 +1,4 @@
 import logging
-from typing import Callable, TypeVar
 
 import pandas as pd
 from absl.testing import absltest
@@ -10,8 +9,6 @@ from tests.integ.snowflake.ml.registry.services import (
     registry_model_deployment_test_base,
 )
 from tests.integ.snowflake.ml.test_utils import db_manager
-
-T = TypeVar("T")
 
 
 class RegistryModelDeploymentPrivilegeTest(registry_model_deployment_test_base.RegistryModelDeploymentTestBase):
@@ -65,17 +62,6 @@ class RegistryModelDeploymentPrivilegeTest(registry_model_deployment_test_base.R
         self._db_manager.drop_role(self._usage_role, if_exists=True)
 
         super().tearDown()
-
-    def _run_as_role(self, role: str, fn: Callable[[], T]) -> T:
-        """Execute a callable under a specific role with secondary roles disabled."""
-        prev_role = self.session.get_current_role()
-        try:
-            self.session.sql("USE SECONDARY ROLES NONE").collect()
-            self.session.use_role(role)
-            return fn()
-        finally:
-            self.session.use_role(prev_role)
-            self.session.sql("USE SECONDARY ROLES ALL").collect()
 
     def test_usage_can_run_service_inference(self) -> None:
         """A user with appropriate privileges on model and service can run inference."""

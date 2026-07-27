@@ -984,6 +984,9 @@ label_cols: Optional[Union[str, List[str]]]
         if self._is_randomized_search_cv:
             self.test_estimator_imports_list.append("from scipy.stats import uniform")
 
+        if self.original_class_name == "LogisticRegressionCV":
+            self.test_estimator_imports_list.append("from sklearn.model_selection import LeaveOneOut")
+
     def _construct_string_from_lists(self) -> None:
         self.estimator_imports = "\n".join(self.estimator_imports_list)
         self.test_estimator_imports = "\n".join(self.test_estimator_imports_list)
@@ -1053,6 +1056,19 @@ class SklearnWrapperGenerator(WrapperGeneratorBase):
                 * n_features_dict[self.test_dataset_func]
             ]
             self.test_estimator_input_args_list.append(f"dictionary={dictionary}")
+
+        if self.original_class_name == "LogisticRegressionCV":
+            # LogisticRegressionCV selects the regularization strength C by cross-validation. On the
+            # small, easily separable test dataset the candidate C values tie on CV score, so the
+            # selected C is decided by the exact CV fold composition. StratifiedKFold (the default cv)
+            # assigns folds by row order, which the stored-procedure fit does not preserve when it
+            # round-trips the dataset through Snowflake. The server-side and local fits therefore pick
+            # different C and produce very different predict_proba / predict_log_proba, even though they
+            # classify identically. Pin a single C and use order-invariant LeaveOneOut folds so both
+            # fits select the same model and are directly comparable, while still exercising the
+            # cross-validation fit path, sample-weight handling, and multiclass inference.
+            self.test_estimator_input_args_list.append("Cs=[1.0]")
+            self.test_estimator_input_args_list.append("cv=LeaveOneOut()")
 
         if WrapperGeneratorFactory._is_class_of_type(self.class_object[1], "Isomap"):
             # Using higher n_neighbors for Isomap to balance accuracy and performance.

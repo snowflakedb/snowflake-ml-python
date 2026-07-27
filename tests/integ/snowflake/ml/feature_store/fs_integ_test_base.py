@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+import decimal
 import uuid
+from typing import Any, Optional, Sequence
 
+import numpy as np
 from absl.testing import absltest
 
 from snowflake.ml.feature_store import FeatureStore  # type: ignore[attr-defined]
 from snowflake.ml.feature_store.feature_store import FeatureStore as FeatureStoreImpl
 from snowflake.ml.utils import sql_client
+from snowflake.snowpark import DataFrame
+from snowflake.snowpark.types import (
+    ArrayType,
+    ByteType,
+    DataType,
+    DecimalType,
+    IntegerType,
+    LongType,
+    ShortType,
+)
 from tests.integ.snowflake.ml.test_utils import (
     db_manager,
     external_volume_manager,
     test_env_utils,
 )
+
+# Snowpark integer types. ``NUMBER(38, 0)`` (Snowflake ``BIGINT``) surfaces as
+# ``LongType``; ``DecimalType`` with ``scale == 0`` is also treated as an integer.
+_INTEGER_SNOWPARK_TYPES = (ByteType, ShortType, IntegerType, LongType)
 
 # Active prefix for online-service-backed test DBs; reclaimed by the bundle's
 # 3h targeted cleanup.
@@ -204,4 +221,95 @@ class FeatureStoreIntegTestBase(absltest.TestCase):
             0,
             f"Found leftover temporary dynamic tables with prefix '{tmp_dt_prefix}': "
             f"{[dt['name'] for dt in dynamic_tables]}",
+        )
+
+    # Strict integer-parity assertions
+    #
+    # ``approx_count_distinct`` must serve the same rounded-integer estimate
+    # offline (Snowflake SQL) and online (Postgres). These helpers enforce that
+    # a served value is a true integer (never a float/bool), optionally equal to
+    # a known distinct count, and that the offline result column is declared as
+    # an integer Snowpark type (the analogue of the server-side
+    # ``assert_long_feature`` / ``assert_metadata_data_type`` helpers).
+
+    def assert_long_feature(self, value: Any, *, expected: Optional[int] = None, msg: str = "") -> None:
+        """Assert a served feature value is an integer, optionally equal to ``expected``.
+
+        Args:
+            value: The served scalar feature value.
+            expected: If set, the exact distinct count the value must equal.
+            msg: Optional label appended to failure messages.
+        """
+        context = f" ({msg})" if msg else ""
+        self.assertIsNotNone(value, f"expected an integer feature value, got None{context}")
+        # ``bool`` is a subclass of ``int``; reject it explicitly.
+        self.assertNotIsInstance(value, bool, f"feature value must not be a bool: {value!r}{context}")
+        self.assertNotIsInstance(
+            value, (float, np.floating), f"feature value must be an integer, got float {value!r}{context}"
+        )
+        # The online read surfaces a NUMBER(38,0) column as a ``decimal.Decimal``; accept it only
+        # when it holds an exact integer (no fractional part), so a float estimate still fails.
+        if isinstance(value, decimal.Decimal):
+            self.assertEqual(
+                value, value.to_integral_value(), f"feature value must be an integer, got {value!r}{context}"
+            )
+        else:
+            self.assertIsInstance(
+                value,
+                (int, np.integer),
+                f"feature value must be an integer type, got {type(value).__name__}: {value!r}{context}",
+            )
+        if expected is not None:
+            self.assertEqual(int(value), int(expected), f"feature value mismatch{context}")
+
+    def assert_long_array_feature(
+        self, values: Any, *, expected: Optional[Sequence[int]] = None, msg: str = ""
+    ) -> None:
+        """Assert every element of an array feature value is an integer.
+
+        Args:
+            values: The served array feature value (e.g. a secondary-key array).
+            expected: If set, the exact per-element distinct counts, in order.
+            msg: Optional label appended to failure messages.
+        """
+        context = f" ({msg})" if msg else ""
+        self.assertIsInstance(
+            values, (list, tuple, np.ndarray), f"expected an array feature value, got {type(values).__name__}{context}"
+        )
+        for element in values:
+            self.assert_long_feature(element, msg=msg)
+        if expected is not None:
+            self.assertEqual([int(v) for v in values], [int(e) for e in expected], f"array feature mismatch{context}")
+
+    def assert_offline_column_is_long(self, result_df: DataFrame, column: str, *, is_array: bool = False) -> None:
+        """Assert the offline result column is declared as an integer Snowpark type.
+
+        Args:
+            result_df: The Snowpark DataFrame returned by an offline read /
+                training-set generation.
+            column: Logical output column name (matched case-insensitively).
+            is_array: When ``True``, ``column`` is an ``ArrayType`` whose element
+                type must be an integer type (secondary-key features).
+        """
+        target = column.strip('"').upper()
+        matches = [f for f in result_df.schema.fields if f.name.strip('"').upper() == target]
+        available = [f.name for f in result_df.schema.fields]
+        self.assertEqual(len(matches), 1, f"column {column!r} not found uniquely in schema: {available}")
+        datatype: DataType = matches[0].datatype
+        if is_array:
+            self.assertIsInstance(datatype, ArrayType, f"column {column!r} must be an ArrayType, got {datatype}")
+            datatype = datatype.element_type
+        self._assert_snowpark_integer_type(datatype, column)
+
+    def _assert_snowpark_integer_type(self, datatype: DataType, column: str) -> None:
+        """Assert a Snowpark ``DataType`` is an integer type (rejecting float types)."""
+        if isinstance(datatype, DecimalType):
+            self.assertEqual(
+                datatype.scale, 0, f"column {column!r} must be an integer type, got {datatype} (non-zero scale)"
+            )
+            return
+        self.assertIsInstance(
+            datatype,
+            _INTEGER_SNOWPARK_TYPES,
+            f"column {column!r} must be an integer type, got {datatype}",
         )

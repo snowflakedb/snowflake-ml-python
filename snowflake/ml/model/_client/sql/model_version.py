@@ -117,12 +117,18 @@ class ModelVersionSQLClient(_base._BaseSQLClient):
         schema_name: Optional[sql_identifier.SqlIdentifier],
         model_name: sql_identifier.SqlIdentifier,
         version_name: sql_identifier.SqlIdentifier,
+        rename_model_to: Optional[sql_identifier.SqlIdentifier] = None,
+        rename_version_to: Optional[sql_identifier.SqlIdentifier] = None,
         statement_params: Optional[dict[str, Any]] = None,
     ) -> None:
         sql = (
             f"ALTER MODEL {self.fully_qualified_object_name(database_name, schema_name, model_name)}"
             f" COMMIT VERSION {version_name.identifier()}"
         )
+        if rename_model_to is not None:
+            sql += f" RENAME TO {self.fully_qualified_object_name(database_name, schema_name, rename_model_to)}"
+        if rename_version_to is not None:
+            sql += f" RENAME VERSION TO {rename_version_to.identifier()}"
 
         query_result_checker.SqlResultValidator(
             self._session,

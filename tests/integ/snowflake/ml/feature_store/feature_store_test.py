@@ -32,6 +32,7 @@ from snowflake.ml.feature_store.feature_view import (
     FeatureView,
     FeatureViewSlice,
     FeatureViewStatus,
+    OnlineConfig,
     StorageConfig,
     StorageFormat,
 )
@@ -2778,8 +2779,31 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         result = self._session.sql(f"SHOW TAGS LIKE 'my_tag' IN SCHEMA {full_schema_path}").collect()
         self.assertEqual(len(result), 1)
 
-    def test_dynamic_table_full_refresh_warning(self) -> None:
-        temp_stage_name = "test_dynamic_table_full_refresh_warning_stage"
+    def _get_object_refresh_mode(self, fs: FeatureStore, object_type: str, physical_name: SqlIdentifier) -> str:
+        """Return the ``refresh_mode`` Snowflake reports for a backing object.
+
+        Args:
+            fs: Feature store owning the object.
+            object_type: SHOW domain, e.g. ``"DYNAMIC TABLES"`` or ``"ONLINE FEATURE TABLES"``.
+            physical_name: Physical object name to look up.
+
+        Returns:
+            The ``refresh_mode`` string (e.g. ``"INCREMENTAL"`` / ``"FULL"``).
+        """
+        rows = fs._find_object(object_type, physical_name)
+        self.assertLen(rows, 1, f"expected exactly one {object_type} row named {physical_name}")
+        return str(rows[0]["refresh_mode"])
+
+    def test_udf_feature_view_incremental_refresh(self) -> None:
+        """A feature view whose query calls a permanent scalar UDF is incrementally refreshed.
+
+        Historically a UDF forced FULL refresh (the removed ``test_dynamic_table_full_refresh_warning``
+        asserted the corresponding warning). As of the Jul 16, 2026 Snowflake GA, VOLATILE scalar UDFs
+        are incrementally refreshable in the SELECT clause, so both the offline dynamic table and the
+        online feature table now resolve to ``refresh_mode='INCREMENTAL'``. This test locks in that
+        end-to-end behavior for both the DT and the OFT.
+        """
+        temp_stage_name = "test_udf_feature_view_incremental_refresh_stage"
         self._session.sql(f"USE DATABASE {FS_INTEG_TEST_DB}").collect()
         self._session.sql(f"CREATE OR REPLACE STAGE {temp_stage_name}").collect()
 
@@ -2800,10 +2824,22 @@ class FeatureStoreTest(FeatureStoreIntegTestBase, parameterized.TestCase):
         fs.register_entity(entity)
 
         df = self._session.table(self._mock_table).select(call_udf(udf_name, col("id")).alias("uid"), "name")
-        fv = FeatureView(name="fv", entities=[entity], feature_df=df, refresh_freq="1h")
+        fv = FeatureView(
+            name="fv",
+            entities=[entity],
+            feature_df=df,
+            refresh_freq="1h",
+            online_config=OnlineConfig(enable=True),
+        )
 
-        with self.assertWarnsRegex(UserWarning, "Your pipeline won't be incrementally refreshed due to:"):
-            fs.register_feature_view(feature_view=fv, version="V1")
+        registered_fv = fs.register_feature_view(feature_view=fv, version="V1")
+        self.assertEqual("FV", SqlIdentifier(registered_fv.name).resolved())
+        self.assertTrue(registered_fv.online)
+
+        dt_name = FeatureView._get_physical_name(SqlIdentifier("fv"), "V1")
+        oft_name = FeatureView._get_online_table_name(SqlIdentifier("fv"), "V1")
+        self.assertEqual("INCREMENTAL", self._get_object_refresh_mode(fs, "DYNAMIC TABLES", dt_name))
+        self.assertEqual("INCREMENTAL", self._get_object_refresh_mode(fs, "ONLINE FEATURE TABLES", oft_name))
 
     def test_switch_warehouse(self) -> None:
         warehouse = self._alt_warehouse_name
